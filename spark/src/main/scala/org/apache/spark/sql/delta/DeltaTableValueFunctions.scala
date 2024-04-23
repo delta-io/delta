@@ -115,7 +115,7 @@ trait CDCStatementBase extends DeltaTableValueFunction {
         case _: IntegerType | LongType => (keyPrefix + "Version") -> value.eval().toString
         case _: StringType => (keyPrefix + "Timestamp") -> value.eval().toString
         case _: TimestampType => (keyPrefix + "Timestamp") -> {
-          val time = value.eval().toString
+          val time = DeltaTableValueFunctionsShims.evaluateTimeOption(value)
           val fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
           // when evaluated the time is represented with microseconds, which needs to be trimmed.
           fmt.format(new Date(time.toLong / 1000))

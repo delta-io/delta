@@ -393,6 +393,10 @@ object DeltaTableUtils extends PredicateHelper
     }
   }
 
+  /** Finds and returns the file source metadata column from a dataframe */
+  def getFileMetadataColumn(df: DataFrame): Column =
+    df.metadataColumn(FileFormat.METADATA_NAME)
+
   /**
    * Update FileFormat for a plan and return the updated plan
    *

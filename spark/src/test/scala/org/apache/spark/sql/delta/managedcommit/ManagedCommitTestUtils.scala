@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.managedcommit
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -29,15 +30,27 @@ import org.apache.spark.sql.test.SharedSparkSession
 trait ManagedCommitTestUtils
   extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
 
+  /**
+   * Runs a specific test with managed commits default properties unset.
+   * Any table created in this test won't have managed commits enabled by default.
+   */
   def testWithoutManagedCommits(testName: String)(f: => Unit): Unit = {
     test(testName) {
-      val oldCommitOwnerValue = spark.conf.get(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
-      try {
-        spark.conf.unset(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
-        f
-      } finally {
-        spark.conf.set(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey, oldCommitOwnerValue)
-      }
+      withoutManagedCommitsDefaultTableProperties { f }
+    }
+  }
+
+  /**
+   * Runs the function `f` with managed commits default properties unset.
+   * Any table created in function `f`` won't have managed commits enabled by default.
+   */
+  def withoutManagedCommitsDefaultTableProperties(f: => Unit): Unit = {
+    val oldCommitOwnerValue = spark.conf.get(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
+    try {
+      spark.conf.unset(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
+      f
+    } finally {
+      spark.conf.set(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey, oldCommitOwnerValue)
     }
   }
 
@@ -71,12 +84,27 @@ trait ManagedCommitTestUtils
       }
     }
   }
+
+  def getUpdatedActionsForZerothCommit(
+      commitInfo: CommitInfo,
+      oldMetadata: Metadata = Metadata()): UpdatedActions = {
+    val newMetadataConfiguration =
+      oldMetadata.configuration +
+        (DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "tracking-in-memory")
+    val newMetadata = oldMetadata.copy(configuration = newMetadataConfiguration)
+    UpdatedActions(commitInfo, newMetadata, Protocol(), oldMetadata, Protocol())
+  }
+
+  def getUpdatedActionsForNonZerothCommit(commitInfo: CommitInfo): UpdatedActions = {
+    val updatedActions = getUpdatedActionsForZerothCommit(commitInfo)
+    updatedActions.copy(oldMetadata = updatedActions.newMetadata)
+  }
 }
 
 case class TrackingInMemoryCommitStoreBuilder(
     batchSize: Long,
     defaultCommitStoreOpt: Option[CommitStore] = None) extends CommitStoreBuilder {
-  private lazy val trackingInMemoryCommitStore =
+  lazy val trackingInMemoryCommitStore =
     defaultCommitStoreOpt.getOrElse {
       new TrackingCommitStore(new PredictableUuidInMemoryCommitStore(batchSize))
     }
@@ -86,7 +114,7 @@ case class TrackingInMemoryCommitStoreBuilder(
 }
 
 class PredictableUuidInMemoryCommitStore(batchSize: Long) extends InMemoryCommitStore(batchSize) {
-  var nextUuidSuffix = 0L
+  var nextUuidSuffix = 1L
   override def generateUUID(): String = {
     nextUuidSuffix += 1
     s"uuid-${nextUuidSuffix - 1}"
@@ -97,16 +125,20 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
 
   var numCommitsCalled: Int = 0
   var numGetCommitsCalled: Int = 0
+  var numBackfillToVersionCalled: Int = 0
+  var numRegisterTableCalled: Int = 0
   var insideOperation: Boolean = false
 
   def recordOperation[T](op: String)(f: => T): T = synchronized {
     val oldInsideOperation = insideOperation
     try {
       if (!insideOperation) {
-        if (op == "commit") {
-          numCommitsCalled += 1
-        } else if (op == "getCommits") {
-          numGetCommitsCalled += 1
+        op match {
+          case "commit" => numCommitsCalled += 1
+          case "getCommits" => numGetCommitsCalled += 1
+          case "backfillToVersion" => numBackfillToVersionCalled += 1
+          case "registerTable" => numRegisterTableCalled += 1
+          case _ => ()
         }
       }
       insideOperation = true
@@ -120,38 +152,47 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
-    delegatingCommitStore
-      .commit(logStore, hadoopConf, logPath, commitVersion, actions, updatedActions)
+    delegatingCommitStore.commit(
+      logStore, hadoopConf, logPath, managedCommitTableConf, commitVersion, actions, updatedActions)
   }
 
   override def getCommits(
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long] = None): GetCommitsResponse = recordOperation("getCommits") {
-    delegatingCommitStore.getCommits(logPath, startVersion, endVersion)
+    delegatingCommitStore.getCommits(logPath, managedCommitTableConf, startVersion, endVersion)
   }
 
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       startVersion: Long,
-      endVersion: Option[Long]): Unit = {
-    delegatingCommitStore.backfillToVersion(logStore, hadoopConf, logPath, startVersion, endVersion)
+      endVersion: Option[Long]): Unit = recordOperation("backfillToVersion") {
+    delegatingCommitStore.backfillToVersion(
+      logStore, hadoopConf, logPath, managedCommitTableConf, startVersion, endVersion)
   }
 
-  def registerTable(
-      logPath: Path,
-      maxCommitVersion: Long): Unit = {
-    delegatingCommitStore.registerTable(logPath, maxCommitVersion)
-  }
+  override def semanticEquals(other: CommitStore): Boolean = this == other
 
   def reset(): Unit = {
     numCommitsCalled = 0
     numGetCommitsCalled = 0
+    numBackfillToVersionCalled = 0
+  }
+
+  override def registerTable(
+      logPath: Path,
+      currentVersion: Long,
+      currentMetadata: Metadata,
+      currentProtocol: Protocol): Map[String, String] = recordOperation("registerTable") {
+    delegatingCommitStore.registerTable(logPath, currentVersion, currentMetadata, currentProtocol)
   }
 }
 
