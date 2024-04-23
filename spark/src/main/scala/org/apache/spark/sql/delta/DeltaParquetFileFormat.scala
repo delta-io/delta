@@ -169,9 +169,10 @@ case class DeltaParquetFileFormat(
     val isRowDeletedColumn = findColumn(IS_ROW_DELETED_COLUMN_NAME)
     // val rowIndexColumn = findColumn(ROW_INDEX_COLUMN_NAME)
     val rowIndexColumn = findColumn(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME)
-    val a = ParquetFileFormat.ROW_INDEX_FIELD
+    // val a = ParquetFileFormat.ROW_INDEX_FIELD
 
-    if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) {
+    // if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) {
+    if (isRowDeletedColumn.isEmpty) {
       return parquetDataReader // no additional metadata is needed.
     } else {
       // verify the file splitting and filter pushdown are disabled. The new additional
@@ -356,6 +357,7 @@ case class DeltaParquetFileFormat(
               index += 1
             }
 
+            /*
             rowIndexColumn.foreach { columnMetadata =>
               val rowIndexVector = writableVectors(index)
               // populate the row index column value
@@ -366,6 +368,7 @@ case class DeltaParquetFileFormat(
               indexVectorTuples += (columnMetadata.index -> rowIndexVector)
               index += 1
             }
+            */
 
             val newBatch = replaceVectors(batch, indexVectorTuples.toSeq: _*)
             rowIndex += size

@@ -290,9 +290,9 @@ class TightBoundsSuite
       dataDF = spark.range(0, 10, 1, 1).toDF("id"),
       enableDVs = true
     ) { (targetTable, targetLog) =>
-      targetTable().delete("id == 1")
+      targetTable().delete("id == 2")
 
-      val a = targetTable().toDF.collect()
+      val a = targetTable().toDF.filter("id != 1").collect()
       val b = 1
     }
   }
