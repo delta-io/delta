@@ -71,8 +71,8 @@ object ScanWithDeletionVectors {
     // If the table has no DVs enabled, no change needed
     if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
 
-    // require(!index.isInstanceOf[TahoeLogFileIndex],
-    //  "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
+   require(!index.isInstanceOf[TahoeLogFileIndex],
+     "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
 
     // If the table has no DVs enabled, no change needed
     if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
@@ -141,7 +141,7 @@ object ScanWithDeletionVectors {
     val skipRowColumnRef = skipRowColumnRefs.head
 
     val keepRow = DeltaUDF.booleanFromByte( _ == RowIndexFilter.KEEP_ROW_VALUE)
-      .asNondeterministic() // To avoid constant folding the filter based on stats.
+      // .asNondeterministic() // To avoid constant folding the filter based on stats.
 
     val filterExp = keepRow(new Column(skipRowColumnRef)).expr
     Filter(filterExp, newScan)

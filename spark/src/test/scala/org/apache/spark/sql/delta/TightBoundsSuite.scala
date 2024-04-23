@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.FILES_MAX_PARTITION_BYTES
+
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -287,13 +290,27 @@ class TightBoundsSuite
 
   test("TEST") {
     withTempDeltaTable(
-      dataDF = spark.range(0, 10, 1, 1).toDF("id"),
+      // .repartition(1)
+      dataDF = spark.range(0, 50000000, 1, 1).toDF("id"),
+      // dataDF = spark.range(0, 100000000, 1, 1).toDF("id"),
       enableDVs = true
     ) { (targetTable, targetLog) =>
-      targetTable().delete("id == 2")
+      withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> true.toString,
+          SQLConf.FILES_MAX_PARTITION_BYTES.key -> "128MB") {
+        targetTable().delete("id == 40000000")
 
-      val a = targetTable().toDF.filter("id != 1").collect()
-      val b = 1
+        // val d = targetTable().toDF.filter("id != 1").queryExecution.executedPlan
+        // .filter("id != 1")
+        val a = targetTable().toDF.filter("id != 1").collect()
+        val c = targetLog.update().allFiles.collect()
+        val b = 1
+        assert(a.length === 49999999)
+
+        // a(40000000).getLong(0)
+        assert(a(40000000).getLong(0) === 40000000)
+        // assert(!a.map(_.getLong(0)).toSeq.contains(40000000))
+        // assert(a === Seq(0, 100000000).drop(2))
+      }
     }
   }
 

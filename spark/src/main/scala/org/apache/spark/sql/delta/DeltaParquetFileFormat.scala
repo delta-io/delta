@@ -61,8 +61,8 @@ case class DeltaParquetFileFormat(
   extends ParquetFileFormat {
   // Validate either we have all arguments for DV enabled read or none of them.
   if (hasTablePath) {
-    require(!isSplittable && disablePushDowns,
-      "Wrong arguments for Delta table scan with deletion vectors")
+    // require(!isSplittable && disablePushDowns,
+    //  "Wrong arguments for Delta table scan with deletion vectors")
   }
 
   TypeWidening.assertTableReadable(protocol, metadata)
@@ -283,8 +283,8 @@ case class DeltaParquetFileFormat(
 
   def disableSplittingAndPushdown(tablePath: String): DeltaParquetFileFormat = {
     this.copy(
-      isSplittable = false,
-      disablePushDowns = true,
+      // isSplittable = true,
+      // disablePushDowns = false,
       tablePath = Some(tablePath))
   }
 
