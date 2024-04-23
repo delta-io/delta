@@ -218,7 +218,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         table.getLatestSnapshot(defaultTableClient)
       }
       assert(ex.getMessage.contains(
-        s"Delta table at path `${target.getCanonicalPath}` is not found"))
+        s"Delta table at path `file:${target.getCanonicalPath}` is not found"))
     }
   }
 

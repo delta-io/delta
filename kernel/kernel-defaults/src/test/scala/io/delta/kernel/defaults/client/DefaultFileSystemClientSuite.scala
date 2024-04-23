@@ -58,8 +58,8 @@ class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
   }
 
   test("resolve path on non-existent file") {
-    intercept[FileNotFoundException] {
-      fsClient.resolvePath("/non-existentfileTable/01.json")
-    }
+    val inputPath = "/non-existentfileTable/01.json"
+    val resolvedPath = fsClient.resolvePath(inputPath)
+    assert("file:" + inputPath === resolvedPath)
   }
 }
