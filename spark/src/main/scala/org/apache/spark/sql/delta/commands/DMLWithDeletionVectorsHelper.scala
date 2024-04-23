@@ -48,7 +48,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
  * Contains utility classes and method for performing DML operations with Deletion Vectors.
  */
 object DMLWithDeletionVectorsHelper extends DeltaCommand {
-  val SUPPORTED_DML_COMMANDS: Seq[String] = Seq("DELETE", "UPDATE", "MERGE")
+  val SUPPORTED_DML_COMMANDS: Seq[String] = Seq("DELETE", "UPDATE")
 
   /**
    * Creates a DataFrame that can be used to scan for rows matching the condition in the given
@@ -106,8 +106,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         val newProjectList = projectList ++ Seq(rowIndexCol, fileMetadataCol)
         p.copy(projectList = newProjectList)
     }
-    // newTarget
-    target
+    newTarget
+    // target
   }
 
   /**
