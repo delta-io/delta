@@ -40,7 +40,7 @@ class IntervalParserUtilsSuite extends AnyFunSuite {
       "foo",
       "foo 1 day",
       "month 3",
-      "year 3",
+      "year 3"
     ).foreach { input =>
       checkFromInvalidString(input, "Error parsing")
     }
