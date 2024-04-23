@@ -491,7 +491,7 @@ class DeltaTableBuilderSuite
 
       checkError(
         exception = e,
-        errorClass = "DELTA_CLUSTERING_AND_PARTITIONING_COLUMNS"
+        errorClass = "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY"
       )
     }
   }

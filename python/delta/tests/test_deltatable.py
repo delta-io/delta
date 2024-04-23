@@ -698,15 +698,28 @@ class DeltaTableTestsMixin:
                                        nullables={"key", "value", "value2"},
                                        partitioningColumns=["value", "value2"])
 
-        with self.table("test3"):
+    def test_create_replace_table_with_cluster_by(self) -> None:
+        with self.table("test"):
             # verify creating table with list of structFields
-            deltaTable2 = DeltaTable.create(self.spark).tableName("test3").addColumns(
+            deltaTable = DeltaTable.create(self.spark).tableName("test").addColumns(
                 df.schema.fields) \
                 .addColumn("value2", dataType="int") \
                 .clusterBy("value2", "value")\
                 .execute()
-            self.__verify_table_schema("test3",
-                                       deltaTable2.toDF().schema,
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
+
+            deltaTable = DeltaTable.replace(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
                                        ["key", "value", "value2"],
                                        [StringType(), LongType(), IntegerType()],
                                        nullables={"key", "value", "value2"},

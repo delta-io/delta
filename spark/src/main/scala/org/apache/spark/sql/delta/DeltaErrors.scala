@@ -3236,9 +3236,9 @@ trait DeltaErrorsBase
     )
   }
 
-  def clusteringAndPartitioningColumnsNotAllowedException(): Throwable = {
+  def clusterByWithPartitionedBy(): Throwable = {
     new DeltaAnalysisException(
-      "DELTA_CLUSTERING_AND_PARTITIONING_COLUMNS",
+      "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY",
       Array.empty)
   }
 

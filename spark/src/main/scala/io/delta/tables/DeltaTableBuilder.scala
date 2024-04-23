@@ -264,6 +264,12 @@ class DeltaTableBuilder private[tables](
     this
   }
 
+  private def validatePartitioning(): Unit = {
+    if (partitioningColumns.nonEmpty && clusteringColumns.nonEmpty) {
+      throw DeltaErrors.clusterByWithPartitionedBy()
+    }
+  }
+
   /**
    * :: Evolving ::
    *
@@ -278,6 +284,7 @@ class DeltaTableBuilder private[tables](
   @scala.annotation.varargs
   def partitionedBy(colNames: String*): DeltaTableBuilder = {
     partitioningColumns = Option(colNames)
+    validatePartitioning()
     this
   }
 
@@ -295,6 +302,7 @@ class DeltaTableBuilder private[tables](
   @scala.annotation.varargs
   def clusterBy(colNames: String*): DeltaTableBuilder = {
     clusteringColumns = Option(colNames)
+    validatePartitioning()
     this
   }
 
@@ -340,15 +348,11 @@ class DeltaTableBuilder private[tables](
 
     val table = spark.sessionState.sqlParser.parseMultipartIdentifier(identifier)
 
-    val partitioning: Seq[Transform] = (partitioningColumns, clusteringColumns) match {
-      case (Some(partitionCols), None) =>
-        partitionCols.map(name => DeltaTableUtils.parseColToTransform(name))
-      case (None, Some(clusterCols)) =>
-        Seq(DeltaTableUtils.parseColsToClusterByTransform(clusterCols))
-      case (Some(partitionCols), Some(clusterCols)) =>
-         throw DeltaErrors.clusteringAndPartitioningColumnsNotAllowedException()
-      case (None, None) => Seq.empty
-    }
+    val partitioning = partitioningColumns.map { colNames =>
+      colNames.map(name => DeltaTableUtils.parseColToTransform(name))
+    }.getOrElse(Seq.empty[Transform]) ++ (clusteringColumns.map { colNames =>
+      DeltaTableUtils.parseColsToClusterByTransform(colNames)
+    })
 
     val tableSpec = org.apache.spark.sql.catalyst.plans.logical.TableSpec(
       properties = properties,
