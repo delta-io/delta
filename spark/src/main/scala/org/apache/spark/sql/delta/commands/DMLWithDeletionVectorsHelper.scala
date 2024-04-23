@@ -17,9 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import java.util.UUID
-
 import scala.collection.generic.Sizing
-
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
@@ -34,13 +32,13 @@ import org.apache.spark.sql.delta.util.{BinPackingIterator, DeltaEncoder, JsonUt
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
@@ -50,7 +48,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
  * Contains utility classes and method for performing DML operations with Deletion Vectors.
  */
 object DMLWithDeletionVectorsHelper extends DeltaCommand {
-  val SUPPORTED_DML_COMMANDS: Seq[String] = Seq("DELETE", "UPDATE")
+  val SUPPORTED_DML_COMMANDS: Seq[String] = Seq("DELETE", "UPDATE", "MERGE")
 
   /**
    * Creates a DataFrame that can be used to scan for rows matching the condition in the given
@@ -77,7 +75,12 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
    * @param fileIndex the new file index
    */
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
-    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)();
+    // val rowIndexCol =
+    // AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)();
+    val rowIndexCol =
+      AttributeReference(
+        s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}",
+        ROW_INDEX_STRUCT_FIELD.dataType)()
     var fileMetadataCol: AttributeReference = null
 
     val newTarget = target.transformUp {
@@ -87,15 +90,15 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         // Take the existing schema and add additional metadata columns
         val newDataSchema =
           StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FIELD)
-        val finalOutput = l.output ++ Seq(rowIndexCol, fileMetadataCol)
+        val finalOutput = l.output :+ fileMetadataCol // Seq(rowIndexCol, fileMetadataCol)
         // Disable splitting and filter pushdown in order to generate the row-indexes
-        val newFormat = format.copy(isSplittable = false, disablePushDowns = true)
+        val newFormat = format.copy(isSplittable = true, disablePushDowns = false)
         val newBaseRelation = hfsr.copy(
           location = fileIndex,
           dataSchema = newDataSchema,
           fileFormat = newFormat)(hfsr.sparkSession)
 
-        l.copy(relation = newBaseRelation, output = finalOutput)
+        l.copy(relation = hfsr, output = finalOutput)
       case p @ Project(projectList, _) =>
         if (fileMetadataCol == null) {
           throw new IllegalStateException("File metadata column is not yet created.")
@@ -103,7 +106,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         val newProjectList = projectList ++ Seq(rowIndexCol, fileMetadataCol)
         p.copy(projectList = newProjectList)
     }
-    newTarget
+    // newTarget
+    target
   }
 
   /**
@@ -369,7 +373,8 @@ object DeletionVectorBitmapGenerator {
       fileNameColumnOpt: Option[Column] = None,
       rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
     val fileNameColumn = fileNameColumnOpt.getOrElse(col(s"${METADATA_NAME}.${FILE_PATH}"))
-    val rowIndexColumn = rowIndexColumnOpt.getOrElse(col(ROW_INDEX_COLUMN_NAME))
+    val rowIndexColumn = rowIndexColumnOpt // .getOrElse(col(ROW_INDEX_COLUMN_NAME))
+      .getOrElse(col(s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}"))
     val matchedRowsDf = targetDf
       .withColumn(FILE_NAME_COL, fileNameColumn)
       // Filter after getting input file name as the filter might introduce a join and we
