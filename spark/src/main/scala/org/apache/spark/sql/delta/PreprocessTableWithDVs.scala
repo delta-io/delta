@@ -25,6 +25,9 @@ import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
+
+import org.apache.spark.sql.execution.datasources.FileFormat.METADATA_NAME
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 
 /**
@@ -117,8 +120,19 @@ object ScanWithDeletionVectors {
     // Add a column for SKIP_ROW to the base output. Value of 0 means the row needs be kept, any
     // other values mean the row needs be skipped.
     val skipRowField = IS_ROW_DELETED_STRUCT_FIELD
-    val newScanOutput = inputScan.output :+
-      AttributeReference(skipRowField.name, skipRowField.dataType)()
+    // val rowIndexField = ParquetFileFormat.ROW_INDEX_FIELD
+    val newScanOutput = if (inputScan.output.map(_.name).contains(METADATA_NAME)) {
+      inputScan.output :+ AttributeReference(skipRowField.name, skipRowField.dataType)()
+    } else {
+      val fileMetadataCol = fileFormat.createFileMetadataCol()
+      /*
+      val rowIndexCol = AttributeReference(
+        s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}",
+        ROW_INDEX_STRUCT_FIELD.dataType)()
+      */
+      inputScan.output ++
+        Seq(AttributeReference(skipRowField.name, skipRowField.dataType)(), fileMetadataCol)
+    }
 
     // Data schema and scan schema could be different. The scan schema may contain additional
     // columns such as `_metadata.file_path` (metadata columns) which are populated in Spark scan

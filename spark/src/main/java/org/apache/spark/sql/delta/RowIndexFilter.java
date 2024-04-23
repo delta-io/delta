@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta;
 
+import org.apache.spark.sql.vectorized.ColumnVector;
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 
 /**
@@ -33,6 +34,22 @@ public interface RowIndexFilter {
      * @param batch  The column vector for the current batch to materialize the range into
      */
     void materializeIntoVector(long start, long end, WritableColumnVector batch);
+
+    /**
+     *
+     * @param batchSize
+     * @param rowIndexColumn
+     * @param batch
+     */
+    void materializeIntoVector(int batchSize, ColumnVector rowIndexColumn, WritableColumnVector batch);
+
+    /**
+     *
+     * @param rowNumber
+     * @param rowIndex
+     * @param batch
+     */
+    void materializeIntoVector(int rowNumber, long rowIndex, WritableColumnVector batch);
 
     /**
      * Value that must be materialised for a row to be kept after filtering.

@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.RowIndexFilterType
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
@@ -338,10 +337,39 @@ case class DeltaParquetFileFormat(
     // Used only when non-column row batches are received from the Parquet reader
     val tempVector = new OnHeapColumnVector(1, ByteType)
 
+    if (rowIndexColumn.isDefined == false) {
+      val c = 1
+    }
+
+    val rowIndexColumnIndex = (rowIndexFilter, rowIndexColumn) match {
+      case (Some(_: KeepAllRowsFilter.type), Some(rowIndexColumn)) => rowIndexColumn.index
+      case (Some(_), Some(rowIndexColumn)) => rowIndexColumn.index
+      case _ =>
+        throw new IllegalStateException("bla bla")
+    }
+
     iterator.map { row =>
       row match {
         case batch: ColumnarBatch => // When vectorized Parquet reader is enabled
           val size = batch.numRows()
+          trySafely(useOffHeapBuffers, size, Seq(isRowDeletedColumn.get)) { writableVectors =>
+            val indexVectorTuples = new ArrayBuffer[(Int, ColumnVector)]
+            // val index = 0
+            isRowDeletedColumn.foreach { columnMetadata =>
+              val isRowDeletedVector = writableVectors.head
+
+              rowIndexFilter.get
+                .materializeIntoVector(size, batch.column(rowIndexColumnIndex), isRowDeletedVector)
+              // rowIndexFilter.get
+              //  .materializeIntoVector(rowIndex, rowIndex + size, isRowDeletedVector)
+              indexVectorTuples += (columnMetadata.index -> isRowDeletedVector)
+              // index += 1
+            }
+
+            replaceVectors(batch, indexVectorTuples.toSeq: _*)
+          }
+
+          /*
           // Create vectors for all needed metadata columns.
           // We can't use the one from Parquet reader as it set the
           // [[WritableColumnVector.isAllNulls]] to true and it can't be reset with using any
@@ -357,7 +385,6 @@ case class DeltaParquetFileFormat(
               index += 1
             }
 
-            /*
             rowIndexColumn.foreach { columnMetadata =>
               val rowIndexVector = writableVectors(index)
               // populate the row index column value
@@ -368,12 +395,12 @@ case class DeltaParquetFileFormat(
               indexVectorTuples += (columnMetadata.index -> rowIndexVector)
               index += 1
             }
-            */
 
             val newBatch = replaceVectors(batch, indexVectorTuples.toSeq: _*)
             rowIndex += size
             newBatch
           }
+        */
 
         case columnarRow: ColumnarBatchRow =>
           // When vectorized reader is enabled but returns immutable rows instead of
@@ -381,6 +408,7 @@ case class DeltaParquetFileFormat(
           // mutable [[InternalRow]] and set the `row_index` and `is_row_deleted`
           // column values. This is not efficient. It should affect only the wide
           // tables. https://github.com/delta-io/delta/issues/2246
+          /*
           val newRow = columnarRow.copy();
           isRowDeletedColumn.foreach { columnMetadata =>
             rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
@@ -390,12 +418,30 @@ case class DeltaParquetFileFormat(
           rowIndexColumn.foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
           rowIndex += 1
           newRow
+          */
+          val newRow = columnarRow.copy();
+          isRowDeletedColumn.foreach { columnMetadata =>
+            rowIndexFilter.get
+              .materializeIntoVector(
+                columnarRow.rowId, // TODO check this
+                columnarRow.getLong(rowIndexColumnIndex),
+                tempVector)
+
+            newRow.setByte(columnMetadata.index, tempVector.getByte(0))
+          }
+
+          // rowIndexColumn
+          // .foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
+          // rowIndex += 1
+          newRow
 
         case rest: InternalRow => // When vectorized Parquet reader is disabled
+          // achatzis
           // Temporary vector variable used to get DV values from RowIndexFilter
           // Currently the RowIndexFilter only supports writing into a columnar vector
           // and doesn't have methods to get DV value for a specific row index.
           // TODO: This is not efficient, but it is ok given the default reader is vectorized
+          /*
           isRowDeletedColumn.foreach { columnMetadata =>
             rowIndexFilter.get.materializeIntoVector(rowIndex, rowIndex + 1, tempVector)
             rest.setByte(columnMetadata.index, tempVector.getByte(0))
@@ -403,6 +449,18 @@ case class DeltaParquetFileFormat(
 
           rowIndexColumn.foreach(columnMetadata => rest.setLong(columnMetadata.index, rowIndex))
           rowIndex += 1
+          rest
+          */
+          isRowDeletedColumn.foreach { columnMetadata =>
+            rowIndexFilter.get
+              .materializeIntoVector(
+                0,
+                rest.getLong(rowIndexColumnIndex),
+                tempVector)
+
+            rest.setByte(columnMetadata.index, tempVector.getByte(0))
+          }
+
           rest
         case others =>
           throw new RuntimeException(

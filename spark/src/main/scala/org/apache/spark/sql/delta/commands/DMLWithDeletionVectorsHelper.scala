@@ -77,10 +77,12 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
   private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
     // val rowIndexCol =
     // AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)();
+    /*
     val rowIndexCol =
       AttributeReference(
         s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}",
         ROW_INDEX_STRUCT_FIELD.dataType)()
+    */
     var fileMetadataCol: AttributeReference = null
 
     val newTarget = target.transformUp {
@@ -91,19 +93,21 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         val newDataSchema =
           StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FIELD)
         val finalOutput = l.output :+ fileMetadataCol // Seq(rowIndexCol, fileMetadataCol)
+        /*
         // Disable splitting and filter pushdown in order to generate the row-indexes
         val newFormat = format.copy(isSplittable = true, disablePushDowns = false)
         val newBaseRelation = hfsr.copy(
           location = fileIndex,
           dataSchema = newDataSchema,
           fileFormat = newFormat)(hfsr.sparkSession)
+        */
 
         l.copy(relation = hfsr, output = finalOutput)
       case p @ Project(projectList, _) =>
         if (fileMetadataCol == null) {
           throw new IllegalStateException("File metadata column is not yet created.")
         }
-        val newProjectList = projectList ++ Seq(rowIndexCol, fileMetadataCol)
+        val newProjectList = projectList :+ fileMetadataCol
         p.copy(projectList = newProjectList)
     }
     newTarget

@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
+import org.apache.spark.sql.vectorized.ColumnVector
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector
 
 /**
@@ -45,6 +45,36 @@ abstract sealed class RowIndexMarkingFilters(bitmap: RoaringBitmapArray) extends
       batch.putByte(rowId, filterOutput)
       rowId += 1
     }
+  }
+
+  override def materializeIntoVector(
+      batchSize: Int,
+      rowIndexColumn: ColumnVector,
+      batch: WritableColumnVector): Unit = {
+    for (rowNumber <- 0  to batchSize - 1) {
+      val rowIndex = rowIndexColumn.getLong(rowNumber)
+
+      val isContained = bitmap.contains(rowIndex)
+      val filterOutput = if (isContained) {
+        valueWhenContained
+      } else {
+        valueWhenNotContained
+      }
+      batch.putByte(rowNumber, filterOutput)
+    }
+  }
+
+  override def materializeIntoVector(
+      rowNumber: Int,
+      rowIndex: Long,
+      batch: WritableColumnVector): Unit = {
+    val isContained = bitmap.contains(rowIndex)
+    val filterOutput = if (isContained) {
+      valueWhenContained
+    } else {
+      valueWhenNotContained
+    }
+    batch.putByte(rowNumber, filterOutput)
   }
 }
 
@@ -123,6 +153,21 @@ case object DropAllRowsFilter extends RowIndexFilter {
       rowId += 1
     }
   }
+
+  override def materializeIntoVector(
+      batchSize: Int,
+      rowIndexColumn: ColumnVector,
+      batch: WritableColumnVector): Unit = {
+    for (rowId <- 0 to batchSize - 1) {
+      batch.putByte(rowId, RowIndexFilter.DROP_ROW_VALUE)
+    }
+  }
+
+  override def materializeIntoVector(
+                                      rowNumber: Int,
+                                      rowIndex: Long,
+                                      batch: WritableColumnVector): Unit =
+    batch.putByte(rowNumber, RowIndexFilter.DROP_ROW_VALUE)
 }
 
 case object KeepAllRowsFilter extends RowIndexFilter {
@@ -134,4 +179,19 @@ case object KeepAllRowsFilter extends RowIndexFilter {
       rowId += 1
     }
   }
+
+  override def materializeIntoVector(
+      batchSize: Int,
+      rowIndexColumn: ColumnVector,
+      batch: WritableColumnVector): Unit = {
+    for (rowId <- 0 to batchSize - 1) {
+      batch.putByte(rowId, RowIndexFilter.KEEP_ROW_VALUE)
+    }
+  }
+
+  override def materializeIntoVector(
+                                      rowNumber: Int,
+                                      rowIndex: Long,
+                                      batch: WritableColumnVector): Unit =
+    batch.putByte(rowNumber, RowIndexFilter.KEEP_ROW_VALUE)
 }
