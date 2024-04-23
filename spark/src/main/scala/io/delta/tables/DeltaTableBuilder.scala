@@ -264,6 +264,9 @@ class DeltaTableBuilder private[tables](
     this
   }
 
+  /**
+   * Validate that clusterBy is not used with partitionedBy.
+   */
   private def validatePartitioning(): Unit = {
     if (partitioningColumns.nonEmpty && clusteringColumns.nonEmpty) {
       throw DeltaErrors.clusterByWithPartitionedBy()

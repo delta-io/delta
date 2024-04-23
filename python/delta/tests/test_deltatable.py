@@ -699,6 +699,7 @@ class DeltaTableTestsMixin:
                                        partitioningColumns=["value", "value2"])
 
     def test_create_replace_table_with_cluster_by(self) -> None:
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
         with self.table("test"):
             # verify creating table with list of structFields
             deltaTable = DeltaTable.create(self.spark).tableName("test").addColumns(

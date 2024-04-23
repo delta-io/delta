@@ -30,11 +30,10 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructType}
 
 class DeltaTableBuilderSuite
-    extends QueryTest
-    with SharedSparkSession
-    with DeltaSQLCommandTest
-    with ClusteredTableTestUtils
-    {
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaSQLCommandTest
+  with ClusteredTableTestUtils {
 
   // Define the information for a default test table used by many tests.
   protected val defaultTestTableSchema = "c1 int, c2 int, c3 string"
