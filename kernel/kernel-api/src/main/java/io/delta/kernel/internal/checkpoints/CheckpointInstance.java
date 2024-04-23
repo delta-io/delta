@@ -180,15 +180,8 @@ public class CheckpointInstance
             return false;
         }
 
-        // For V2 checkpoints, compare the filepath.
         CheckpointInstance checkpointInstance = (CheckpointInstance) o;
-        if (checkpointInstance.format == CheckpointFormat.V2 && format == CheckpointFormat.V2 &&
-                !filePath.equals(checkpointInstance.filePath)) {
-            return false;
-        }
-        return version == checkpointInstance.version &&
-                Objects.equals(numParts, checkpointInstance.numParts) &&
-                format == checkpointInstance.format;
+        return this.compareTo(checkpointInstance) == 0;
     }
 
     @Override
