@@ -61,6 +61,10 @@ public class ParquetFileWriter {
 
     private long currentFileNumber; // used to generate the unique file names.
 
+    /**
+     * Create writer to write data into one or more files depending upon the
+     * {@code targetMaxFileSize} value and the given data.
+     */
     public ParquetFileWriter(
             Configuration configuration,
             Path location,
@@ -75,6 +79,9 @@ public class ParquetFileWriter {
         this.writeAsSingleFile = false;
     }
 
+    /**
+     * Create writer to write the data exactly into one file.
+     */
     public ParquetFileWriter(Configuration configuration, Path destPath) {
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.writeAsSingleFile = true;
@@ -146,6 +153,9 @@ public class ParquetFileWriter {
                     boolean maxFileSizeReached;
                     do {
                         consumeNextRow(writer);
+                        // If we are writing a single file, then don't need to check for the current
+                        // file size. Otherwise see if the current file size reached the target file
+                        // size.
                         maxFileSizeReached =
                                 !writeAsSingleFile && writer.getDataSize() >= targetMaxFileSize;
                         // Keep writing until max file is reached or no more data to write

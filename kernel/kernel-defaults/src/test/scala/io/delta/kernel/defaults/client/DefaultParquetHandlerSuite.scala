@@ -51,7 +51,7 @@ class DefaultParquetHandlerSuite extends AnyFunSuite with ParquetSuiteBase {
           filePath,
           toCloseableIterator(dataToWrite.asJava.iterator()))
 
-        // Uses both park and Kernel to read and verify the content is same as the one written.
+        // Uses both Spark and Kernel to read and verify the content is same as the one written.
         verifyContent(tempDir.getAbsolutePath, dataToWrite)
       }
 

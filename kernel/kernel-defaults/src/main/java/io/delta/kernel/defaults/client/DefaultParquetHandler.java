@@ -33,6 +33,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
 import io.delta.kernel.utils.FileStatus;
 
+import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
@@ -133,18 +134,15 @@ public class DefaultParquetHandler implements ParquetHandler {
         }
         ParquetFileWriter fileWriter = new ParquetFileWriter(hadoopConf, writePath);
 
-        DataFileStatus writtenFile = null;
+        Optional<DataFileStatus> writtenFile;
 
-        try (CloseableIterator<DataFileStatus> status = fileWriter.write(data)) {
-            while (status.hasNext()) {
-                checkState(writtenFile == null, "expected to write exactly one file");
-                writtenFile = status.next();
-            }
+        try (CloseableIterator<DataFileStatus> statuses = fileWriter.write(data)) {
+            writtenFile = InternalUtils.getSingularElement(statuses);
         } catch (UncheckedIOException uio) {
             throw uio.getCause();
         }
 
-        checkState(writtenFile != null, "expected to write one output file");
+        checkState(writtenFile.isPresent(), "expected to write one output file");
         if (useRename) {
             FileSystem fs = targetPath.getFileSystem(hadoopConf);
             boolean renameDone = false;
