@@ -104,6 +104,32 @@ public final class DeltaErrors {
         return new UnsupportedOperationException(message);
     }
 
+    public static UnsupportedOperationException unsupportedReaderProtocol(int readVersion) {
+        throw new UnsupportedOperationException(
+                "Unsupported reader protocol version: " + readVersion);
+    }
+
+    public static UnsupportedOperationException unsupportedReadFeature(
+            int readProtocolVersion,
+            String readFeature) {
+        throw new UnsupportedOperationException(String.format(
+                "Unsupported reader protocol version: %s with feature: %s",
+                    readProtocolVersion, readFeature));
+    }
+
+    public static UnsupportedOperationException unsupportedWriterProtocol(int writeVersion) {
+        throw new UnsupportedOperationException(
+                "Unsupported writer protocol version: " + writeVersion);
+    }
+
+    public static UnsupportedOperationException unsupportedWriteFeature(
+            int writeProtocolVersion,
+            String writeFeature) {
+        throw new UnsupportedOperationException(String.format(
+                "Unsupported writer protocol version: %s with feature: %s",
+                writeProtocolVersion, writeFeature));
+    }
+
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
     }

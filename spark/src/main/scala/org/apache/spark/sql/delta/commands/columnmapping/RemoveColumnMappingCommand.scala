@@ -53,8 +53,9 @@ class RemoveColumnMappingCommand(
       val addedFiles = writeData(txn, originalData, deltaOptions)
       val removeFileActions = originalFiles.map(_.removeWithTimestamp(dataChange = false))
 
-      txn.commit(removeFileActions ++ addedFiles,
-        DeltaOperations.RemoveColumnMapping()
+      txn.commit(actions = removeFileActions ++ addedFiles,
+        op = DeltaOperations.RemoveColumnMapping(),
+        tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot)
       )
     }
   }
@@ -120,8 +121,14 @@ class RemoveColumnMappingCommand(
       txn: OptimisticTransaction,
       data: DataFrame,
       deltaOptions: DeltaOptions): Seq[AddFile] = {
-    txn.writeFiles(data, Some(deltaOptions), isOptimize = true, additionalConstraints = Seq.empty)
+    txn.writeFiles(
+      inputData = RowTracking.preserveRowTrackingColumns(data, txn.snapshot),
+      writeOptions = Some(deltaOptions),
+      isOptimize = true,
+      additionalConstraints = Seq.empty)
       .asInstanceOf[Seq[AddFile]]
+      // Mark as no data change to not generate CDC data. We are only removing column mapping.
+      .map(_.copy(dataChange = false))
   }
 }
 

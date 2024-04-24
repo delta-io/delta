@@ -18,8 +18,12 @@ package io.delta.kernel.internal;
 
 import java.util.List;
 
-import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.types.StructType;
+
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
+import static io.delta.kernel.internal.DeltaErrors.*;
 
 /**
  * Contains utility methods related to the Delta table feature support in protocol.
@@ -50,14 +54,74 @@ public class TableFeatures {
                         case "v2Checkpoint":
                             break;
                         default:
-                            throw new UnsupportedOperationException(
-                                    "Unsupported table feature: " + readerFeature);
+                            throw DeltaErrors.unsupportedReadFeature(3, readerFeature);
                     }
                 }
                 break;
             default:
-                throw new UnsupportedOperationException(
-                        "Unsupported reader protocol version: " + protocol.getMinReaderVersion());
+                throw unsupportedReaderProtocol(protocol.getMinReaderVersion());
+        }
+    }
+
+    /**
+     * Utility method to validate whether the given table is supported for writing from Kernel.
+     * Currently, the support is as follows:
+     * <ul>
+     *     <li>protocol writer version 1.</li>
+     *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
+     *     <li>protocol writer version 7 with "appendOnly" feature enabled.</li>
+     * </ul>
+     *
+     * @param protocol    Table protocol
+     * @param metadata    Table metadata
+     * @param tableSchema Table schema
+     */
+    public static void validateWriteSupportedTable(
+            Protocol protocol,
+            Metadata metadata,
+            StructType tableSchema) {
+        int minWriterVersion = protocol.getMinWriterVersion();
+        switch (minWriterVersion) {
+            case 1:
+                break;
+            case 2:
+                // Append-only and column invariants are the writer features added in version 2
+                // Append-only is supported, but not the invariants
+                validateNoInvariants(minWriterVersion, tableSchema);
+                break;
+            case 3:
+                // Check constraints are added in version 3
+                throw unsupportedWriterProtocol(minWriterVersion);
+            case 4:
+                // CDF and generated columns are writer features added in version 4
+                throw unsupportedWriterProtocol(minWriterVersion);
+            case 5:
+                // Column mapping is the only one writer feature added in version 5
+                throw unsupportedWriterProtocol(minWriterVersion);
+            case 6:
+                // Identity is the only one writer feature added in version 6
+                throw unsupportedWriterProtocol(minWriterVersion);
+            case 7:
+                for (String writerFeature : protocol.getWriterFeatures()) {
+                    switch (writerFeature) {
+                        // Only supported writer features as of today in Kernel
+                        case "appendOnly":
+                            break;
+                        default:
+                            throw unsupportedWriteFeature(7, writerFeature);
+                    }
+                }
+                break;
+            default:
+                throw unsupportedWriterProtocol(minWriterVersion);
+        }
+    }
+
+    private static void validateNoInvariants(int minWriterVersion, StructType tableSchema) {
+        boolean hasInvariants = tableSchema.fields().stream().anyMatch(
+                field -> field.getMetadata().contains("delta.invariants"));
+        if (hasInvariants) {
+            throw unsupportedWriteFeature(minWriterVersion, "invariants");
         }
     }
 }
