@@ -16,17 +16,24 @@
 package io.delta.kernel.defaults
 
 import java.io.File
+import java.util
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.client.{ExpressionHandler, FileSystemClient, JsonHandler, ParquetHandler, TableClient}
+import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
+import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.util.FileNames
@@ -34,9 +41,13 @@ import org.apache.spark.sql.delta.util.FileNames
 class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
 
-  def validateSnapshot(path: String, snapshotFromSpark: Snapshot): Unit = {
+  def validateSnapshot(
+      path: String,
+      snapshotFromSpark: Snapshot,
+      tableClient: TableClient = defaultTableClient,
+      strictFileValidation: Boolean = true): Unit = {
     // Create a snapshot from Spark connector and from kernel.
-    val snapshot = latestSnapshot(path)
+    val snapshot = latestSnapshot(path, tableClient)
     val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
 
     // Validate metadata/protocol loaded correctly from top-level v2 checkpoint file.
@@ -59,10 +70,15 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
       collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
         _.getPath.split('/').last).toSet
     val expectedFiles = snapshotFromSpark.allFiles.collect().map(_.path).toSet
-    assert(foundFiles == expectedFiles)
+    if (strictFileValidation) {
+      assert(foundFiles == expectedFiles)
+    } else {
+      assert(foundFiles.subsetOf(expectedFiles))
+    }
   }
 
   test("v2 checkpoint support") {
+    import spark.implicits._
     supportedFileFormats.foreach { format =>
       withTempDir { path =>
         val tbl = "tbl"
@@ -76,14 +92,17 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
             spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
             spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
             spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+
+            // Insert more data to ensure multiple ColumnarBatches created.
+            (10 to 110).map(i => (i, i.toString)).toDF("a", "b").repartition(10)
+              .write.format("delta").mode("append").saveAsTable(tbl)
           }
 
           // Validate snapshot and data.
           validateSnapshot(path.toString, DeltaLog.forTable(spark, path.toString).update())
           checkTable(
             path = path.toString,
-            expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
-          )
+            expectedAnswer = spark.sql(s"SELECT * FROM $tbl").collect().map(TestRow(_)))
 
           // Remove some files from the table, then add a new one.
           spark.sql(s"DELETE FROM $tbl WHERE a=1 OR a=2")
@@ -93,8 +112,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           validateSnapshot(path.toString, DeltaLog.forTable(spark, path.toString).update())
           checkTable(
             path = path.toString,
-            expectedAnswer = (3 to 8).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
-          )
+            expectedAnswer = spark.sql(s"SELECT * FROM $tbl").collect().map(TestRow(_)))
         }
       }
     }
@@ -134,6 +152,74 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
             path = path.toString,
             expectedAnswer = (3 to 8).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
           )
+        }
+      }
+    }
+  }
+
+  test("v2 checkpoint support with an empty sidecar") {
+    supportedFileFormats.foreach { format =>
+      withTempDir { path =>
+        val tbl = "tbl"
+        withTable(tbl) {
+          // Create table.
+          withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
+            DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
+            "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
+            spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
+              s"LOCATION '$path' " +
+              s"TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
+            spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
+            spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
+            spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+          }
+
+          // Remove all data from one of the sidecar files.
+          val sidecarFolderPath =
+            new Path(DeltaLog.forTable(spark, path.toString).logPath, "_sidecars")
+          val sidecarCkptPath = new Path(new File(sidecarFolderPath.toUri).listFiles()
+            .filter(f => !f.getName.endsWith(".crc")).head.toURI).toString
+
+          class DelegatingTableClient(sidecarPath: String) extends TableClient {
+            def getExpressionHandler: ExpressionHandler = defaultTableClient.getExpressionHandler
+            def getJsonHandler: JsonHandler = defaultTableClient.getJsonHandler
+            def getFileSystemClient: FileSystemClient = defaultTableClient.getFileSystemClient
+            def getParquetHandler: ParquetHandler = new ParquetHandler {
+              // Filter out one sidecar file.
+              def readParquetFiles(
+                  fileIter: CloseableIterator[FileStatus],
+                  physicalSchema: StructType,
+                  predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+                defaultTableClient.getParquetHandler.readParquetFiles(
+                  fileIter.filter{ f =>
+                    (new Path(f.getPath).toString != sidecarPath).asInstanceOf[java.lang.Boolean]
+                  },
+                  physicalSchema,
+                  predicate)
+              }
+
+              def writeParquetFiles(
+                  directoryPath: String,
+                  dataIter: CloseableIterator[FilteredColumnarBatch],
+                  maxFileSize: Long,
+                  statsColumns: util.List[Column]): CloseableIterator[DataFileStatus] =
+                defaultTableClient.getParquetHandler.writeParquetFiles(
+                  directoryPath, dataIter, maxFileSize, statsColumns)
+              def writeParquetFileAtomically(
+                  filePath: String, data: CloseableIterator[FilteredColumnarBatch]): Unit =
+                defaultTableClient.getParquetHandler.writeParquetFileAtomically(filePath, data)
+            }
+          }
+
+          val snapshotFromSpark = DeltaLog.forTable(spark, path.toString).update()
+          snapshotFromSpark.allFiles.collect()
+
+          // Validate snapshot and data.
+          validateSnapshot(
+            path.toString,
+            DeltaLog.forTable(spark, path.toString).update(),
+            new DelegatingTableClient(sidecarCkptPath),
+            strictFileValidation = false)
         }
       }
     }
