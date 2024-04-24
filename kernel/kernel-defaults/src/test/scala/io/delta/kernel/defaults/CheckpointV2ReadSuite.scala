@@ -36,6 +36,15 @@ import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, 
 class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
 
+  def createSourceTable(tbl: String, path: String): Unit = {
+    spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
+      s"LOCATION '$path' " +
+      s"TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
+    spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
+    spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
+    spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+  }
+
   def validateSnapshot(
       path: String,
       snapshotFromSpark: Snapshot,
@@ -95,12 +104,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
             "delta.kernel.default.json.reader.batch-size" -> "10",
             DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-            spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
-              s"LOCATION '$path' " +
-              s"TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
-            spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
-            spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
-            spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+            createSourceTable(tbl, path.toString)
 
             // Insert more data to ensure multiple ColumnarBatches created.
             spark.createDataFrame(
@@ -139,12 +143,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-            spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
-              s"LOCATION '$path' " +
-              s"TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
-            spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
-            spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
-            spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+            createSourceTable(tbl, path.toString)
           }
 
           // Validate snapshot and data.
@@ -178,12 +177,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-            spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
-              s"LOCATION '$path' " +
-              s"TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
-            spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
-            spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
-            spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+            createSourceTable(tbl, path.toString)
           }
 
           // Evalute Spark result before updating sidecar.
@@ -271,11 +265,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
         withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> "parquet",
           "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
           spark.conf.set(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, "parquet")
-          spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta LOCATION '$path'" +
-            " TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
-          spark.sql("INSERT INTO tbl VALUES (1, 'a'), (2, 'b')")
-          spark.sql("INSERT INTO tbl VALUES (3, 'c'), (4, 'd')")
-          spark.sql("INSERT INTO tbl VALUES (5, 'e'), (6, 'f')")
+          createSourceTable(tbl, path.toString)
         }
 
         // Spark snapshot and files must be evaluated before renaming the checkpoint file.
