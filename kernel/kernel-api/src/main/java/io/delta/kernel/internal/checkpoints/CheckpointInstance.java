@@ -170,7 +170,7 @@ public class CheckpointInstance
     @Override
     public String toString() {
         return "CheckpointInstance{version=" + version + ", numParts=" + numParts + ", format=" +
-                format + ", filePath=" + filePath.map(Path::toString).orElse("") + "}";
+                format + ", filePath=" + filePath + "}";
     }
 
     @Override

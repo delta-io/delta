@@ -221,7 +221,7 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 }
 
-object CheckpointerSuite extends MockTableClientUtils with VectorTestUtils {
+object CheckpointerSuite extends VectorTestUtils {
   val SAMPLE_LAST_CHECKPOINT_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -236,20 +236,6 @@ object CheckpointerSuite extends MockTableClientUtils with VectorTestUtils {
     override def getSize: Int = 1
   }
 
-  val SAMPLE_SIDECAR_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
-    override def getSchema: StructType = SidecarFile.READ_SCHEMA
-
-    override def getColumnVector(ordinal: Int): ColumnVector = {
-      ordinal match {
-        case 0 => stringVector(Seq("abc", "def")) // path
-        case 1 => longVector(44, 45) // size
-        case 2 => longVector(20, 30); // modification time
-      }
-    }
-
-    override def getSize: Int = 2
-  }
-
   val ZERO_ENTRIES_COLUMNAR_BATCH: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -259,7 +245,6 @@ object CheckpointerSuite extends MockTableClientUtils with VectorTestUtils {
     override def getSize: Int = 0
   }
 
-  val CHECKPOINT_V2_FILE_TABLE = new Path("/ckpt-v2-test")
   val VALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/valid")
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
@@ -285,7 +270,6 @@ class MockLastCheckpointMetadataFileReader(maxFailures: Int) extends BaseMockJso
 
     Utils.singletonCloseableIterator(
       path.getParent match {
-        case CHECKPOINT_V2_FILE_TABLE => SAMPLE_SIDECAR_FILE_CONTENT
         case VALID_LAST_CHECKPOINT_FILE_TABLE => SAMPLE_LAST_CHECKPOINT_FILE_CONTENT
         case ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE => ZERO_ENTRIES_COLUMNAR_BATCH
         case INVALID_LAST_CHECKPOINT_FILE_TABLE =>

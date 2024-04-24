@@ -76,7 +76,7 @@ trait MockTableClientUtils {
 /**
  * Base class for mocking [[JsonHandler]]
  */
-trait BaseMockJsonHandler extends JsonHandler with MockTableClientUtils {
+trait BaseMockJsonHandler extends JsonHandler {
   override def parseJson(
       jsonStringVector: ColumnVector,
       outputSchema: StructType,

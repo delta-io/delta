@@ -189,12 +189,12 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         final CloseableIterator<ColumnarBatch> topLevelIter;
         if (fileName.endsWith(".parquet")) {
             topLevelIter = tableClient.getParquetHandler().readParquetFiles(
-                    Utils.singletonCloseableIterator(file),
+                    singletonCloseableIterator(file),
                     modifiedReadSchema,
                     checkpointPredicate);
         } else if (fileName.endsWith(".json")) {
             topLevelIter = tableClient.getJsonHandler().readJsonFiles(
-                    Utils.singletonCloseableIterator(file),
+                    singletonCloseableIterator(file),
                     modifiedReadSchema,
                     checkpointPredicate);
         } else {

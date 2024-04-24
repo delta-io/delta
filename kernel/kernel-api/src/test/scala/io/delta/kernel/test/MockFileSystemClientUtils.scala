@@ -131,7 +131,7 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
  * It also maintains metrics on number of times `listFrom` is called and arguments for each call.
  */
 class MockListFromFileSystemClient(listFromProvider: String => Seq[FileStatus])
-  extends BaseMockFileSystemClient {
+    extends BaseMockFileSystemClient {
   private var listFromCalls: Seq[String] = Seq.empty
 
   override def listFrom(filePath: String): CloseableIterator[FileStatus] = {

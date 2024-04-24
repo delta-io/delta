@@ -19,9 +19,12 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.internal.checkpoints.CheckpointInstance
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.tables.DeltaTable
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -35,6 +38,14 @@ import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, 
 
 class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
+
+  override lazy val defaultTableClient = DefaultTableClient.create(new Configuration() {
+    {
+      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+      set("delta.kernel.default.parquet.reader.batch-size", "2");
+      set("delta.kernel.default.json.reader.batch-size", "2");
+    }
+  })
 
   def createSourceTable(tbl: String, path: String): Unit = {
     spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
@@ -69,15 +80,16 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
       snapshotFromSpark.protocol.writerFeatureNames)
     assert(snapshot.getVersion(defaultTableClient) == snapshotFromSpark.version)
 
-    // Validate that snapshot read from most recent checkpoint.
+    // Validate that snapshot read from most recent checkpoint. For most cases, given a checkpoint
+    // interval of 2, this will be the most recent even version.
     val expectedV2CkptToRead =
       ckptVersionExpected.getOrElse(snapshotFromSpark.version - (snapshotFromSpark.version % 2))
     assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
       f => FileNames.checkpointVersion(new Path(f.getPath)))
       .contains(expectedV2CkptToRead))
-    // UUID checkpoints will contain "-" in the name.
     assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
-      f => new Path(f.getPath).getName.contains("-")).contains(expectV2CheckpointFormat))
+      f => new CheckpointInstance(f.getPath).format == CheckpointInstance.CheckpointFormat.V2)
+      .contains(expectV2CheckpointFormat))
 
 
     // Validate AddFiles from sidecars found against Spark connector.
@@ -99,10 +111,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
         val tbl = "tbl"
         withTable(tbl) {
           // Create table.
-          withSQLConf(
-            "delta.kernel.default.parquet.reader.batch-size" -> "10",
-            "delta.kernel.default.json.reader.batch-size" -> "10",
-            DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
+          withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
             createSourceTable(tbl, path.toString)
 

@@ -24,6 +24,11 @@ import io.delta.kernel.types.StructType;
  * Action representing a SidecarFile in a top-level V2 checkpoint file.
  */
 public class SidecarFile {
+    public static StructType READ_SCHEMA = new StructType()
+            .add("path", StringType.STRING, false /* nullable */)
+            .add("sizeInBytes", LongType.LONG, false /* nullable */)
+            .add("modificationTime", LongType.LONG, false /* nullable */);
+
     public static SidecarFile fromColumnVector(ColumnVector vector, int rowIndex) {
         if (vector.isNullAt(rowIndex)) {
             return null;
@@ -44,11 +49,6 @@ public class SidecarFile {
         this.sizeInBytes = sizeInBytes;
         this.modificationTime = modificationTime;
     }
-
-    public static StructType READ_SCHEMA = new StructType()
-            .add("path", StringType.STRING, false /* nullable */)
-            .add("sizeInBytes", LongType.LONG, false /* nullable */)
-            .add("modificationTime", LongType.LONG, false /* nullable */);
 
     public String getPath() {
         return path;

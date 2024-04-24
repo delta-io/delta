@@ -38,9 +38,9 @@ public class SnapshotImpl implements Snapshot {
     private final Path dataPath;
     private final long version;
     private final LogReplay logReplay;
-    private final LogSegment logSegment;
     private final Protocol protocol;
     private final Metadata metadata;
+    private final LogSegment logSegment;
 
     public SnapshotImpl(
             Path logPath,

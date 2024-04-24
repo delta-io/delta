@@ -525,58 +525,58 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   /* ------------------- V2 CHECKPOINT TESTS ------------------ */
   test("v2 checkpoint exists at version") {
     testWithCheckpoints(
-      (0L to 5L),
-      Seq.empty,
-      Seq.empty,
+      deltaVersions = (0L to 5L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(5L),
       v2CheckpointSpec = Seq((0L, true, 2), (5L, true, 2)))
   }
 
   test("multiple v2 checkpoint exist at version") {
     testWithCheckpoints(
-      (0L to 5L),
-      Seq.empty,
-      Seq.empty,
+      deltaVersions = (0L to 5L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(5L),
       v2CheckpointSpec = Seq((5L, true, 2), (5L, true, 2)))
   }
 
   test("v2 checkpoint exists before version") {
     testWithCheckpoints(
-      (0L to 7L),
-      Seq.empty,
-      Seq.empty,
+      deltaVersions = (0L to 7L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(6L),
       v2CheckpointSpec = Seq((0L, true, 2), (5L, true, 2)))
   }
 
   test("v1 and v2 checkpoints in table") {
     testWithCheckpoints(
-      (0L to 12L),
-      Seq(0L, 10L),
-      Seq.empty,
+      deltaVersions = (0L to 12L),
+      checkpointVersions = Seq(0L, 10L),
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(8L),
       v2CheckpointSpec = Seq((5L, true, 2)))
     testWithCheckpoints(
       (0L to 12L),
-      Seq(0L, 10L),
-      Seq.empty,
+      checkpointVersions = Seq(0L, 10L),
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(12L),
       v2CheckpointSpec = Seq((5L, true, 2)))
   }
 
   test("multipart and v2 checkpoints in table") {
     testWithCheckpoints(
-      (0L to 12L),
-      Seq.empty,
-      Seq(0L, 10L),
+      deltaVersions = (0L to 12L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq(0L, 10L),
       numParts = 5,
       versionToLoad = Optional.of(8L),
       v2CheckpointSpec = Seq((5L, true, 2)))
     testWithCheckpoints(
-      (0L to 12L),
-      Seq.empty,
-      Seq(0L, 10L),
+      deltaVersions = (0L to 12L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq(0L, 10L),
       numParts = 5,
       versionToLoad = Optional.of(12L),
       v2CheckpointSpec = Seq((5L, true, 2)))
@@ -584,42 +584,42 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("no checkpoint prior to version") {
     testWithCheckpoints(
-      (0L to 5L),
-      Seq.empty,
-      Seq.empty,
+      deltaVersions = (0L to 5L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(3L),
       v2CheckpointSpec = Seq((5L, true, 2)))
   }
 
   test("read from compatibility checkpoint") {
     testWithCheckpoints(
-      (0L to 5L),
-      Seq.empty,
-      Seq.empty,
+      deltaVersions = (0L to 5L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(5L),
       v2CheckpointSpec = Seq((5L, false, 5)))
     testWithCheckpoints(
-      (0L to 5L),
-      Seq.empty,
-      Seq.empty,
+      deltaVersions = (0L to 5L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(5L),
       v2CheckpointSpec = Seq((0L, true, 5), (5L, false, 5)))
   }
 
   test("read from V2 checkpoint with compatibility checkpoint at same version") {
     testWithCheckpoints(
-      (0L to 5L),
-      Seq.empty,
-      Seq.empty,
+      deltaVersions = (0L to 5L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(5L),
       v2CheckpointSpec = Seq((5L, true, 5), (5L, false, 5)))
   }
 
   test("read from V2 checkpoint with compatibility checkpoint at previous version") {
     testWithCheckpoints(
-      (0L to 5L),
-      Seq.empty,
-      Seq.empty,
+      deltaVersions = (0L to 5L),
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
       versionToLoad = Optional.of(5L),
       v2CheckpointSpec = Seq((3L, false, 5), (5L, true, 5)))
   }
@@ -862,54 +862,40 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 }
 
-class MockSidecarParquetHandler(sidecars: Seq[FileStatus])
-  extends BaseMockParquetHandler
-    with VectorTestUtils {
-  override def readParquetFiles(
-    fileIter: CloseableIterator[FileStatus],
-    physicalSchema: StructType,
-    predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+trait SidecarIteratorProvider extends VectorTestUtils {
+  def singletonSidecarIterator(sidecars: Seq[FileStatus])
+  : CloseableIterator[ColumnarBatch] = Utils.singletonCloseableIterator(
+    new ColumnarBatch {
+      override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
-    Utils.singletonCloseableIterator(
-      new ColumnarBatch {
-        override def getSchema: StructType = SidecarFile.READ_SCHEMA
-
-        override def getColumnVector(ordinal: Int): ColumnVector = {
-          ordinal match {
-            case 0 => stringVector(sidecars.map(_.getPath)) // path
-            case 1 => longVector(sidecars.map(_.getSize): _*) // size
-            case 2 =>
-              longVector(sidecars.map(_.getModificationTime): _*); // modification time
-          }
+      override def getColumnVector(ordinal: Int): ColumnVector = {
+        ordinal match {
+          case 0 => stringVector(sidecars.map(_.getPath)) // path
+          case 1 => longVector(sidecars.map(_.getSize): _*) // size
+          case 2 =>
+            longVector(sidecars.map(_.getModificationTime): _*); // modification time
         }
+      }
 
-        override def getSize: Int = sidecars.length
-      })
-  }
+      override def getSize: Int = sidecars.length
+    })
+}
+
+class MockSidecarParquetHandler(sidecars: Seq[FileStatus])
+  extends BaseMockParquetHandler with SidecarIteratorProvider {
+  override def readParquetFiles(
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
+    singletonSidecarIterator(sidecars)
 }
 
 class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
   extends BaseMockJsonHandler
-    with VectorTestUtils {
+    with SidecarIteratorProvider {
   override def readJsonFiles(
-    fileIter: CloseableIterator[FileStatus],
-    physicalSchema: StructType,
-    predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-
-    Utils.singletonCloseableIterator(
-      new ColumnarBatch {
-        override def getSchema: StructType = SidecarFile.READ_SCHEMA
-
-        override def getColumnVector(ordinal: Int): ColumnVector = {
-          ordinal match {
-            case 0 => stringVector(sidecars.map(_.getPath)) // path
-            case 1 => longVector(sidecars.map(_.getSize): _*) // size
-            case 2 =>
-              longVector(sidecars.map(_.getModificationTime): _*); // modification time
-          }
-        }
-
-        override def getSize: Int = sidecars.length
-      })
-  }
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
+    singletonSidecarIterator(sidecars)
 }
