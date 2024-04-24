@@ -21,7 +21,6 @@ To enable UniForm, you must fulfill the following requirements:
 - Hive Metastore (HMS) must be configured as the catalog. See [the HMS documentation](https://spark.apache.org/docs/latest/sql-data-sources-hive-tables.html) for how to configure <AS> to use Hive Metastore.
 
 ### Uniform Hudi (preview)
-- The table must have column mapping enabled. See [_](delta-column-mapping.md).
 - Writes to the table must use <Delta> 3.2 or above.
 
 ## Enable <Delta> UniForm
@@ -120,6 +119,7 @@ You are able to read UniForm tables as Hudi tables in <AS> with the following st
 *  See [Hudi documentation](https://hudi.apache.org/docs/quick-start-guide#spark-shellsql) for how to run Hudi on <AS>
 ```scala
 spark.read.format("hudi").option("hoodie.metadata.enable", "true").load("PATH_TO_UNIFORM_TABLE_DIRECTORY")
+
 ```
 
 ## <a id="versions"></a> Delta and Iceberg/Hudi table versions
