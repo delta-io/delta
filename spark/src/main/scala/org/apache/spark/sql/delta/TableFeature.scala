@@ -625,7 +625,7 @@ object V2CheckpointTableFeature
     V2CheckpointPreDowngradeCommand(table)
 }
 
-/** Table feature to represent tables whose commits are managed by separate commit-store */
+/** Table feature to represent tables whose commits are managed by separate commit-owner */
 object ManagedCommitTableFeature
   extends ReaderWriterFeature(name = "managed-commit-dev")
     with FeatureAutomaticallyEnabledByMetadata {

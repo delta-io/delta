@@ -17,24 +17,24 @@
 package org.apache.spark.sql.delta.managedcommit
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 /**
- * A wrapper around CommitStore that provides a more user-friendly API for committing/accessing
- * commits to a specific table. This class takes care of passing the table specific configuration
- * to the underlying CommitStore e.g. logPath / logStore / managedCommitTableConf / hadoopConf.
+ * A wrapper around [[CommitOwnerClient]] that provides a more user-friendly API for committing
+ * / accessing commits to a specific table. This class takes care of passing the table specific
+ * configuration to the underlying [[CommitOwnerClient]] e.g. logPath / logStore
+ * / managedCommitTableConf / hadoopConf.
  *
- * @param commitStore the underlying [[CommitStore]]
+ * @param commitOwnerClient the underlying [[CommitOwnerClient]]
  * @param logPath the path to the log directory
  * @param tableConf the table specific managed-commit configuration
  * @param hadoopConf hadoop configuration
  * @param logStore the log store
  */
-case class TableCommitStore(
-    commitStore: CommitStore,
+case class TableCommitOwnerClient(
+    commitOwnerClient: CommitOwnerClient,
     logPath: Path,
     tableConf: Map[String, String],
     hadoopConf: Configuration,
@@ -44,47 +44,47 @@ case class TableCommitStore(
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
-    commitStore.commit(
+    commitOwnerClient.commit(
       logStore, hadoopConf, logPath, tableConf, commitVersion, actions, updatedActions)
   }
 
   def getCommits(
       startVersion: Long,
       endVersion: Option[Long] = None): GetCommitsResponse = {
-    commitStore.getCommits(logPath, tableConf, startVersion, endVersion)
+    commitOwnerClient.getCommits(logPath, tableConf, startVersion, endVersion)
   }
 
   def backfillToVersion(
       startVersion: Long,
       endVersion: Option[Long]): Unit = {
-    commitStore.backfillToVersion(
+    commitOwnerClient.backfillToVersion(
       logStore, hadoopConf, logPath, tableConf, startVersion, endVersion)
   }
 
   /**
-   * Checks whether the signature of the underlying backing [[CommitStore]] is the same as the
-   * given `otherCommitStore`
+   * Checks whether the signature of the underlying backing [[CommitOwnerClient]] is the same as the
+   * given `otherCommitOwnerClient`
    */
-  def semanticsEquals(otherCommitStore: CommitStore): Boolean = {
-    CommitStore.semanticEquals(Some(commitStore), Some(otherCommitStore))
+  def semanticsEquals(otherCommitOwnerClient: CommitOwnerClient): Boolean = {
+    CommitOwnerClient.semanticEquals(Some(commitOwnerClient), Some(otherCommitOwnerClient))
   }
 
   /**
-   * Checks whether the signature of the underlying backing [[CommitStore]] is the same as the
-   * given `otherCommitStore`
+   * Checks whether the signature of the underlying backing [[CommitOwnerClient]] is the same as the
+   * given `otherCommitOwnerClient`
    */
-  def semanticsEquals(otherTableCommitStore: TableCommitStore): Boolean = {
-    semanticsEquals(otherTableCommitStore.commitStore)
+  def semanticsEquals(otherCommitOwnerClient: TableCommitOwnerClient): Boolean = {
+    semanticsEquals(otherCommitOwnerClient.commitOwnerClient)
   }
 }
 
-object TableCommitStore {
+object TableCommitOwnerClient {
     def apply(
-      commitStore: CommitStore,
+      commitOwnerClient: CommitOwnerClient,
       deltaLog: DeltaLog,
-      managedCommitTableConf: Map[String, String]): TableCommitStore = {
+      managedCommitTableConf: Map[String, String]): TableCommitOwnerClient = {
     val hadoopConf = deltaLog.newDeltaHadoopConf()
-    new TableCommitStore(
-      commitStore, deltaLog.logPath, managedCommitTableConf, hadoopConf, deltaLog.store)
+    new TableCommitOwnerClient(
+      commitOwnerClient, deltaLog.logPath, managedCommitTableConf, hadoopConf, deltaLog.store)
   }
 }

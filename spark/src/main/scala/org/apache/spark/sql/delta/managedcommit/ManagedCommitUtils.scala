@@ -50,9 +50,9 @@ object ManagedCommitUtils {
     def tailFromSnapshot(): Iterator[(FileStatus, Long)] = {
       val currentSnapshotInDeltaLog = deltaLog.unsafeVolatileSnapshot
       if (currentSnapshotInDeltaLog.version == maxVersionSeen &&
-          currentSnapshotInDeltaLog.tableCommitStoreOpt.isEmpty) {
+          currentSnapshotInDeltaLog.tableCommitOwnerClientOpt.isEmpty) {
         // If the last version in listing is same as the `unsafeVolatileSnapshot` in deltaLog and
-        // if that snapshot doesn't have a commit-store => this table was not a managed-commit table
+        // if that snapshot doesn't have a commit-owner => this table was not a managed-commit table
         // at the time of listing. This is because the commit which converts the file-system table
         // to a managed-commit table must be a file-system commit as per the spec.
         return Iterator.empty
