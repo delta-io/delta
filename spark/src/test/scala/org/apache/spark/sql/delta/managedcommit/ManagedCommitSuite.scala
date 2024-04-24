@@ -145,8 +145,8 @@ class ManagedCommitSuite
   }
 
   // Test commit-owner changed on concurrent cluster
-    testWithDefaultCommitOwnerUnset("snapshot is updated recursively when FS table is converted to" +
-      " commit-owner table on a concurrent cluster") {
+    testWithDefaultCommitOwnerUnset("snapshot is updated recursively when FS table is converted" +
+      " to commit-owner table on a concurrent cluster") {
     val commitOwnerClient =
       new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize = 10))
     val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10, Some(commitOwnerClient))
