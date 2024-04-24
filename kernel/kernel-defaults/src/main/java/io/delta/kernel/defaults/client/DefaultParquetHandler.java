@@ -120,46 +120,51 @@ public class DefaultParquetHandler implements ParquetHandler {
     public void writeParquetFileAtomically(
             String filePath,
             CloseableIterator<FilteredColumnarBatch> data) throws IOException {
-        Path targetPath = new Path(filePath);
-        LogStore logStore =
-                LogStoreProvider.getLogStore(hadoopConf, targetPath.toUri().getScheme());
+        try {
+            Path targetPath = new Path(filePath);
+            LogStore logStore =
+                    LogStoreProvider.getLogStore(hadoopConf, targetPath.toUri().getScheme());
 
-        boolean useRename = logStore.isPartialWriteVisible(targetPath, hadoopConf);
+            boolean useRename = logStore.isPartialWriteVisible(targetPath, hadoopConf);
 
-        Path writePath = targetPath;
-        if (useRename) {
-            // In order to atomically write the file, write to a temp file and rename to target path
-            String tempFileName = format(".%s.%s.tmp", targetPath.getName(), UUID.randomUUID());
-            writePath = new Path(targetPath.getParent(), tempFileName);
-        }
-        ParquetFileWriter fileWriter = new ParquetFileWriter(hadoopConf, writePath);
+            Path writePath = targetPath;
+            if (useRename) {
+                // In order to atomically write the file, write to a temp file and rename
+                // to target path
+                String tempFileName = format(".%s.%s.tmp", targetPath.getName(), UUID.randomUUID());
+                writePath = new Path(targetPath.getParent(), tempFileName);
+            }
+            ParquetFileWriter fileWriter = new ParquetFileWriter(hadoopConf, writePath);
 
-        Optional<DataFileStatus> writtenFile;
+            Optional<DataFileStatus> writtenFile;
 
-        try (CloseableIterator<DataFileStatus> statuses = fileWriter.write(data)) {
-            writtenFile = InternalUtils.getSingularElement(statuses);
-        } catch (UncheckedIOException uio) {
-            throw uio.getCause();
-        }
+            try (CloseableIterator<DataFileStatus> statuses = fileWriter.write(data)) {
+                writtenFile = InternalUtils.getSingularElement(statuses);
+            } catch (UncheckedIOException uio) {
+                throw uio.getCause();
+            }
 
-        checkState(writtenFile.isPresent(), "expected to write one output file");
-        if (useRename) {
-            FileSystem fs = targetPath.getFileSystem(hadoopConf);
-            boolean renameDone = false;
-            try {
-                renameDone = fs.rename(writePath, targetPath);
-                if (!renameDone) {
-                    if (fs.exists(targetPath)) {
-                        throw new java.nio.file.FileAlreadyExistsException(
-                                "target file already exists: " + targetPath);
+            checkState(writtenFile.isPresent(), "expected to write one output file");
+            if (useRename) {
+                FileSystem fs = targetPath.getFileSystem(hadoopConf);
+                boolean renameDone = false;
+                try {
+                    renameDone = fs.rename(writePath, targetPath);
+                    if (!renameDone) {
+                        if (fs.exists(targetPath)) {
+                            throw new java.nio.file.FileAlreadyExistsException(
+                                    "target file already exists: " + targetPath);
+                        }
+                        throw new IOException("Failed to rename the file");
                     }
-                    throw new IOException("Failed to rename the file");
-                }
-            } finally {
-                if (!renameDone) {
-                    fs.delete(writePath, false /* recursive */);
+                } finally {
+                    if (!renameDone) {
+                        fs.delete(writePath, false /* recursive */);
+                    }
                 }
             }
+        } finally {
+            Utils.closeCloseables(data);
         }
     }
 }
