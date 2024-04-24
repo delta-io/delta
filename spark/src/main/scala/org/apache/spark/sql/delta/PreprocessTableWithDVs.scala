@@ -108,6 +108,23 @@ object ScanWithDeletionVectors {
     // remove the skip row column
     Some(Project(planOutput, rowIndexFilter))
   }
+
+  /**
+   * Helper function that adds row_index column to _metadata if missing.
+   */
+  private def addRowIndexIfMissing(a: AttributeReference): AttributeReference = {
+    require(a.name == METADATA_NAME)
+
+    val fieldNames = a.dataType.asInstanceOf[StructType].fieldNames
+    if (fieldNames.contains(ParquetFileFormat.ROW_INDEX)) return a
+
+    val newDatatype = StructType.merge(
+      left = a.dataType,
+      right = StructType(Seq(ParquetFileFormat.ROW_INDEX_FIELD)))
+    a.copy(dataType = newDatatype)(exprId = a.exprId, qualifier = a.qualifier)
+  }
+
+
   /**
    * Helper method that creates a new `LogicalRelation` for existing scan that outputs
    * an extra column which indicates whether the row needs to be skipped or not.
@@ -128,24 +145,23 @@ object ScanWithDeletionVectors {
     // other values mean the row needs be skipped.
     val skipRowField = IS_ROW_DELETED_STRUCT_FIELD
 
-    val newScanOutput = if (predicatePushdownEnabled) {
-      val withReplacedMetadata = inputScan.output.collect {
-        case a: AttributeReference if a.name == METADATA_NAME &&
-          !a.dataType.asInstanceOf[StructType].fieldNames.contains(ParquetFileFormat.ROW_INDEX) =>
-          fileFormat.createFileMetadataCol().withExprId(a.exprId)
-        case o => o
-      }
-
-      if (withReplacedMetadata.map(_.name).contains(METADATA_NAME)) {
-        withReplacedMetadata ++ Seq(AttributeReference(skipRowField.name, skipRowField.dataType)())
+    val scanOutputWithMetadata = if (predicatePushdownEnabled) {
+      // When predicate pushdown is enabled, make sure the output contains metadata.row_index.
+      if (inputScan.output.map(_.name).contains(METADATA_NAME)) {
+        // If scan already contains metadata column without a row_index add it.
+        inputScan.output.collect {
+          case a: AttributeReference if a.name == METADATA_NAME => addRowIndexIfMissing(a)
+          case o => o
+        }
       } else {
-        withReplacedMetadata ++
-          Seq(AttributeReference(skipRowField.name, skipRowField.dataType)(),
-            fileFormat.createFileMetadataCol())
+        inputScan.output :+ fileFormat.createFileMetadataCol()
       }
     } else {
-      inputScan.output :+ AttributeReference(skipRowField.name, skipRowField.dataType)()
+      inputScan.output
     }
+
+    val newScanOutput =
+      scanOutputWithMetadata :+ AttributeReference(skipRowField.name, skipRowField.dataType)()
 
     // Data schema and scan schema could be different. The scan schema may contain additional
     // columns such as `_metadata.file_path` (metadata columns) which are populated in Spark scan
