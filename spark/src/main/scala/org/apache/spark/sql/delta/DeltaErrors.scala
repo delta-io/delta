@@ -3285,6 +3285,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def clusterByWithPartitionedBy(): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY",
+      Array.empty)
+  }
+
   def dropClusteringColumnNotSupported(droppingClusteringCols: Seq[String]): Throwable = {
     new DeltaAnalysisException(
       "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
