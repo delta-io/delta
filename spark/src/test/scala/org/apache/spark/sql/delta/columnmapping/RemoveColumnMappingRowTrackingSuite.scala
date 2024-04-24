@@ -57,7 +57,9 @@ class RemoveColumnMappingRowTrackingSuite extends RowIdTestUtils
           sql(s"UPDATE $testTableName SET $secondColumn = -1 WHERE $predicate ")
         }
 
-        testRemovingColumnMapping()
+        checkRowTrackingMarkedAsPreservedForCommit(deltaLog) {
+          testRemovingColumnMapping()
+        }
       }
     }
   }
