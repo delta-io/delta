@@ -297,8 +297,7 @@ case class UpdateCommand(
     val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ totalActions
     txn.commitIfNeeded(
       actions = finalActions,
-      op = DeltaOperations.Update(condition),
-      tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
+      op = DeltaOperations.Update(condition))
     sendDriverMetrics(sparkSession, metrics)
 
     recordDeltaEvent(

@@ -1108,6 +1108,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val readRowIdHighWatermark =
         RowId.extractHighWatermark(snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
+      val allTags = RowTracking.addPreservedRowTrackingTagIfNotSet(
+        protocol, metadata, tags)
+
       commitAttemptStartTimeMillis = clock.getTimeMillis()
       commitInfo = CommitInfo(
         time = commitAttemptStartTimeMillis,
@@ -1121,7 +1124,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isBlindAppend = Some(isBlindAppend),
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
-        tags = if (tags.nonEmpty) Some(tags) else None,
+        tags = Option.when(allTags.nonEmpty)(allTags),
         txnId = Some(txnId))
 
       val firstAttemptVersion = getFirstAttemptVersion
@@ -1295,7 +1298,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     try {
-      val tags = Map.empty[String, String]
+      val finalProtocol = newProtocolOpt.getOrElse(protocol)
+      val tags = RowTracking.addPreservedRowTrackingTagIfNotSet(
+        finalProtocol, metadata)
       val commitInfo = CommitInfo(
         NANOSECONDS.toMillis(commitStartNano),
         operation = op.name,
@@ -1307,7 +1312,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isBlindAppend = Some(false),
         Some(metrics),
         userMetadata = getUserMetadata(op),
-        tags = if (tags.nonEmpty) Some(tags) else None,
+        tags = Option.when(tags.nonEmpty)(tags),
         txnId = Some(txnId))
 
       // We don't expect commits to have more than 2 billion actions
@@ -1324,7 +1329,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
-      val finalProtocol = newProtocolOpt.getOrElse(protocol)
       updateMetadataWithManagedCommitConfs()
       updateMetadataWithInCommitTimestamp(commitInfo)
 

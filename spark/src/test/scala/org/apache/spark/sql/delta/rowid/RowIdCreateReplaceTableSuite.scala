@@ -193,6 +193,42 @@ class RowIdCreateReplaceTableSuite extends QueryTest
     }
   }
 
+  test("Row tracking marked as preserved when row tracking is enabled") {
+    withTable("target") {
+      writeTargetTestData(withRowIds = false)
+
+      val log = DeltaLog.forTable(spark, TableIdentifier("target"))
+      checkRowTrackingMarkedAsPreservedForCommit(log) {
+        createReplaceTargetTable(
+          commandName = "CREATE OR REPLACE",
+          query = "SELECT * FROM VALUES (0), (1)",
+          tblProperties = s"${DeltaConfigs.ROW_TRACKING_ENABLED.key} = 'true'" :: Nil)
+      }
+
+      assertRowIdsAreValid(log)
+
+      val df = spark.read.table("target").select("*", "_metadata.row_id")
+      checkAnswer(df, Seq(Row(0, 0), Row(1, 1)))
+    }
+  }
+
+  test("Row tracking marked as preserved when row tracking is supported but disabled") {
+    withTable("target") {
+      writeTargetTestData(withRowIds = false)
+
+      val log = DeltaLog.forTable(spark, TableIdentifier("target"))
+      assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+        createReplaceTargetTable(
+          commandName = "CREATE OR REPLACE",
+          query = "SELECT * FROM VALUES (0), (1)",
+          tblProperties = s"'$rowTrackingFeatureName' = 'supported'" ::
+            s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION" :: Nil)
+      })
+
+      assertRowIdsAreValid(log)
+    }
+  }
+
   def createReplaceTargetTable(
       commandName: String, query: String, tblProperties: Seq[String] = Seq.empty): Unit = {
     val tblPropertiesStr = if (tblProperties.nonEmpty) {

@@ -19,10 +19,11 @@ package org.apache.spark.sql.delta.rowid
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, DeltaOperations, MaterializedRowId, RowId, RowTrackingFeature, Serializable, SnapshotIsolation}
+import org.apache.spark.sql.delta.DeltaCommitTag.PreservedRowTrackingTag
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
-import org.apache.spark.sql.delta.actions.{CommitInfo, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -822,6 +823,32 @@ class RowIdSuite extends QueryTest
         checkAnswer(
           spark.read.format("delta").load(dir.toString).select("id", RowId.QUALIFIED_COLUMN_NAME),
           (0 until 10).map(i => Row(i, i)))
+      }
+    }
+  }
+
+  test("PreservedRowTrackingTag is not set again if it is already set") {
+    withTempDir { tempDir =>
+      spark.range(start = 0, end = 20).toDF("id").write.format("delta")
+        .save(tempDir.getAbsolutePath)
+      val log = DeltaLog.forTable(spark, tempDir)
+      val txn1 = log.startTransaction(catalogTableOpt = None)
+      val tags = Map(PreservedRowTrackingTag.key -> "false")
+      assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+        txn1.commit(
+          actions = Seq.empty[Action],
+          op = DeltaOperations.ManualUpdate,
+          tags = tags)
+      })
+
+      val txn2 = log.startTransaction(catalogTableOpt = None)
+      withRowTrackingEnabled(enabled = true) {
+        assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+          txn2.commit(
+            actions = Seq.empty[Action],
+            op = DeltaOperations.ManualUpdate,
+            tags = tags)
+        })
       }
     }
   }

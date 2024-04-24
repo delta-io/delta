@@ -472,8 +472,7 @@ class OptimizeExecutor(
       metrics: Map[String, SQLMetric])(f: OptimisticTransaction => Boolean): Unit = {
     try {
       txn.registerSQLMetrics(sparkSession, metrics)
-      txn.commit(actions, optimizeOperation,
-        RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
+      txn.commit(actions, optimizeOperation)
     } catch {
       case e: ConcurrentModificationException =>
         val newTxn = txn.deltaLog.startTransaction(txn.catalogTable)

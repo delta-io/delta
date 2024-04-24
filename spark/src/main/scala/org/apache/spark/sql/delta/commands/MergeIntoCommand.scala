@@ -213,8 +213,7 @@ case class MergeIntoCommand(
         matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedBySourcePredicates =
-          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))),
-      tags = RowTracking.addPreservedRowTrackingTagIfNotSet(deltaTxn.snapshot))
+          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))))
     val stats = collectMergeStats(deltaTxn, materializeSourceReason)
     recordDeltaEvent(targetDeltaLog, "delta.dml.merge.stats", data = stats)
   }

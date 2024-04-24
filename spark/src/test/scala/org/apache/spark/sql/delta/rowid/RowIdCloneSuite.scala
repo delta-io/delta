@@ -254,6 +254,49 @@ class RowIdCloneSuite
     }
   }
 
+  test("Row tracking marked as preserved on the target when row tracking is " +
+    "enabled during cloning") {
+    withTables(
+      TableSetupInfo(tableName = "source",
+        rowIdsEnabled = false, tableState = TableState.NON_EMPTY),
+      TableSetupInfo(tableName = "target",
+        rowIdsEnabled = false, tableState = TableState.EMPTY)) {
+      val targetLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+
+      checkRowTrackingMarkedAsPreservedForCommit(targetLog) {
+        cloneTable(targetTableName = "target", sourceTableName = "source",
+          tblProperties = s"${DeltaConfigs.ROW_TRACKING_ENABLED.key} = 'true'" :: Nil)
+      }
+
+      val snapshot = targetLog.update()
+      assertRowIdsAreValid(targetLog)
+      assert(RowId.isSupported(snapshot.protocol))
+      assert(RowId.isEnabled(snapshot.protocol, snapshot.metadata))
+    }
+  }
+
+  test("Row tracking marked as not preserved on the target when row tracking is " +
+    "supported but disabled during cloning") {
+    withTables(
+      TableSetupInfo(tableName = "source",
+        rowIdsEnabled = false, tableState = TableState.NON_EMPTY),
+      TableSetupInfo(tableName = "target",
+        rowIdsEnabled = false, tableState = TableState.EMPTY)) {
+      val targetLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+
+      assert(!rowTrackingMarkedAsPreservedForCommit(targetLog) {
+        cloneTable(targetTableName = "target", sourceTableName = "source",
+          tblProperties = s"'$rowTrackingFeatureName' = 'supported'" ::
+            s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION" :: Nil)
+      })
+
+      val snapshot = targetLog.update()
+      assertRowIdsAreValid(targetLog)
+      assert(RowId.isSupported(snapshot.protocol))
+      assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
+    }
+  }
+
   def cloneTable(
       targetTableName: String,
       sourceTableName: String,
