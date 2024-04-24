@@ -25,14 +25,38 @@ You must enable liquid clustering when creating a table. Clustering is not compa
 
 To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation statement, as in the examples below:
 
-```sql
--- Create an empty table
-CREATE TABLE table1(col0 int, col1 string) USING DELTA CLUSTER BY (col0);
+.. note:: In <Delta> 3.2 and above, you can use DeltaTable API in Python or Scala to enable liquid clustering.
 
--- Using a CTAS statement
-CREATE TABLE table2 CLUSTER BY (col0)  -- specify clustering after table name, not in subquery
-AS SELECT * FROM table1;
-```
+.. code-language-tabs::
+
+  ```sql
+  -- Create an empty table
+  CREATE TABLE table1(col0 int, col1 string) USING DELTA CLUSTER BY (col0);
+
+  -- Using a CTAS statement
+  CREATE TABLE table2 CLUSTER BY (col0)  -- specify clustering after table name, not in subquery
+  AS SELECT * FROM table1;
+  ```
+
+  ```python
+  # Create an empty table
+  DeltaTable.create()
+    .tableName("table1")
+    .addColumn("col0", dataType = "INT")
+    .addColumn("col1", dataType = "STRING")
+    .clusterBy("col0")
+    .execute()
+  ```
+
+  ```scala
+  // Create an empty table
+  DeltaTable.create()
+    .tableName("table1")
+    .addColumn("col0", dataType = "INT")
+    .addColumn("col1", dataType = "STRING")
+    .clusterBy("col0")
+    .execute()
+  ```
 
 .. warning:: Tables created with liquid clustering have `Clustering` and `DomainMetadata` table features enabled (both writer features) and use Delta writer version 7 and reader version 1. Table protocol versions cannot be downgraded. See [_](/versioning.md).
 
