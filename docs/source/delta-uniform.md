@@ -1,5 +1,5 @@
 ---
-description: Configure Delta tables to be read as Iceberg tables using UniForm.
+description: Configure Delta tables to be read as Iceberg/Hudi tables using UniForm.
 ---
 
 # Universal Format (UniForm)
@@ -14,14 +14,13 @@ A single copy of the data files provides access to clients of all formats.
 
 To enable UniForm, you must fulfill the following requirements:
 
-
-## Uniform Iceberg
+### Uniform Iceberg
 - The table must have column mapping enabled. See [_](delta-column-mapping.md).
 - The Delta table must have a `minReaderVersion` >= 2 and `minWriterVersion` >= 7.
 - Writes to the table must use <Delta> 3.1 or above.
 - Hive Metastore (HMS) must be configured as the catalog. See [the HMS documentation](https://spark.apache.org/docs/latest/sql-data-sources-hive-tables.html) for how to configure <AS> to use Hive Metastore.
 
-## Uniform Hudi (preview)
+### Uniform Hudi (preview)
 - The table must have column mapping enabled. See [_](delta-column-mapping.md).
 - Writes to the table must use <Delta> 3.2 or above.
 
@@ -41,9 +40,15 @@ The following table properties enable UniForm support for Iceberg.
 The following table properties enable UniForm support for Hudi.
 
 ```
-'delta.universalFormat.enabledFormats' = 'Hudi'
+'delta.universalFormat.enabledFormats' = 'hudi'
 ```
 
+The following table properties enable UniForm support for both.
+
+```
+'delta.enableIcebergCompatV2' = 'true'
+'delta.universalFormat.enabledFormats' = 'iceberg,hudi'
+```
 
 You must also enable column mapping to use UniForm. It is set automatically during table creation, as in the following example:
 
@@ -97,7 +102,7 @@ You are able to read UniForm tables as Iceberg tables in <AS> with the following
 * Use the `SHOW TABLES` command to see a list of available Iceberg tables in the catalog.
 * Read an Iceberg table using standard SQL such as `SELECT`. 
 
-## Read using a metadata JSON path
+## Read UniForm tables as Iceberg tables using a metadata JSON path
 
 Some Iceberg clients allow you to register external Iceberg tables by providing a path to versioned metadata files. Each time UniForm converts a new version of the Delta table to Iceberg, it creates a new metadata JSON file.
 
@@ -114,7 +119,7 @@ Clients that use metadata JSON paths for configuring Iceberg include BigQuery. R
 You are able to read UniForm tables as Hudi tables in <AS> with the following steps:
 *  See [Hudi documentation](https://hudi.apache.org/docs/quick-start-guide#spark-shellsql) for how to run Hudi on <AS>
 ```scala
-spark.read.format("hudi").option("hoodie.metadata.enable", "true").load("PATH_TO_TABLE_DIRECTORY")
+spark.read.format("hudi").option("hoodie.metadata.enable", "true").load("PATH_TO_UNIFORM_TABLE_DIRECTORY")
 ```
 
 ## <a id="versions"></a> Delta and Iceberg/Hudi table versions
