@@ -16,27 +16,22 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-import java.util
-import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.client.{ExpressionHandler, FileSystemClient, JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
-import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.types.{BooleanType, LongType, MapType, StringType, StructType}
 
 class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
@@ -44,10 +39,9 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   def validateSnapshot(
       path: String,
       snapshotFromSpark: Snapshot,
-      tableClient: TableClient = defaultTableClient,
       strictFileValidation: Boolean = true): Unit = {
     // Create a snapshot from Spark connector and from kernel.
-    val snapshot = latestSnapshot(path, tableClient)
+    val snapshot = latestSnapshot(path)
     val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
 
     // Validate metadata/protocol loaded correctly from top-level v2 checkpoint file.
@@ -174,51 +168,31 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
             spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
           }
 
+          // Evalute Spark result before updating sidecar.
+          val snapshotFromSpark = DeltaLog.forTable(spark, path.toString).update()
+          snapshotFromSpark.allFiles.collect()
+
           // Remove all data from one of the sidecar files.
           val sidecarFolderPath =
             new Path(DeltaLog.forTable(spark, path.toString).logPath, "_sidecars")
           val sidecarCkptPath = new Path(new File(sidecarFolderPath.toUri).listFiles()
             .filter(f => !f.getName.endsWith(".crc")).head.toURI).toString
-
-          class DelegatingTableClient(sidecarPath: String) extends TableClient {
-            def getExpressionHandler: ExpressionHandler = defaultTableClient.getExpressionHandler
-            def getJsonHandler: JsonHandler = defaultTableClient.getJsonHandler
-            def getFileSystemClient: FileSystemClient = defaultTableClient.getFileSystemClient
-            def getParquetHandler: ParquetHandler = new ParquetHandler {
-              // Filter out one sidecar file.
-              def readParquetFiles(
-                  fileIter: CloseableIterator[FileStatus],
-                  physicalSchema: StructType,
-                  predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-                defaultTableClient.getParquetHandler.readParquetFiles(
-                  fileIter.filter{ f =>
-                    (new Path(f.getPath).toString != sidecarPath).asInstanceOf[java.lang.Boolean]
-                  },
-                  physicalSchema,
-                  predicate)
-              }
-
-              def writeParquetFiles(
-                  directoryPath: String,
-                  dataIter: CloseableIterator[FilteredColumnarBatch],
-                  maxFileSize: Long,
-                  statsColumns: util.List[Column]): CloseableIterator[DataFileStatus] =
-                defaultTableClient.getParquetHandler.writeParquetFiles(
-                  directoryPath, dataIter, maxFileSize, statsColumns)
-              def writeParquetFileAtomically(
-                  filePath: String, data: CloseableIterator[FilteredColumnarBatch]): Unit =
-                defaultTableClient.getParquetHandler.writeParquetFileAtomically(filePath, data)
-            }
-          }
-
-          val snapshotFromSpark = DeltaLog.forTable(spark, path.toString).update()
-          snapshotFromSpark.allFiles.collect()
+          spark.createDataFrame(spark.sparkContext.parallelize(Seq.empty[Row]),
+              new StructType()
+                .add("add", new StructType()
+                  .add("path", StringType)
+                  .add("partitionValues", MapType(StringType, StringType))
+                  .add("size", LongType)
+                  .add("modificationTime", LongType)
+                  .add("dataChange", BooleanType))
+                .add("remove", new StructType()
+                  .add("path", StringType)))
+            .write.format("parquet").mode("overwrite").save(sidecarCkptPath)
 
           // Validate snapshot and data.
           validateSnapshot(
             path.toString,
             DeltaLog.forTable(spark, path.toString).update(),
-            new DelegatingTableClient(sidecarCkptPath),
             strictFileValidation = false)
         }
       }
