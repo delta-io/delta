@@ -338,7 +338,8 @@ object TableFeature {
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
       RowTrackingFeature,
-      InCommitTimestampTableFeature)
+      InCommitTimestampTableFeature,
+      VariantTypeTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -499,6 +500,14 @@ object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata, spark: SparkSession): Boolean = {
     SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
+  }
+}
+
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata, spark: SparkSession): Boolean = {
+    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
   }
 }
 

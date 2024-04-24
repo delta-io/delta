@@ -1271,6 +1271,14 @@ def normalizeColumnNamesInDataType(
     SchemaUtils.typeExistsRecursively(schema)(_.isInstanceOf[TimestampNTZType])
   }
 
+
+  /**
+   * Returns 'true' if any VariantType exists in the table schema.
+   */
+  def checkForVariantTypeColumnsRecursively(schema: StructType): Boolean = {
+    SchemaUtils.typeExistsRecursively(schema)(VariantShims.isVariantType(_))
+  }
+
   /**
    * Find the unsupported data types in a `DataType` recursively. Add the unsupported data types to
    * the provided `unsupportedDataTypes` buffer.
@@ -1303,6 +1311,7 @@ def normalizeColumnNamesInDataType(
     case DateType =>
     case TimestampType =>
     case TimestampNTZType =>
+    case dt if VariantShims.isVariantType(dt) =>
     case BinaryType =>
     case _: DecimalType =>
     case a: ArrayType =>
