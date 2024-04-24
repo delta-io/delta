@@ -754,16 +754,16 @@ class DeletionVectorsSuite extends QueryTest
       val predicatePushDownEnabled =
         spark.conf.get(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
       withTempDir { dir =>
-        FileUtils.copyDirectory(new File(table5Path), dir)
-        val log = DeltaLog.forTable(spark, dir)
-
-        withDeletionVectorsEnabled() {
-          sql(s"DELETE FROM delta.`${dir.getCanonicalPath}` WHERE ${deleteSpec.sqlRule}")
-        }
-        val (added, _) = getFileActionsInLastVersion(log)
-        assert(added.forall(_.deletionVector != null))
-
         try {
+          FileUtils.copyDirectory(new File(table5Path), dir)
+          val log = DeltaLog.forTable(spark, dir)
+
+          withDeletionVectorsEnabled() {
+            sql(s"DELETE FROM delta.`${dir.getCanonicalPath}` WHERE ${deleteSpec.sqlRule}")
+          }
+          val (added, _) = getFileActionsInLastVersion(log)
+          assert(added.forall(_.deletionVector != null))
+
           checkCountAndSum("value", deleteSpec.count, deleteSpec.sum, dir.getCanonicalPath)
         } catch {
           // TODO(SPARK-47731): Known issue. To be fixed in Spark 3.5 and/or Spark 4.0.
