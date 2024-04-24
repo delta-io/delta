@@ -87,6 +87,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       fileIndex: TahoeFileIndex): LogicalPlan = {
     val predicatePushdownEnabled =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
+    // This is only used when predicate pushdown is disabled.
     val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)()
 
     var fileMetadataCol: AttributeReference = null

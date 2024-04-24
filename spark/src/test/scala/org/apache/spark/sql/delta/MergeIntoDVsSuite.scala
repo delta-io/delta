@@ -66,6 +66,11 @@ trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils 
 class MergeIntoDVsSuite extends MergeIntoDVsTests {
   import testImplicits._
 
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "false")
+  }
+
   def assertOperationalDVMetrics(
       tablePath: String,
       numDeletedRows: Long,
@@ -248,3 +253,19 @@ trait MergeCDCWithDVsTests extends MergeCDCTests with DeletionVectorsTestUtils {
  * Includes the entire MergeIntoSQLSuite with CDC enabled.
  */
 class MergeIntoDVsCDCSuite extends MergeIntoDVsTests with MergeCDCWithDVsTests
+
+class MergeIntoDVsWithPredicatePushdownSuite extends MergeIntoDVsTests {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "true")
+  }
+}
+
+class MergeIntoDVsWithPredicatePushdownCDCSuite
+    extends MergeIntoDVsTests
+    with MergeCDCWithDVsTests {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "true")
+  }
+}
