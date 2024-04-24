@@ -30,16 +30,42 @@ public interface Table {
     /**
      * Instantiate a table object for the Delta Lake table at the given path.
      *
+     * <ul>
+     *     <li>
+     *         Behavior when the table location doesn't exist:
+     *         <ul>
+     *         <li>reads will fail with a {@link TableNotFoundException}}</li>
+     *         <li>writes will create the location</li>
+     *         </ul>
+     *     </li>
+     *     <li>
+     *         Behavior when the table location exists (with contents or not) but not a Delta table
+     *         <ul>
+     *          <li>reads will fail with a {@link TableNotFoundException}</li>
+     *          <li>writes will create a Delta table to the given location. If there are any
+     *          existing files in the location that are not already part of the Delta table, they
+     *          will remain excluded as part of the Delta table.</li>
+     *         </ul>
+     *     </li>
+     * </ul>
+     *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @param path        location where the Delta table is present. Path is resolved to fully
+     * @param path        location of the table. Path is resolved to fully
      *                    qualified path using the given {@code tableClient}.
      * @return an instance of {@link Table} representing the Delta table at given path
-     * @throws TableNotFoundException when there is no Delta table at the given path.
      */
-    static Table forPath(TableClient tableClient, String path)
-        throws TableNotFoundException {
+    static Table forPath(TableClient tableClient, String path) {
         return TableImpl.forPath(tableClient, path);
     }
+
+    /**
+     * The fully qualified path of this {@link Table} instance.
+     *
+     * @param tableClient {@link TableClient} instance.
+     * @return the table path.
+     * @since 3.2.0
+     */
+    String getPath(TableClient tableClient);
 
     /**
      * Get the latest snapshot of the table.
@@ -49,14 +75,6 @@ public interface Table {
      */
     Snapshot getLatestSnapshot(TableClient tableClient)
         throws TableNotFoundException;
-
-    /**
-     * The fully qualified path of this {@link Table} instance.
-     *
-     * @return the table path
-     * @since 3.2.0
-     */
-    String getPath();
 
     /**
      * Get the snapshot at the given {@code versionId}.

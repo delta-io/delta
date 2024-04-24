@@ -398,6 +398,12 @@
     ],
     "sqlState" : "54000"
   },
+  "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY" : {
+    "message" : [
+      "Clustering and partitioning cannot both be specified. Please remove partitionedBy if you want to create a Delta table with clustering."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
     "message" : [
       "Data skipping is not supported for partition column '<column>'."

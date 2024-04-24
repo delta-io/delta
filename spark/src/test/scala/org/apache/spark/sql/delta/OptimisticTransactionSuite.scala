@@ -23,7 +23,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitOwnerClient, CommitOwnerBuilder, CommitOwnerProvider, GetCommitsResponse, InMemoryCommitOwner, UpdatedActions}
+import org.apache.spark.sql.delta.managedcommit._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._

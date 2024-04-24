@@ -546,6 +546,15 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
 
+  val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =
+    buildConf("catalog.update.longFieldTruncationThreshold")
+      .internal()
+      .doc(
+        "When syncing table schema to the catalog, Delta will truncate the whole schema " +
+        "if any field is longer than this threshold.")
+      .longConf
+      .createWithDefault(4000)
+
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
       .doc("""If true, DROP CONSTRAINT quietly drops nonexistent constraints even without

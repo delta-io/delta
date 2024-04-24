@@ -127,6 +127,8 @@ class RemoveColumnMappingCommand(
       isOptimize = true,
       additionalConstraints = Seq.empty)
       .asInstanceOf[Seq[AddFile]]
+      // Mark as no data change to not generate CDC data. We are only removing column mapping.
+      .map(_.copy(dataChange = false))
   }
 }
 

@@ -25,7 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.SnapshotManagementSuiteShims._
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitOwnerClient, CommitOwnerBuilder, CommitOwnerProvider, GetCommitsResponse, InMemoryCommitOwner}
+import org.apache.spark.sql.delta.managedcommit._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.storage.LogStore
