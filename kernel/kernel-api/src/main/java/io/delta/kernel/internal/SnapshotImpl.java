@@ -41,7 +41,6 @@ public class SnapshotImpl implements Snapshot {
     private final LogSegment logSegment;
     private final Protocol protocol;
     private final Metadata metadata;
-    private final LogSegment logSegment;
 
     public SnapshotImpl(
             Path logPath,
@@ -61,7 +60,6 @@ public class SnapshotImpl implements Snapshot {
             tableClient,
             logSegment,
             snapshotHint);
-        this.logSegment = logSegment;
         this.protocol = logReplay.getProtocol();
         this.metadata = logReplay.getMetadata();
     }
