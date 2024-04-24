@@ -20,10 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
@@ -32,7 +29,7 @@ import org.apache.hadoop.fs.*;
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -185,8 +182,10 @@ public class DefaultJsonHandler implements JsonHandler {
      * @throws IOException
      */
     @Override
-    public void writeJsonFileAtomically(String filePath, CloseableIterator<Row> data)
-            throws IOException {
+    public void writeJsonFileAtomically(
+            String filePath,
+            CloseableIterator<Row> data,
+            boolean overwrite) throws IOException {
         Path path = new Path(filePath);
         LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
         try {
@@ -203,7 +202,7 @@ public class DefaultJsonHandler implements JsonHandler {
                             return JsonUtils.rowToJson(data.next());
                         }
                     },
-                    false /* overwrite */,
+                    overwrite,
                     hadoopConf);
         } finally {
             Utils.closeCloseables(data);

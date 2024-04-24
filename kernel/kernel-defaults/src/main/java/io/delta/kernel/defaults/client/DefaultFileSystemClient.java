@@ -87,8 +87,7 @@ public class DefaultFileSystemClient
     public String resolvePath(String path) throws IOException {
         Path pathObject = new Path(path);
         FileSystem fs = pathObject.getFileSystem(hadoopConf);
-        Path resolvedPath = fs.resolvePath(pathObject);
-        return fs.makeQualified(resolvedPath).toString();
+        return fs.makeQualified(pathObject).toString();
     }
 
     @Override

@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.RowId.extractHighWatermark
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -133,6 +134,9 @@ class RowIdCreateReplaceTableSuite extends QueryTest
       }
 
       assertRowIdsAreValid(log)
+
+      val df = spark.read.table("target").select("*", "_metadata.row_id")
+      checkAnswer(df, (0 until 50).map(i => Row(i, i)))
     }
   }
 
@@ -152,6 +156,9 @@ class RowIdCreateReplaceTableSuite extends QueryTest
       }
 
       assertRowIdsAreValid(log)
+
+      val df = spark.read.table("target").select("*", "_metadata.row_id")
+      checkAnswer(df, Seq(Row(0, 0), Row(1, 1)))
     }
   }
 
@@ -164,6 +171,9 @@ class RowIdCreateReplaceTableSuite extends QueryTest
 
       val log = DeltaLog.forTable(spark, TableIdentifier("target"))
       assertRowIdsAreValid(log)
+
+      val df = spark.read.table("target").select("*", "_metadata.row_id")
+      checkAnswer(df, Seq(Row(0, 0), Row(1, 1)))
     }
   }
 
@@ -176,6 +186,9 @@ class RowIdCreateReplaceTableSuite extends QueryTest
 
         val log = DeltaLog.forTable(spark, TableIdentifier("target"))
         assertRowIdsAreValid(log)
+
+        val df = spark.read.table("target").select("*", "_metadata.row_id")
+        checkAnswer(df, Seq(Row(0, 0), Row(1, 1)))
       }
     }
   }
@@ -198,14 +211,14 @@ class RowIdCreateReplaceTableSuite extends QueryTest
 
   def writeTargetTestData(withRowIds: Boolean): Unit = {
     withRowTrackingEnabled(enabled = withRowIds) {
-      spark.range(start = 0, end = 100, step = 1, numPartitions = 10)
+      spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
         .write.format("delta").saveAsTable("target")
     }
   }
 
   def writeSourceTestData(withRowIds: Boolean): Unit = {
     withRowTrackingEnabled(enabled = withRowIds) {
-      spark.range(start = 0, end = numSourceRows, step = 1, numPartitions = 10)
+      spark.range(start = 0, end = numSourceRows, step = 1, numPartitions = 1)
         .write.format("delta").saveAsTable("source")
     }
   }

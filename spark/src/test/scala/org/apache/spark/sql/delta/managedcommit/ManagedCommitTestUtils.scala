@@ -34,9 +34,11 @@ trait ManagedCommitTestUtils
    * Runs a specific test with managed commits default properties unset.
    * Any table created in this test won't have managed commits enabled by default.
    */
-  def testWithoutManagedCommits(testName: String)(f: => Unit): Unit = {
+  def testWithDefaultCommitOwnerUnset(testName: String)(f: => Unit): Unit = {
     test(testName) {
-      withoutManagedCommitsDefaultTableProperties { f }
+      withoutManagedCommitsDefaultTableProperties {
+        f
+      }
     }
   }
 
@@ -45,12 +47,11 @@ trait ManagedCommitTestUtils
    * Any table created in function `f`` won't have managed commits enabled by default.
    */
   def withoutManagedCommitsDefaultTableProperties(f: => Unit): Unit = {
-    val oldCommitOwnerValue = spark.conf.get(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
-    try {
-      spark.conf.unset(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey)
-      f
-    } finally {
-      spark.conf.set(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey, oldCommitOwnerValue)
+    val commitOwnerKey = MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey
+    val oldCommitOwnerValue = spark.conf.get(commitOwnerKey)
+    spark.conf.unset(commitOwnerKey)
+    try { f } finally {
+      spark.conf.set(commitOwnerKey, oldCommitOwnerValue)
     }
   }
 

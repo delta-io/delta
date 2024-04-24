@@ -170,17 +170,18 @@ public final class DeltaHistoryManager {
             TableClient tableClient,
             Path logPath,
             long startVersion) throws TableNotFoundException {
+        Path tablePath = logPath.getParent();
         try {
             CloseableIterator<FileStatus> files = tableClient
                 .getFileSystemClient()
                 .listFrom(FileNames.listingPrefix(logPath, startVersion));
             if (!files.hasNext()) {
                 // We treat an empty directory as table not found
-                throw new TableNotFoundException(logPath.getParent().toString()); /* use dataPath */
+                throw new TableNotFoundException(tablePath.toString());
             }
             return files;
         } catch (FileNotFoundException e) {
-            throw new TableNotFoundException(logPath.toString());
+            throw new TableNotFoundException(tablePath.toString());
         } catch (IOException io) {
             throw new RuntimeException("Failed to list the files in delta log", io);
         }

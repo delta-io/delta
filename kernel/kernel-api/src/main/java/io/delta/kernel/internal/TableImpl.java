@@ -15,26 +15,19 @@
  */
 package io.delta.kernel.internal;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.Table;
-import io.delta.kernel.TableNotFoundException;
+import io.delta.kernel.*;
 import io.delta.kernel.client.TableClient;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 
 public class TableImpl implements Table {
-    public static Table forPath(TableClient tableClient, String path)
-        throws TableNotFoundException {
-        // Resolve the path to fully qualified table path using the `TableClient` APIs
+    public static Table forPath(TableClient tableClient, String path) {
         String resolvedPath;
         try {
             resolvedPath = tableClient.getFileSystemClient().resolvePath(path);
-        } catch (FileNotFoundException fnf) {
-            throw new TableNotFoundException(path, fnf);
         } catch (IOException io) {
             throw new RuntimeException(io);
         }
@@ -52,13 +45,13 @@ public class TableImpl implements Table {
     }
 
     @Override
-    public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
-        return snapshotManager.buildLatestSnapshot(tableClient);
+    public String getPath(TableClient tableClient) {
+        return tablePath;
     }
 
     @Override
-    public String getPath() {
-        return tablePath;
+    public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
+        return snapshotManager.buildLatestSnapshot(tableClient);
     }
 
     @Override
