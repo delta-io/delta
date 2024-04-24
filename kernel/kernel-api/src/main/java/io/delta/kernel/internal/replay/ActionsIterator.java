@@ -22,18 +22,20 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 import io.delta.kernel.client.TableClient;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
-import io.delta.kernel.internal.checkpoints.CheckpointInstance;
+import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.Utils;
-import static io.delta.kernel.internal.fs.Path.getName;
+import io.delta.kernel.internal.util.*;
+import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.MULTIPART_CHECKPOINT;
+import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.SIDECAR;
 import static io.delta.kernel.internal.util.FileNames.*;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
@@ -117,20 +119,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
             throw new NoSuchElementException("No next element");
         }
 
-        ActionWrapper next = actionsIter.get().next();
-
-        // If the ActionWrapper schema does not match the read schema, then we have injected sidecar
-        // files into the schema. Append any sidecar files found to the end of the file list and
-        // return a new ActionWrapper with the sidecar files removed from the read schema.
-        if (next.getContainsSidecarsInSchema()) {
-            // Sidecar files should only be injected into checkpoint file read schemas.
-            assert(next.isFromCheckpoint());
-            List<DeltaLogFile> filesToAppend = next.extractSidecarsFromBatch();
-            filesList.addAll(filesToAppend);
-            return next;
-        }
-
-        return next;
+        return actionsIter.get().next();
     }
 
     @Override
@@ -195,6 +184,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
             modifiedReadSchema = LogReplay.withSidecarFileSchema(readSchema);
         }
 
+        long checkpointVersion = checkpointVersion(file.getPath());
+
         final CloseableIterator<ColumnarBatch> topLevelIter;
         if (fileName.endsWith(".parquet")) {
             topLevelIter = tableClient.getParquetHandler().readParquetFiles(
@@ -209,7 +200,62 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         } else {
             throw new IOException("Unrecognized top level v2 checkpoint file format: " + fileName);
         }
-        return topLevelIter;
+        return new CloseableIterator<ColumnarBatch>() {
+            @Override
+            public void close() throws IOException {
+                topLevelIter.close();
+            }
+
+            @Override
+            public boolean hasNext() {
+                return topLevelIter.hasNext();
+            }
+
+            @Override
+            public ColumnarBatch next() {
+                ColumnarBatch batch = topLevelIter.next();
+                if (schemaContainsAddOrRemoveFiles) {
+                    return extractSidecarsFromBatch(file, checkpointVersion, batch);
+                }
+                return batch;
+            }
+        };
+    }
+
+    /**
+     * Reads SidecarFile actions from ColumnarBatch, removing sidecar actions from the
+     * ColumnarBatch. Returns a list of SidecarFile actions found.
+     */
+    public ColumnarBatch extractSidecarsFromBatch(
+            FileStatus checkpointFileStatus,
+            long checkpointVersion,
+            ColumnarBatch columnarBatch) {
+        checkArgument(columnarBatch.getSchema()
+                .fieldNames().contains(LogReplay.SIDECAR_FIELD_NAME));
+
+        Path deltaLogPath = new Path(checkpointFileStatus.getPath()).getParent();
+
+        // Sidecars will exist in schema. Extract sidecar files, then remove sidecar files from
+        // batch output.
+        List<DeltaLogFile> outputFiles = new ArrayList<>();
+        int sidecarIndex =
+                columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
+        ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
+        for (int i = 0; i < columnarBatch.getSize(); i++) {
+            SidecarFile sidecarFile = SidecarFile.fromColumnVector(sidecarVector, i);
+            if (sidecarFile == null) {
+                continue;
+            }
+            FileStatus sideCarFileStatus = FileStatus.of(
+                    FileNames.sidecarFile(deltaLogPath, sidecarFile.getPath()),
+                    sidecarFile.getSizeInBytes(),
+                    sidecarFile.getModificationTime());
+
+            filesList.add(DeltaLogFile.ofSideCar(sideCarFileStatus, checkpointVersion));
+        }
+
+        // Delete SidecarFile actions from the schema.
+        return columnarBatch.withDeletedColumnAt(sidecarIndex);
     }
 
     /**
@@ -224,70 +270,47 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         final Path nextFilePath = new Path(nextFile.getPath());
         final String fileName = nextFilePath.getName();
         try {
-            if (nextLogFile.isCommit()) {
-                final long fileVersion = FileNames.deltaVersion(nextFilePath);
-                // We can not read multiple JSON files in parallel (like the checkpoint files),
-                // because each one has a different version, and we need to associate the version
-                // with actions read from the JSON file for further optimizations later on (faster
-                // metadata & protocol loading in subsequent runs by remembering the version of
-                // the last version where the metadata and protocol are found).
+            switch (nextLogFile.getLogType()) {
+                case COMMIT: {
+                    final long fileVersion = FileNames.deltaVersion(nextFilePath);
+                    // We can not read multiple JSON files in parallel (like the checkpoint files),
+                    // because each one has a different version, and we need to associate the
+                    // version with actions read from the JSON file for further optimizations later
+                    // on (faster metadata & protocol loading in subsequent runs by remembering
+                    // the version of the last version where the metadata and protocol are found).
+                    final CloseableIterator<ColumnarBatch> dataIter =
+                            tableClient.getJsonHandler().readJsonFiles(
+                                    singletonCloseableIterator(nextFile),
+                                    readSchema,
+                                    Optional.empty());
 
-                final CloseableIterator<ColumnarBatch> dataIter =
-                    tableClient.getJsonHandler().readJsonFiles(
-                        singletonCloseableIterator(nextFile),
-                        readSchema,
-                        Optional.empty());
-
-                return combine(dataIter, null /* isFromCheckpoint */, fileVersion, false);
-            } else if (nextLogFile.isSidecar()) {
-                // The current file is a sidecar file. Because all sidecar files are appended at the
-                // end of the file list, read all sidecar files together here.
-                List<FileStatus> sidecars = new ArrayList<FileStatus>();
-                sidecars.add(nextFile);
-                final long fileVersion = nextLogFile.getVersion();
-                while(!filesList.isEmpty() && filesList.peek().isSidecar() &&
-                        filesList.peek().getVersion() == fileVersion) {
-                    sidecars.add(filesList.pop().getFile());
+                    return combine(dataIter, false /* isFromCheckpoint */, fileVersion);
                 }
-                CloseableIterator<ColumnarBatch> dataIter =
-                        tableClient.getParquetHandler().readParquetFiles(
-                                toCloseableIterator(sidecars.iterator()),
-                                readSchema, checkpointPredicate);
+                case CHECKPOINT_CLASSIC:
+                case V2_CHECKPOINT_MANIFEST: {
+                    // If the checkpoint file is a UUID or classic checkpoint, read the top-level
+                    // checkpoint file and any potential sidecars. Otherwise, look for any other
+                    // parts of the current multipart checkpoint.
+                    CloseableIterator<ColumnarBatch> dataIter =
+                            getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
+                    long version = checkpointVersion(nextFilePath);
+                    return combine(dataIter, true /* isFromCheckpoint */, version);
+                }
+                case MULTIPART_CHECKPOINT:
+                case SIDECAR: {
+                    // Try to retrieve the remaining checkpoint files (if there are any) and issue
+                    // read request for all in one go, so that the {@link ParquetHandler} can do
+                    // optimizations like reading multiple files in parallel.
+                    CloseableIterator<FileStatus> checkpointFiles =
+                            retrieveRemainingCheckpointFiles(nextLogFile);
+                    CloseableIterator<ColumnarBatch> dataIter = tableClient.getParquetHandler()
+                            .readParquetFiles(checkpointFiles, readSchema, checkpointPredicate);
 
-                return combine(
-                        dataIter,
-                        nextLogFile.getCheckpointInstanceFilepath(),
-                        fileVersion,
-                        false);
-            } else if (nextLogFile.isMultipartCheckpoint()) {
-                CheckpointInstance checkpointInstance = new CheckpointInstance(fileName);
-                final long fileVersion = checkpointInstance.version;
-
-                // Try to retrieve the remaining checkpoint files (if there are any) and issue
-                // read request for all in one go, so that the {@link ParquetHandler} can do
-                // optimizations like reading multiple files in parallel.
-                List<FileStatus> checkpointFiles =
-                        retrieveRemainingCheckpointFiles(nextFile, fileVersion);
-                CloseableIterator<ColumnarBatch> dataIter = tableClient.getParquetHandler()
-                        .readParquetFiles(
-                            toCloseableIterator(checkpointFiles.iterator()),
-                            readSchema, checkpointPredicate);
-                return combine(dataIter, nextFilePath, checkpointVersion(nextFilePath), false);
-            } else if (nextLogFile.isSinglePartOrV2Checkpoint()) {
-                // If the checkpoint file is a UUID or classic checkpoint, read the top-level
-                // checkpoint file and any potential sidecars. Otherwise, look for any other parts
-                // of the current multipart checkpoint.
-                CloseableIterator<ColumnarBatch> dataIter =
-                        getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
-                return combine(
-                        dataIter,
-                        nextFilePath,
-                        checkpointVersion(nextFilePath),
-                        schemaContainsAddOrRemoveFiles);
-            } else {
-                throw new IllegalStateException(
-                    String.format("Unexpected log file path: %s", nextFile.getPath())
-                );
+                    long version = checkpointVersion(nextFilePath);
+                    return combine(dataIter, true /* isFromCheckpoint */, version);
+                }
+                default:
+                    throw new IOException("Unrecognized log type: " + nextLogFile.getLogType());
             }
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
@@ -299,9 +322,8 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
      */
     private CloseableIterator<ActionWrapper> combine(
             CloseableIterator<ColumnarBatch> fileReadDataIter,
-            Path checkpointPath,
-            long version,
-            boolean batchSchemaContainsAddOrRemoveFiles) {
+            boolean isFromCheckpoint,
+            long version) {
         return new CloseableIterator<ActionWrapper>() {
             @Override
             public boolean hasNext() {
@@ -310,11 +332,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
             @Override
             public ActionWrapper next() {
-                return new ActionWrapper(
-                        fileReadDataIter.next(),
-                        checkpointPath,
-                        version,
-                        batchSchemaContainsAddOrRemoveFiles);
+                return new ActionWrapper(fileReadDataIter.next(), isFromCheckpoint, version);
             }
 
             @Override
@@ -325,29 +343,34 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     /**
-     * Given a checkpoint file, retrieve all the files that are part of the same checkpoint.
+     * Given a checkpoint file, retrieve all the files that are part of the same checkpoint or
+     * sidecar files.
      * <p>
-     * This is done by looking at the file name and finding all the files that have the same
+     * This is done by looking at the log file type and finding all the files that have the same
      * version number.
      */
-    private List<FileStatus> retrieveRemainingCheckpointFiles(
-            FileStatus checkpointFile,
-            long version) {
+    private CloseableIterator<FileStatus> retrieveRemainingCheckpointFiles(
+            DeltaLogFile deltaLogFile) {
 
         // Find the contiguous parquet files that are part of the same checkpoint
         final List<FileStatus> checkpointFiles = new ArrayList<>();
 
         // Add the already retrieved checkpoint file to the list.
-        checkpointFiles.add(checkpointFile);
+        checkpointFiles.add(deltaLogFile.getFile());
 
-        DeltaLogFile peek = filesList.peek();
-        while (peek != null &&
-                isCheckpointFile(getName(peek.getFile().getPath())) &&
-                checkpointVersion(peek.getFile().getPath()) == version) {
-            checkpointFiles.add(filesList.pop().getFile());
-            peek = filesList.peek();
+        // Sidecar or multipart checkpoint types are the only files that can have multiple parts.
+        if (deltaLogFile.getLogType() == SIDECAR ||
+                deltaLogFile.getLogType() == MULTIPART_CHECKPOINT) {
+
+            DeltaLogFile peek = filesList.peek();
+            while (peek != null &&
+                deltaLogFile.getLogType() == peek.getLogType() &&
+                deltaLogFile.getVersion() == peek.getVersion()) {
+                checkpointFiles.add(filesList.pop().getFile());
+                peek = filesList.peek();
+            }
         }
 
-        return checkpointFiles;
+        return toCloseableIterator(checkpointFiles.iterator());
     }
 }

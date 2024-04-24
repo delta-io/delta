@@ -33,6 +33,15 @@ public final class FileNames {
         Pattern.compile(
             "(\\d+)\\.checkpoint((\\.\\d+\\.\\d+)?\\.parquet|\\.[^.]+\\.(json|parquet))");
 
+    private static final Pattern CLASSIC_CHECKPOINT_FILE_PATTERN =
+        Pattern.compile("\\d+\\.checkpoint\\.parquet");
+
+    private static final Pattern V2_CHECKPOINT_FILE_PATTERN =
+        Pattern.compile("(\\d+)\\.checkpoint\\.[^.]+\\.(json|parquet)");
+
+    private static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
+        Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
+
     public static final String SIDECAR_DIRECTORY = "_sidecars";
 
     /**
@@ -137,6 +146,20 @@ public final class FileNames {
     public static boolean isCheckpointFile(String fileName) {
         return CHECKPOINT_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
     }
+
+    public static boolean isClassicCheckpointFile(String fileName) {
+        return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+    }
+
+    public static boolean isMulitPartCheckpointFile(String fileName) {
+        return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+    }
+
+    public static boolean isV2CheckpointFile(String fileName) {
+        return V2_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+    }
+
+
 
     public static boolean isCommitFile(String fileName) {
         return DELTA_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();

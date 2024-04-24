@@ -15,36 +15,18 @@
  */
 package io.delta.kernel.internal.replay;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-
-import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.utils.FileStatus;
-import io.delta.kernel.internal.checkpoints.CheckpointInstance;
-import io.delta.kernel.internal.checkpoints.SidecarFile;
-import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.Preconditions;
 
 /** Internal wrapper class holding information needed to perform log replay. */
 class ActionWrapper {
-    private ColumnarBatch columnarBatch;
-    private final Path checkpointPath;
+    private final ColumnarBatch columnarBatch;
+    private final boolean isFromCheckpoint;
     private final long version;
 
-    private boolean containsSidecarsInSchema;
-
-    ActionWrapper(
-            ColumnarBatch data,
-            Path checkpointPath,
-            long version,
-            boolean containsSidecarsInSchema) {
+    ActionWrapper(ColumnarBatch data, boolean isFromCheckpoint, long version) {
         this.columnarBatch = data;
-        this.checkpointPath = checkpointPath;
+        this.isFromCheckpoint = isFromCheckpoint;
         this.version = version;
-        this.containsSidecarsInSchema = containsSidecarsInSchema;
     }
 
     public ColumnarBatch getColumnarBatch() {
@@ -52,55 +34,10 @@ class ActionWrapper {
     }
 
     public boolean isFromCheckpoint() {
-        return checkpointPath != null;
+        return isFromCheckpoint;
     }
 
     public long getVersion() {
         return version;
-    }
-
-    public boolean getContainsSidecarsInSchema() {
-        return containsSidecarsInSchema;
-    }
-
-    /**
-     * Reads SidecarFile actions from ColumnarBatch, removing sidecar actions from the
-     * ColumnarBatch. Returns a list of SidecarFile actions found.
-     */
-    public List<DeltaLogFile> extractSidecarsFromBatch() {
-        Preconditions.checkArgument(columnarBatch.getSchema()
-                .fieldNames().contains(LogReplay.SIDECAR_FIELD_NAME));
-        // If the source checkpoint for this action does not use sidecars, sidecars will not exist
-        // in schema.
-        CheckpointInstance sourceCheckpoint =
-                new CheckpointInstance(checkpointPath.getName());
-        if (!sourceCheckpoint.format.usesSidecars()) {
-            return Collections.emptyList();
-        }
-
-        // Sidecars will exist in schema. Extract sidecar files, then remove sidecar files from
-        // batch output.
-        List<DeltaLogFile> outputFiles = new ArrayList<>();
-        int sidecarIndex =
-                columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
-        ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
-        for (int i = 0; i < columnarBatch.getSize(); i++) {
-            SidecarFile f = SidecarFile.fromColumnVector(sidecarVector, i);
-            if (f != null) {
-                outputFiles.add(
-                        DeltaLogFile.forSidecar(
-                                FileStatus.of(
-                                        FileNames.sidecarFile(checkpointPath.getParent(), f.path),
-                                        f.sizeInBytes,
-                                        f.modificationTime),
-                                sourceCheckpoint));
-            }
-        }
-
-        // Delete SidecarFile actions from the schema.
-        columnarBatch = columnarBatch.withDeletedColumnAt(sidecarIndex);
-        containsSidecarsInSchema = false;
-
-        return outputFiles;
     }
 }

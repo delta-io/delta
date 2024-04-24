@@ -16,78 +16,69 @@
 package io.delta.kernel.internal.replay;
 
 import io.delta.kernel.utils.FileStatus;
-import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 
-/** Internal wrapper class holding information needed to perform log replay. Represents either a
+/**
+ * Internal wrapper class holding information needed to perform log replay. Represents either a
  * Delta commit file, classic checkpoint, a multipart checkpoint, a V2 checkpoint,
  * or a sidecar checkpoint.
  */
 public class DeltaLogFile {
-    private final FileStatus file;
-
-    private final String fileName;
-
-    private final boolean isSidecar;
-
-    private final CheckpointInstance checkpointInstance;
-
-    DeltaLogFile(
-            FileStatus file, boolean isSidecar, CheckpointInstance parentV2CheckpointInstance) {
-        this.file = file;
-        this.fileName = new Path(file.getPath()).getName();
-        this.isSidecar = isSidecar;
-        this.checkpointInstance = parentV2CheckpointInstance;
-    }
-
-    // parentV2CheckpointInstance is the CheckpointInstance of the top-level checkpoint that
-    // contains this sidecar file.
-    public static DeltaLogFile forSidecar(
-            FileStatus file, CheckpointInstance parentV2CheckpointInstance) {
-        return new DeltaLogFile(file, true, parentV2CheckpointInstance);
+    public enum LogType {
+        COMMIT,
+        CHECKPOINT_CLASSIC,
+        MULTIPART_CHECKPOINT,
+        V2_CHECKPOINT_MANIFEST,
+        SIDECAR
     }
 
     public static DeltaLogFile forCommitOrCheckpoint(FileStatus file) {
         String fileName = new Path(file.getPath()).getName();
-        if (FileNames.isCheckpointFile(fileName)) {
-            return new DeltaLogFile(file, false, new CheckpointInstance(fileName));
+        LogType logType = null;
+        long version = -1;
+        if (FileNames.isCommitFile(fileName)) {
+            logType = LogType.COMMIT;
+            version = FileNames.deltaVersion(fileName);
+        } else if (FileNames.isClassicCheckpointFile(fileName)) {
+            logType = LogType.CHECKPOINT_CLASSIC;
+            version = FileNames.checkpointVersion(fileName);
+        } else if (FileNames.isMulitPartCheckpointFile(fileName)) {
+            logType = LogType.MULTIPART_CHECKPOINT;
+            version = FileNames.checkpointVersion(fileName);
+        } else if (FileNames.isV2CheckpointFile(fileName)) {
+            logType = LogType.V2_CHECKPOINT_MANIFEST;
+            version = FileNames.checkpointVersion(fileName);
+        } else {
+            throw new IllegalArgumentException(
+                    "File is not a commit or checkpoint file: " + file.getPath());
         }
-        return new DeltaLogFile(file, false, null);
+        return new DeltaLogFile(file, logType, version);
+    }
+
+    public static DeltaLogFile ofSideCar(FileStatus file, long version) {
+        return new DeltaLogFile(file, LogType.SIDECAR, version);
+    }
+
+    private final FileStatus file;
+    private final LogType logType;
+    private final long version;
+
+    private DeltaLogFile(FileStatus file, LogType logType, long version) {
+        this.file = file;
+        this.logType = logType;
+        this.version = version;
     }
 
     public FileStatus getFile() {
         return file;
     }
 
-    public boolean isCommit() {
-        return FileNames.isCommitFile(fileName);
-    }
-
-    public boolean isMultipartCheckpoint() {
-        return checkpointInstance != null &&
-                checkpointInstance.format == CheckpointInstance.CheckpointFormat.MULTI_PART;
-    }
-
-    public boolean isSinglePartOrV2Checkpoint() {
-        return checkpointInstance != null &&
-                checkpointInstance.format.usesSidecars();
-
-    }
-
-    public boolean isSidecar() {
-        return isSidecar;
+    public LogType getLogType() {
+        return logType;
     }
 
     public long getVersion() {
-        return checkpointInstance.version;
-    }
-
-    public Path getCheckpointInstanceFilepath() {
-        if (checkpointInstance == null) {
-            return null;
-        }
-
-        return checkpointInstance.filePath.get();
+        return version;
     }
 }

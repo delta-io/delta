@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
-import java.util.Objects;
-
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
@@ -26,10 +24,6 @@ import io.delta.kernel.types.StructType;
  * Action representing a SidecarFile in a top-level V2 checkpoint file.
  */
 public class SidecarFile {
-    public String path;
-    public long sizeInBytes;
-    public long modificationTime;
-
     public static SidecarFile fromColumnVector(ColumnVector vector, int rowIndex) {
         if (vector.isNullAt(rowIndex)) {
             return null;
@@ -40,6 +34,10 @@ public class SidecarFile {
                 vector.getChild(2).getLong(rowIndex)
         );
     }
+
+    private final String path;
+    private final long sizeInBytes;
+    private final long modificationTime;
 
     public SidecarFile(String path, long sizeInBytes, long modificationTime) {
         this.path = path;
@@ -52,22 +50,15 @@ public class SidecarFile {
             .add("sizeInBytes", LongType.LONG, false /* nullable */)
             .add("modificationTime", LongType.LONG, false /* nullable */);
 
-    @Override
-    public boolean equals(Object other) {
-        if (this == other) {
-            return true;
-        }
-        if (other == null || getClass() != other.getClass()) {
-            return false;
-        }
-        SidecarFile otherSidecarFile = (SidecarFile) other;
-        return this.path.equals(otherSidecarFile.path) &&
-                this.sizeInBytes == otherSidecarFile.sizeInBytes &&
-                this.modificationTime == otherSidecarFile.modificationTime;
+    public String getPath() {
+        return path;
     }
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(path, sizeInBytes, modificationTime);
+    public long getSizeInBytes() {
+        return sizeInBytes;
+    }
+
+    public long getModificationTime() {
+        return modificationTime;
     }
 }
