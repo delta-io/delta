@@ -535,6 +535,20 @@
     ],
     "sqlState" : "42710"
   },
+  "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH" : {
+    "message" : [
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following check constraint(s):",
+      "<constraints>"
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot alter column <columnName> because this column is referenced by the following check constraint(s):",
+      "<constraints>"
+    ],
+    "sqlState" : "42K09"
+  },
   "DELTA_CONSTRAINT_DOES_NOT_EXIST" : {
     "message" : [
       "Cannot drop nonexistent constraint <constraintName> from table <tableName>. To avoid throwing an error, provide the parameter IF EXISTS or set the SQL session configuration <config> to <confValue>."
@@ -996,7 +1010,15 @@
   },
   "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH" : {
     "message" : [
-      "Column <columnName> is a generated column or a column used by a generated column. The data type is <columnType>. It doesn't accept data type <dataType>"
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following generated column(s):",
+      "<generatedColumns>"
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot alter column <columnName> because this column is referenced by the following generated column(s):",
+      "<generatedColumns>"
     ],
     "sqlState" : "42K09"
   },
@@ -2812,20 +2834,6 @@
       "Delta configuration:",
       "<configuration>",
       "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0004" : {
-    "message" : [
-      "Cannot <operation> column <columnName> because this column is referenced by the following",
-      "check constraint(s):",
-      "<constraints>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0005" : {
-    "message" : [
-      "Cannot <operation> column <columnName> because this column is referenced by the following",
-      "generated column(s):",
-      "<generatedColumns>"
     ]
   },
   "_LEGACY_ERROR_TEMP_DELTA_0006" : {
