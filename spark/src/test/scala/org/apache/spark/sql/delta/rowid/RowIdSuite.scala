@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.rowid
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, DeltaOperations, MaterializedRowId, RowId, RowTrackingFeature, Serializable, SnapshotIsolation}
-import org.apache.spark.sql.delta.DeltaCommitTag.PreservedRowTrackingTag
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
