@@ -126,7 +126,7 @@ spark.read.format("hudi").option("hoodie.metadata.enable", "true").load("PATH_TO
 
 All <Delta>, Iceberg and Hudi allow time travel queries using table versions or timestamps stored in table metadata.
 
-In general, Delta and Iceberg/Hudi table versions do not align by either the commit timestamp or the version ID. If you wish to verify which version of a Delta table a given version of an Iceberg/Hudi table corresponds to, you can use the corresponding table properties set on the Iceberg/Hudi table. See [_](#status).
+Delta and Iceberg table versions do not align by either the commit timestamp or the version ID, while Delta and Hudi commit timestamp aligns but version ID does not. If you wish to verify which version of a Delta table a given version of an Iceberg/Hudi table corresponds to, you can use the corresponding table properties set on the Iceberg/Hudi table. See [_](#status).
 
 ## Limitations
 
