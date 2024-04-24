@@ -39,7 +39,8 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   def validateSnapshot(
       path: String,
       snapshotFromSpark: Snapshot,
-      strictFileValidation: Boolean = true): Unit = {
+      strictFileValidation: Boolean = true,
+      ckptVersionExpected: Option[Int] = None): Unit = {
     // Create a snapshot from Spark connector and from kernel.
     val snapshot = latestSnapshot(path)
     val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
@@ -59,9 +60,11 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
     assert(snapshot.getVersion(defaultTableClient) == snapshotFromSpark.version)
 
     // Validate that snapshot read from most recent checkpoint.
-    //assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
-    //  f => FileNames.checkpointVersion(new Path(f.getPath)))
-    //  .contains(snapshotFromSpark.version - (snapshotFromSpark.version % 2)))
+    val expectedCkptToRead =
+      ckptVersionExpected.getOrElse(snapshotFromSpark.version - (snapshotFromSpark.version % 2))
+    assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
+      f => FileNames.checkpointVersion(new Path(f.getPath)))
+      .contains(expectedCkptToRead))
 
     // Validate AddFiles from sidecars found against Spark connector.
     val scan = snapshot.getScanBuilder(defaultTableClient).build()
@@ -244,11 +247,11 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
       // Rename to UUID.
       val ckptPath = new Path(new File(log.logPath.toUri).listFiles().filter(f =>
         FileNames.isCheckpointFile(new Path(f.getPath))).head.toURI)
-      new File(ckptPath.toUri).renameTo(new File(new Path(ckptPath.getParent, ckptPath.getName
+      new File(ckptPath.toUri).renamgeTo(new File(new Path(ckptPath.getParent, ckptPath.getName
         .replace("checkpoint.parquet", "checkpoint.abc-def.parquet")).toUri))
 
       // Validate snapshot.
-      validateSnapshot(path.toString, snapshotFromSpark)
+      validateSnapshot(path.toString, snapshotFromSpark, ckptVersionExpected = Some(1))
     }
   }
 
