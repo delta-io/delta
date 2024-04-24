@@ -168,6 +168,7 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, update = true)
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "false")
   }
 
   override def excluded: Seq[String] = super.excluded ++
@@ -333,4 +334,14 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
       for (a <- addFiles) assert(a.deletionVector === null)
     }
   }
+}
+
+class UpdateSQLWithDeletionVectorsAndPredicatePushdownSuite
+    extends UpdateSQLWithDeletionVectorsSuite {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "true")
+  }
+
 }

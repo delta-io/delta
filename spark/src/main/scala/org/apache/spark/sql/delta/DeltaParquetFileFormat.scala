@@ -312,7 +312,7 @@ case class DeltaParquetFileFormat(
    *   - [[IS_ROW_DELETED_COLUMN_NAME]] - row deleted status from deletion vector corresponding
    *   to this file
    *   - [[ROW_INDEX_COLUMN_NAME]] - index of the row within the file. Note, this column is only
-   *     populated when are not using _metadata.row_index column.
+   *     populated when we are not using _metadata.row_index column.
    */
   private def iteratorWithAdditionalMetadataColumns(
       partitionedFile: PartitionedFile,

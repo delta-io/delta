@@ -16,13 +16,12 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.RowIndexFilter
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{Column, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
@@ -30,7 +29,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project
 import org.apache.spark.sql.execution.datasources.FileFormat.METADATA_NAME
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
-import org.apache.spark.sql.types.{LongType, StructField, StructType}
+import org.apache.spark.sql.types.StructType
 
 /**
  * Plan transformer to inject a filter that removes the rows marked as deleted according to
@@ -87,7 +86,6 @@ object ScanWithDeletionVectors {
     if (fileFormat.hasTablePath) return None
 
     // See if any files actually have a DV.
-    val spark = SparkSession.getActiveSession.get
     val filesWithDVs = index
       .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
       .filter(_.deletionVector != null)
@@ -98,6 +96,7 @@ object ScanWithDeletionVectors {
     // `LogicalRelation` that has the same output as this `LogicalRelation`
     val planOutput = scan.output
 
+    val spark = SparkSession.getActiveSession.get
     val newScan = createScanWithSkipRowColumn(spark, scan, fileFormat, index, hadoopRelation)
 
     // On top of the scan add a filter that filters out the rows which have
@@ -112,16 +111,17 @@ object ScanWithDeletionVectors {
   /**
    * Helper function that adds row_index column to _metadata if missing.
    */
-  private def addRowIndexIfMissing(a: AttributeReference): AttributeReference = {
-    require(a.name == METADATA_NAME)
+  private def addRowIndexIfMissing(attribute: AttributeReference): AttributeReference = {
+    require(attribute.name == METADATA_NAME)
 
-    val fieldNames = a.dataType.asInstanceOf[StructType].fieldNames
-    if (fieldNames.contains(ParquetFileFormat.ROW_INDEX)) return a
+    val fieldNames = attribute.dataType.asInstanceOf[StructType].fieldNames
+    if (fieldNames.contains(ParquetFileFormat.ROW_INDEX)) return attribute
 
     val newDatatype = StructType.merge(
-      left = a.dataType,
+      left = attribute.dataType,
       right = StructType(Seq(ParquetFileFormat.ROW_INDEX_FIELD)))
-    a.copy(dataType = newDatatype)(exprId = a.exprId, qualifier = a.qualifier)
+    attribute.copy(
+      dataType = newDatatype)(exprId = attribute.exprId, qualifier = attribute.qualifier)
   }
 
 
@@ -148,7 +148,7 @@ object ScanWithDeletionVectors {
     val scanOutputWithMetadata = if (predicatePushdownEnabled) {
       // When predicate pushdown is enabled, make sure the output contains metadata.row_index.
       if (inputScan.output.map(_.name).contains(METADATA_NAME)) {
-        // If scan already contains metadata column without a row_index add it.
+        // If the scan already contains a metadata column without a row_index, add it.
         inputScan.output.collect {
           case a: AttributeReference if a.name == METADATA_NAME => addRowIndexIfMissing(a)
           case o => o
