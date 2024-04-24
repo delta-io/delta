@@ -16,13 +16,10 @@
 
 package org.apache.spark.sql.delta.schema
 
-import java.util.Locale
-
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, TypeWidening}
 
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -158,7 +155,6 @@ object SchemaMergingUtils {
    *                                 merge will succeed, because once we get to write time Spark SQL
    *                                 will support implicitly converting the int to a string.
    * @param keepExistingType Whether to keep existing types instead of trying to merge types.
-   * @param fixedTypeColumns The set of columns whose type should not be changed in any case.
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
    *                      This should default to false for Delta, which is case insensitive.
    */
@@ -168,13 +164,9 @@ object SchemaMergingUtils {
       allowImplicitConversions: Boolean = false,
       keepExistingType: Boolean = false,
       allowTypeWidening: Boolean = false,
-      fixedTypeColumns: Set[String] = Set.empty,
       caseSensitive: Boolean = false): StructType = {
     checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
-    def merge(
-        current: DataType,
-        update: DataType,
-        fixedTypeColumnsSet: Set[String] = Set.empty): DataType = {
+    def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>
           // Merge existing fields.
@@ -182,15 +174,6 @@ object SchemaMergingUtils {
           val updatedCurrentFields = currentFields.map { currentField =>
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
-                if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
-                    !equalsIgnoreCaseAndCompatibleNullability(
-                      currentField.dataType, updateField.dataType)) {
-                  throw new DeltaAnalysisException(
-                    errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-                    messageParameters = Array(currentField.name, currentField.dataType.sql,
-                      updateField.dataType.sql)
-                  )
-                }
                 try {
                   StructField(
                     currentField.name,
@@ -284,8 +267,7 @@ object SchemaMergingUtils {
             messageParameters = Array(current.toString, update.toString))
       }
     }
-    merge(tableSchema, dataSchema, fixedTypeColumns.map(_.toLowerCase(Locale.ROOT)))
-      .asInstanceOf[StructType]
+    merge(tableSchema, dataSchema).asInstanceOf[StructType]
   }
 
   /**

@@ -538,6 +538,15 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
+  val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =
+    buildConf("catalog.update.longFieldTruncationThreshold")
+      .internal()
+      .doc(
+        "When syncing table schema to the catalog, Delta will truncate the whole schema " +
+        "if any field is longer than this threshold.")
+      .longConf
+      .createWithDefault(4000)
+
   val DELTA_LIST_FROM_COMMIT_STORE_THREAD_POOL_SIZE =
     buildStaticConf("commitStore.getCommits.threadPoolSize")
       .internal()

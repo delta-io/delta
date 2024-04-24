@@ -31,6 +31,7 @@ import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
@@ -274,35 +275,64 @@ class DeltaLog private(
   /**
    * Get all actions starting from "startVersion" (inclusive). If `startVersion` doesn't exist,
    * return an empty Iterator.
+   * Callers are encouraged to use the other override which takes the endVersion if available to
+   * avoid I/O and improve performance of this method.
    */
   def getChanges(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    val hadoopConf = newDeltaHadoopConf()
-    val deltasWithVersion = store.listFrom(listingPrefix(logPath, startVersion), hadoopConf)
-      .flatMap(DeltaFile.unapply(_))
-    // Subtract 1 to ensure that we have the same check for the inclusive startVersion
-    var lastSeenVersion = startVersion - 1
-    deltasWithVersion.map { case (status, version) =>
-      val p = status.getPath
-      if (failOnDataLoss && version > lastSeenVersion + 1) {
-        throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
-      }
-      lastSeenVersion = version
-      (version, store.read(status, hadoopConf).map(Action.fromJson))
+    getChangeLogFiles(startVersion, failOnDataLoss).map { case (version, status) =>
+      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
     }
+  }
+
+  private[sql] def getChanges(
+      startVersion: Long,
+      endVersion: Long,
+      failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
+    getChangeLogFiles(startVersion, endVersion, failOnDataLoss).map { case (version, status) =>
+      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+    }
+  }
+
+  private[sql] def getChangeLogFiles(
+      startVersion: Long,
+      endVersion: Long,
+      failOnDataLoss: Boolean): Iterator[(Long, FileStatus)] = {
+    implicit class IteratorWithStopAtHelper[T](underlying: Iterator[T]) {
+      // This method is used to stop the iterator when the condition is met.
+      def stopAt(stopAtFunc: (T) => Boolean): Iterator[T] = new Iterator[T] {
+        var shouldStop = false
+
+        override def hasNext: Boolean = !shouldStop && underlying.hasNext
+
+        override def next(): T = {
+          val v = underlying.next()
+          shouldStop = stopAtFunc(v)
+          v
+        }
+      }
+    }
+
+    getChangeLogFiles(startVersion, failOnDataLoss)
+      // takeWhile always looks at one extra item, which can trigger unnecessary work. Instead, we
+      // stop if we've seen the item we believe should be the last interesting item, without
+      // examining the one that follows.
+      .stopAt { case (version, _) => version >= endVersion }
+      // The last element in this iterator may not be <= endVersion, so we need to filter it out.
+      .takeWhile { case (version, _) => version <= endVersion }
   }
 
   /**
    * Get access to all actions starting from "startVersion" (inclusive) via [[FileStatus]].
    * If `startVersion` doesn't exist, return an empty Iterator.
+   * Callers are encouraged to use the other override which takes the endVersion if available to
+   * avoid I/O and improve performance of this method.
    */
   def getChangeLogFiles(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltasWithVersion = store
-      .listFrom(listingPrefix(logPath, startVersion), newDeltaHadoopConf())
-      .flatMap(DeltaFile.unapply(_))
+    val deltasWithVersion = ManagedCommitUtils.commitFilesIterator(this, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltasWithVersion.map { case (status, version) =>

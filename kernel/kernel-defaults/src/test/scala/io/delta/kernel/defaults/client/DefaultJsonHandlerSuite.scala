@@ -497,19 +497,26 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with VectorTest
       assert(batch.getSize == 2)
 
       val filePath = tempDir + "/1.json"
-      jsonHandler.writeJsonFileAtomically(filePath, batch.getRows)
+      def writeAndVerify(overwrite: Boolean): Unit = {
+        jsonHandler.writeJsonFileAtomically(filePath, batch.getRows, overwrite)
 
-      // read it back and verify the contents are correct
-      val source = scala.io.Source.fromFile(filePath)
-      val result = try source.getLines().mkString(",") finally source.close()
+        // read it back and verify the contents are correct
+        val source = scala.io.Source.fromFile(filePath)
+        val result = try source.getLines().mkString(",") finally source.close()
 
-      // remove the whitespaces from the input to compare
-      assert(input.map(_.replaceAll(" ", "")).mkString(",") === result)
-
-      // Try to write as same file and expect an error
-      intercept[FileAlreadyExistsException] {
-        jsonHandler.writeJsonFileAtomically(filePath, batch.getRows)
+        // remove the whitespaces from the input to compare
+        assert(input.map(_.replaceAll(" ", "")).mkString(",") === result)
       }
+
+      writeAndVerify(overwrite = false)
+
+      // Try to write as same file with overwrite as false and expect an error
+      intercept[FileAlreadyExistsException] {
+        jsonHandler.writeJsonFileAtomically(filePath, batch.getRows, false /* overwrite */)
+      }
+
+      // Try to write as file with overwrite set to true
+      writeAndVerify(overwrite = true)
     }
   }
 
