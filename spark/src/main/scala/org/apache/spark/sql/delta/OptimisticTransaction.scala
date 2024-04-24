@@ -2320,13 +2320,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /**
    * This method takes care of backfilling any unbackfilled delta files when managed commit is
-   * not enabled on the table (i.e. commit-owner is not present) but their are unbackfilled delta
-   * files in the table. This can happen if an error occurred during the MC -> FS commit where the
-   * commit-owner was able to register the downgrade commit but it failed to backfill it.
-   * This method must be invoked before doing the next commit as otherwise there will be a gap in
-   * the backfilled commit sequence.
+   * not enabled on the table (i.e. commit-owner is not present) but there are still unbackfilled
+   * delta files in the table. This can happen if an error occurred during the MC -> FS commit
+   * where the commit-owner was able to register the downgrade commit but it failed to backfill
+   * it. This method must be invoked before doing the next commit as otherwise there will be a
+   * gap in the backfilled commit sequence.
    */
-  def backfillWhenManagedCommitDisabled(): Unit = {
+  private def backfillWhenManagedCommitDisabled(): Unit = {
     if (snapshot.tableCommitStoreOpt.nonEmpty) {
       // Managed commits is enabled on the table. Don't backfill as backfills are managed by
       // commit-owners.
