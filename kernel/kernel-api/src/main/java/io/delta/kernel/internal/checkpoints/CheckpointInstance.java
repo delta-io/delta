@@ -60,24 +60,26 @@ public class CheckpointInstance
                 "not a valid checkpoint file name");
 
         String[] pathParts = getPathName(path).split("\\.");
-        this.filePath = Optional.of(new Path(path));
 
         if (pathParts.length == 3 && pathParts[2].equals("parquet")) {
             // Classic checkpoint 00000000000000000010.checkpoint.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();
             this.format = CheckpointFormat.CLASSIC;
+            this.filePath = Optional.empty();
         } else if (pathParts.length == 5 && pathParts[4].equals("parquet")) {
             // Multi-part checkpoint 00000000000000000010.checkpoint.0000000001.0000000003.parquet
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.of(Integer.parseInt(pathParts[3]));
             this.format = CheckpointFormat.MULTI_PART;
+            this.filePath = Optional.empty();
         } else if (pathParts.length == 4 && (pathParts[3].equals("parquet") ||
                 pathParts[3].equals("json"))) {
             // V2 checkpoint 00000000000000000010.checkpoint.UUID.(parquet|json)
             this.version = Long.parseLong(pathParts[0]);
             this.numParts = Optional.empty();
             this.format = CheckpointFormat.V2;
+            this.filePath = Optional.of(new Path(path));
         } else {
             throw new RuntimeException("Unrecognized checkpoint path format: " + getPathName(path));
         }
@@ -186,13 +188,10 @@ public class CheckpointInstance
 
     @Override
     public int hashCode() {
-        // For V2 checkpoints, include the filepath in the hash of the instance (as we consider
+        // For V2 checkpoints, the filepath is included in the hash of the instance (as we consider
         // different UUID checkpoints to be different checkpoint instances. Otherwise, ignore
-        // the filepath when hashing.
-        if (format == CheckpointFormat.V2) {
-            return Objects.hash(version, numParts, format, filePath);
-        }
-        return Objects.hash(version, numParts, format, "");
+        // the filepath (which is empty) when hashing.
+        return Objects.hash(version, numParts, format, filePath);
     }
 
     private String getPathName(String path) {

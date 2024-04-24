@@ -160,7 +160,6 @@ public final class FileNames {
     }
 
 
-
     public static boolean isCommitFile(String fileName) {
         return DELTA_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
     }
