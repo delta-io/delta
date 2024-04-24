@@ -64,4 +64,17 @@ public class Preconditions {
                     String.format(String.valueOf(message), args));
         }
     }
+
+    /**
+     * Ensures the truth of an expression involving the state of the calling instance.
+     *
+     * @param expression a boolean expression
+     * @param errorMessage the exception message to use if the check fails
+     * @throws IllegalStateException if {@code expression} is false
+     */
+    public static void checkState(boolean expression, String errorMessage) {
+        if (!expression) {
+            throw new IllegalStateException(errorMessage);
+        }
+    }
 }

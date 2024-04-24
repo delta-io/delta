@@ -20,6 +20,8 @@ package org.apache.spark.sql.delta
 import java.io.FileNotFoundException
 import java.net.URL
 
+import org.apache.spark.sql.delta.DeltaThrowableHelperShims._
+
 import org.apache.spark.ErrorClassesJsonReader
 import org.apache.spark.util.Utils
 
@@ -42,7 +44,7 @@ object DeltaThrowableHelper
   }
 
   lazy val sparkErrorClassSource: URL = {
-    safeGetErrorClassesSource("error/error-classes.json")
+    safeGetErrorClassesSource(SPARK_ERROR_CLASS_SOURCE_FILE)
   }
 
   def deltaErrorClassSource: URL = {

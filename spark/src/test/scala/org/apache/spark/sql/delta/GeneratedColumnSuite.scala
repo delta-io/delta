@@ -718,14 +718,95 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
       }
       assert(tableSchema == spark.table(table).schema)
       // Insert an INT to `c1` should fail rather than changing the `c1` type to INT
-      val e = intercept[AnalysisException] {
-        Seq(32767).toDF("c1").write.format("delta").mode("append")
-          .option("mergeSchema", "true")
-          .saveAsTable(table)
-      }.getMessage
-      assert(e.contains("Column c1") &&
-        e.contains("The data type is SMALLINT. It doesn't accept data type INT"))
+      checkError(
+        exception = intercept[AnalysisException] {
+          Seq(32767).toDF("c1").write.format("delta").mode("append")
+            .option("mergeSchema", "true")
+            .saveAsTable(table)
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "c1",
+          "columnType" -> "SMALLINT",
+          "dataType" -> "INT",
+          "generatedColumns" -> "c2 -> CAST(HASH(c1 + 32767s) AS SMALLINT)"
+      ))
       checkAnswer(spark.table(table), Row(32767, 31349) :: Nil)
+    }
+  }
+
+  test("disallow column type evolution - nesting") {
+    withTableName("disallow_column_type_evolution") { table =>
+      createTable(table, None, "a SMALLINT, c1 STRUCT<a: SMALLINT>, c2 SMALLINT",
+        Map("c2" -> "CAST(HASH(a - 10s) AS SMALLINT)"), Nil)
+      val tableSchema = spark.table(table).schema
+      Seq(32767.toShort).toDF("a")
+        .selectExpr("a", "named_struct('a', a) as c1")
+        .write.format("delta").mode("append").saveAsTable(table)
+      assert(tableSchema == spark.table(table).schema)
+
+      // INSERT an INT to `c1.a` should not fail
+      Seq((32767.toShort, 32767)).toDF("a", "c1a")
+        .selectExpr("a", "named_struct('a', c1a) as c1")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+
+      // Insert an INT to `a` should fail rather than changing the `a` type to INT
+      checkError(
+        exception = intercept[AnalysisException] {
+          Seq((32767, 32767)).toDF("a", "c1a")
+            .selectExpr("a", "named_struct('a', c1a) as c1")
+            .write.format("delta").mode("append")
+            .option("mergeSchema", "true")
+            .saveAsTable(table)
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "a",
+          "columnType" -> "SMALLINT",
+          "dataType" -> "INT",
+          "generatedColumns" -> "c2 -> CAST(HASH(a - 10s) AS SMALLINT)"
+        )
+      )
+    }
+  }
+
+  test("changing the type of a nested field named the same as the generated column") {
+    withTableName("disallow_column_type_evolution") { table =>
+      createTable(table, None, "a INT, t STRUCT<gen: SMALLINT>, gen SMALLINT",
+        Map("gen" -> "CAST(HASH(a - 10s) AS SMALLINT)"), Nil)
+      // Changing the type of `t.gen` should succeed since it's not actually the generated column.
+      Seq((32767, 32767)).toDF("a", "gen")
+        .selectExpr("a", "named_struct('gen', gen) as t")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+      checkAnswer(spark.table(table), Row(32767, Row(32767), -22677) :: Nil)
+    }
+  }
+
+  test("changing the type of nested field not referenced by a generated col") {
+    withTableName("disallow_column_type_evolution") { table =>
+      createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen SMALLINT",
+        Map("gen" -> "CAST(HASH(t.a - 10s) AS SMALLINT)"), Nil)
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          Seq((32767.toShort, 32767)).toDF("a", "b")
+            .selectExpr("named_struct('a', a, 'b', b) as t")
+            .write.format("delta").mode("append")
+            .option("mergeSchema", "true")
+            .saveAsTable(table)
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "t",
+          "columnType" -> "STRUCT<a: SMALLINT, b: SMALLINT>",
+          "dataType" -> "STRUCT<a: SMALLINT, b: INT>",
+          "generatedColumns" -> "gen -> CAST(HASH(t.a - 10s) AS SMALLINT)"
+        )
+      )
     }
   }
 

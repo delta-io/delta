@@ -347,6 +347,11 @@ class RowIdSuite extends QueryTest
         val log = DeltaLog.forTable(spark, dir)
         assertRowIdsAreValid(log)
         assert(extractMaterializedRowIdColumnName(log).isDefined)
+
+        val df = spark.read.format("delta").load(dir.toString)
+        checkAnswer(
+          df.select("id", "_metadata.row_id"),
+          (0 until 10).map(i => Row(i, i)))
       }
     }
   }

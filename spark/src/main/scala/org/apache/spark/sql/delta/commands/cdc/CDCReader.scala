@@ -872,9 +872,7 @@ trait CDCReaderImpl extends DeltaLogging {
       useCoarseGrainedCDC: Boolean = false,
       startVersionSnapshot: Option[SnapshotDescriptor] = None): DataFrame = {
 
-    val changesWithinRange = deltaLog.getChanges(start).takeWhile { case (version, _) =>
-      version <= end
-    }
+    val changesWithinRange = deltaLog.getChanges(start, end, failOnDataLoss = false)
     changesToDF(
       readSchemaSnapshot.getOrElse(deltaLog.unsafeVolatileSnapshot),
       start,

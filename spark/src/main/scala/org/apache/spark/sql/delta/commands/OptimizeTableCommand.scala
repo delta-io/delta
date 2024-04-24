@@ -416,7 +416,8 @@ class OptimizeExecutor(
       maxFileSize: Long): Seq[FileAction] = {
     val baseTablePath = txn.deltaLog.dataPath
 
-    val input = txn.deltaLog.createDataFrame(txn.snapshot, bin, actionTypeOpt = Some("Optimize"))
+    var input = txn.deltaLog.createDataFrame(txn.snapshot, bin, actionTypeOpt = Some("Optimize"))
+    input = RowTracking.preserveRowTrackingColumns(input, txn.snapshot)
     val repartitionDF = if (isMultiDimClustering) {
       val totalSize = bin.map(_.size).sum
       val approxNumFiles = Math.max(1, totalSize / maxFileSize).toInt
@@ -471,7 +472,8 @@ class OptimizeExecutor(
       metrics: Map[String, SQLMetric])(f: OptimisticTransaction => Boolean): Unit = {
     try {
       txn.registerSQLMetrics(sparkSession, metrics)
-      txn.commit(actions, optimizeOperation)
+      txn.commit(actions, optimizeOperation,
+        RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
     } catch {
       case e: ConcurrentModificationException =>
         val newTxn = txn.deltaLog.startTransaction(txn.catalogTable)
