@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.sources.{
   DeltaSourceOffset
 }
 import io.delta.sharing.client.DeltaSharingClient
+import io.delta.sharing.client.util.ConfUtils
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 
 import org.apache.spark.delta.sharing.CachedTableManager
@@ -155,7 +156,17 @@ case class DeltaFormatSharingSource(
   private var lastTimestampForGetVersionFromServer: Long = -1
 
   // The minimum gap between two getTableVersion rpcs, to avoid a high traffic load to the server.
-  private val QUERY_TABLE_VERSION_INTERVAL_MILLIS = TimeUnit.SECONDS.toMillis(30)
+  private val QUERY_TABLE_VERSION_INTERVAL_MILLIS = {
+    val intervalSeconds = ConfUtils.MINIMUM_TABLE_VERSION_INTERVAL_SECONDS.max(
+      ConfUtils.streamingQueryTableVersionIntervalSeconds(spark.sessionState.conf)
+    )
+    logInfo(s"Configured queryTableVersionIntervalSeconds:${intervalSeconds}.")
+    if (intervalSeconds < ConfUtils.MINIMUM_TABLE_VERSION_INTERVAL_SECONDS) {
+      throw new IllegalArgumentException(s"QUERY_TABLE_VERSION_INTERVAL_MILLIS($intervalSeconds) " +
+        s"must not be less than ${ConfUtils.MINIMUM_TABLE_VERSION_INTERVAL_SECONDS} seconds.")
+    }
+    TimeUnit.SECONDS.toMillis(intervalSeconds)
+  }
 
   // Maximum number of versions of getFiles() rpc when fetching files from the server. Used to
   // reduce the number of files returned to avoid timeout of the rpc on the server.
