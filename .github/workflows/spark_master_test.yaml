@@ -45,5 +45,5 @@ jobs:
         if: steps.git-diff.outputs.diff
       - name: Run Spark Master tests
         run: |
-          build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
+          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
         if: steps.git-diff.outputs.diff
