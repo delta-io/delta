@@ -79,6 +79,10 @@ public abstract class AbstractColumnVector
         return nullability.get()[rowId];
     }
 
+    public Optional<boolean[]> getNullability() {
+        return nullability;
+    }
+
     @Override
     public boolean getBoolean(int rowId) {
         throw unsupportedDataAccessException("boolean");

@@ -88,4 +88,12 @@ public class DefaultArrayVector
             }
         };
     }
+
+    public ColumnVector getElementVector() {
+        return elementVector;
+    }
+
+    public int[] getOffsets() {
+        return offsets;
+    }
 }

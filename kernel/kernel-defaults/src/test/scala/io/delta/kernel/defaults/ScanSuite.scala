@@ -21,18 +21,21 @@ import java.time.{Instant, OffsetDateTime}
 import java.time.temporal.ChronoUnit
 import java.util.Optional
 
+import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.{Row => SparkRow}
+import org.apache.spark.sql.{DataFrame, Row => SparkRow}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.engine.{JsonHandler, ParquetHandler, Engine}
+import io.delta.kernel.Scan
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.utils.TestRow
+import io.delta.kernel.engine.{JsonHandler, ParquetHandler, TableClient}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types.StructType
@@ -40,9 +43,12 @@ import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Scan, Snapshot, Table}
-import io.delta.kernel.internal.util.InternalUtils
-import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
 import io.delta.kernel.defaults.engine.{DefaultJsonHandler, DefaultParquetHandler, DefaultEngine}
+import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
+import io.delta.kernel.internal.data.ScanStateRow
+import io.delta.kernel.internal.util.InternalUtils
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
@@ -1587,6 +1593,99 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           ).build()
       )
     }
+  }
+
+  private def testReadWithVariant(testName: String)(df: => DataFrame): Unit = {
+    test(testName) {
+      withTable("test_table") {
+        df.write
+          .format("delta")
+          .mode("overwrite")
+          .saveAsTable("test_table")
+        val path = spark.sql("describe table extended `test_table`")
+          .where("col_name = 'Location'")
+          .collect()(0)
+          .getString(1)
+          .replace("file:", "")
+
+        val kernelSchema = tableSchema(path)
+
+        val snapshot = latestSnapshot(path)
+        val scan = snapshot.getScanBuilder(defaultTableClient).build()
+        val scanState = scan.getScanState(defaultTableClient)
+        val physicalReadSchema =
+          ScanStateRow.getPhysicalDataReadSchema(defaultTableClient, scanState)
+        val scanFilesIter = scan.getScanFiles(defaultTableClient)
+
+        val readRows = ArrayBuffer[Row]()
+        while (scanFilesIter.hasNext()) {
+          val scanFilesBatch = scanFilesIter.next()
+          val scanFileRows = scanFilesBatch.getRows()
+          while (scanFileRows.hasNext()) {
+            val scanFileRow = scanFileRows.next()
+            val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
+
+            val physicalDataIter = defaultTableClient.getParquetHandler.readParquetFiles(
+              singletonCloseableIterator(fileStatus),
+              physicalReadSchema,
+              Optional.empty())
+
+            val transformedRowsIter = Scan.transformPhysicalData(
+              defaultTableClient,
+              scanState,
+              scanFileRow,
+              physicalDataIter
+            )
+
+            val transformedRows = transformedRowsIter.asScala.toSeq.map(_.getRows).flatMap(_.toSeq)
+            readRows.appendAll(transformedRows)
+          }
+        }
+
+        checkAnswer(readRows.toSeq, df.collect().map(TestRow(_)))
+      }
+    }
+  }
+
+  testReadWithVariant("basic variant") {
+    spark.range(0, 1, 1, 1).selectExpr(
+      "parse_json(cast(id as string)) as basic_v",
+      "named_struct('v', parse_json(cast(id as string))) as struct_v",
+      "named_struct('v', array(parse_json(cast(id as string)))) as struct_array_v",
+      "named_struct('v', map('key', parse_json(cast(id as string)))) as struct_map_v",
+      "named_struct('top', named_struct('v', parse_json(cast(id as string)))) as struct_struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string))
+      ) as array_v""",
+      """array(
+        named_struct('v', parse_json(cast(id as string))),
+        named_struct('v', parse_json(cast(id as string))),
+        named_struct('v', parse_json(cast(id as string)))
+      ) as array_struct_v""",
+      """array(
+        map('v', parse_json(cast(id as string))),
+        map('k1', parse_json(cast(id as string)), 'k2',  parse_json(cast(id as string))),
+        map('v', parse_json(cast(id as string)))
+      ) as array_map_v""",
+      "map('test', parse_json(cast(id as string))) as map_value_v",
+      "map('test', named_struct('v', parse_json(cast(id as string)))) as map_struct_v",
+      "map(parse_json(cast(id as string)), parse_json(cast(id as string))) as map_key_v"
+    )
+  }
+
+  testReadWithVariant("basic null variant") {
+    spark.range(0, 10, 1, 1).selectExpr(
+      "cast(null as variant) basic_v",
+      "named_struct('v', cast(null as variant)) as struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        null
+      ) as array_v""",
+      "map('test', cast(null as variant)) as map_value_v"
+    )
   }
 }
 

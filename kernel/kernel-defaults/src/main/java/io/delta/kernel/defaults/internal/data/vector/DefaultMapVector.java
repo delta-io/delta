@@ -98,4 +98,16 @@ public class DefaultMapVector
             }
         };
     }
+
+    public ColumnVector getKeyVector() {
+        return keyVector;
+    }
+
+    public ColumnVector getValueVector() {
+        return valueVector;
+    }
+
+    public int[] getOffsets() {
+        return offsets;
+    }
 }

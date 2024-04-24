@@ -144,7 +144,9 @@ object TestRow {
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
         }
         case _: sparktypes.StructType => TestRow(obj.asInstanceOf[SparkRow])
-        case _: sparktypes.VariantType => obj.asInstanceOf[VariantVal]
+        case _: sparktypes.VariantType =>
+          val sparkVariant = obj.asInstanceOf[VariantVal]
+          new DefaultVariantValue(sparkVariant.getValue(), sparkVariant.getMetadata())
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     }
@@ -212,9 +214,7 @@ object TestRow {
         TestRow.fromSeq(Seq.range(0, dataType.length()).map { ordinal =>
           getAsTestObject(vector.getChild(ordinal), rowId)
         })
-      case _: VariantType =>
-        val kernelVariant = vector.getVariant(rowId)
-        new VariantVal(kernelVariant.getValue(), kernelVariant.getMetadata())
+      case _: VariantType => vector.getVariant(rowId)
       case _ => throw new UnsupportedOperationException("unrecognized data type")
     }
   }

@@ -158,58 +158,6 @@ class ParquetFileReaderSuite extends AnyFunSuite
     checkAnswer(actResult2, expResult2)
   }
 
-  /**
-   * Writes a table using Spark, reads it back using the Delta Kernel implementation, and asserts
-   * that the results are the same.
-   */
-  private def testRead(testName: String)(df: => DataFrame): Unit = {
-    test(testName) {
-      withTable("test_table") {
-        df.write
-          .format("delta")
-          .mode("overwrite")
-          .saveAsTable("test_table")
-        val path = spark.sql("describe table extended `test_table`")
-          .where("col_name = 'Location'")
-          .collect()(0)
-          .getString(1)
-          .replace("file:", "")
-
-        val kernelSchema = tableSchema(path)
-        val actResult = readParquetFilesUsingKernel(path, kernelSchema)
-        val expResult = readParquetFilesUsingSpark(path, kernelSchema)
-        checkAnswer(actResult, expResult)
-      }
-    }
-  }
-
-  testRead("basic read variant") {
-    spark.range(0, 10, 1, 1).selectExpr(
-      "parse_json(cast(id as string)) as basic_v",
-      "named_struct('v', parse_json(cast(id as string))) as struct_v",
-      """array(
-        parse_json(cast(id as string)),
-        parse_json(cast(id as string)),
-        parse_json(cast(id as string))
-      ) as array_v""",
-      "map('test', parse_json(cast(id as string))) as map_value_v",
-      "map(parse_json(cast(id as string)), parse_json(cast(id as string))) as map_key_v"
-    )
-  }
-
-  testRead("basic null variant") {
-    spark.range(0, 10, 1, 1).selectExpr(
-      "cast(null as variant) basic_v",
-      "named_struct('v', cast(null as variant)) as struct_v",
-      """array(
-        parse_json(cast(id as string)),
-        parse_json(cast(id as string)),
-        null
-      ) as array_v""",
-      "map('test', cast(null as variant)) as map_value_v"
-    )
-  }
-
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Test compatibility with Parquet legacy format files                                         //
   /////////////////////////////////////////////////////////////////////////////////////////////////
