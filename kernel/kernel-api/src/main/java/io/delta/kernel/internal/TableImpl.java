@@ -65,4 +65,10 @@ public class TableImpl implements Table {
         throws TableNotFoundException {
         return snapshotManager.getSnapshotForTimestamp(tableClient, millisSinceEpochUTC);
     }
+
+    @Override
+    public void checkpoint(TableClient tableClient, long version)
+            throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
+        snapshotManager.checkpoint(tableClient, version);
+    }
 }
