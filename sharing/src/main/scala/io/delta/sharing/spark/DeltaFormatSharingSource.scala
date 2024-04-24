@@ -34,8 +34,8 @@ import org.apache.spark.sql.delta.sources.{
   DeltaSourceOffset
 }
 import io.delta.sharing.client.DeltaSharingClient
-import io.delta.sharing.client.util.ConfUtils
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
+import io.delta.sharing.client.util.ConfUtils
 
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.sql.{DataFrame, SparkSession}
