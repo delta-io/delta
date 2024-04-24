@@ -27,10 +27,10 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
-class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
+class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest {
 
-  trait TestCommitStoreBase extends CommitStore {
+  trait TestCommitOwnerClientBase extends CommitOwnerClient {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
@@ -56,43 +56,43 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
         startVersion: Long,
         endVersion: Option[Long]): Unit = {}
 
-    override def semanticEquals(other: CommitStore): Boolean = this == other
+    override def semanticEquals(other: CommitOwnerClient): Boolean = this == other
   }
 
-  class TestCommitStore1 extends TestCommitStoreBase
-  class TestCommitStore2 extends TestCommitStoreBase
+  class TestCommitOwnerClient1 extends TestCommitOwnerClientBase
+  class TestCommitOwnerClient2 extends TestCommitOwnerClientBase
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    CommitStoreProvider.clearNonDefaultBuilders()
-    CommitStoreProvider.registerBuilder(InMemoryCommitStoreBuilder(batchSize = 1))
+    CommitOwnerProvider.clearNonDefaultBuilders()
+    CommitOwnerProvider.registerBuilder(InMemoryCommitOwnerBuilder(batchSize = 1))
   }
 
-  test("registering multiple commit store builders with same name") {
-    object Builder1 extends CommitStoreBuilder {
-      override def build(conf: Map[String, String]): CommitStore = null
+  test("registering multiple commit-owner builders with same name") {
+    object Builder1 extends CommitOwnerBuilder {
+      override def build(conf: Map[String, String]): CommitOwnerClient = null
       override def name: String = "builder-1"
     }
-    object BuilderWithSameName extends CommitStoreBuilder {
-      override def build(conf: Map[String, String]): CommitStore = null
+    object BuilderWithSameName extends CommitOwnerBuilder {
+      override def build(conf: Map[String, String]): CommitOwnerClient = null
       override def name: String = "builder-1"
     }
-    object Builder3 extends CommitStoreBuilder {
-      override def build(conf: Map[String, String]): CommitStore = null
+    object Builder3 extends CommitOwnerBuilder {
+      override def build(conf: Map[String, String]): CommitOwnerClient = null
       override def name: String = "builder-3"
     }
-    CommitStoreProvider.registerBuilder(Builder1)
+    CommitOwnerProvider.registerBuilder(Builder1)
     intercept[Exception] {
-      CommitStoreProvider.registerBuilder(BuilderWithSameName)
+      CommitOwnerProvider.registerBuilder(BuilderWithSameName)
     }
-    CommitStoreProvider.registerBuilder(Builder3)
+    CommitOwnerProvider.registerBuilder(Builder3)
   }
 
-  test("getCommitStore - builder returns same object") {
-    object Builder1 extends CommitStoreBuilder {
-      val cs1 = new TestCommitStore1()
-      val cs2 = new TestCommitStore2()
-      override def build(conf: Map[String, String]): CommitStore = {
+  test("getCommitOwner - builder returns same object") {
+    object Builder1 extends CommitOwnerBuilder {
+      val cs1 = new TestCommitOwnerClient1()
+      val cs2 = new TestCommitOwnerClient2()
+      override def build(conf: Map[String, String]): CommitOwnerClient = {
         conf.getOrElse("url", "") match {
           case "url1" => cs1
           case "url2" => cs2
@@ -101,33 +101,33 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
       }
       override def name: String = "cs-x"
     }
-    CommitStoreProvider.registerBuilder(Builder1)
-    val cs1 = CommitStoreProvider.getCommitStore("cs-x", Map("url" -> "url1"))
-    assert(cs1.isInstanceOf[TestCommitStore1])
-    val cs1_again = CommitStoreProvider.getCommitStore("cs-x", Map("url" -> "url1"))
+    CommitOwnerProvider.registerBuilder(Builder1)
+    val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url1"))
+    assert(cs1.isInstanceOf[TestCommitOwnerClient1])
+    val cs1_again = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url1"))
     assert(cs1 eq cs1_again)
-    val cs2 = CommitStoreProvider.getCommitStore("cs-x", Map("url" -> "url2", "a" -> "b"))
-    assert(cs2.isInstanceOf[TestCommitStore2])
+    val cs2 = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url2", "a" -> "b"))
+    assert(cs2.isInstanceOf[TestCommitOwnerClient2])
     // If builder receives a config which doesn't have expected params, then it can throw exception.
     intercept[IllegalArgumentException] {
-      CommitStoreProvider.getCommitStore("cs-x", Map("url" -> "url3"))
+      CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url3"))
     }
   }
 
-  test("getCommitStore - builder returns new object each time") {
-    object Builder1 extends CommitStoreBuilder {
-      override def build(conf: Map[String, String]): CommitStore = {
+  test("getCommitOwnerClient - builder returns new object each time") {
+    object Builder1 extends CommitOwnerBuilder {
+      override def build(conf: Map[String, String]): CommitOwnerClient = {
         conf.getOrElse("url", "") match {
-          case "url1" => new TestCommitStore1()
+          case "url1" => new TestCommitOwnerClient1()
           case _ => throw new IllegalArgumentException("Invalid url")
         }
       }
       override def name: String = "cs-name"
     }
-    CommitStoreProvider.registerBuilder(Builder1)
-    val cs1 = CommitStoreProvider.getCommitStore("cs-name", Map("url" -> "url1"))
-    assert(cs1.isInstanceOf[TestCommitStore1])
-    val cs1_again = CommitStoreProvider.getCommitStore("cs-name", Map("url" -> "url1"))
+    CommitOwnerProvider.registerBuilder(Builder1)
+    val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("url" -> "url1"))
+    assert(cs1.isInstanceOf[TestCommitOwnerClient1])
+    val cs1_again = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("url" -> "url1"))
     assert(cs1 ne cs1_again)
   }
 
@@ -193,27 +193,28 @@ class CommitStoreSuite extends QueryTest with DeltaSQLTestUtils with SharedSpark
     }
   }
 
-  test("Semantic Equality works as expected on CommitStores") {
-    class TestCommitStore(val key: String) extends TestCommitStoreBase {
-      override def semanticEquals(other: CommitStore): Boolean =
-        other.isInstanceOf[TestCommitStore] && other.asInstanceOf[TestCommitStore].key == key
+  test("Semantic Equality works as expected on CommitOwnerClients") {
+    class TestCommitOwnerClient(val key: String) extends TestCommitOwnerClientBase {
+      override def semanticEquals(other: CommitOwnerClient): Boolean =
+        other.isInstanceOf[TestCommitOwnerClient] &&
+          other.asInstanceOf[TestCommitOwnerClient].key == key
     }
-    object Builder1 extends CommitStoreBuilder {
-      override def build(conf: Map[String, String]): CommitStore = {
-        new TestCommitStore(conf("key"))
+    object Builder1 extends CommitOwnerBuilder {
+      override def build(conf: Map[String, String]): CommitOwnerClient = {
+        new TestCommitOwnerClient(conf("key"))
       }
       override def name: String = "cs-name"
     }
-    CommitStoreProvider.registerBuilder(Builder1)
+    CommitOwnerProvider.registerBuilder(Builder1)
 
-    // Different CommitStores with same keys should be semantically equal.
-    val obj1 = CommitStoreProvider.getCommitStore("cs-name", Map("key" -> "url1"))
-    val obj2 = CommitStoreProvider.getCommitStore("cs-name", Map("key" -> "url1"))
+    // Different CommitOwner with same keys should be semantically equal.
+    val obj1 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url1"))
+    val obj2 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url1"))
     assert(obj1 != obj2)
     assert(obj1.semanticEquals(obj2))
 
-    // Different CommitStores with different keys should be semantically unequal.
-    val obj3 = CommitStoreProvider.getCommitStore("cs-name", Map("key" -> "url2"))
+    // Different CommitOwner with different keys should be semantically unequal.
+    val obj3 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url2"))
     assert(obj1 != obj3)
     assert(!obj1.semanticEquals(obj3))
   }

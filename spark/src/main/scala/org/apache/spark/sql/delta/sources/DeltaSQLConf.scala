@@ -538,10 +538,10 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
-  val DELTA_LIST_FROM_COMMIT_STORE_THREAD_POOL_SIZE =
-    buildStaticConf("commitStore.getCommits.threadPoolSize")
+  val MANAGED_COMMIT_GET_COMMITS_THREAD_POOL_SIZE =
+    buildStaticConf("managedCommits.getCommits.threadPoolSize")
       .internal()
-      .doc("The size of the thread pool for listing files from the CommitStore.")
+      .doc("The size of the thread pool for listing files from the commit-owner.")
       .intConf
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)

@@ -25,7 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.SnapshotManagementSuiteShims._
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitStore, CommitStoreBuilder, CommitStoreProvider, GetCommitsResponse, InMemoryCommitStore}
+import org.apache.spark.sql.delta.managedcommit.{Commit, CommitOwnerClient, CommitOwnerBuilder, CommitOwnerProvider, GetCommitsResponse, InMemoryCommitOwner}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.storage.LogStore
@@ -492,7 +492,7 @@ class CountDownLatchLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
     extends LocalLogStore(sparkConf, hadoopConf) {
   override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
     val files = super.listFrom(path, hadoopConf).toSeq
-    if (ConcurrentBackfillCommitStore.beginConcurrentBackfills) {
+    if (ConcurrentBackfillCommitOwnerClient.beginConcurrentBackfills) {
       CountDownLatchLogStore.listFromCalled.countDown()
     }
     files.iterator
@@ -502,17 +502,17 @@ object CountDownLatchLogStore {
   val listFromCalled = new CountDownLatch(1)
 }
 
-case class ConcurrentBackfillCommitStore(
+case class ConcurrentBackfillCommitOwnerClient(
     synchronousBackfillThreshold: Long,
     override val batchSize: Long
-) extends InMemoryCommitStore(batchSize) {
+) extends InMemoryCommitOwner(batchSize) {
   private val deferredBackfills: mutable.Map[Long, () => Unit] = mutable.Map.empty
   override def getCommits(
       logPath: Path,
       managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long]): GetCommitsResponse = {
-    if (ConcurrentBackfillCommitStore.beginConcurrentBackfills) {
+    if (ConcurrentBackfillCommitOwnerClient.beginConcurrentBackfills) {
       CountDownLatchLogStore.listFromCalled.await()
       logInfo(s"Finishing pending backfills concurrently: ${deferredBackfills.keySet}")
       deferredBackfills.keys.toSeq.sorted.foreach((version: Long) => deferredBackfills(version)())
@@ -526,7 +526,8 @@ case class ConcurrentBackfillCommitStore(
       logPath: Path,
       version: Long,
       fileStatus: FileStatus): Unit = {
-    if (version > synchronousBackfillThreshold && ConcurrentBackfillCommitStore.deferBackfills) {
+    if (version > synchronousBackfillThreshold &&
+        ConcurrentBackfillCommitOwnerClient.deferBackfills) {
       deferredBackfills(version) = () =>
         super.backfill(logStore, hadoopConf, logPath, version, fileStatus)
     } else {
@@ -534,33 +535,35 @@ case class ConcurrentBackfillCommitStore(
     }
   }
 }
-object ConcurrentBackfillCommitStore {
+object ConcurrentBackfillCommitOwnerClient {
   var deferBackfills = false
   var beginConcurrentBackfills = false
 }
 
-object ConcurrentBackfillCommitStoreBuilder extends CommitStoreBuilder {
+object ConcurrentBackfillCommitOwnerBuilder extends CommitOwnerBuilder {
   val batchSize = 5
-  private lazy val concurrentBackfillCommitStore =
-    ConcurrentBackfillCommitStore(synchronousBackfillThreshold = 2, batchSize)
-  override def name: String = "awaiting-commit-store"
-  override def build(conf: Map[String, String]): CommitStore = concurrentBackfillCommitStore
+  private lazy val concurrentBackfillCommitOwnerClient =
+    ConcurrentBackfillCommitOwnerClient(synchronousBackfillThreshold = 2, batchSize)
+  override def name: String = "awaiting-commit-owner"
+  override def build(conf: Map[String, String]): CommitOwnerClient = {
+    concurrentBackfillCommitOwnerClient
+  }
 }
 
 /**
  * Setup (Assuming batch size = 5 & synchronousBackfillThreshold = 2):
  * - LogStore contains backfilled commits [0, 2]
- * - CommitStore contains unbackfilled commits [3, ...]
+ * - CommitOwnerClient contains unbackfilled commits [3, ...]
  * - Backfills are pending for versions [3, 5]
  *
- * Goal: Create a gap for versions [3, 5] in the LogStore and CommitStore listings.
+ * Goal: Create a gap for versions [3, 5] in the LogStore and CommitOwnerClient listings.
  *
  * Step 1: LogStore retrieves delta files for versions [0, 2] from the file system.
  * Step 2: Wait on the latch to ensure step (1) is completed before step (3) begins.
- * Step 3: Backfill commits [3, 5] from CommitStore to LogStore using deferredBackfills map.
- * Step 4: CommitStore returns commits [6, ...] (if valid).
+ * Step 3: Backfill commits [3, 5] from CommitOwnerClient to LogStore using deferredBackfills map.
+ * Step 4: CommitOwnerClient returns commits [6, ...] (if valid).
  *
- * Test that the code correctly handles the gap in the LogStore and CommitStore listings by
+ * Test that the code correctly handles the gap in the LogStore and CommitOwnerClient listings by
  * making an additional call to LogStore to fetch versions [3, 5].
  */
 class SnapshotManagementParallelListingSuite extends QueryTest
@@ -572,10 +575,10 @@ class SnapshotManagementParallelListingSuite extends QueryTest
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()
-    CommitStoreProvider.clearNonDefaultBuilders()
-    CommitStoreProvider.registerBuilder(ConcurrentBackfillCommitStoreBuilder)
-    ConcurrentBackfillCommitStore.beginConcurrentBackfills = false
-    ConcurrentBackfillCommitStore.deferBackfills = false
+    CommitOwnerProvider.clearNonDefaultBuilders()
+    CommitOwnerProvider.registerBuilder(ConcurrentBackfillCommitOwnerBuilder)
+    ConcurrentBackfillCommitOwnerClient.beginConcurrentBackfills = false
+    ConcurrentBackfillCommitOwnerClient.deferBackfills = false
   }
 
   private def writeDeltaData(path: String, endVersion: Long): Unit = {
@@ -621,12 +624,12 @@ class SnapshotManagementParallelListingSuite extends QueryTest
       test(
         s"Backfills are properly reconciled with concurrentBackfills: $concurrentBackfills, " +
           s"tryIncludeGapAtTheEnd: $tryIncludeGapAtTheEnd") {
-        ConcurrentBackfillCommitStore.deferBackfills = concurrentBackfills
-        val batchSize = ConcurrentBackfillCommitStoreBuilder.batchSize
+        ConcurrentBackfillCommitOwnerClient.deferBackfills = concurrentBackfills
+        val batchSize = ConcurrentBackfillCommitOwnerBuilder.batchSize
         val endVersion = if (tryIncludeGapAtTheEnd) { batchSize } else { batchSize + 3 }
         withSQLConf(
             MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey ->
-              ConcurrentBackfillCommitStoreBuilder.name,
+              ConcurrentBackfillCommitOwnerBuilder.name,
             DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
           withTempDir { tempDir =>
             val path = tempDir.getCanonicalPath
@@ -636,7 +639,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
 
             // Invalidate cache to ensure re-listing.
             DeltaLog.invalidateCache(spark, dataPath)
-            ConcurrentBackfillCommitStore.beginConcurrentBackfills = true
+            ConcurrentBackfillCommitOwnerClient.beginConcurrentBackfills = true
 
             val (snapshot, records) = captureUsageRecordsAndGetSnapshot(dataPath)
             val expectedNeedAdditionalFsListingCount = if (concurrentBackfills) { 1 } else { 0 }
