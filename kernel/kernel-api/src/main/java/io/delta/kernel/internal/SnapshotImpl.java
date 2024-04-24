@@ -36,6 +36,7 @@ public class SnapshotImpl implements Snapshot {
     private final Path dataPath;
     private final long version;
     private final LogReplay logReplay;
+    private final LogSegment logSegment;
     private final Protocol protocol;
     private final Metadata metadata;
 
@@ -56,6 +57,7 @@ public class SnapshotImpl implements Snapshot {
             tableClient,
             logSegment,
             snapshotHint);
+        this.logSegment = logSegment;
         this.protocol = logReplay.getProtocol();
         this.metadata = logReplay.getMetadata();
     }
@@ -102,5 +104,9 @@ public class SnapshotImpl implements Snapshot {
      */
     public Optional<Long> getLatestTransactionVersion(String applicationId) {
         return logReplay.getLatestTransactionIdentifier(applicationId);
+    }
+
+    public LogSegment getLogSegment() {
+        return logSegment;
     }
 }

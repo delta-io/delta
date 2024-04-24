@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.spark.sql.types.{BooleanType, LongType, MapType, StringType, StructType}
+import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, StringType, StructType}
 
 class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
@@ -58,6 +58,11 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
       snapshotFromSpark.protocol.writerFeatureNames)
     assert(snapshot.getVersion(defaultTableClient) == snapshotFromSpark.version)
 
+    // Validate that snapshot read from most recent checkpoint.
+    assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
+      f => FileNames.checkpointVersion(new Path(f.getPath)))
+      .contains(snapshotFromSpark.version - (snapshotFromSpark.version % 2)))
+
     // Validate AddFiles from sidecars found against Spark connector.
     val scan = snapshot.getScanBuilder(defaultTableClient).build()
     val foundFiles =
@@ -72,7 +77,6 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   }
 
   test("v2 checkpoint support") {
-    import spark.implicits._
     supportedFileFormats.foreach { format =>
       withTempDir { path =>
         val tbl = "tbl"
@@ -88,7 +92,10 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
             spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
 
             // Insert more data to ensure multiple ColumnarBatches created.
-            (10 to 110).map(i => (i, i.toString)).toDF("a", "b").repartition(10)
+            spark.createDataFrame(
+              spark.sparkContext.parallelize(10 to 110).map(i => Row(i, i.toString)),
+              new StructType().add("a", IntegerType).add("b", StringType))
+              .repartition(10)
               .write.format("delta").mode("append").saveAsTable(tbl)
           }
 
