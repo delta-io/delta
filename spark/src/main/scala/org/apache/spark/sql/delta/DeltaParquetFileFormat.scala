@@ -296,7 +296,7 @@ case class DeltaParquetFileFormat(
       .updated(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, extractDefaultRowCommitVersion)
   }
 
-  def disableSplittingAndPushdown(
+  def copyWithDVInfo(
       tablePath: String,
       predicatePushdownEnabled: Boolean): DeltaParquetFileFormat = {
     // When predicate pushdown is enabled we allow both splits and predicate pushdown.

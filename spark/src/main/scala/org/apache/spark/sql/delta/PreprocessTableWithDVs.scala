@@ -114,16 +114,13 @@ object ScanWithDeletionVectors {
   private def addRowIndexIfMissing(attribute: AttributeReference): AttributeReference = {
     require(attribute.name == METADATA_NAME)
 
-    val fieldNames = attribute.dataType.asInstanceOf[StructType].fieldNames
-    if (fieldNames.contains(ParquetFileFormat.ROW_INDEX)) return attribute
+    val dataType = attribute.dataType.asInstanceOf[StructType]
+    if (dataType.fieldNames.contains(ParquetFileFormat.ROW_INDEX)) return attribute
 
-    val newDatatype = StructType.merge(
-      left = attribute.dataType,
-      right = StructType(Seq(ParquetFileFormat.ROW_INDEX_FIELD)))
+    val newDatatype = dataType.add(ParquetFileFormat.ROW_INDEX_FIELD)
     attribute.copy(
       dataType = newDatatype)(exprId = attribute.exprId, qualifier = attribute.qualifier)
   }
-
 
   /**
    * Helper method that creates a new `LogicalRelation` for existing scan that outputs
@@ -168,7 +165,7 @@ object ScanWithDeletionVectors {
     // operator after the data is read from the underlying file reader.
     val newDataSchema = hadoopFsRelation.dataSchema.add(skipRowField)
 
-    val newFileFormat = fileFormat.disableSplittingAndPushdown(
+    val newFileFormat = fileFormat.copyWithDVInfo(
       tablePath = tahoeFileIndex.path.toString,
       predicatePushdownEnabled = predicatePushdownEnabled)
 

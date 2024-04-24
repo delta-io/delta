@@ -1539,7 +1539,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("Controls whether we generate pushdown predicates in scans with DVs.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val WRITE_DATA_FILES_TO_SUBDIR = buildConf("write.dataFilesToSubdir")
     .internal()
