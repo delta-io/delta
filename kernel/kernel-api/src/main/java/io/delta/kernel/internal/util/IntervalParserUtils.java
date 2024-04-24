@@ -35,20 +35,22 @@ public class IntervalParserUtils {
 
     /**
      * Parse the given interval string into milliseconds. For configs accepting an interval, we
-     * require the user specified string must obey: - Doesn't use months or years, since an internal
-     * like this is not deterministic. - The microseconds parsed from the string value must be a
-     * non-negative value. - Doesn't use nanoseconds part as it too granular to use
+     * require the user specified string must obey:
+     * <ul>
+     *     <li>Doesn't use months or years, since an internal like this is not deterministic.</li>
+     *     <li>Doesn't use microseconds or nanoseconds part as it too granular to use.</li>
+     * </ul>
      *
-     * @return parsed interval as microseconds.
+     * @return parsed interval as milliseconds.
      */
-    public static long safeParseIntervalAsMicros(String input) {
+    public static long safeParseIntervalAsMillis(String input) {
         checkArgument(input != null, "interval string cannot be null");
         String inputInLowerCase = input.trim().toLowerCase(Locale.ROOT);
         checkArgument(!inputInLowerCase.isEmpty(), "interval string cannot be empty");
         if (!inputInLowerCase.startsWith("interval ")) {
             inputInLowerCase = "interval " + inputInLowerCase;
         }
-        return parseIntervalAsMicros(inputInLowerCase);
+        return parseIntervalAsMicros(inputInLowerCase) / 1000; // convert to milliseconds
     }
 
     public static long parseIntervalAsMicros(String input) {

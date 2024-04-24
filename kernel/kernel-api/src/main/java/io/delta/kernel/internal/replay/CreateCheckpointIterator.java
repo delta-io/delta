@@ -256,7 +256,9 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
                     getUniqueFileAction(removePathVector, removeDvVector, rowId);
             tombstonesFromJson.add(key);
 
-            // Default is zero.
+            // Default is zero. Not sure if this the correct way, but it is same Delta Spark.
+            // Ideally this should never be zero, but we are following the same behavior as Delta
+            // Spark here.
             long deleteTimestamp = 0;
             if (!removeDeleteTimestampVector.isNullAt(rowId)) {
                 deleteTimestamp = removeDeleteTimestampVector.getLong(rowId);

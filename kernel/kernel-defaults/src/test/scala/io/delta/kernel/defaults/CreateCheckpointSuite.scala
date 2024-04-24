@@ -23,8 +23,11 @@ import io.delta.kernel.{CheckpointAlreadyExistsException, Table, TableNotFoundEx
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, VersionNotFoundException}
+import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.File
@@ -215,8 +218,81 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("checkpoint contains all not expired tombstones") {
-    // TODO
+  Seq(None, Some("2 days"), Some("0 days")).foreach { retentionInterval =>
+    test(s"checkpoint contains all not expired tombstones: $retentionInterval") {
+      withTempDirAndTableClient { (tablePath, tc) =>
+        def addFile(path: String): AddFile = AddFile(
+          path = path,
+          partitionValues = Map.empty,
+          size = 0,
+          modificationTime = 0L,
+          dataChange = true)
+
+        def removeFile(path: String, deletionTimestamp: Long): Unit = {
+          val remove = RemoveFile(path = path, deletionTimestamp = Some(deletionTimestamp))
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          val txn = deltaLog.startTransaction()
+          txn.commit(Seq(remove), ManualUpdate)
+        }
+
+        def addFiles(addFiles: String*): Unit = {
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          val txn = deltaLog.startTransaction()
+          val configuration = retentionInterval.map(interval =>
+            Map("delta.deletedFileRetentionDuration" -> interval)).getOrElse(Map.empty)
+          txn.updateMetadata(Metadata(
+            schemaString = new StructType().add("c1", IntegerType).json,
+            configuration = configuration))
+          txn.commit(addFiles.map(addFile(_)), ManualUpdate)
+        }
+
+        def millisPerDays(days: Int): Long = days * 24 * 60 * 60 * 1000
+
+        // version 0
+        addFiles(
+          "file1", "file2", "file3", "file4", "file5", "file6", "file7", "file8", "file9")
+
+        val now = System.currentTimeMillis()
+        removeFile("file8", deletionTimestamp = 1) // set delete time very old
+        removeFile("file7", deletionTimestamp = now - millisPerDays(8))
+        removeFile("file6", deletionTimestamp = now - millisPerDays(3))
+        removeFile("file5", deletionTimestamp = now - 1000) // set delete time 1 second ago
+        // end version 4
+
+        // add few more files - version 5
+        addFiles(
+          "file10", "file11", "file12", "file13", "file14", "file15", "file16", "file17", "file18")
+
+        // delete some files again
+        removeFile("file3", deletionTimestamp = now - millisPerDays(9))
+        removeFile("file2", deletionTimestamp = now - millisPerDays(1))
+        // end version 7
+
+        val expected = if (retentionInterval.isEmpty) {
+          // Given the default retention interval is 1 week, the tombstones file8, file 7 and file 3
+          // should be expired and not included in the checkpoint
+          Seq("file6", "file5", "file2").map(TestRow(_))
+        } else if (retentionInterval.get.equals("2 days")) {
+          // Given the retention interval is 2 days, the tombstones file8, file 7, file 6, file 3
+          // should be expired and not included in the checkpoint
+          Seq("file5", "file2").map(TestRow(_))
+        } else {
+          // All tombstones should be excluded in the checkpoint
+          Seq.empty
+        }
+
+        val checkpointVersion = 7
+        kernelCheckpoint(tc, tablePath, checkpointVersion)
+
+        val result = spark.read.format("parquet")
+          .load(checkpointFilePath(tablePath, checkpointVersion))
+          .filter("remove is not null")
+          .select("remove.path")
+          .collect().toSeq.map(TestRow(_))
+
+        checkAnswer(result, expected)
+      }
+    }
   }
 
   test("try creating checkpoint on a non-existent table") {

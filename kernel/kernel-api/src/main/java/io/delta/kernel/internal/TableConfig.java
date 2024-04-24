@@ -40,9 +40,9 @@ public class TableConfig<T> {
      * </ul>
      */
     public static final TableConfig<Long> TOMBSTONE_RETENTION = new TableConfig<>(
-            "delta.tombstoneRetentionDuration",
+            "delta.deletedFileRetentionDuration",
             "interval 1 week",
-            IntervalParserUtils::safeParseIntervalAsMicros,
+            IntervalParserUtils::safeParseIntervalAsMillis,
             value -> value >= 0,
             "needs to be provided as a calendar interval such as '2 weeks'. Months" +
                     " and years are not accepted. You may specify '365 days' for a year instead."

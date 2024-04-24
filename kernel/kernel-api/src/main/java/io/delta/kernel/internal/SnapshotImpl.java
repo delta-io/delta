@@ -97,7 +97,7 @@ public class SnapshotImpl implements Snapshot {
     public CreateCheckpointIterator getCreateCheckpointIterator(
             TableClient tableClient) {
         long minFileRetentionTimestampMillis =
-                System.currentTimeMillis() -TOMBSTONE_RETENTION.fromMetadata(metadata);
+                System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
         return new CreateCheckpointIterator(
                 tableClient,
                 logSegment,
