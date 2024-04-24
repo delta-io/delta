@@ -93,10 +93,9 @@ object RowTracking {
    * Operations can set the tag to mark row tracking as preserved/not preserved.
    */
   private[delta] def addPreservedRowTrackingTagIfNotSet(
-      protocol: Protocol,
-      metadata: Metadata,
+      snapshot: SnapshotDescriptor,
       tagsMap: Map[String, String] = Map.empty): Map[String, String] = {
-    if (!isEnabled(protocol, metadata) ||
+    if (!isEnabled(snapshot.protocol, snapshot.metadata) ||
       tagsMap.contains(PreservedRowTrackingTag.key)) {
       return tagsMap
     }

@@ -38,7 +38,7 @@ class RemoveColumnMappingRowTrackingSuite extends RowIdTestUtils
 
     checkRowTrackingMarkedAsPreservedForCommit(deltaLog) {
       checkRowIdHighWaterMarkBeforeAndAfterOperation(deltaLog, diffRows = totalRows) {
-        checkRowIdsStayTheSameBeforeAndAfterOperation() {
+        checkRowIdsStayTheSameBeforeAndAfterOperation {
           testRemovingColumnMapping()
         }
       }
@@ -47,7 +47,7 @@ class RemoveColumnMappingRowTrackingSuite extends RowIdTestUtils
     // High watermark increased 3 times from the original value. Rewrite, UPDATE, Rewrite.
     checkRowIdHighWaterMarkBeforeAndAfterOperation(deltaLog, diffRows = totalRows * 3) {
       // Add back column mapping and remove it again. Row IDs should stay the same.
-      checkRowIdsStayTheSameBeforeAndAfterOperation() {
+      checkRowIdsStayTheSameBeforeAndAfterOperation {
         sql(
           s"""ALTER TABLE $testTableName
              |SET TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name')""".stripMargin)
@@ -71,7 +71,7 @@ class RemoveColumnMappingRowTrackingSuite extends RowIdTestUtils
 
         assert(!rowTrackingMarkedAsPreservedForCommit(deltaLog) {
           checkRowIdHighWaterMarkBeforeAndAfterOperation(deltaLog, diffRows = totalRows) {
-            checkRowIdsStayTheSameBeforeAndAfterOperation() {
+            checkRowIdsStayTheSameBeforeAndAfterOperation {
               testRemovingColumnMapping()
             }
           }
@@ -91,7 +91,7 @@ class RemoveColumnMappingRowTrackingSuite extends RowIdTestUtils
 
         assert(!rowTrackingMarkedAsPreservedForCommit(deltaLog) {
           checkRowIdHighWaterMarkBeforeAndAfterOperation(deltaLog, diffRows = totalRows) {
-            checkRowIdsStayTheSameBeforeAndAfterOperation() {
+            checkRowIdsStayTheSameBeforeAndAfterOperation {
               testRemovingColumnMapping()
             }
           }
@@ -121,7 +121,7 @@ class RemoveColumnMappingRowTrackingSuite extends RowIdTestUtils
          |""".stripMargin)
   }
 
-  private def checkRowIdsStayTheSameBeforeAndAfterOperation()(operation: => Unit): Unit = {
+  private def checkRowIdsStayTheSameBeforeAndAfterOperation(operation: => Unit): Unit = {
     val originalDf = spark.read.table(testTableName)
     val originalRowIds = originalDf.select(logicalColumnName, RowId.QUALIFIED_COLUMN_NAME)
       .collect()
@@ -133,18 +133,14 @@ class RemoveColumnMappingRowTrackingSuite extends RowIdTestUtils
 
   private def checkRowIdHighWaterMarkBeforeAndAfterOperation
       (log: DeltaLog, diffRows: Int)(operation: => Unit): Unit = {
-    def verifyRowIdHighWaterMark(
-        snapshot: Snapshot,
-        originalDomainMetadata: RowTrackingMetadataDomain) = {
-      val newDomainMetadata = RowTrackingMetadataDomain.fromSnapshot(snapshot).get
-      assert(newDomainMetadata.rowIdHighWaterMark ===
-        originalDomainMetadata.rowIdHighWaterMark + diffRows,
-        "Should increase the high watermark by the number of rewritten rows.")
-    }
     val originalDomainMetadata = RowTrackingMetadataDomain.fromSnapshot(log.update()).get
 
     operation
 
-    verifyRowIdHighWaterMark(log.update(), originalDomainMetadata)
+    val snapshot = log.update()
+    val newDomainMetadata = RowTrackingMetadataDomain.fromSnapshot(snapshot).get
+    assert(newDomainMetadata.rowIdHighWaterMark ===
+      originalDomainMetadata.rowIdHighWaterMark + diffRows,
+      "Should increase the high watermark by the number of rewritten rows.")
   }
 }

@@ -54,7 +54,8 @@ class RemoveColumnMappingCommand(
       val removeFileActions = originalFiles.map(_.removeWithTimestamp(dataChange = false))
 
       txn.commit(actions = removeFileActions ++ addedFiles,
-        op = DeltaOperations.RemoveColumnMapping()
+        op = DeltaOperations.RemoveColumnMapping(),
+        tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot)
       )
     }
   }

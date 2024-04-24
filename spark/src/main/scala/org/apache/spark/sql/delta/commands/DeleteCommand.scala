@@ -127,7 +127,8 @@ case class DeleteCommand(
 
         val deleteActions = performDelete(sparkSession, deltaLog, txn)
         txn.commitIfNeeded(actions = deleteActions,
-          op = DeltaOperations.Delete(condition.toSeq))
+          op = DeltaOperations.Delete(condition.toSeq),
+          tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
       }
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.
