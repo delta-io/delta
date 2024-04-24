@@ -34,8 +34,8 @@ public class TableImpl implements Table {
         return new TableImpl(resolvedPath);
     }
 
+    private final SnapshotManager snapshotManager;
     private final String tablePath;
-    private SnapshotManager snapshotManager;
 
     public TableImpl(String tablePath) {
         this.tablePath = tablePath;
