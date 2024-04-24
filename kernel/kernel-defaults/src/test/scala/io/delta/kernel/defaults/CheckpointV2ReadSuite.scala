@@ -40,7 +40,8 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
       path: String,
       snapshotFromSpark: Snapshot,
       strictFileValidation: Boolean = true,
-      ckptVersionExpected: Option[Int] = None): Unit = {
+      ckptVersionExpected: Option[Int] = None,
+      expectV2CheckpointFormat: Boolean = true): Unit = {
     // Create a snapshot from Spark connector and from kernel.
     val snapshot = latestSnapshot(path)
     val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
@@ -60,11 +61,15 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
     assert(snapshot.getVersion(defaultTableClient) == snapshotFromSpark.version)
 
     // Validate that snapshot read from most recent checkpoint.
-    val expectedCkptToRead =
+    val expectedV2CkptToRead =
       ckptVersionExpected.getOrElse(snapshotFromSpark.version - (snapshotFromSpark.version % 2))
     assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
       f => FileNames.checkpointVersion(new Path(f.getPath)))
-      .contains(expectedCkptToRead))
+      .contains(expectedV2CkptToRead))
+    // UUID checkpoints will contain "-" in the name.
+    assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
+      f => new Path(f.getPath).getName.contains("-")).contains(expectV2CheckpointFormat))
+
 
     // Validate AddFiles from sidecars found against Spark connector.
     val scan = snapshot.getScanBuilder(defaultTableClient).build()
@@ -85,7 +90,10 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
         val tbl = "tbl"
         withTable(tbl) {
           // Create table.
-          withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
+          withSQLConf(
+            "delta.kernel.default.parquet.reader.batch-size" -> "10",
+            "delta.kernel.default.json.reader.batch-size" -> "10",
+            DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
             spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
               s"LOCATION '$path' " +
@@ -247,7 +255,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
       // Rename to UUID.
       val ckptPath = new Path(new File(log.logPath.toUri).listFiles().filter(f =>
         FileNames.isCheckpointFile(new Path(f.getPath))).head.toURI)
-      new File(ckptPath.toUri).renamgeTo(new File(new Path(ckptPath.getParent, ckptPath.getName
+      new File(ckptPath.toUri).renameTo(new File(new Path(ckptPath.getParent, ckptPath.getName
         .replace("checkpoint.parquet", "checkpoint.abc-def.parquet")).toUri))
 
       // Validate snapshot.
@@ -282,7 +290,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           FileNames.checkpointFileSingular(ckptPath.getParent, 2).toUri))
 
         // Validate snapshot and data.
-        validateSnapshot(path.toString, snapshotFromSpark)
+        validateSnapshot(path.toString, snapshotFromSpark, expectV2CheckpointFormat = false)
         checkTable(
           path = path.toString,
           expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
