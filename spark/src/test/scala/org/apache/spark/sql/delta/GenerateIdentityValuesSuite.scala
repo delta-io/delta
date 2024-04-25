@@ -94,7 +94,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
       val gev2 = gev.copy()
       verifyIdentityValues(
         df.select(new Column(
-            If(GreaterThan(col(colName).expr, Literal(10)), gev, gev2)).alias(colName)),
+            If(GreaterThan(col(colName).expr, right = Literal(10)), gev, gev2)).alias(colName)),
         IdentityInfo(start, step, highWaterMark),
         size
       )

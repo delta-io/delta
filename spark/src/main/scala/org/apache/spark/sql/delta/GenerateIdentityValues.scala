@@ -31,8 +31,8 @@ import org.apache.spark.sql.types.{DataType, LongType}
  * Returns the next generated IDENTITY column value based on the underlying
  * [[PartitionIdentityValueGenerator]].
  */
-case class GenerateIdentityValues(
-    generator: PartitionIdentityValueGenerator) extends LeafExpression with Nondeterministic {
+case class GenerateIdentityValues(generator: PartitionIdentityValueGenerator)
+  extends LeafExpression with Nondeterministic {
 
   override protected def initializeInternal(partitionIndex: Int): Unit = {
     generator.initialize(partitionIndex)
@@ -127,10 +127,8 @@ case class PartitionIdentityValueGenerator(
     }
   }
 
-  private def assertInitialized(): Unit = {
-    if (partitionIndex == -1) {
-      throw SparkException.internalError("PartitionIdentityValueGenerator is not initialized.")
-    }
+  private def assertInitialized(): Unit = if (partitionIndex == -1) {
+    throw SparkException.internalError("PartitionIdentityValueGenerator is not initialized.")
   }
 
   // Generate the next IDENTITY value.
