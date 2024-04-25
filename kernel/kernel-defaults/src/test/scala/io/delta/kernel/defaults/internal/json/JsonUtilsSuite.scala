@@ -19,9 +19,9 @@ import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
+
 import scala.Double.NegativeInfinity
 import scala.collection.JavaConverters._
-
 
 class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
 
