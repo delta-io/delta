@@ -15,13 +15,13 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.utils.{TestUtils, VectorTestUtils}
+import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
 import io.delta.kernel.expressions._
 import io.delta.kernel.types._
 
-trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
+trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
   /** create a columnar batch of given `size` with zero columns in it. */
   protected def zeroColumnBatch(rowCount: Int): ColumnarBatch = {
     new DefaultColumnarBatch(rowCount, new StructType(), new Array[ColumnVector](0))

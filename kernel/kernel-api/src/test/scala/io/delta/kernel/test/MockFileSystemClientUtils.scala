@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.test
 
+import java.util.UUID
+
 import io.delta.kernel.client._
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
@@ -58,11 +60,51 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
     )
   }
 
+  /**
+   * Checkpoint file status for a top-level V2 checkpoint file.
+   *
+   * @param checkpointVersions List of checkpoint versions, given as Seq(version, whether to use
+   *                           UUID naming scheme, number of sidecars).
+   * Returns top-level checkpoint file and sidecar files for each checkpoint version.
+   */
+  def v2CheckpointFileStatuses(
+      checkpointVersions: Seq[(Long, Boolean, Int)],
+      fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
+    checkpointVersions.map { case (v, useUUID, numSidecars) =>
+      val topLevelFile = if (useUUID) {
+        FileStatus.of(FileNames.topLevelV2CheckpointFile(
+          logPath, v, UUID.randomUUID().toString, fileType).toString, v, v * 10)
+      } else {
+        FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
+      }
+      val sidecars = (0 until numSidecars).map { _ =>
+        FileStatus.of(
+          FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
+          v, v * 10)
+      }
+      (topLevelFile, sidecars)
+    }
+  }
+
   /* Create input function for createMockTableClient to implement listFrom from a list of
    * file statuses.
    */
   def listFromProvider(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
     files.filter(_.getPath.compareTo(filePath) >= 0).sortBy(_.getPath)
+  }
+
+  /**
+   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * the given contents. The contents are filtered depending upon the list from path prefix.
+   */
+  def createMockFSListFromTableClient(
+      contents: Seq[FileStatus],
+      parquetHandler: ParquetHandler,
+      jsonHandler: JsonHandler): TableClient = {
+    mockTableClient(fileSystemClient =
+      new MockListFromFileSystemClient(listFromProvider(contents)),
+      parquetHandler = parquetHandler,
+      jsonHandler = jsonHandler)
   }
 
   /**

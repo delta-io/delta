@@ -15,7 +15,8 @@
  */
 package io.delta.kernel.defaults.internal.json
 
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils, VectorTestUtils}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 

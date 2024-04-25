@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.utils
+package io.delta.kernel.test
 
 import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
-import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+
+import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.types._
 
 trait VectorTestUtils {
@@ -78,18 +78,15 @@ trait VectorTestUtils {
     }
   }
 
-  /**
-   * Returns a [[ColumnarBatch]] with each given vector is a top-level column col_i where i is
-   * the index of the vector in the input list.
-   */
-  protected def columnarBatch(vectors: ColumnVector*): ColumnarBatch = {
-    val numRows = vectors.head.getSize
-    vectors.tail.foreach(
-      v => require(v.getSize == numRows, "All vectors should have the same size"))
+  def longVector(values: Long*): ColumnVector = new ColumnVector {
+    override def getDataType: DataType = LongType.LONG
 
-    val schema = (0 until vectors.length)
-      .foldLeft(new StructType())((s, i) => s.add(s"col_$i", vectors(i).getDataType))
+    override def getSize: Int = values.size
 
-    new DefaultColumnarBatch(numRows, schema, vectors.toArray)
+    override def close(): Unit = {}
+
+    override def isNullAt(rowId: Int): Boolean = false
+
+    override def getLong(rowId: Int): Long = values(rowId)
   }
 }
