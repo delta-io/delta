@@ -102,7 +102,7 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "false")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
   // Read with deletion vectors has separate code paths based on vectorized Parquet
@@ -151,8 +151,7 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
             deltaLog.snapshot.protocol,
             metadata,
             nullableRowTrackingFields = false,
-            isSplittable = false,
-            disablePushDowns = true,
+            optimizationsEnabled = false,
             if (enableDVs) Some(tablePath) else None)
 
           val fileIndex = TahoeLogFileIndex(spark, deltaLog)
@@ -228,7 +227,7 @@ class DeltaParquetFileFormatWithPredicatePushdownSuite extends DeltaParquetFileF
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectorsForAllSupportedOperations(spark)
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "true")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 
   for {
@@ -258,8 +257,7 @@ class DeltaParquetFileFormatWithPredicatePushdownSuite extends DeltaParquetFileF
         deltaLog.update().protocol,
         metadata,
         nullableRowTrackingFields = false,
-        isSplittable = true,
-        disablePushDowns = false,
+        optimizationsEnabled = true,
         Some(tablePath))
 
       val fileIndex = TahoeLogFileIndex(spark, deltaLog)

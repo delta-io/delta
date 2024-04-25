@@ -51,7 +51,7 @@ class DeletionVectorsSuite extends QueryTest
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "false")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
   test(s"read Delta table with deletion vectors") {
@@ -635,7 +635,7 @@ class DeletionVectorsSuite extends QueryTest
     val canonicalTable5Path = new File(table5Path).getCanonicalPath
 
     val predicatePushDownEnabled =
-      spark.conf.get(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
+      spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
 
     try {
       checkCountAndSum("value", table5Count, table5Sum, canonicalTable5Path)
@@ -753,7 +753,7 @@ class DeletionVectorsSuite extends QueryTest
     test(
       s"huge table: delete a ${deleteSpec.scale} number of rows from tables of 2B rows with DVs") {
       val predicatePushDownEnabled =
-        spark.conf.get(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
+        spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
       withTempDir { dir =>
         try {
           FileUtils.copyDirectory(new File(table5Path), dir)
@@ -877,7 +877,7 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
       .format("delta")
       .saveAsTable(multiRowgroupTable)
 
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "true")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 
   override def afterAll(): Unit = {
