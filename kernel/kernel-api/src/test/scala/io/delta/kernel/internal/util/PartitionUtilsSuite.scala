@@ -17,7 +17,7 @@ package io.delta.kernel.internal.util
 
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.expressions._
-import io.delta.kernel.internal.util.PartitionUtils.{rewritePartitionPredicateOnCheckpointFileSchema, rewritePartitionPredicateOnScanFileSchema, splitMetadataAndDataPredicates}
+import io.delta.kernel.internal.util.PartitionUtils._
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -208,6 +208,41 @@ class PartitionUtilsSuite extends AnyFunSuite {
         assert(actCheckpointReaderPushdownPredicate.toString ===
           expCheckpointReaderPushdownPredicate)
       }
+  }
+
+  Seq(
+    ofBoolean(true) -> "true",
+    ofBoolean(false) -> "false",
+    ofNull(BooleanType.BOOLEAN) -> null,
+    ofByte(24.toByte) -> "24",
+    ofNull(ByteType.BYTE) -> null,
+    ofShort(876.toShort) -> "876",
+    ofNull(ShortType.SHORT) -> null,
+    ofInt(2342342) -> "2342342",
+    ofNull(IntegerType.INTEGER) -> null,
+    ofLong(234234223L) -> "234234223",
+    ofNull(LongType.LONG) -> null,
+    ofFloat(23423.4223f) -> "23423.422",
+    ofNull(FloatType.FLOAT) -> null,
+    ofDouble(23423.422233d) -> "23423.422233",
+    ofNull(DoubleType.DOUBLE) -> null,
+    ofString("string_val") -> "string_val",
+    ofDecimal(new java.math.BigDecimal("23423.234234"), 15, 7) -> "23423.2342340",
+    ofNull(new DecimalType(15, 7)) -> null,
+    ofNull(StringType.STRING) -> null,
+    ofBinary("binary_val".getBytes) -> "binary_val",
+    ofNull(BinaryType.BINARY) -> null,
+    ofDate(4234)  -> "1981-08-05",
+    ofNull(DateType.DATE) -> null,
+    ofTimestamp(2342342342232L) -> "1970-01-28 02:39:02.342232",
+    ofNull(TimestampType.TIMESTAMP) -> null,
+    ofTimestampNtz(-2342342342L) -> "1969-12-31 23:20:58.657658",
+    ofNull(TimestampNTZType.TIMESTAMP_NTZ) -> null
+  ).foreach { case (literal, expStr) =>
+    test(s"serialize partition value literal as string: ${literal.getDataType}($literal)") {
+      val result = serializePartitionValue(literal)
+      assert(result === expStr)
+    }
   }
 
   private def col(names: String*): Column = {
