@@ -350,7 +350,7 @@ trait Checkpoints extends DeltaLogging {
     // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
     // writing the checkpoint file in the log directory before backfilling the relevant commits
     // will leave gaps in the dir structure. This can cause issues for readers that are not
-    // communicating with the CommitStore.
+    // communicating with the commit-owner.
     //
     // Sample directory structure with a gap if we don't backfill commit files:
     // _delta_log/

@@ -20,18 +20,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectReader;
+import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 
 import io.delta.kernel.client.JsonHandler;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -40,6 +38,8 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
+import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.defaults.internal.types.DataTypeParser;
 
 /**
@@ -63,15 +63,16 @@ public class DefaultJsonHandler implements JsonHandler {
     }
 
     @Override
-    public ColumnarBatch parseJson(ColumnVector jsonStringVector, StructType outputSchema,
+    public ColumnarBatch parseJson(
+            ColumnVector jsonStringVector,
+            StructType outputSchema,
             Optional<ColumnVector> selectionVector) {
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < jsonStringVector.getSize(); i++) {
             boolean isSelected = !selectionVector.isPresent() ||
                 (!selectionVector.get().isNullAt(i) && selectionVector.get().getBoolean(i));
             if (isSelected && !jsonStringVector.isNullAt(i)) {
-                rows.add(
-                    parseJson(jsonStringVector.getString(i), outputSchema));
+                rows.add(parseJson(jsonStringVector.getString(i), outputSchema));
             } else {
                 rows.add(null);
             }
@@ -93,17 +94,16 @@ public class DefaultJsonHandler implements JsonHandler {
 
     @Override
     public CloseableIterator<ColumnarBatch> readJsonFiles(
-        CloseableIterator<FileStatus> scanFileIter,
-        StructType physicalSchema,
-        Optional<Predicate> predicate) throws IOException {
+            CloseableIterator<FileStatus> scanFileIter,
+            StructType physicalSchema,
+            Optional<Predicate> predicate) throws IOException {
         return new CloseableIterator<ColumnarBatch>() {
             private FileStatus currentFile;
             private BufferedReader currentFileReader;
             private String nextLine;
 
             @Override
-            public void close()
-                throws IOException {
+            public void close() throws IOException {
                 Utils.closeCloseables(currentFileReader, scanFileIter);
             }
 
@@ -151,8 +151,7 @@ public class DefaultJsonHandler implements JsonHandler {
                 return new DefaultRowBasedColumnarBatch(physicalSchema, rows);
             }
 
-            private void tryOpenNextFile()
-                throws IOException {
+            private void tryOpenNextFile() throws IOException {
                 Utils.closeCloseables(currentFileReader); // close the current opened file
                 currentFileReader = null;
 
@@ -172,6 +171,42 @@ public class DefaultJsonHandler implements JsonHandler {
                 }
             }
         };
+    }
+
+    /**
+     * Makes use of {@link LogStore} implementations in `delta-storage` to atomically write the data
+     * to a file depending upon the destination filesystem.
+     *
+     * @param filePath Destination file path
+     * @param data     Data to write as Json
+     * @throws IOException
+     */
+    @Override
+    public void writeJsonFileAtomically(
+            String filePath,
+            CloseableIterator<Row> data,
+            boolean overwrite) throws IOException {
+        Path path = new Path(filePath);
+        LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
+        try {
+            logStore.write(
+                    path,
+                    new Iterator<String>() {
+                        @Override
+                        public boolean hasNext() {
+                            return data.hasNext();
+                        }
+
+                        @Override
+                        public String next() {
+                            return JsonUtils.rowToJson(data.next());
+                        }
+                    },
+                    overwrite,
+                    hadoopConf);
+        } finally {
+            Utils.closeCloseables(data);
+        }
     }
 
     private Row parseJson(String json, StructType readSchema) {

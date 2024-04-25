@@ -1946,4 +1946,44 @@ class DeltaColumnMappingSuite extends QueryTest
       }
     }
   }
+
+  test("filters pushed down to parquet use physical names") {
+    val tableName = "table_name"
+    withTable(tableName) {
+      // Create a table with column mapping **disabled**
+      sql(
+        s"""CREATE TABLE $tableName (a INT, b INT)
+           |USING DELTA
+           |TBLPROPERTIES (
+           |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'none',
+           |  '${DeltaConfigs.MIN_READER_VERSION.key}' = '2',
+           |  '${DeltaConfigs.MIN_WRITER_VERSION.key}' = '5'
+           |)
+           |""".stripMargin)
+
+      sql(s"INSERT INTO $tableName VALUES (100, 1000)")
+
+      sql(
+        s"""ALTER TABLE $tableName
+           |SET TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name')
+           |""".stripMargin)
+
+      // Confirm that the physical names are equal to the logical names
+      val schema = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().schema
+      assert(DeltaColumnMapping.getPhysicalName(schema("a")) == "a")
+      assert(DeltaColumnMapping.getPhysicalName(schema("b")) == "b")
+
+      // Rename the columns so that the logical name of the second column is equal to the physical
+      // name of the first column.
+      sql(s"ALTER TABLE $tableName RENAME COLUMN a TO c")
+      sql(s"ALTER TABLE $tableName RENAME COLUMN b TO a")
+
+      // Filter the table by the second column. This will return empty results if the filter was
+      // (incorrectly) pushed down without translating the logical names to physical names.
+      checkAnswer(
+        sql(s"SELECT * FROM $tableName WHERE a = 1000"),
+        Seq(Row(100, 1000))
+      )
+    }
+  }
 }

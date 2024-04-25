@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import java.net.URI
-
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
@@ -32,16 +30,17 @@ import org.apache.hadoop.mapreduce.Job
 import org.apache.parquet.hadoop.ParquetOutputFormat
 import org.apache.parquet.hadoop.util.ContextUtil
 
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseColumnPath
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.vectorized.{OffHeapColumnVector, OnHeapColumnVector, WritableColumnVector}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.{ByteType, LongType, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.sources._
+import org.apache.spark.sql.types.{ByteType, LongType, MetadataBuilder, StringType, StructField, StructType}
 import org.apache.spark.sql.vectorized.{ColumnarBatch, ColumnarBatchRow, ColumnVector}
 import org.apache.spark.util.SerializableConfiguration
 
@@ -58,13 +57,11 @@ case class DeltaParquetFileFormat(
     nullableRowTrackingFields: Boolean = false,
     isSplittable: Boolean = true,
     disablePushDowns: Boolean = false,
-    tablePath: Option[String] = None,
-    broadcastDvMap: Option[Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]]] = None,
-    broadcastHadoopConf: Option[Broadcast[SerializableConfiguration]] = None)
+    tablePath: Option[String] = None)
   extends ParquetFileFormat {
   // Validate either we have all arguments for DV enabled read or none of them.
-  if (hasDeletionVectorMap) {
-    require(tablePath.isDefined && !isSplittable && disablePushDowns,
+  if (hasTablePath) {
+    require(!isSplittable && disablePushDowns,
       "Wrong arguments for Delta table scan with deletion vectors")
   }
 
@@ -101,10 +98,29 @@ case class DeltaParquetFileFormat(
     } else schema
   }
 
+  /**
+   * Prepares filters so that they can be pushed down into the Parquet reader.
+   *
+   * If column mapping is enabled, then logical column names in the filters will be replaced with
+   * their corresponding physical column names. This is necessary as the Parquet files will use
+   * physical column names, and the requested schema pushed down in the Parquet reader will also use
+   * physical column names.
+   */
+  private def prepareFiltersForRead(filters: Seq[Filter]): Seq[Filter] = {
+    if (disablePushDowns) {
+      Seq.empty
+    } else if (columnMappingMode != NoMapping) {
+      val physicalNameMap = DeltaColumnMapping.getLogicalNameToPhysicalNameMap(referenceSchema)
+      filters.flatMap(translateFilterForColumnMapping(_, physicalNameMap))
+    } else {
+      filters
+    }
+  }
+
   override def isSplitable(
     sparkSession: SparkSession, options: Map[String, String], path: Path): Boolean = isSplittable
 
-  def hasDeletionVectorMap: Boolean = broadcastDvMap.isDefined && broadcastHadoopConf.isDefined
+  def hasTablePath: Boolean = tablePath.isDefined
 
   /**
    * We sometimes need to replace FileFormat within LogicalPlans, so we have to override
@@ -131,15 +147,13 @@ case class DeltaParquetFileFormat(
       filters: Seq[Filter],
       options: Map[String, String],
       hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
-    val pushdownFilters = if (disablePushDowns) Seq.empty else filters
-
     val parquetDataReader: PartitionedFile => Iterator[InternalRow] =
       super.buildReaderWithPartitionValues(
         sparkSession,
         prepareSchemaForRead(dataSchema),
         prepareSchemaForRead(partitionSchema),
         prepareSchemaForRead(requiredSchema),
-        pushdownFilters,
+        prepareFiltersForRead(filters),
         options,
         hadoopConf)
 
@@ -164,10 +178,12 @@ case class DeltaParquetFileFormat(
       require(disablePushDowns, "Cannot generate row index related metadata with filter pushdown")
     }
 
-    if (hasDeletionVectorMap && isRowDeletedColumn.isEmpty) {
+    if (hasTablePath && isRowDeletedColumn.isEmpty) {
         throw new IllegalArgumentException(
           s"Expected a column $IS_ROW_DELETED_COLUMN_NAME in the schema")
     }
+
+    val serializableHadoopConf = new SerializableConfiguration(hadoopConf)
 
     val useOffHeapBuffers = sparkSession.sessionState.conf.offHeapColumnVectorEnabled
     (partitionedFile: PartitionedFile) => {
@@ -178,8 +194,9 @@ case class DeltaParquetFileFormat(
             partitionedFile,
             rowIteratorFromParquet,
             isRowDeletedColumn,
-            useOffHeapBuffers = useOffHeapBuffers,
-            rowIndexColumn = rowIndexColumn)
+            rowIndexColumn,
+            useOffHeapBuffers,
+            serializableHadoopConf)
         iterToReturn.asInstanceOf[Iterator[InternalRow]]
       } catch {
         case NonFatal(e) =>
@@ -258,16 +275,11 @@ case class DeltaParquetFileFormat(
       .updated(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, extractDefaultRowCommitVersion)
   }
 
-  def copyWithDVInfo(
-      tablePath: String,
-      broadcastDvMap: Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]],
-      broadcastHadoopConf: Broadcast[SerializableConfiguration]): DeltaParquetFileFormat = {
+  def disableSplittingAndPushdown(tablePath: String): DeltaParquetFileFormat = {
     this.copy(
       isSplittable = false,
       disablePushDowns = true,
-      tablePath = Some(tablePath),
-      broadcastDvMap = Some(broadcastDvMap),
-      broadcastHadoopConf = Some(broadcastHadoopConf))
+      tablePath = Some(tablePath))
   }
 
   /**
@@ -282,28 +294,32 @@ case class DeltaParquetFileFormat(
       iterator: Iterator[Object],
       isRowDeletedColumn: Option[ColumnMetadata],
       rowIndexColumn: Option[ColumnMetadata],
-      useOffHeapBuffers: Boolean): Iterator[Object] = {
-    val pathUri = partitionedFile.pathUri
-
+      useOffHeapBuffers: Boolean,
+      serializableHadoopConf: SerializableConfiguration): Iterator[Object] = {
     val rowIndexFilter = isRowDeletedColumn.map { col =>
       // Fetch the DV descriptor from the broadcast map and create a row index filter
-      broadcastDvMap.get.value
-        .get(pathUri)
-        .map { case DeletionVectorDescriptorWithFilterType(dvDescriptor, filterType) =>
-          filterType match {
-            case i if i == RowIndexFilterType.IF_CONTAINED =>
-              DropMarkedRowsFilter.createInstance(
-                dvDescriptor,
-                broadcastHadoopConf.get.value.value,
-                tablePath.map(new Path(_)))
-            case i if i == RowIndexFilterType.IF_NOT_CONTAINED =>
-              KeepMarkedRowsFilter.createInstance(
-                dvDescriptor,
-                broadcastHadoopConf.get.value.value,
-                tablePath.map(new Path(_)))
-          }
+      val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
+        .get(FILE_ROW_INDEX_FILTER_ID_ENCODED)
+      val filterTypeOpt = partitionedFile.otherConstantMetadataColumnValues
+        .get(FILE_ROW_INDEX_FILTER_TYPE)
+      if (dvDescriptorOpt.isDefined && filterTypeOpt.isDefined) {
+        val rowIndexFilter = filterTypeOpt.get match {
+          case RowIndexFilterType.IF_CONTAINED => DropMarkedRowsFilter
+          case RowIndexFilterType.IF_NOT_CONTAINED => KeepMarkedRowsFilter
+          case unexpectedFilterType => throw new IllegalStateException(
+            s"Unexpected row index filter type: ${unexpectedFilterType}")
         }
-        .getOrElse(KeepAllRowsFilter)
+        rowIndexFilter.createInstance(
+          DeletionVectorDescriptor.fromJson(dvDescriptorOpt.get.asInstanceOf[String]),
+          serializableHadoopConf.value,
+          tablePath.map(new Path(_)))
+      } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
+        throw new IllegalStateException(
+          s"Both ${FILE_ROW_INDEX_FILTER_ID_ENCODED} and ${FILE_ROW_INDEX_FILTER_TYPE} " +
+            "should either both have values or no values at all.")
+      } else {
+        KeepAllRowsFilter
+      }
     }
 
     val metadataColumns = Seq(isRowDeletedColumn, rowIndexColumn).filter(_.nonEmpty).map(_.get)
@@ -399,6 +415,14 @@ object DeltaParquetFileFormat {
   val ROW_INDEX_COLUMN_NAME = "__delta_internal_row_index"
   val ROW_INDEX_STRUCT_FIELD = StructField(ROW_INDEX_COLUMN_NAME, LongType)
 
+  /** The key to the encoded row index filter identifier value of the
+   * [[PartitionedFile]]'s otherConstantMetadataColumnValues map. */
+  val FILE_ROW_INDEX_FILTER_ID_ENCODED = "row_index_filter_id_encoded"
+
+  /** The key to the row index filter type value of the
+   * [[PartitionedFile]]'s otherConstantMetadataColumnValues map. */
+  val FILE_ROW_INDEX_FILTER_TYPE = "row_index_filter_type"
+
   /** Utility method to create a new writable vector */
   private def newVector(
       useOffHeapBuffers: Boolean, size: Int, dataType: StructField): WritableColumnVector = {
@@ -466,9 +490,66 @@ object DeltaParquetFileFormat {
   /** Helper class to encapsulate column info */
   case class ColumnMetadata(index: Int, structField: StructField)
 
-  /** Helper class that encapsulate an [[RowIndexFilterType]]. */
-  case class DeletionVectorDescriptorWithFilterType(
-      descriptor: DeletionVectorDescriptor,
-      filterType: RowIndexFilterType) {
+  /**
+   * Translates the filter to use physical column names instead of logical column names.
+   * This is needed when the column mapping mode is set to `NameMapping` or `IdMapping`
+   * to match the requested schema that's passed to the [[ParquetFileFormat]].
+   */
+  private def translateFilterForColumnMapping(
+       filter: Filter,
+       physicalNameMap: Map[Seq[String], Seq[String]]): Option[Filter] = {
+    object PhysicalAttribute {
+      def unapply(attribute: String): Option[String] = {
+        import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
+        physicalNameMap.get(parseColumnPath(attribute)).map(_.quoted)
+      }
+    }
+
+    filter match {
+      case EqualTo(PhysicalAttribute(physicalAttribute), value) =>
+        Some(EqualTo(physicalAttribute, value))
+      case EqualNullSafe(PhysicalAttribute(physicalAttribute), value) =>
+        Some(EqualNullSafe(physicalAttribute, value))
+      case GreaterThan(PhysicalAttribute(physicalAttribute), value) =>
+        Some(GreaterThan(physicalAttribute, value))
+      case GreaterThanOrEqual(PhysicalAttribute(physicalAttribute), value) =>
+        Some(GreaterThanOrEqual(physicalAttribute, value))
+      case LessThan(PhysicalAttribute(physicalAttribute), value) =>
+        Some(LessThan(physicalAttribute, value))
+      case LessThanOrEqual(PhysicalAttribute(physicalAttribute), value) =>
+        Some(LessThanOrEqual(physicalAttribute, value))
+      case In(PhysicalAttribute(physicalAttribute), values) =>
+        Some(In(physicalAttribute, values))
+      case IsNull(PhysicalAttribute(physicalAttribute)) =>
+        Some(IsNull(physicalAttribute))
+      case IsNotNull(PhysicalAttribute(physicalAttribute)) =>
+        Some(IsNotNull(physicalAttribute))
+      case And(left, right) =>
+        val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
+        val newRight = translateFilterForColumnMapping(right, physicalNameMap)
+        (newLeft, newRight) match {
+          case (Some(l), Some(r)) => Some(And(l, r))
+          case (Some(l), None) => Some(l)
+          case (_, _) => newRight
+        }
+      case Or(left, right) =>
+        val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
+        val newRight = translateFilterForColumnMapping(right, physicalNameMap)
+        (newLeft, newRight) match {
+          case (Some(l), Some(r)) => Some(Or(l, r))
+          case (_, _) => None
+        }
+      case Not(child) =>
+        translateFilterForColumnMapping(child, physicalNameMap).map(Not)
+      case StringStartsWith(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringStartsWith(physicalAttribute, value))
+      case StringEndsWith(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringEndsWith(physicalAttribute, value))
+      case StringContains(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringContains(physicalAttribute, value))
+      case AlwaysTrue() => Some(AlwaysTrue())
+      case AlwaysFalse() => Some(AlwaysFalse())
+      case _ => None
+    }
   }
 }

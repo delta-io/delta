@@ -698,6 +698,34 @@ class DeltaTableTestsMixin:
                                        nullables={"key", "value", "value2"},
                                        partitioningColumns=["value", "value2"])
 
+    def test_create_replace_table_with_cluster_by(self) -> None:
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+        with self.table("test"):
+            # verify creating table with list of structFields
+            deltaTable = DeltaTable.create(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
+
+            deltaTable = DeltaTable.replace(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
+
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
         with self.table("test"):
             # create table.
@@ -965,6 +993,16 @@ class DeltaTableTestsMixin:
 
         with self.assertRaises(TypeError):
             builder.partitionedBy([1])  # type: ignore[list-item]
+
+        # bad clusterBy col name
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1)  # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1, "1")   # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy([1])  # type: ignore[list-item]
 
         # bad property key
         with self.assertRaises(TypeError):

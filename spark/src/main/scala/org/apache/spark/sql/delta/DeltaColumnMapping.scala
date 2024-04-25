@@ -569,6 +569,18 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   }
 
   /**
+   * Returns a map from the logical name paths to the physical name paths for the given schema.
+   * The logical name path is the result of splitting a multi-part identifier, and the physical name
+   * path is result of replacing all names in the logical name path with their physical names.
+   */
+  def getLogicalNameToPhysicalNameMap(schema: StructType): Map[Seq[String], Seq[String]] = {
+    val physicalSchema = renameColumns(schema)
+    val logicalSchemaFieldPaths = SchemaMergingUtils.explode(schema).map(_._1)
+    val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
+    logicalSchemaFieldPaths.zip(physicalSchemaFieldPaths).toMap
+  }
+
+  /**
    * Returns true if Column Mapping mode is enabled and the newMetadata's schema, when compared to
    * the currentMetadata's schema, is indicative of a DROP COLUMN operation.
    *
@@ -673,9 +685,9 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       // use the same check
       !hasNoColMappingAndRepartitionSchemaChange(newMetadata, upgradedMetadata)
     } else {
-      // Not column mapping, don't block
-      // TODO: support column mapping downgrade check once that's rolled out.
-      true
+      // Prohibit reading across a downgrade.
+      val isDowngrade = oldMode != NoMapping && newMode == NoMapping
+      !isDowngrade
     }
   }
 

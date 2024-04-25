@@ -29,10 +29,10 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.internal.Logging
 
 /**
- * An abstract [[CommitStore]] which triggers backfills every n commits.
+ * An abstract [[CommitOwnerClient]] which triggers backfills every n commits.
  * - every commit version which satisfies `commitVersion % batchSize == 0` will trigger a backfill.
  */
-trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
+trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with Logging {
 
   /**
    * Size of batch that should be backfilled. So every commit version which satisfies
@@ -169,7 +169,7 @@ trait AbstractBatchBackfillingCommitStore extends CommitStore with Logging {
     }
   }
 
-  /** Callback to tell the CommitStore that all commits <= `backfilledVersion` are backfilled. */
+  /** Callback to tell the CommitOwner that all commits <= `backfilledVersion` are backfilled. */
   protected[delta] def registerBackfill(
       logPath: Path,
       backfilledVersion: Long): Unit

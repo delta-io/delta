@@ -24,13 +24,15 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
-import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.{col, lit}
@@ -45,7 +47,6 @@ import org.apache.spark.util.ManualClock
 class DeltaTypeWideningSuite
   extends QueryTest
     with ParquetTest
-    with DeltaDMLTestUtils
     with RowTrackingTestUtils
     with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
@@ -53,11 +54,16 @@ class DeltaTypeWideningSuite
     with DeltaTypeWideningNestedFieldsTests
     with DeltaTypeWideningMetadataTests
     with DeltaTypeWideningTableFeatureTests
+    with DeltaTypeWideningStatsTests
+    with DeltaTypeWideningConstraintsTests
+    with DeltaTypeWideningGeneratedColumnTests
 
 /**
  * Test mixin that enables type widening by default for all tests in the suite.
  */
-trait DeltaTypeWideningTestMixin extends SharedSparkSession {
+trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUtils {
+  import testImplicits._
+
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
@@ -80,6 +86,9 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession {
       .putMetadataArray(
         "delta.typeChanges", Array(TypeChange(version, from, to, path).toMetadata))
       .build()
+
+  def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
+      append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
 }
 
 /**
@@ -211,7 +220,7 @@ trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
  * CHANGE COLUMN TYPE.
  */
 trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWideningTestCases {
-  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin with DeltaDMLTestUtils =>
+  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin =>
 
   import testImplicits._
 
@@ -323,7 +332,7 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
  * Tests covering type changes on nested fields in structs, maps and arrays.
  */
 trait DeltaTypeWideningNestedFieldsTests {
-  self: QueryTest with ParquetTest with DeltaDMLTestUtils with DeltaTypeWideningTestMixin
+  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin
     with SharedSparkSession =>
 
   import testImplicits._
@@ -500,7 +509,7 @@ trait DeltaTypeWideningNestedFieldsTests {
  * lower-level tests, see [[DeltaTypeWideningMetadataSuite]].
  */
 trait DeltaTypeWideningMetadataTests {
-  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin with DeltaDMLTestUtils =>
+  self: QueryTest with ParquetTest with DeltaTypeWideningTestMixin =>
 
   def testTypeWideningMetadata(name: String)(
       initialSchema: String,
@@ -654,13 +663,164 @@ trait DeltaTypeWideningMetadataTests {
 }
 
 /**
+ * Trait collecting tests for stats and data skipping with type changes.
+ */
+trait DeltaTypeWideningStatsTests {
+  self: QueryTest with DeltaTypeWideningTestMixin =>
+  import testImplicits._
+
+  /**
+   * Helper to create a table and run tests while enabling/disabling storing stats as JSON string or
+   * strongly-typed structs in checkpoint files. Creates a
+   */
+  def testStats(
+      name: String,
+      partitioned: Boolean,
+      jsonStatsEnabled: Boolean,
+      structStatsEnabled: Boolean)(
+      body: => Unit): Unit =
+    test(s"$name, partitioned=$partitioned, jsonStatsEnabled=$jsonStatsEnabled, " +
+        s"structStatsEnabled=$structStatsEnabled") {
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.defaultTablePropertyKey ->
+          jsonStatsEnabled.toString,
+        DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.defaultTablePropertyKey ->
+          structStatsEnabled.toString
+      ) {
+        val partitionStr = if (partitioned) "PARTITIONED BY (a)" else ""
+        sql(s"""
+            |CREATE TABLE delta.`$tempPath` (a smallint, dummy int DEFAULT 1)
+            |USING DELTA
+            |$partitionStr
+            |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')
+          """.stripMargin)
+        body
+      }
+    }
+
+  /** Returns the latest checkpoint for the test table. */
+  def getLatestCheckpoint: LastCheckpointInfo =
+    deltaLog.readLastCheckpointFile().getOrElse {
+      fail("Expected the table to have a checkpoint but it didn't")
+    }
+
+  /** Returns the type used to store JSON stats in the checkpoint if JSON stats are present. */
+  def getJsonStatsType(checkpoint: LastCheckpointInfo): Option[DataType] =
+    checkpoint.checkpointSchema.flatMap {
+      _.findNestedField(Seq("add", "stats"))
+    }.map(_._2.dataType)
+
+  /**
+   * Returns the type used to store parsed partition values for the given column in the checkpoint
+   * if these are present.
+   */
+  def getPartitionValuesType(checkpoint: LastCheckpointInfo, colName: String)
+    : Option[DataType] = {
+    checkpoint.checkpointSchema.flatMap {
+      _.findNestedField(Seq("add", "partitionValues_parsed", colName))
+    }.map(_._2.dataType)
+  }
+
+  /**
+   * Checks that stats and parsed partition values are stored in the checkpoint when enabled and
+   * that their type matches the expected type.
+   */
+  def checkCheckpointStats(
+      checkpoint: LastCheckpointInfo,
+      colName: String,
+      colType: DataType,
+      partitioned: Boolean,
+      jsonStatsEnabled: Boolean,
+      structStatsEnabled: Boolean): Unit = {
+    val expectedJsonStatsType = if (jsonStatsEnabled) Some(StringType) else None
+    assert(getJsonStatsType(checkpoint) === expectedJsonStatsType)
+
+    val expectedPartitionStats = if (partitioned && structStatsEnabled) Some(colType) else None
+    assert(getPartitionValuesType(checkpoint, colName) === expectedPartitionStats)
+  }
+
+  /**
+   * Reads the test table filtered by the given value and checks that files are skipped as expected.
+   */
+  def checkFileSkipping(filterValue: Any, expectedFilesRead: Long): Unit = {
+    val dataFilter: Expression =
+      EqualTo(AttributeReference("a", IntegerType)(), Literal(filterValue))
+    val files = deltaLog.update().filesForScan(Seq(dataFilter), keepNumRecords = false).files
+    assert(files.size === expectedFilesRead, s"Expected $expectedFilesRead files to be " +
+      s"read but read ${files.size} files.")
+  }
+
+  for {
+    partitioned <- BOOLEAN_DOMAIN
+    jsonStatsEnabled <- BOOLEAN_DOMAIN
+    structStatsEnabled <- BOOLEAN_DOMAIN
+  }
+  testStats(s"data skipping after type change", partitioned, jsonStatsEnabled, structStatsEnabled) {
+    addSingleFile(Seq(1), ShortType)
+    addSingleFile(Seq(2), ShortType)
+    deltaLog.checkpoint()
+    assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
+    val initialCheckpoint = getLatestCheckpoint
+    checkCheckpointStats(
+      initialCheckpoint, "a", ShortType, partitioned, jsonStatsEnabled, structStatsEnabled)
+
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+    addSingleFile(Seq(Int.MinValue), IntegerType)
+
+    var checkpoint = getLatestCheckpoint
+    // Ensure there's no new checkpoint after the type change.
+    assert(getLatestCheckpoint.semanticEquals(initialCheckpoint))
+
+    val canSkipFiles = jsonStatsEnabled || partitioned
+
+    // The last file added isn't part of the checkpoint, it always has stats that can be used for
+    // skipping even when checkpoint stats can't be used for skipping.
+    checkFileSkipping(filterValue = 1, expectedFilesRead = if (canSkipFiles) 1 else 2)
+    checkAnswer(readDeltaTable(tempPath).filter("a = 1"), Row(1, 1))
+
+    checkFileSkipping(filterValue = Int.MinValue, expectedFilesRead = if (canSkipFiles) 1 else 3)
+    checkAnswer(readDeltaTable(tempPath).filter(s"a = ${Int.MinValue}"), Row(Int.MinValue, 1))
+
+    // Trigger a new checkpoint after the type change and re-check data skipping.
+    deltaLog.checkpoint()
+    checkpoint = getLatestCheckpoint
+    assert(!checkpoint.semanticEquals(initialCheckpoint))
+    checkCheckpointStats(
+      checkpoint, "a", IntegerType, partitioned, jsonStatsEnabled, structStatsEnabled)
+    // When checkpoint stats are completely disabled, the last file added can't be skipped anymore.
+    checkFileSkipping(filterValue = 1, expectedFilesRead = if (canSkipFiles) 1 else 3)
+    checkFileSkipping(filterValue = Int.MinValue, expectedFilesRead = if (canSkipFiles) 1 else 3)
+  }
+
+  for {
+    partitioned <- BOOLEAN_DOMAIN
+    jsonStatsEnabled <- BOOLEAN_DOMAIN
+    structStatsEnabled <- BOOLEAN_DOMAIN
+  }
+  testStats(s"metadata-only query", partitioned, jsonStatsEnabled, structStatsEnabled) {
+    addSingleFile(Seq(1), ShortType)
+    addSingleFile(Seq(2), ShortType)
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+    addSingleFile(Seq(Int.MinValue), IntegerType)
+    addSingleFile(Seq(Int.MaxValue), IntegerType)
+
+    // Check that collecting aggregates using a metadata-only query works after the type change.
+    val resultDf = sql(s"SELECT MIN(a), MAX(a), COUNT(*) FROM delta.`$tempPath`")
+    val isMetadataOnly = resultDf.queryExecution.optimizedPlan.collectFirst {
+      case l: LocalRelation => l
+    }.nonEmpty
+    assert(isMetadataOnly, "Expected the query to be metadata-only")
+    checkAnswer(resultDf, Row(Int.MinValue, Int.MaxValue, 4))
+  }
+}
+
+/**
  * Tests covering adding and removing the type widening table feature. Dropping the table feature
  * also includes rewriting data files with the old type and removing type widening metadata.
  */
-trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
+trait DeltaTypeWideningTableFeatureTests {
   self: QueryTest
     with ParquetTest
-    with DeltaDMLTestUtils
     with RowTrackingTestUtils
     with DeltaTypeWideningTestMixin =>
 
@@ -669,8 +829,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
   /** Clock used to advance past the retention period when dropping the table feature. */
   var clock: ManualClock = _
 
-  override protected def beforeEach(): Unit = {
-    super.beforeEach()
+  protected def setupManualClock(): Unit = {
     clock = new ManualClock(System.currentTimeMillis())
     // Override the (cached) delta log with one using our manual clock.
     DeltaLog.clearCache()
@@ -735,13 +894,11 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
    * the table retention period.
    */
   def advancePastRetentionPeriod(): Unit = {
+    assert(clock != null, "Must call setupManualClock in tests that are using this method.")
     clock.advance(
       deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
         TimeUnit.MINUTES.toMillis(5))
   }
-
-  def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
-      append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
 
   /** Get the number of AddFile actions committed since the given table version (included). */
   def getNumAddFilesSinceVersion(version: Long): Long =
@@ -870,6 +1027,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop unused table feature on table with data inserted before adding the table feature," +
       s"rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
         s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
       addSingleFile(Seq(1, 2, 3), ByteType)
@@ -895,6 +1053,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop table feature on table with data added only after type change, " +
       s"rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
       addSingleFile(Seq(1, 2, 3), IntegerType)
@@ -921,6 +1080,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop table feature on table with data added before type change, " +
       s"rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
       addSingleFile(Seq(1, 2, 3), ByteType)
       sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
@@ -944,6 +1104,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop table feature on table with data added before type change and fully rewritten " +
       s"after, rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
       addSingleFile(Seq(1, 2, 3), ByteType)
       sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
@@ -969,6 +1130,7 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
 
     test(s"drop table feature on table with data added before type change and partially " +
       s"rewritten after, rowTrackingEnabled=$rowTrackingEnabled") {
+      setupManualClock()
       withRowTrackingEnabled(rowTrackingEnabled) {
         sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
         addSingleFile(Seq(1, 2, 3), ByteType)
@@ -1056,5 +1218,264 @@ trait DeltaTypeWideningTableFeatureTests extends BeforeAndAfterEach {
     // during the UPDATE.
     assert(metrics("numFilesRewritten").toLong === 1L)
     assert(metrics("metadataRemoved").toBoolean)
+  }
+}
+
+trait DeltaTypeWideningConstraintsTests {
+  self: QueryTest with SharedSparkSession =>
+
+  test("not null constraint with type change") {
+    withTable("t") {
+      sql("CREATE TABLE t (a byte NOT NULL) USING DELTA")
+      sql("INSERT INTO t VALUES (1)")
+      checkAnswer(sql("SELECT * FROM t"), Row(1))
+
+      // Changing the type of a column with a NOT NULL constraint is allowed.
+      sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
+      assert(sql("SELECT * FROM t").schema("a").dataType === ShortType)
+
+      sql("INSERT INTO t VALUES (2)")
+      checkAnswer(sql("SELECT * FROM t"), Seq(Row(1), Row(2)))
+    }
+  }
+
+  test("check constraint with type change") {
+    withTable("t") {
+      sql("CREATE TABLE t (a byte, b byte) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a) > 0)")
+      sql("INSERT INTO t VALUES (2, 2)")
+      checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
+
+      // Changing the type of a column that a CHECK constraint depends on is not allowed.
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
+        },
+        errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "columnName" -> "a",
+          "constraints" -> "delta.constraints.ck -> hash ( a ) > 0"
+      ))
+
+      // Changing the type of `b` is allowed as it's not referenced by the constraint.
+      sql("ALTER TABLE t CHANGE COLUMN b TYPE SMALLINT")
+      assert(sql("SELECT * FROM t").schema("b").dataType === ShortType)
+      checkAnswer(sql("SELECT * FROM t"), Row(2, 2))
+    }
+  }
+
+  test("check constraint on nested field with type change") {
+    withTable("t") {
+      sql("CREATE TABLE t (a struct<x: byte, y: byte>) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a.x) > 0)")
+      sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
+      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
+        },
+        errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "columnName" -> "a.x",
+          "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
+      ))
+
+      // Changing the type of a.y is allowed since it's not referenced by the CHECK constraint.
+      sql("ALTER TABLE t CHANGE COLUMN a.y TYPE SMALLINT")
+      checkAnswer(sql("SELECT * FROM t"), Row(Row(2, 3)))
+    }
+  }
+
+  test(s"check constraint with type evolution") {
+    withTable("t") {
+      sql(s"CREATE TABLE t (a byte) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a) > 0)")
+      sql("INSERT INTO t VALUES (2)")
+      checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t VALUES (200)")
+          },
+          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "TINYINT",
+            "dataType" -> "INT",
+            "constraints" -> "delta.constraints.ck -> hash ( a ) > 0"
+        ))
+      }
+    }
+  }
+
+  test("check constraint on nested field with type evolution") {
+    withTable("t") {
+      sql("CREATE TABLE t (a struct<x: byte, y: byte>) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a.x) > 0)")
+      sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
+      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
+          },
+          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
+            "dataType" -> "STRUCT<x: INT, y: TINYINT>",
+            "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
+        ))
+
+        // We're currently too strict and reject changing the type of struct field a.y even though
+        // it's not the field referenced by the CHECK constraint.
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 500))")
+          },
+          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
+            "dataType" -> "STRUCT<x: TINYINT, y: INT>",
+            "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
+        ))
+      }
+    }
+  }
+}
+
+trait DeltaTypeWideningGeneratedColumnTests extends GeneratedColumnTest {
+  self: QueryTest with SharedSparkSession =>
+
+  test("generated column with type change") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a byte, b byte, gen int",
+        generatedColumns = Map("gen" -> "hash(a)"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a, b) VALUES (2, 2)")
+      checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
+
+      // Changing the type of a column that a generated column depends on is not allowed.
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "columnName" -> "a",
+          "generatedColumns" -> "gen -> hash(a)"
+        ))
+
+      // Changing the type of `b` is allowed as it's not referenced by the generated column.
+      sql("ALTER TABLE t CHANGE COLUMN b TYPE SMALLINT")
+      assert(sql("SELECT * FROM t").schema("b").dataType === ShortType)
+      checkAnswer(sql("SELECT * FROM t"), Row(2, 2, 1765031574))
+    }
+  }
+
+  test("generated column on nested field with type change") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a struct<x: byte, y: byte>, gen int",
+        generatedColumns = Map("gen" -> "hash(a.x)"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
+      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+        parameters = Map(
+          "columnName" -> "a.x",
+          "generatedColumns" -> "gen -> hash(a.x)"
+      ))
+
+      // Changing the type of a.y is allowed since it's not referenced by the CHECK constraint.
+      sql("ALTER TABLE t CHANGE COLUMN a.y TYPE SMALLINT")
+      checkAnswer(sql("SELECT * FROM t"), Row(Row(2, 3), 1765031574) :: Nil)
+    }
+  }
+
+  test("generated column with type evolution") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a byte, gen int",
+        generatedColumns = Map("gen" -> "hash(a)"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (2)")
+      checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        checkError(
+        exception = intercept[DeltaAnalysisException] {
+          sql("INSERT INTO t (a) VALUES (200)")
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "a",
+          "columnType" -> "TINYINT",
+          "dataType" -> "INT",
+          "generatedColumns" -> "gen -> hash(a)"
+        ))
+      }
+    }
+  }
+
+  test("generated column on nested field with type evolution") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a struct<x: byte, y: byte>, gen int",
+        generatedColumns = Map("gen" -> "hash(a.x)"),
+        partitionColumns = Seq.empty
+      )
+      sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
+      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
+          },
+          errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
+            "dataType" -> "STRUCT<x: INT, y: TINYINT>",
+            "generatedColumns" -> "gen -> hash(a.x)"
+        ))
+
+        // We're currently too strict and reject changing the type of struct field a.y even though
+        // it's not the field referenced by the generated column.
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 200))")
+          },
+          errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "a",
+            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
+            "dataType" -> "STRUCT<x: TINYINT, y: INT>",
+            "generatedColumns" -> "gen -> hash(a.x)"
+        ))
+      }
+    }
   }
 }

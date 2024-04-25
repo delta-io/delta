@@ -16,12 +16,13 @@
 package io.delta.kernel.test
 
 import io.delta.kernel.client._
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
-import io.delta.kernel.expressions.{Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.types.{DataType, StructType}
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 
 import java.io.ByteArrayInputStream
+import java.util
 import java.util.Optional
 
 /**
@@ -90,6 +91,12 @@ trait BaseMockJsonHandler extends JsonHandler {
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
     throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def writeJsonFileAtomically(
+      filePath: String,
+      data: CloseableIterator[Row],
+      overwrite: Boolean): Unit =
+    throw new UnsupportedOperationException("not supported in this test suite")
 }
 
 /**
@@ -100,6 +107,18 @@ trait BaseMockParquetHandler extends ParquetHandler {
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def writeParquetFiles(
+      directoryPath: String,
+      dataIter: CloseableIterator[FilteredColumnarBatch],
+      maxFileSize: Long,
+      statsColumns: util.List[Column]): CloseableIterator[DataFileStatus] =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def writeParquetFileAtomically(
+      filePath: String,
+      data: CloseableIterator[FilteredColumnarBatch]): Unit =
     throw new UnsupportedOperationException("not supported in this test suite")
 }
 

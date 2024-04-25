@@ -198,11 +198,14 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
 
 
   override protected def schemaHasChanged(snapshot: Snapshot, spark: SparkSession): Boolean = {
-    // We need to check whether the schema in the catalog matches the current schema. If a
-    // field in the schema is very long, we cannot store the schema in the catalog, therefore
-    // here we have to compare what's in the catalog with what we actually can store in the
-    // catalog
-    val schemaChanged = UpdateCatalog.truncateSchemaIfNecessary(snapshot.schema) != table.schema
+    // We need to check whether the schema in the catalog matches the current schema.
+    // Depending on the schema validation policy, the schema might need to be truncated.
+    // Therefore, we should use what we want to store in the catalog for comparison.
+    val truncationThreshold = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD)
+    val schemaChanged = table.schema != UpdateCatalog.truncateSchemaIfNecessary(
+      snapshot.schema,
+      truncationThreshold)._1
     // The table may have been dropped as we're just about to update the information. There is
     // unfortunately no great way to avoid a race condition, but we do one last check here as
     // updates may have been queued for some time.
@@ -261,11 +264,11 @@ object UpdateCatalog {
   // This is the encoding of the database for the Hive MetaStore
   private val latin1 = Charset.forName("ISO-8859-1")
 
-  // Maximum number of characters that a catalog can store.
-  val MAX_CATALOG_TYPE_DDL_LENGTH = 4000
   val ERROR_KEY = "delta.catalogUpdateError"
   val LONG_SCHEMA_ERROR: String = "The schema contains a very long nested field and cannot be " +
     "stored in the catalog."
+  val NON_LATIN_CHARS_ERROR: String = "The schema contains non-latin encoding characters and " +
+    "cannot be stored in the catalog."
   val HIVE_METASTORE_NAME = "hive_metastore"
 
   private def getOrCreateExecutionContext(conf: SQLConf): ExecutionContext = synchronized {
@@ -313,12 +316,11 @@ object UpdateCatalog {
       catalog.qualifyIdentifier(TableIdentifier(table.identifier.table, Some(table.database)))
     val db = qualifiedIdentifier.database.get
     val tblName = qualifiedIdentifier.table
-    val schema = truncateSchemaIfNecessary(snapshot.schema)
-    val additionalProperties = if (schema.isEmpty) {
-      Map(ERROR_KEY -> LONG_SCHEMA_ERROR)
-    } else {
-      Map.empty
-    }
+    val truncationThreshold = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD)
+    val (schema, additionalProperties) = truncateSchemaIfNecessary(
+      snapshot.schema,
+      truncationThreshold)
 
     // We call the lower level API so that we can actually drop columns. We also assume that
     // all columns are data columns so that we don't have to deal with partition columns
@@ -346,25 +348,28 @@ object UpdateCatalog {
   }
 
   /**
-   * If a field in the schema has a very long string representation, then the schema will be
+   * If the schema contains non-latin encoding characters, the schema can become garbled.
+   * We need to truncate the schema in that case.
+   * Also, if any of the fields is longer than `truncationThreshold`, then the schema will be
    * truncated to an empty schema to avoid corruption.
-   * Also, if the schema contains non-latin encoding characters, the schema will be garbled. In
-   * this case we also truncate the schema.
+   *
+   * @return a tuple of the truncated schema and a map of error messages if any.
+   *         The error message is only set if the schema is truncated. Truncation
+   *         can happen if the schema is too long or if it contains non-latin characters.
    */
-  def truncateSchemaIfNecessary(schema: StructType): StructType = {
+  def truncateSchemaIfNecessary(
+      schema: StructType,
+      truncationThreshold: Long): (StructType, Map[String, String]) = {
     // Encoders are not threadsafe
     val encoder = latin1.newEncoder()
-    def isColumnValid(f: StructField): Boolean = {
-      val typeString = f.dataType.catalogString
-        encoder.canEncode(f.name) &&
-        typeString.length <= MAX_CATALOG_TYPE_DDL_LENGTH &&
-        encoder.canEncode(typeString)
+    schema.foreach { f =>
+      if (f.dataType.catalogString.length > truncationThreshold) {
+        return (new StructType(), Map(UpdateCatalog.ERROR_KEY -> LONG_SCHEMA_ERROR))
+      }
+      if (!encoder.canEncode(f.name) || !encoder.canEncode(f.dataType.catalogString)) {
+        return (new StructType(), Map(UpdateCatalog.ERROR_KEY -> NON_LATIN_CHARS_ERROR))
+      }
     }
-
-    if (schema.exists(f => !isColumnValid(f))) {
-      new StructType()
-    } else {
-      schema
-    }
+    (schema, Map.empty)
   }
 }
