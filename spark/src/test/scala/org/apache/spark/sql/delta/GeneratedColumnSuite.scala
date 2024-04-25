@@ -42,7 +42,9 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
-trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
+trait GeneratedColumnSuiteBase
+    extends GeneratedColumnTest
+    with DeltaExcludedBySparkVersionTestMixinShims {
 
   import GeneratedColumn._
   import testImplicits._
@@ -735,7 +737,7 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     }
   }
 
-  test("disallow column type evolution - nesting") {
+  testSparkLatestOnly("disallow column type evolution - nesting") {
     withTableName("disallow_column_type_evolution") { table =>
       createTable(table, None, "a SMALLINT, c1 STRUCT<a: SMALLINT>, c2 SMALLINT",
         Map("c2" -> "CAST(HASH(a - 10s) AS SMALLINT)"), Nil)
@@ -772,7 +774,9 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
     }
   }
 
-  test("changing the type of a nested field named the same as the generated column") {
+  // scalastyle:off line.size.limit
+  testSparkLatestOnly("changing the type of a nested field named the same as the generated column") {
+  // scalastyle:on line.size.limit
     withTableName("disallow_column_type_evolution") { table =>
       createTable(table, None, "a INT, t STRUCT<gen: SMALLINT>, gen SMALLINT",
         Map("gen" -> "CAST(HASH(a - 10s) AS SMALLINT)"), Nil)

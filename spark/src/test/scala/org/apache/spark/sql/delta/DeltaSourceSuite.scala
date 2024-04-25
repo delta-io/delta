@@ -48,7 +48,8 @@ import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
 
@@ -1657,7 +1658,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("startingVersion: user defined start works with mergeSchema") {
+  testSparkLatestOnly("startingVersion: user defined start works with mergeSchema") {
     withTempDir { inputDir =>
       withTempView("startingVersionTest") {
         spark.range(10)
