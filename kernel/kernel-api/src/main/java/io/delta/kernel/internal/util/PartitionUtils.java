@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.Timestamp;
@@ -28,14 +30,15 @@ import static java.util.Arrays.asList;
 
 import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class PartitionUtils {
     private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
@@ -246,6 +249,44 @@ public class PartitionUtils {
         }
 
         return expression;
+    }
+
+    /**
+     * Get the target directory for writing data for given partition values.
+     *
+     * @param dataRoot          Root directory where the data is stored.
+     * @param partitionColNames Partition column names. We need this to create the target directory
+     *                          structure that is consistent levels of directories.
+     * @param partitionValues   Partition values to create the target directory.
+     * @return Target directory path.
+     */
+    public static String getTargetDirectory(
+            String dataRoot,
+            List<String> partitionColNames,
+            Map<String, Literal> partitionValues) {
+        Path targetDirectory = new Path(dataRoot);
+        for (String partitionColName : partitionColNames) {
+            Literal partitionValue = partitionValues.get(partitionColName);
+            checkArgument(
+                    partitionValue != null,
+                    "Partition column value is missing for column: " + partitionColName);
+            String serializedValue = serializePartitionValue(partitionValues.get(partitionColName));
+            if (serializedValue == null) {
+                //
+                serializedValue = "__HIVE_DEFAULT_PARTITION__";
+            } else {
+                try {
+                    serializedValue = URLEncoder.encode(serializedValue, "UTF-8");
+                } catch (UnsupportedEncodingException e) {
+                    throw new RuntimeException(
+                            "Failed to encode partition value: " + serializedValue, e);
+                }
+            }
+            String partitionDirectory = partitionColName + "=" + serializedValue;
+            targetDirectory = new Path(targetDirectory, partitionDirectory);
+        }
+
+        return targetDirectory.toString();
     }
 
     private static boolean hasNonPartitionColumns(
