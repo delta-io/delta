@@ -129,8 +129,8 @@ object ScanWithDeletionVectors {
       fileFormat: DeltaParquetFileFormat,
       tahoeFileIndex: TahoeFileIndex,
       hadoopFsRelation: HadoopFsRelation): LogicalRelation = {
-    val predicatePushdownEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
+    val useMetadataRowIndex =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
 
     // Create a new `LogicalRelation` that has modified `DeltaFileFormat` and output with an extra
     // column to indicate whether to skip the row or not
@@ -139,7 +139,7 @@ object ScanWithDeletionVectors {
     // other values mean the row needs be skipped.
     val skipRowField = IS_ROW_DELETED_STRUCT_FIELD
 
-    val scanOutputWithMetadata = if (predicatePushdownEnabled) {
+    val scanOutputWithMetadata = if (useMetadataRowIndex) {
       // When predicate pushdown is enabled, make sure the output contains metadata.row_index.
       if (inputScan.output.map(_.name).contains(METADATA_NAME)) {
         // If the scan already contains a metadata column without a row_index, add it.
@@ -164,7 +164,7 @@ object ScanWithDeletionVectors {
 
     val newFileFormat = fileFormat.copyWithDVInfo(
       tablePath = tahoeFileIndex.path.toString,
-      predicatePushdownEnabled = predicatePushdownEnabled)
+      optimizationsEnabled = useMetadataRowIndex)
 
     val newRelation = hadoopFsRelation.copy(
       fileFormat = newFileFormat,

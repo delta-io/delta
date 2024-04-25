@@ -68,7 +68,7 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "false")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
   def assertOperationalDVMetrics(
@@ -257,7 +257,7 @@ class MergeIntoDVsCDCSuite extends MergeIntoDVsTests with MergeCDCWithDVsTests
 class MergeIntoDVsWithPredicatePushdownSuite extends MergeIntoDVsTests {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "true")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 }
 
@@ -266,6 +266,6 @@ class MergeIntoDVsWithPredicatePushdownCDCSuite
     with MergeCDCWithDVsTests {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "true")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 }

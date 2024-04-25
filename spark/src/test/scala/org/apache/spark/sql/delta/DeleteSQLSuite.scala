@@ -106,7 +106,7 @@ class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, delete = true)
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "false")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
   override def excluded: Seq[String] = super.excluded ++
@@ -134,6 +134,6 @@ class DeleteSQLWithDeletionVectorsAndPredicatePushdownSuite
     extends DeleteSQLWithDeletionVectorsSuite {
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED.key, "true")
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 }

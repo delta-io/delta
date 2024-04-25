@@ -85,8 +85,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       target: LogicalPlan,
       fileIndex: TahoeFileIndex): LogicalPlan = {
-    val predicatePushdownEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
+    val useMetadataRowIndex =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
     // This is only used when predicate pushdown is disabled.
     val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)()
 
@@ -97,7 +97,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
         fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
-        if (predicatePushdownEnabled) {
+        if (useMetadataRowIndex) {
           l.copy(
             relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession),
             output = l.output :+ fileMetadataCol)
@@ -106,7 +106,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
             StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FIELD)
           val finalOutput = l.output ++ Seq(rowIndexCol, fileMetadataCol)
           // Disable splitting and filter pushdown in order to generate the row-indexes.
-          val newFormat = format.copy(isSplittable = false, disablePushDowns = true)
+          val newFormat = format.copy(optimizationsEnabled = false)
           val newBaseRelation = hfsr.copy(
             location = fileIndex,
             dataSchema = newDataSchema,
@@ -118,7 +118,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         if (fileMetadataCol == null) {
           throw new IllegalStateException("File metadata column is not yet created.")
         }
-        val rowIndexColOpt = if (predicatePushdownEnabled) None else Some(rowIndexCol)
+        val rowIndexColOpt = if (useMetadataRowIndex) None else Some(rowIndexCol)
         val additionalColumns = Seq(fileMetadataCol) ++ rowIndexColOpt
         p.copy(projectList = projectList ++ additionalColumns)
     }
@@ -387,10 +387,10 @@ object DeletionVectorBitmapGenerator {
       condition: Expression,
       fileNameColumnOpt: Option[Column] = None,
       rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
-    val predicatePushdownConf = DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED
-    val predicatePushdownEnabled = sparkSession.sessionState.conf.getConf(predicatePushdownConf)
+    val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
+    val useMetadataRowIndex = sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
     val fileNameColumn = fileNameColumnOpt.getOrElse(col(s"${METADATA_NAME}.${FILE_PATH}"))
-    val rowIndexColumn = if (predicatePushdownEnabled) {
+    val rowIndexColumn = if (useMetadataRowIndex) {
       rowIndexColumnOpt.getOrElse(col(s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}"))
     } else {
       rowIndexColumnOpt.getOrElse(col(ROW_INDEX_COLUMN_NAME))

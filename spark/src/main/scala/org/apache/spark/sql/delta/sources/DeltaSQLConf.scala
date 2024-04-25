@@ -1534,10 +1534,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED =
-    buildConf("deletionVectors.predicatePushdownEnabled")
+  val DELETION_VECTORS_USE_METADATA_ROW_INDEX =
+    buildConf("deletionVectors.useMetadataRowIndex")
       .internal()
-      .doc("Controls whether we generate pushdown predicates in scans with DVs.")
+      .doc(
+        """Controls whether we use the metadata row_index column for filtering deleted
+          |rows with deletion vectors. When enabled, it allows predicate pushdown and
+          |file splitting in scans.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
