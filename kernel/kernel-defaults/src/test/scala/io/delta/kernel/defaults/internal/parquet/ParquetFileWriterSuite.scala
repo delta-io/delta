@@ -20,7 +20,7 @@ import java.lang.{Double => DoubleJ, Float => FloatJ}
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, VectorTestUtils}
+import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, ExpressionTestUtils, TestRow}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.ColumnMapping.convertToPhysicalSchema
@@ -54,7 +54,7 @@ import org.scalatest.funsuite.AnyFunSuite
  * 4.3) verify the stats returned in (3) are correct using the Spark Parquet reader
  */
 class ParquetFileWriterSuite extends AnyFunSuite
-  with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
+  with ParquetSuiteBase with DefaultVectorTestUtils with ExpressionTestUtils {
 
   Seq(
     // Test cases reading and writing all types of data with or without stats collection

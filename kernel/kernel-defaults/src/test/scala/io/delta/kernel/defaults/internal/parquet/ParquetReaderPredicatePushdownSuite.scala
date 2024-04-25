@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, VectorTestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.expressions.Literal.{ofBinary, ofBoolean, ofDate, ofDouble, ofFloat, ofInt, ofLong, ofNull, ofString}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
@@ -28,6 +28,7 @@ import org.apache.spark.sql.{Row, types => sparktypes}
 import java.nio.file.Files
 import java.sql.Date
 import java.util.Optional
+import io.delta.kernel.test.VectorTestUtils
 
 class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
     with BeforeAndAfterAll with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {

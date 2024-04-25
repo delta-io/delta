@@ -118,4 +118,8 @@ public class SnapshotImpl implements Snapshot {
     public Optional<Long> getLatestTransactionVersion(String applicationId) {
         return logReplay.getLatestTransactionIdentifier(applicationId);
     }
+
+    public LogSegment getLogSegment() {
+        return logSegment;
+    }
 }

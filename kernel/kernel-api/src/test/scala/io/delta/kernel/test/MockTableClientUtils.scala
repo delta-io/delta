@@ -102,7 +102,7 @@ trait BaseMockJsonHandler extends JsonHandler {
 /**
  * Base class for mocking [[ParquetHandler]]
  */
-trait BaseMockParquetHandler extends ParquetHandler {
+trait BaseMockParquetHandler extends ParquetHandler with MockTableClientUtils {
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
@@ -161,4 +161,3 @@ trait BaseMockFileSystemClient extends FileSystemClient {
       readRequests: CloseableIterator[FileReadRequest]): CloseableIterator[ByteArrayInputStream] =
     throw new UnsupportedOperationException("not supported in this test suite")
 }
-

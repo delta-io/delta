@@ -24,7 +24,6 @@ from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
 from pyspark.sql import DataFrame, Row
-from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
 from pyspark.sql.utils import AnalysisException, ParseException
@@ -916,6 +915,12 @@ class DeltaTableTestsMixin:
                                        tblComment="comment")
 
     def test_verify_paritionedBy_compatibility(self) -> None:
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[attr-defined]
+
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
                 .addColumn("col1", "int", comment="foo", nullable=False) \
