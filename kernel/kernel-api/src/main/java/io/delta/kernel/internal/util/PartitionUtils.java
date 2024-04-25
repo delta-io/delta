@@ -16,8 +16,11 @@
 package io.delta.kernel.internal.util;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.Timestamp;
+import java.time.*;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -35,6 +38,9 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import io.delta.kernel.internal.InternalScanFileUtils;
 
 public class PartitionUtils {
+    private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+
     private PartitionUtils() {}
 
     /**
@@ -277,7 +283,7 @@ public class PartitionUtils {
         return new And(left, right);
     }
 
-    private static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
+    protected static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
         if (partitionValue == null) {
             return Literal.ofNull(dataType);
         }
@@ -329,5 +335,52 @@ public class PartitionUtils {
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);
+    }
+
+    /**
+     * Serialize the given partition value to a string according to the Delta protocol <a
+     * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md
+     * #partition-value-serialization">partition value serialization rules</a>.
+     *
+     * @param literal Literal representing the partition value of specific datatype.
+     * @return Serialized string representation of the partition value.
+     */
+    protected static String serializePartitionValue(Literal literal) {
+        Object value = literal.getValue();
+        if (value == null) {
+            return null;
+        }
+        DataType dataType = literal.getDataType();
+        if (dataType instanceof ByteType
+                || dataType instanceof ShortType
+                || dataType instanceof IntegerType
+                || dataType instanceof LongType
+                || dataType instanceof FloatType
+                || dataType instanceof DoubleType
+                || dataType instanceof BooleanType) {
+            return String.valueOf(value);
+        } else if (dataType instanceof StringType) {
+            return (String) value;
+        } else if (dataType instanceof DateType) {
+            int daysSinceEpochUTC = (int) value;
+            return LocalDate.ofEpochDay(daysSinceEpochUTC).toString();
+        } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
+            long microsSinceEpochUTC = (long) value;
+            long seconds = microsSinceEpochUTC / 1_000_000;
+            int microsOfSecond = (int) (microsSinceEpochUTC % 1_000_000);
+            if (microsOfSecond < 0) {
+                // also adjust for negative microsSinceEpochUTC
+                microsOfSecond = 1_000_000 + microsOfSecond;
+            }
+            int nanosOfSecond = microsOfSecond * 1_000;
+            LocalDateTime localDateTime =
+                    LocalDateTime.ofEpochSecond(seconds, nanosOfSecond, ZoneOffset.UTC);
+            return localDateTime.format(PARTITION_TIMESTAMP_FORMATTER);
+        } else if (dataType instanceof DecimalType) {
+            return ((BigDecimal) value).toString();
+        } else if (dataType instanceof BinaryType) {
+            return new String((byte[]) value, StandardCharsets.UTF_8);
+        }
+        throw new UnsupportedOperationException("Unsupported partition column type: " + dataType);
     }
 }
