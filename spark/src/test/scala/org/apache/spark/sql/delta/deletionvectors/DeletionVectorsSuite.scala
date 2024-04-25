@@ -642,7 +642,8 @@ class DeletionVectorsSuite extends QueryTest
     } catch {
       // TODO(SPARK-47731): Known issue. To be fixed in Spark 3.5 and/or Spark 4.0.
       case e: SparkException if predicatePushDownEnabled &&
-        e.getMessage.contains("More than Int.MaxValue elements") => () // Ignore.
+        (e.getMessage.contains("More than Int.MaxValue elements") ||
+          e.getCause.getMessage.contains("More than Int.MaxValue elements")) => () // Ignore.
     }
   }
 
@@ -768,7 +769,8 @@ class DeletionVectorsSuite extends QueryTest
         } catch {
           // TODO(SPARK-47731): Known issue. To be fixed in Spark 3.5 and/or Spark 4.0.
           case e: SparkException if predicatePushDownEnabled &&
-            e.getMessage.contains("More than Int.MaxValue elements") => () // Ignore.
+            (e.getMessage.contains("More than Int.MaxValue elements") ||
+              e.getCause.getMessage.contains("More than Int.MaxValue elements")) => () // Ignore.
         }
       }
     }
