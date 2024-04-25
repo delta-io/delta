@@ -252,7 +252,9 @@ public class PartitionUtils {
     }
 
     /**
-     * Get the target directory for writing data for given partition values.
+     * Get the target directory for writing data for given partition values. Example:
+     * Given partition values (part1=1, part2='abc'), the target directory will be for a table
+     * rooted at 's3://bucket/table': 's3://bucket/table/part1=1/part2=abc'.
      *
      * @param dataRoot          Root directory where the data is stored.
      * @param partitionColNames Partition column names. We need this to create the target directory
@@ -270,9 +272,9 @@ public class PartitionUtils {
             checkArgument(
                     partitionValue != null,
                     "Partition column value is missing for column: " + partitionColName);
-            String serializedValue = serializePartitionValue(partitionValues.get(partitionColName));
+            String serializedValue = serializePartitionValue(partitionValue);
             if (serializedValue == null) {
-                //
+                // Follow the delta-spark behavior to use "__HIVE_DEFAULT_PARTITION__" for null
                 serializedValue = "__HIVE_DEFAULT_PARTITION__";
             } else {
                 try {

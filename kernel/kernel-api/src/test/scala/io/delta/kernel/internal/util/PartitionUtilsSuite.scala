@@ -251,7 +251,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
     test(s"construct partition data output directory: ${literal.getDataType}($literal)") {
       val result = getTargetDirectory(
         "/tmp/root",
-        Seq("part").asJava,
+        Seq("part1").asJava,
         Map("part1" -> literal).asJava)
       assert(result === s"/tmp/root/part1=$expFileName")
     }
