@@ -983,7 +983,6 @@ class ManagedCommitSuite
       assert(usageObj("numAlreadyBackfilledFiles").asInstanceOf[Int] === 0)
     }
   }
-}
 
   /////////////////////////////////////////////////////////////////////////////////////////////
   //           Test managed-commits with DeltaLog.getChangeLogFile API starts                //
