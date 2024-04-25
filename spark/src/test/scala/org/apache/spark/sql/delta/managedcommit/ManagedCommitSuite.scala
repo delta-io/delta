@@ -938,6 +938,58 @@ class ManagedCommitSuite
     }
   }
 
+  test("Incomplete backfills are handled properly by next commit after MC to FS conversion") {
+    val batchSize = 10
+    val neverBackfillingCommitOwner =
+      new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize) {
+        override def backfillToVersion(
+            logStore: LogStore,
+            hadoopConf: Configuration,
+            logPath: Path,
+            managedCommitTableConf: Map[String, String],
+            startVersion: Long,
+            endVersion: Option[Long]): Unit = { }
+      })
+    CommitOwnerProvider.clearNonDefaultBuilders()
+    val builder =
+      TrackingInMemoryCommitOwnerBuilder(batchSize, Some(neverBackfillingCommitOwner))
+    CommitOwnerProvider.registerBuilder(builder)
+
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v0
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v1
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v2
+
+      val log = DeltaLog.forTable(spark, tablePath)
+      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.version === 2)
+      assert(
+        log.unsafeVolatileSnapshot.logSegment.deltas.count(FileNames.isUnbackfilledDeltaFile) == 2)
+
+      val oldMetadata = log.unsafeVolatileSnapshot.metadata
+      val downgradeMetadata = oldMetadata.copy(
+        configuration = oldMetadata.configuration - MANAGED_COMMIT_OWNER_NAME.key)
+      log.startTransaction().commitManually(downgradeMetadata)
+      log.update()
+      val snapshotAfterDowngrade = log.unsafeVolatileSnapshot
+      assert(snapshotAfterDowngrade.version === 3)
+      assert(snapshotAfterDowngrade.tableCommitOwnerClientOpt.isEmpty)
+      assert(snapshotAfterDowngrade.logSegment.deltas.count(FileNames.isUnbackfilledDeltaFile) == 3)
+
+      val records = Log4jUsageLogger.track {
+        // commit 4
+        Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
+      }
+      val filteredUsageLogs = filterUsageRecords(
+        records, "delta.managedCommit.backfillWhenManagedCommitSupportedAndDisabled")
+      assert(filteredUsageLogs.size === 1)
+      val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredUsageLogs.head.blob)
+      assert(usageObj("numUnbackfilledFiles").asInstanceOf[Int] === 3)
+      assert(usageObj("numAlreadyBackfilledFiles").asInstanceOf[Int] === 0)
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////
   //           Test managed-commits with DeltaLog.getChangeLogFile API starts                //
   /////////////////////////////////////////////////////////////////////////////////////////////
