@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.vectorized.ColumnVector
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector
 
@@ -55,7 +56,7 @@ abstract sealed class RowIndexMarkingFilters(bitmap: RoaringBitmapArray) extends
       batchSize: Int,
       rowIndexColumn: ColumnVector,
       batch: WritableColumnVector): Unit = {
-    for (rowNumber <- 0  to batchSize - 1) {
+    for (rowNumber <- 0 until batchSize) {
       val rowIndex = rowIndexColumn.getLong(rowNumber)
       val isContained = isContainedInBitmap(rowIndex)
       batch.putByte(rowNumber, isContained)
@@ -151,7 +152,7 @@ case object DropAllRowsFilter extends RowIndexFilter {
       batchSize: Int,
       rowIndexColumn: ColumnVector,
       batch: WritableColumnVector): Unit = {
-    for (rowId <- 0 to batchSize - 1) {
+    for (rowId <- 0 until batchSize) {
       batch.putByte(rowId, RowIndexFilter.DROP_ROW_VALUE)
     }
   }
@@ -177,7 +178,7 @@ case object KeepAllRowsFilter extends RowIndexFilter {
       batchSize: Int,
       rowIndexColumn: ColumnVector,
       batch: WritableColumnVector): Unit = {
-    for (rowId <- 0 to batchSize - 1) {
+    for (rowId <- 0 until batchSize) {
       batch.putByte(rowId, RowIndexFilter.KEEP_ROW_VALUE)
     }
   }
