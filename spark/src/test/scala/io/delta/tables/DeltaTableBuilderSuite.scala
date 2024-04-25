@@ -381,10 +381,10 @@ class DeltaTableBuilderSuite
   }
 
   test("delta table property case") {
-    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
-    val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
-
     sealed trait DeltaTablePropertySetOperation {
+      val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
+      val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
+
       def setTableProperty(tablePath: String): Unit
 
       def expectedConfig: Map[String, String]
