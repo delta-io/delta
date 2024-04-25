@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.defaults.utils;
 
+import java.math.BigDecimal;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
@@ -98,5 +100,85 @@ public class DefaultKernelTestUtils {
         }
 
         throw new UnsupportedOperationException(dataType + " is not supported yet");
+    }
+
+    public static Object convertToType(Object o, DataType outputType) {
+        if (o == null) {
+            return null;
+        }
+        if (outputType instanceof ShortType) {
+            if (o instanceof Byte) {
+                return Integer.valueOf((byte) o );
+            } else if (o instanceof  Short) {
+                return (short) o;
+            } else {
+                throw new IllegalArgumentException("Cannot convert to output type " + outputType);
+            }
+        } else if (outputType instanceof IntegerType) {
+            if (o instanceof Byte) {
+                return Integer.valueOf((byte) o );
+            } else if (o instanceof  Short) {
+                return Integer.valueOf((short) o );
+            } else if (o instanceof  Integer) {
+                return (int) o ;
+            } else {
+                throw new IllegalArgumentException("Cannot convert to output type " + outputType);
+            }
+        }  else if (outputType instanceof LongType) {
+            if (o instanceof Byte) {
+                return Long.valueOf((byte) o );
+            } else if (o instanceof  Short) {
+                return Long.valueOf((short) o );
+            } else if (o instanceof  Integer) {
+                return Long.valueOf((int) o );
+            } else if (o instanceof  String) {
+                return Long.parseLong((String) o );
+            } else if (o instanceof Long) {
+                return (long) o;
+            } else {
+                throw new IllegalArgumentException("Cannot convert to output type " + outputType);
+            }
+        } else if (outputType instanceof DecimalType) {
+            return new BigDecimal((double) o);
+        } else if (outputType instanceof FloatType) {
+            if (o instanceof Byte) {
+                return Float.valueOf((byte) o );
+            } else if (o instanceof Short) {
+                return Float.valueOf((short) o );
+            } else if (o instanceof Integer) {
+                return Float.valueOf((int) o );
+            } else if (o instanceof Long) {
+                return Float.valueOf((long) o );
+            } else if (o instanceof BigDecimal) {
+                return  ((BigDecimal) o).floatValue();
+            } else if (o instanceof Float) {
+                return (float) o ;
+            } else {
+                throw new IllegalArgumentException("Cannot convert to output type " + outputType);
+            }
+        } else if (outputType instanceof DoubleType) {
+            if (o instanceof Byte) {
+                return Double.valueOf((byte) o );
+            } else if (o instanceof Short) {
+                return Double.valueOf((short) o );
+            } else if (o instanceof Integer) {
+                return Double.valueOf((int) o );
+            } else if (o instanceof Long) {
+                return Double.valueOf((long) o );
+            } else if (o instanceof BigDecimal) {
+                return  ((BigDecimal) o).doubleValue();
+            } else if (o instanceof Float) {
+                return Double.valueOf((float) o );
+            } else if (o instanceof String) {
+                return Long.parseLong((String) o );
+            } else if (o instanceof Double) {
+                return (double) o;
+            } else {
+                throw new IllegalArgumentException("Cannot convert to output type " + outputType);
+            }
+        } else if (outputType instanceof BooleanType) {
+            throw new UnsupportedOperationException("boolean type is not supported yet");
+        }
+        throw new UnsupportedOperationException(outputType + " is not supported yet");
     }
 }

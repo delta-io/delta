@@ -33,6 +33,7 @@ import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.defaults.internal.data.ColumnVectorConverter;
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
@@ -40,6 +41,8 @@ import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUti
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
+import static io.delta.kernel.defaults.internal.types.LeastCommonTypeResolver.isCompatible;
+import static io.delta.kernel.defaults.internal.types.LeastCommonTypeResolver.resolveLeastCommonType;
 
 /**
  * Implementation of {@link ExpressionEvaluator} for default {@link ExpressionHandler}.
@@ -63,9 +66,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         DataType outputType) {
         ExpressionTransformResult transformResult =
             new ExpressionTransformer(inputSchema).visit(expression);
-        if (!transformResult.outputType.equivalent(outputType)) {
-            String reason = format(
-                    "Can not create an expression handler returns result of type %s", outputType);
+
+        if (!isCompatible(outputType, transformResult.outputType)) {
+            String reason = format("Can not create an expression handler " +
+                            "for expression `%s` returns result of type %s, " +
+                            "type %s is not compatible with type %s",
+                    expression, outputType, outputType, transformResult.outputType);
             throw DeltaErrors.unsupportedExpression(expression, Optional.of(reason));
         }
         this.expression = transformResult.expression;
@@ -254,27 +260,34 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 throw DeltaErrors.unsupportedExpression(
                     coalesce, Optional.of("Coalesce requires at least one expression"));
             }
-            // TODO support least-common-type resolution
-            long numDistinctTypes = children.stream().map(e -> e.outputType)
-                .distinct()
-                .count();
-            if (numDistinctTypes > 1) {
-                throw DeltaErrors.unsupportedExpression(
-                        coalesce,
-                        Optional.of("Coalesce is only supported for arguments of the same type"));
-            }
-            // TODO support other data types besides boolean (just needs tests)
-            if (!(children.get(0).outputType instanceof BooleanType)) {
+            if (!(children.get(0).outputType instanceof BooleanType) &&
+                    !(children.get(0).outputType instanceof ByteType) &&
+                    !(children.get(0).outputType instanceof ShortType) &&
+                    !(children.get(0).outputType instanceof IntegerType) &&
+                    !(children.get(0).outputType instanceof LongType) &&
+                    !(children.get(0).outputType instanceof FloatType) &&
+                    !(children.get(0).outputType instanceof DoubleType) &&
+                    !(children.get(0).outputType instanceof StringType)) {
                 throw new UnsupportedOperationException(
-                    "Coalesce is only supported for boolean type expressions");
+                        "Coalesce is only supported for boolean, " +
+                                "string and number type expressions");
             }
+
+            List<DataType> types = children
+                    .stream()
+                    .map(e -> e.outputType)
+                    .collect(Collectors.toList());
+            DataType outputType = resolveLeastCommonType(types);
+
+
             return new ExpressionTransformResult(
                 new ScalarExpression(
                     "COALESCE",
                     children.stream()
                         .map(e -> e.expression)
-                        .collect(Collectors.toList())),
-                children.get(0).outputType
+                        .collect(Collectors.toList()),
+                        outputType),
+                    outputType
             );
         }
 
@@ -544,6 +557,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             List<ColumnVector> childResults = coalesce.getChildren()
                 .stream()
                 .map(this::visit)
+                    .map(c -> ColumnVectorConverter.convertToOutputType(
+                            c, coalesce.getOutputType()))
                 .collect(Collectors.toList());
             return DefaultExpressionUtils.combinationVector(
                 childResults,

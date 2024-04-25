@@ -15,7 +15,10 @@
  */
 package io.delta.kernel.defaults.utils
 
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
+import java.lang.{
+  Boolean => BooleanJ,
+  Byte => ByteJ,
+  Short => ShortJ, Integer => IntegerJ, Long => LongJ, Double => DoubleJ, Float => FloatJ}
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.types._
@@ -47,6 +50,60 @@ trait VectorTestUtils {
       override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getString(rowId: Int): String = values(rowId)
+    }
+  }
+
+  protected def byteVector(values: Seq[ByteJ]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = ByteType.BYTE
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getByte(rowId: Int): Byte = values(rowId)
+    }
+  }
+  protected def shortVector(values: Seq[ShortJ]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = ShortType.SHORT
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getShort(rowId: Int): Short = values(rowId)
+    }
+  }
+  protected def integerVector(values: Seq[IntegerJ]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = IntegerType.INTEGER
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getInt(rowId: Int): Int = values(rowId)
+    }
+  }
+
+  protected def longVector(values: Seq[LongJ]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = LongType.LONG
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getLong(rowId: Int): Long = values(rowId)
     }
   }
 

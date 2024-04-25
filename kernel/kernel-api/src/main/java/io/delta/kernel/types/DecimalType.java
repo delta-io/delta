@@ -32,6 +32,9 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public final class DecimalType extends DataType {
+    private static final byte typePromotionGroup = PromotionGroup.NUMBER_GROUP;
+    private static final byte typePromotionPrecedenceInGroup =
+            PromotionGroup.NUMBER_PRECEDENCE_DECIMAL;
     public static final DecimalType USER_DEFAULT = new DecimalType(10, 0);
 
     private final int precision;
@@ -47,6 +50,15 @@ public final class DecimalType extends DataType {
         this.scale = scale;
     }
 
+
+    @Override
+    public byte getPromotionPrecedence(DataType dataType) {
+        return typePromotionPrecedenceInGroup;
+    }
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
+    }
     /**
      * @return the maximum number of digits of the decimal
      */

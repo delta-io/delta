@@ -25,6 +25,19 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public abstract class DataType {
+    public byte getPromotionPrecedence(DataType dataType) {
+        String msg = String.format(
+                "`%s` Does not have typePromotionPrecedenceInGroup`",
+                dataType);
+        throw new UnsupportedOperationException(msg);
+    }
+    public byte getPromotionGroup(DataType dataType) {
+        String msg = String.format(
+                "`%s` Does not have typePromotionGroup`",
+                dataType);
+        throw new UnsupportedOperationException(msg);
+    }
+
     /**
      * Convert the data type to Delta protocol specified serialization format.
      *

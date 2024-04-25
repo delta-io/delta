@@ -27,12 +27,18 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class ArrayType extends DataType {
+    private static final byte typePromotionGroup = PromotionGroup.ARRAY_GROUP;
     private final DataType elementType;
     private final boolean containsNull;
 
     public ArrayType(DataType elementType, boolean containsNull) {
         this.elementType = elementType;
         this.containsNull = containsNull;
+    }
+
+    @Override
+    public byte getPromotionGroup(DataType dataType) {
+        return typePromotionGroup;
     }
 
     public DataType getElementType() {

@@ -23,6 +23,7 @@ import java.util.stream.Collectors;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.types.DataType;
 
 /**
  * Scalar SQL expressions which take zero or more inputs and for each input row generate one
@@ -53,10 +54,16 @@ import io.delta.kernel.annotation.Evolving;
 public class ScalarExpression implements Expression {
     protected final String name;
     protected final List<Expression> children;
+    protected final DataType outputType;
 
-    public ScalarExpression(String name, List<Expression> children) {
+    public ScalarExpression(String name, List<Expression> children, DataType outputType) {
         this.name = requireNonNull(name, "name is null").toUpperCase(Locale.ENGLISH);
         this.children = Collections.unmodifiableList(new ArrayList<>(children));
+        this.outputType = outputType;
+    }
+
+    public ScalarExpression(String name, List<Expression> children) {
+        this(name, children, null);
     }
 
     @Override
@@ -72,5 +79,12 @@ public class ScalarExpression implements Expression {
     @Override
     public List<Expression> getChildren() {
         return children;
+    }
+
+    public DataType getOutputType() {
+        if (this.outputType == null) {
+            throw new IllegalStateException("Output type is null, and cannot be rely on");
+        }
+        return this.outputType;
     }
 }
