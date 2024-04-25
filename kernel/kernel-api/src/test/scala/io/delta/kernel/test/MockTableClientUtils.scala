@@ -15,15 +15,15 @@
  */
 package io.delta.kernel.test
 
-import java.io.ByteArrayInputStream
-import java.util
-import java.util.Optional
-
 import io.delta.kernel.client._
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
+
+import java.io.ByteArrayInputStream
+import java.util
+import java.util.Optional
 
 /**
  * Contains broiler plate code for mocking [[TableClient]] and its sub-interfaces.
