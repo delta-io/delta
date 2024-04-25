@@ -2334,7 +2334,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * gap in the backfilled commit sequence.
    */
   private def backfillWhenManagedCommitDisabled(): Unit = {
-    if (snapshot.tableCommitStoreOpt.nonEmpty) {
+    if (snapshot.tableCommitOwnerClientOpt.nonEmpty) {
       // Managed commits is enabled on the table. Don't backfill as backfills are managed by
       // commit-owners.
       return

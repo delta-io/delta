@@ -940,19 +940,20 @@ class ManagedCommitSuite
 
   test("Incomplete backfills are handled properly by next commit after MC to FS conversion") {
     val batchSize = 10
-    val neverBackfillingCommitStore = new TrackingCommitStore(new InMemoryCommitStore(batchSize) {
-      override def backfillToVersion(
-          logStore: LogStore,
-          hadoopConf: Configuration,
-          logPath: Path,
-          managedCommitTableConf: Map[String, String],
-          startVersion: Long,
-          endVersion: Option[Long]): Unit = { }
-    })
-    CommitStoreProvider.clearNonDefaultBuilders()
+    val neverBackfillingCommitOwner =
+      new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize) {
+        override def backfillToVersion(
+            logStore: LogStore,
+            hadoopConf: Configuration,
+            logPath: Path,
+            managedCommitTableConf: Map[String, String],
+            startVersion: Long,
+            endVersion: Option[Long]): Unit = { }
+      })
+    CommitOwnerProvider.clearNonDefaultBuilders()
     val builder =
-      TrackingInMemoryCommitStoreBuilder(batchSize, Some(neverBackfillingCommitStore))
-    CommitStoreProvider.registerBuilder(builder)
+      TrackingInMemoryCommitOwnerBuilder(batchSize, Some(neverBackfillingCommitOwner))
+    CommitOwnerProvider.registerBuilder(builder)
 
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
@@ -961,7 +962,7 @@ class ManagedCommitSuite
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v2
 
       val log = DeltaLog.forTable(spark, tablePath)
-      assert(log.unsafeVolatileSnapshot.tableCommitStoreOpt.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
       assert(log.unsafeVolatileSnapshot.version === 2)
       assert(
         log.unsafeVolatileSnapshot.logSegment.deltas.count(FileNames.isUnbackfilledDeltaFile) == 2)
@@ -973,7 +974,7 @@ class ManagedCommitSuite
       log.update()
       val snapshotAfterDowngrade = log.unsafeVolatileSnapshot
       assert(snapshotAfterDowngrade.version === 3)
-      assert(snapshotAfterDowngrade.tableCommitStoreOpt.isEmpty)
+      assert(snapshotAfterDowngrade.tableCommitOwnerClientOpt.isEmpty)
       assert(snapshotAfterDowngrade.logSegment.deltas.count(FileNames.isUnbackfilledDeltaFile) == 3)
 
       val records = Log4jUsageLogger.track {
