@@ -16,6 +16,9 @@
 package io.delta.kernel.defaults.internal.expressions
 
 import java.lang.{Boolean => BooleanJ}
+import java.lang.{
+  Byte => ByteJ,
+  Short => ShortJ, Integer => IntegerJ, Long => LongJ, Double => DoubleJ, Float => FloatJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
@@ -255,6 +258,73 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkBooleanVectors(actOutputVector, expOutputVector)
   }
 
+  Seq(ByteType.BYTE,
+    ShortType.SHORT,
+    IntegerType.INTEGER,
+    LongType.LONG,
+    FloatType.FLOAT,
+    DoubleType.DOUBLE,
+    StringType.STRING).foreach(typeToTest =>
+    test(s"evaluate expression coalesce with type: $typeToTest") {
+      val sizeOfVector = 11
+      // col1 -> [n,2,n,2,n,2,n,2,n,2,n]
+      // col2 -> [n,n,3,n,n,3,n,n,3,n,n]
+      // col3 -> [n,n,n,n,5,n,n,n,n,5,n]
+      // expected coalesce result for coalesce(col1, col2, col3)
+      //         [n,2,3,2,5,2,n,2,3,2,n]
+      val col1 = getTestColumnVectors(typeToTest, sizeOfVector, 2, 2)
+      val col2 = getTestColumnVectors(typeToTest, sizeOfVector, 3, 3)
+      val col3 = getTestColumnVectors(typeToTest, sizeOfVector, 5, 5)
+
+      // setup
+      val schema = new StructType()
+        .add("col1", typeToTest)
+        .add("col2", typeToTest)
+        .add("col3", typeToTest)
+      val batch = new DefaultColumnarBatch(
+        col1.getSize, schema, Array(col1, col2, col3))
+
+      // expected value for coalescing single column vector col1
+      var expectedCoalesceResultSingle: Seq[Any] = Seq.fill(sizeOfVector)(null)
+      Seq.range(0, sizeOfVector).foreach(index => {
+        val nonNullValue = Seq(col1)
+          .find(col => !col.isNullAt(index))
+          .map(col => getValueAsObject(col, index))
+          .orNull
+        expectedCoalesceResultSingle = expectedCoalesceResultSingle.updated(index, nonNullValue)
+      })
+
+      // Single column vector
+      val coalesceEpxr1 = new ScalarExpression(
+        "COALESCE",
+        util.Arrays.asList(new Column("col1")))
+      val actOutputVector1 = evaluator(
+        schema, coalesceEpxr1, typeToTest).eval(batch)
+      val expectedSingle = seqToColumnVector(typeToTest, expectedCoalesceResultSingle)
+      checkVectors(expectedSingle, actOutputVector1, typeToTest)
+
+      // expected value for coalescing all 3 column vector
+      var expectedCoalesceResult: Seq[Any] = Seq.fill(sizeOfVector)(null)
+      Seq.range(0, sizeOfVector).foreach(index => {
+        val nonNullValue = Seq(col1, col2, col3)
+          .find(col => !col.isNullAt(index))
+          .map(col => getValueAsObject(col, index))
+          .orNull
+        expectedCoalesceResult = expectedCoalesceResult.updated(index, nonNullValue)
+      })
+
+      // All 3 column vector
+      val coalesceEpxr3 = new ScalarExpression(
+        "COALESCE",
+        util.Arrays.asList(
+          new Column("col1"), new Column("col2"), new Column("col3")))
+      val expectedAll = seqToColumnVector(typeToTest, expectedCoalesceResult)
+      val actOutputVector3 = evaluator(
+        schema, coalesceEpxr3, typeToTest).eval(batch)
+      checkVectors(expectedAll, actOutputVector3, typeToTest)
+    }
+  )
+
   test("evaluate expression: coalesce") {
     val col1 = booleanVector(Seq[BooleanJ](true, null, null, null))
     val col2 = booleanVector(Seq[BooleanJ](false, false, null, null))
@@ -302,9 +372,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // TODO support least-common-type resolution
     checkUnsupportedTypes(LongType.LONG, IntegerType.INTEGER,
       "Coalesce is only supported for arguments of the same type")
-    // TODO support other types besides boolean
-    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER,
-      "Coalesce is only supported for boolean type expressions")
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
