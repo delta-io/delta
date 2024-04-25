@@ -15,16 +15,18 @@
  */
 package io.delta.kernel.internal.actions;
 
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 
 public class Protocol {
 
@@ -43,7 +45,7 @@ public class Protocol {
         );
     }
 
-    public static final StructType READ_SCHEMA = new StructType()
+    public static final StructType FULL_SCHEMA = new StructType()
         .add("minReaderVersion", IntegerType.INTEGER, false /* nullable */)
         .add("minWriterVersion", IntegerType.INTEGER, false /* nullable */)
         .add("readerFeatures", new ArrayType(StringType.STRING, false /* contains null */))
@@ -90,5 +92,20 @@ public class Protocol {
         sb.append(", writerFeatures=").append(writerFeatures);
         sb.append('}');
         return sb.toString();
+    }
+
+    /**
+     * Encode as a {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}.
+     *
+     * @return {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}
+     */
+    public Row toRow() {
+        Map<Integer, Object> protocolMap = new HashMap<>();
+        protocolMap.put(0, minReaderVersion);
+        protocolMap.put(1, minWriterVersion);
+        protocolMap.put(2, readerFeatures == null ? null : stringArrayValue(readerFeatures));
+        protocolMap.put(3, writerFeatures == null ? null : stringArrayValue(writerFeatures));
+
+        return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
     }
 }
