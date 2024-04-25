@@ -17,7 +17,6 @@
 package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Optional;
 
 import io.delta.kernel.client.TableClient;
@@ -28,7 +27,6 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
@@ -36,6 +34,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -300,20 +299,5 @@ public class LogReplay {
         }
 
         return Optional.empty();
-    }
-
-    /**
-     * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
-     * Visible only for testing.
-     */
-    protected static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
-        String logPathStr = logPath.toString(); // fully qualified path
-        for (FileStatus fileStatus : allFiles) {
-            String filePath = fileStatus.getPath();
-            if (!filePath.startsWith(logPathStr)) {
-                throw new RuntimeException("File (" + filePath + ") doesn't belong in the " +
-                    "transaction log at " + logPathStr + ".");
-            }
-        }
     }
 }

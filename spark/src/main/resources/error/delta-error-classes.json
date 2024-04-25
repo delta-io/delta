@@ -398,6 +398,12 @@
     ],
     "sqlState" : "54000"
   },
+  "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY" : {
+    "message" : [
+      "Clustering and partitioning cannot both be specified. Please remove partitionedBy if you want to create a Delta table with clustering."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
     "message" : [
       "Data skipping is not supported for partition column '<column>'."
@@ -528,6 +534,20 @@
       "<oldConstraint>"
     ],
     "sqlState" : "42710"
+  },
+  "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH" : {
+    "message" : [
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following check constraint(s):",
+      "<constraints>"
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot alter column <columnName> because this column is referenced by the following check constraint(s):",
+      "<constraints>"
+    ],
+    "sqlState" : "42K09"
   },
   "DELTA_CONSTRAINT_DOES_NOT_EXIST" : {
     "message" : [
@@ -990,7 +1010,15 @@
   },
   "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH" : {
     "message" : [
-      "Column <columnName> is a generated column or a column used by a generated column. The data type is <columnType>. It doesn't accept data type <dataType>"
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following generated column(s):",
+      "<generatedColumns>"
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot alter column <columnName> because this column is referenced by the following generated column(s):",
+      "<generatedColumns>"
     ],
     "sqlState" : "42K09"
   },
@@ -2806,20 +2834,6 @@
       "Delta configuration:",
       "<configuration>",
       "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0004" : {
-    "message" : [
-      "Cannot <operation> column <columnName> because this column is referenced by the following",
-      "check constraint(s):",
-      "<constraints>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0005" : {
-    "message" : [
-      "Cannot <operation> column <columnName> because this column is referenced by the following",
-      "generated column(s):",
-      "<generatedColumns>"
     ]
   },
   "_LEGACY_ERROR_TEMP_DELTA_0006" : {

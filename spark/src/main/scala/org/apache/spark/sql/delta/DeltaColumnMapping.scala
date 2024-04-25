@@ -685,9 +685,9 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       // use the same check
       !hasNoColMappingAndRepartitionSchemaChange(newMetadata, upgradedMetadata)
     } else {
-      // Not column mapping, don't block
-      // TODO: support column mapping downgrade check once that's rolled out.
-      true
+      // Prohibit reading across a downgrade.
+      val isDowngrade = oldMode != NoMapping && newMode == NoMapping
+      !isDowngrade
     }
   }
 

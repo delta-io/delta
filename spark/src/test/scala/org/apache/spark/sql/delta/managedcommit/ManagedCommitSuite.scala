@@ -18,10 +18,12 @@ package org.apache.spark.sql.delta.managedcommit
 
 import java.io.File
 
+import scala.collection.mutable.ArrayBuffer
+
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.{DeltaOperations, ManagedCommitTableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CommitStoreGetCommitsFailedException
-import org.apache.spark.sql.delta.DeltaConfigs.{MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME, ROW_TRACKING_ENABLED}
+import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.InitialSnapshot
@@ -143,8 +145,8 @@ class ManagedCommitSuite
   }
 
   // Test commit owner changed on concurrent cluster
-  testWithoutManagedCommits("snapshot is updated recursively when FS table is converted to commit" +
-      " owner table on a concurrent cluster") {
+  testWithDefaultCommitOwnerUnset("snapshot is updated recursively when FS table is converted to" +
+      " commit owner table on a concurrent cluster") {
     val commitStore = new TrackingCommitStore(new InMemoryCommitStore(batchSize = 10))
     val builder = TrackingInMemoryCommitStoreBuilder(batchSize = 10, Some(commitStore))
     CommitStoreProvider.registerBuilder(builder)
@@ -518,7 +520,7 @@ class ManagedCommitSuite
     }
   }
 
-  testWithoutManagedCommits("DeltaLog.getSnapshotAt") {
+  testWithDefaultCommitOwnerUnset("DeltaLog.getSnapshotAt") {
     val commitStore = new TrackingCommitStore(new InMemoryCommitStore(batchSize = 10))
     val builder = TrackingInMemoryCommitStoreBuilder(batchSize = 10, Some(commitStore))
     CommitStoreProvider.registerBuilder(builder)
@@ -853,7 +855,7 @@ class ManagedCommitSuite
     }
   }
 
-  testWithoutManagedCommits("FS -> MC upgrade is not retried on a conflict") {
+  testWithDefaultCommitOwnerUnset("FS -> MC upgrade is not retried on a conflict") {
     val builder = TrackingInMemoryCommitStoreBuilder(batchSize = 10)
     CommitStoreProvider.registerBuilder(builder)
 
@@ -870,7 +872,7 @@ class ManagedCommitSuite
     }
   }
 
-  testWithoutManagedCommits("FS -> MC upgrade with commitLarge API") {
+  testWithDefaultCommitOwnerUnset("FS -> MC upgrade with commitLarge API") {
     val builder = TrackingInMemoryCommitStoreBuilder(batchSize = 10)
     val cs = builder.trackingInMemoryCommitStore.asInstanceOf[TrackingCommitStore]
     CommitStoreProvider.registerBuilder(builder)
@@ -931,7 +933,7 @@ class ManagedCommitSuite
     }
   }
 
-  test("no backfill at downgrade") {
+  test("Incomplete backfills are handled properly by next commit after MC to FS conversion") {
     val batchSize = 10
     val neverBackfillingCommitStore = new TrackingCommitStore(new InMemoryCommitStore(batchSize) {
       override def backfillToVersion(
@@ -983,3 +985,231 @@ class ManagedCommitSuite
   }
 }
 
+  /////////////////////////////////////////////////////////////////////////////////////////////
+  //           Test managed-commits with DeltaLog.getChangeLogFile API starts                //
+  /////////////////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * Helper method which generates a delta table with `totalCommits`.
+   * The `upgradeToManagedCommitVersion`th commit version upgrades this table to managed commit
+   * and it uses `backfillInterval` for backfilling.
+   * This method returns a mapping of version to DeltaLog for the versions in
+   * `requiredDeltaLogVersions`. Each of this deltaLog object has a Snapshot as per what is
+   * mentioned in the `requiredDeltaLogVersions`.
+   */
+  private def generateDataForGetChangeLogFilesTest(
+      dir: File,
+      totalCommits: Int,
+      upgradeToManagedCommitVersion: Int,
+      backfillInterval: Int,
+      requiredDeltaLogVersions: Set[Int]): Map[Int, DeltaLog] = {
+    val commitStore = new TrackingCommitStore(new InMemoryCommitStore(backfillInterval))
+    val builder = TrackingInMemoryCommitStoreBuilder(backfillInterval, Some(commitStore))
+    CommitStoreProvider.registerBuilder(builder)
+    val versionToDeltaLogMapping = collection.mutable.Map.empty[Int, DeltaLog]
+    withSQLConf(
+      CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "100") {
+      val tablePath = dir.getAbsolutePath
+
+      (0 to totalCommits).foreach { v =>
+        if (v === upgradeToManagedCommitVersion) {
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          val oldMetadata = deltaLog.unsafeVolatileSnapshot.metadata
+          val commitOwner = (MANAGED_COMMIT_OWNER_NAME.key -> "tracking-in-memory")
+          val newMetadata =
+            oldMetadata.copy(configuration = oldMetadata.configuration + commitOwner)
+          deltaLog.startTransaction().commitManually(newMetadata)
+        } else {
+          Seq(v).toDF().write.format("delta").mode("append").save(tablePath)
+        }
+        if (requiredDeltaLogVersions.contains(v)) {
+          versionToDeltaLogMapping.put(v, DeltaLog.forTable(spark, tablePath))
+          DeltaLog.clearCache()
+        }
+      }
+    }
+    versionToDeltaLogMapping.toMap
+  }
+
+  def runGetChangeLogFiles(
+      deltaLog: DeltaLog,
+      startVersion: Long,
+      endVersionOpt: Option[Long] = None,
+      totalCommitsOnTable: Long = 8,
+      expectedLastBackfilledCommit: Long,
+      updateExpected: Boolean): Unit = {
+    val usageRecords = Log4jUsageLogger.track {
+      val iter = endVersionOpt match {
+        case Some(endVersion) =>
+          deltaLog.getChangeLogFiles(startVersion, endVersion, failOnDataLoss = false)
+        case None =>
+          deltaLog.getChangeLogFiles(startVersion)
+      }
+      val paths = iter.map(_._2.getPath).toIndexedSeq
+      val (backfilled, unbackfilled) = paths.partition(_.getParent === deltaLog.logPath)
+      val expectedBackfilledCommits = startVersion to expectedLastBackfilledCommit
+      val expectedUnbackfilledCommits = {
+        val firstUnbackfilledVersion = (expectedLastBackfilledCommit + 1).max(startVersion)
+        val expectedEndVersion = endVersionOpt.getOrElse(totalCommitsOnTable)
+        firstUnbackfilledVersion to expectedEndVersion
+      }
+      assert(backfilled.map(FileNames.deltaVersion) === expectedBackfilledCommits)
+      assert(unbackfilled.map(FileNames.deltaVersion) === expectedUnbackfilledCommits)
+    }
+    val updateCountEvents = if (updateExpected) 1 else 0
+    assert(filterUsageRecords(usageRecords, "delta.log.update").size === updateCountEvents)
+  }
+
+  testWithDefaultCommitOwnerUnset("DeltaLog.getChangeLogFile with and" +
+    " without endVersion [No Managed Commits]") {
+    withTempDir { dir =>
+      val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
+        dir,
+        totalCommits = 4,
+        upgradeToManagedCommitVersion = -1,
+        backfillInterval = -1,
+        requiredDeltaLogVersions = Set(2, 4))
+
+      // We are asking for changes between 0 and 0 to a DeltaLog(unsafeVolatileSnapshot = 2).
+      // So we should not need an update() as all the required files are on filesystem.
+      runGetChangeLogFiles(
+        versionsToDeltaLogMapping(2),
+        totalCommitsOnTable = 4,
+        startVersion = 0,
+        endVersionOpt = Some(0),
+        expectedLastBackfilledCommit = 0,
+        updateExpected = false)
+
+      // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 2).
+      // Since the commits in filesystem are more than what unsafeVolatileSnapshot has, we should
+      // need an update() to get the latest snapshot and see if managed commit was enabled on the
+      // table concurrently.
+      runGetChangeLogFiles(
+        versionsToDeltaLogMapping(2),
+        totalCommitsOnTable = 4,
+        startVersion = 0,
+        expectedLastBackfilledCommit = 4,
+        updateExpected = true)
+
+      // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 4).
+      // The latest commit from filesystem listing is 4 -- same as unsafeVolatileSnapshot and this
+      // unsafeVolatileSnapshot doesn't have managed commit enabled. So we should not need an
+      // update().
+      runGetChangeLogFiles(
+        versionsToDeltaLogMapping(4),
+        totalCommitsOnTable = 4,
+        startVersion = 0,
+        expectedLastBackfilledCommit = 4,
+        updateExpected = false)
+    }
+  }
+
+  testWithDefaultCommitOwnerUnset("DeltaLog.getChangeLogFile with and" +
+    " without endVersion [Managed Commits backfill size 1]") {
+    withTempDir { dir =>
+      val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
+        dir,
+        totalCommits = 4,
+        upgradeToManagedCommitVersion = 2,
+        backfillInterval = 1,
+        requiredDeltaLogVersions = Set(0, 2, 4))
+
+      // We are asking for changes between 0 and 0 to a DeltaLog(unsafeVolatileSnapshot = 2).
+      // So we should not need an update() as all the required files are on filesystem.
+      runGetChangeLogFiles(
+        versionsToDeltaLogMapping(2),
+        totalCommitsOnTable = 4,
+        startVersion = 0,
+        endVersionOpt = Some(0),
+        expectedLastBackfilledCommit = 0,
+        updateExpected = false)
+
+      // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 2).
+      // Since the commits in filesystem are more than what unsafeVolatileSnapshot has, we should
+      // need an update() to get the latest snapshot and see if managed commit was enabled on the
+      // table concurrently.
+      runGetChangeLogFiles(
+        versionsToDeltaLogMapping(2),
+        totalCommitsOnTable = 4,
+        startVersion = 0,
+        expectedLastBackfilledCommit = 4,
+        updateExpected = true)
+
+      // We are asking for changes between 0 to 4 to a DeltaLog(unsafeVolatileSnapshot = 4).
+      // Since the commits in filesystem are between 0 to 4, so we don't need to update() to get
+      // the latest snapshot and see if managed commit was enabled on the table concurrently.
+      runGetChangeLogFiles(
+        versionsToDeltaLogMapping(4),
+        totalCommitsOnTable = 4,
+        startVersion = 0,
+        endVersionOpt = Some(4),
+        expectedLastBackfilledCommit = 4,
+        updateExpected = false)
+
+      // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 4).
+      // The latest commit from filesystem listing is 4 -- same as unsafeVolatileSnapshot and this
+      // unsafeVolatileSnapshot has managed commit enabled. So we should need an update() to find
+      // out latest commits from Commit Store.
+      runGetChangeLogFiles(
+        versionsToDeltaLogMapping(4),
+        totalCommitsOnTable = 4,
+        startVersion = 0,
+        expectedLastBackfilledCommit = 4,
+        updateExpected = true)
+    }
+  }
+
+  testWithDefaultCommitOwnerUnset("DeltaLog.getChangeLogFile with and" +
+    " without endVersion [Managed Commits backfill size 10]") {
+    withTempDir { dir =>
+      val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
+        dir,
+        totalCommits = 8,
+        upgradeToManagedCommitVersion = 2,
+        backfillInterval = 10,
+        requiredDeltaLogVersions = Set(2, 3, 4, 8))
+
+      // We are asking for changes between 0 and 1 to a DeltaLog(unsafeVolatileSnapshot = 2/4).
+      // So we should not need an update() as all the required files are on filesystem.
+      Seq(2, 3, 4).foreach { version =>
+        runGetChangeLogFiles(
+          versionsToDeltaLogMapping(version),
+          totalCommitsOnTable = 8,
+          startVersion = 0,
+          endVersionOpt = Some(1),
+          expectedLastBackfilledCommit = 1,
+          updateExpected = false)
+      }
+
+      // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 2/4).
+      // Since the unsafeVolatileSnapshot has managed-commits enabled, so we need to trigger an
+      // update to find the latest commits from Commit Store.
+      Seq(2, 3, 4).foreach { version =>
+        runGetChangeLogFiles(
+          versionsToDeltaLogMapping(version),
+          totalCommitsOnTable = 8,
+          startVersion = 0,
+          expectedLastBackfilledCommit = 2,
+          updateExpected = true)
+      }
+
+      // We are asking for changes between 0 to `4` to a DeltaLog(unsafeVolatileSnapshot = 8).
+      // The filesystem has only commit 0/1/2.
+      // After that we need to rely on deltaLog.update() to get the latest snapshot and return the
+      // files until 8.
+      // Ideally the unsafeVolatileSnapshot should have the info to generate files from 0 to 4 and
+      // an update() should not be needed. This is an optimization that can be done in future.
+      runGetChangeLogFiles(
+        versionsToDeltaLogMapping(8),
+        totalCommitsOnTable = 8,
+        startVersion = 0,
+        endVersionOpt = Some(4),
+        expectedLastBackfilledCommit = 2,
+        updateExpected = true)
+    }
+  }
+
+  /////////////////////////////////////////////////////////////////////////////////////////////
+  //           Test managed-commits with DeltaLog.getChangeLogFile API ENDS                  //
+  /////////////////////////////////////////////////////////////////////////////////////////////
+}
