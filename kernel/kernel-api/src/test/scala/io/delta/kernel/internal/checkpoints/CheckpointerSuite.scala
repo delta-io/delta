@@ -25,6 +25,7 @@ import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, Moc
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
+
 import java.io.{FileNotFoundException, IOException}
 import java.util.Optional
 
