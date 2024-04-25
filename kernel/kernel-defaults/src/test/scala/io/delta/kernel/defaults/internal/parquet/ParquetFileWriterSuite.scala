@@ -26,7 +26,6 @@ import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.ColumnMapping.convertToPhysicalSchema
 import io.delta.kernel.types._
 import io.delta.kernel.utils.DataFileStatus
-
 import org.apache.spark.sql.{functions => sparkfn}
 import org.scalatest.funsuite.AnyFunSuite
 
