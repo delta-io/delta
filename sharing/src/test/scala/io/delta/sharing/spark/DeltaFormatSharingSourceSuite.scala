@@ -215,6 +215,23 @@ class DeltaFormatSharingSourceSuite
             .load(tablePath)
             .filter($"value" contains "keep")
 
+          spark.sessionState.conf.setConfString(
+            "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds",
+            "9s"
+          )
+          val e = intercept[Exception] {
+            testStream(df)(
+              AssertOnQuery { q =>
+                q.processAllAvailable(); true
+              }
+            )
+          }
+          assert(e.getMessage.contains("must not be less than 10 seconds"))
+
+          spark.sessionState.conf.setConfString(
+            "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds",
+            "10s"
+          )
           testStream(df)(
             AssertOnQuery { q =>
               q.processAllAvailable(); true

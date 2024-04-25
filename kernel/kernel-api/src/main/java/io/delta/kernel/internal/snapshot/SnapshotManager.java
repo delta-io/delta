@@ -16,8 +16,8 @@
 
 package io.delta.kernel.internal.snapshot;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
+import java.io.*;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -28,8 +28,7 @@ import static java.lang.String.format;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.TableNotFoundException;
+import io.delta.kernel.*;
 import io.delta.kernel.client.TableClient;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -38,10 +37,13 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
+import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
 import static io.delta.kernel.internal.fs.Path.getName;
+import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class SnapshotManager {
@@ -150,6 +152,47 @@ public class SnapshotManager {
                 millisSinceEpochUTC);
 
         return getSnapshotAt(tableClient, versionToRead);
+    }
+
+    public void checkpoint(TableClient tableClient, long version)
+            throws TableNotFoundException, IOException {
+        logger.info("{}: Starting checkpoint for version: {}", tablePath, version);
+        // Get the snapshot corresponding the version
+        SnapshotImpl snapshot = (SnapshotImpl) getSnapshotAt(tableClient, version);
+
+        // Check if writing to the given table protocol version/features is supported in Kernel
+        validateWriteSupportedTable(
+                snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getSchema(tableClient));
+
+        Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
+
+        long numberOfAddFiles = 0;
+        try (CreateCheckpointIterator checkpointDataIter =
+                     snapshot.getCreateCheckpointIterator(tableClient)) {
+            // Write the iterator actions to the checkpoint using the Parquet handler
+            tableClient.getParquetHandler()
+                    .writeParquetFileAtomically(
+                            checkpointPath.toString(),
+                            checkpointDataIter);
+
+            logger.info("{}: Checkpoint file is written for version: {}", tablePath, version);
+
+            // Get the metadata of the checkpoint file
+            numberOfAddFiles = checkpointDataIter.getNumberOfAddActions();
+        } catch (FileAlreadyExistsException faee) {
+            throw new CheckpointAlreadyExistsException(version);
+        }
+
+        CheckpointMetaData checkpointMetaData =
+                new CheckpointMetaData(version, numberOfAddFiles, Optional.empty());
+
+        Checkpointer checkpointer = new Checkpointer(logPath);
+        checkpointer.writeLastCheckpointFile(tableClient, checkpointMetaData);
+
+        logger.info("{}: Last checkpoint metadata file is written for version: {}",
+                tablePath, version);
+
+        logger.info("{}: Finished checkpoint for version: {}", tablePath, version);
     }
 
     ////////////////////
@@ -323,6 +366,9 @@ public class SnapshotManager {
         logger.info("{}: Loading version {} {}", tablePath, initSegment.version, startingFromStr);
 
         long startTimeMillis = System.currentTimeMillis();
+
+        assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
+
         final SnapshotImpl snapshot = new SnapshotImpl(
             logPath,
             tablePath,

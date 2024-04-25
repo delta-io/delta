@@ -20,18 +20,16 @@ import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
-import io.delta.kernel.internal.util.{FileNames, Utils}
-import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils}
-import io.delta.kernel.types.{DataType, LongType, StructType}
+import io.delta.kernel.internal.util.Utils
+import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils, VectorTestUtils}
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.{FileNotFoundException, IOException}
 import java.util.Optional
 
-class CheckpointerSuite extends AnyFunSuite
-    with MockFileSystemClientUtils
-    with MockTableClientUtils {
+class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -224,7 +222,7 @@ class CheckpointerSuite extends AnyFunSuite
   }
 }
 
-object CheckpointerSuite {
+object CheckpointerSuite extends VectorTestUtils {
   val SAMPLE_LAST_CHECKPOINT_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -252,18 +250,6 @@ object CheckpointerSuite {
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
   val LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE = new Path("/filenotfoundtable")
-
-  def longVector(values: Long*): ColumnVector = new ColumnVector {
-    override def getDataType: DataType = LongType.LONG
-
-    override def getSize: Int = 1
-
-    override def close(): Unit = {}
-
-    override def isNullAt(rowId: Int): Boolean = false
-
-    override def getLong(rowId: Int): Long = values(rowId)
-  }
 }
 
 /** `maxFailures` allows how many times to fail before returning the valid data */
