@@ -25,7 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.managedcommit.{CommitStoreProvider, ManagedCommitBaseSuite, TrackingInMemoryCommitStoreBuilder}
+import org.apache.spark.sql.delta.managedcommit.{CommitOwnerProvider, ManagedCommitBaseSuite, TrackingInMemoryCommitOwnerBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -951,14 +951,14 @@ class InCommitTimestampWithManagedCommitSuite
   override def managedCommitBackfillBatchSize: Option[Int] = Some(5)
 
   test("getActiveCommitAtTime works correctly within managed commit range") {
-    CommitStoreProvider.clearNonDefaultBuilders()
-    val builder = TrackingInMemoryCommitStoreBuilder(batchSize = 10)
-    CommitStoreProvider.registerBuilder(builder)
+    CommitOwnerProvider.clearNonDefaultBuilders()
+    val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
+    CommitOwnerProvider.registerBuilder(builder)
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
-      val commitStore = deltaLog.snapshot.tableCommitStoreOpt.get
+      val tableCommitOwnerClient = deltaLog.snapshot.tableCommitOwnerClientOpt.get
       val numberAdditionalCommits = 4
       // Create 4 unbackfilled commits.
       for (i <- 1 to numberAdditionalCommits) {
@@ -966,7 +966,7 @@ class InCommitTimestampWithManagedCommitSuite
       }
       val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
       val unbackfilledCommits =
-        commitStore
+        tableCommitOwnerClient
           .getCommits(1)
           .commits
           .map { commit => DeltaHistoryManager.Commit(commit.version, commit.commitTimestamp)}

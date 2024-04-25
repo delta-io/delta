@@ -29,6 +29,10 @@ public class AddFile {
         true /* nullable */
     );
 
+    /**
+     * Schema of the {@code add} action in the Delta Log without stats. Used for constructing
+     * table snapshot to read data from the table.
+     */
     public static final StructType SCHEMA_WITHOUT_STATS = new StructType()
         .add("path", StringType.STRING, false /* nullable */)
         .add("partitionValues",
@@ -41,4 +45,16 @@ public class AddFile {
 
     public static final StructType SCHEMA_WITH_STATS = SCHEMA_WITHOUT_STATS
         .add(JSON_STATS_FIELD);
+
+    /**
+     * Full schema of the {@code add} action in the Delta Log.
+     */
+    public static final StructType FULL_SCHEMA = SCHEMA_WITHOUT_STATS
+            .add("stats", StringType.STRING, true /* nullable */)
+            .add(
+                    "tags",
+                    new MapType(StringType.STRING, StringType.STRING, true),
+                    true /* nullable */);
+    // There are more fields which are added when row-id tracking and clustering is enabled.
+    // When Kernel starts supporting row-ids and clustering, we should add those fields here.
 }

@@ -625,7 +625,7 @@ object V2CheckpointTableFeature
     V2CheckpointPreDowngradeCommand(table)
 }
 
-/** Table feature to represent tables whose commits are managed by separate commit-store */
+/** Table feature to represent tables whose commits are managed by separate commit-owner */
 object ManagedCommitTableFeature
   extends ReaderWriterFeature(name = "managed-commit-dev")
     with FeatureAutomaticallyEnabledByMetadata {
@@ -670,7 +670,7 @@ object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening
  * every writer write a monotonically increasing timestamp inside the commit file.
  */
 object InCommitTimestampTableFeature
-  extends WriterFeature(name = "inCommitTimestamp-dev")
+  extends WriterFeature(name = "inCommitTimestamp-preview")
   with FeatureAutomaticallyEnabledByMetadata
   with RemovableFeature {
 
