@@ -367,12 +367,12 @@ public class PartitionUtils {
         } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
             long microsSinceEpochUTC = (long) value;
             long seconds = microsSinceEpochUTC / 1_000_000;
-            long microsOfSecond = (microsSinceEpochUTC % 1_000_000);
-            if (microsSinceEpochUTC < 0) {
+            int microsOfSecond = (int) (microsSinceEpochUTC % 1_000_000);
+            if (microsOfSecond < 0) {
                 // also adjust for negative microsSinceEpochUTC
                 microsOfSecond = 1_000_000 + microsOfSecond;
             }
-            int nanosOfSecond = (int) (microsOfSecond * 1_000);
+            int nanosOfSecond = microsOfSecond * 1_000;
             LocalDateTime localDateTime =
                     LocalDateTime.ofEpochSecond(seconds, nanosOfSecond, ZoneOffset.UTC);
             return localDateTime.format(PARTITION_TIMESTAMP_FORMATTER);
