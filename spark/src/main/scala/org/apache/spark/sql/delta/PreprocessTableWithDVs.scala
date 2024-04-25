@@ -78,9 +78,6 @@ object ScanWithDeletionVectors {
     require(!index.isInstanceOf[TahoeLogFileIndex],
       "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
 
-    // If the table has no DVs enabled, no change needed
-    if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
-
     // See if the relation is already modified to include DV reads as part of
     // a previous invocation of this rule on this table
     if (fileFormat.hasTablePath) return None

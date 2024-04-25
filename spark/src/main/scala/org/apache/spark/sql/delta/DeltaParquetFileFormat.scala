@@ -59,7 +59,8 @@ case class DeltaParquetFileFormat(
     nullableRowTrackingFields: Boolean = false,
     isSplittable: Boolean = true,
     disablePushDowns: Boolean = false,
-    tablePath: Option[String] = None)
+    tablePath: Option[String] = None,
+    isCDCRead: Boolean = false)
   extends ParquetFileFormat {
   // Validate either we have all arguments for DV enabled read or none of them.
   if (hasTablePath) {
@@ -67,7 +68,7 @@ case class DeltaParquetFileFormat(
       val predicatePushdownEnabled =
         session.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_PREDICATE_PUSHDOWN_ENABLED)
       if (!predicatePushdownEnabled) {
-        require(tablePath.isDefined && !isSplittable && disablePushDowns,
+        require(!isSplittable && disablePushDowns,
           "Wrong arguments for Delta table scan with deletion vectors")
       }
     }
@@ -188,11 +189,10 @@ case class DeltaParquetFileFormat(
     val rowIndexColumn = findColumn(rowIndexColumnName)
 
     // No additional metadata is needed.
-    if (predicatePushdownEnabled) {
-      if (isRowDeletedColumn.isEmpty) return parquetDataReader
-    } else {
-      if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) return parquetDataReader
+    if (isRowDeletedColumn.isEmpty && rowIndexColumn.isEmpty) return parquetDataReader
+    if (predicatePushdownEnabled && isRowDeletedColumn.isEmpty) return parquetDataReader
 
+     if (!predicatePushdownEnabled) {
       // verify the file splitting and filter pushdown are disabled. The new additional
       // metadata columns cannot be generated with file splitting and filter pushdowns
       require(!isSplittable, "Cannot generate row index related metadata with file splitting")
@@ -245,15 +245,15 @@ case class DeltaParquetFileFormat(
     // not strictly required. We do expose it when Row Tracking or DVs are enabled.
     // In general, having 2b+ rows in a single rowgroup is not a common use case. When the issue is
     // hit an exception is thrown.
-    if (RowId.isEnabled(protocol, metadata)) {
-      super.metadataSchemaFields ++
-        RowTracking.createMetadataStructFields(protocol, metadata, nullableRowTrackingFields)
-    } else if (deletionVectorsReadable(protocol, metadata)) {
-      super.metadataSchemaFields
-    } else {
-      super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
-      }
+    (protocol, metadata) match {
+      // We should not expose row tracking fields for CDC reads.
+      case (p, m) if RowId.isEnabled(p, m) && !isCDCRead =>
+        val extraFields = RowTracking.createMetadataStructFields(p, m, nullableRowTrackingFields)
+        super.metadataSchemaFields ++ extraFields
+      case (p, m) if deletionVectorsReadable(p, m) => super.metadataSchemaFields
+      case _ => super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
     }
+  }
 
   override def prepareWrite(
        sparkSession: SparkSession,
