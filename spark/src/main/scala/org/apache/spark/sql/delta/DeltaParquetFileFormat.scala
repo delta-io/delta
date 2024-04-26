@@ -315,15 +315,15 @@ case class DeltaParquetFileFormat(
   private def iteratorWithAdditionalMetadataColumns(
       partitionedFile: PartitionedFile,
       iterator: Iterator[Object],
-      isRowDeletedColumn: Option[ColumnMetadata],
-      rowIndexColumn: Option[ColumnMetadata],
+      isRowDeletedColumnOpt: Option[ColumnMetadata],
+      rowIndexColumnOpt: Option[ColumnMetadata],
       useOffHeapBuffers: Boolean,
       serializableHadoopConf: SerializableConfiguration,
       useMetadataRowIndex: Boolean): Iterator[Object] = {
-    require(!useMetadataRowIndex || rowIndexColumn.isDefined,
+    require(!useMetadataRowIndex || rowIndexColumnOpt.isDefined,
       "useMetadataRowIndex is enabled but rowIndexColumn is not defined.")
 
-    val rowIndexFilter = isRowDeletedColumn.map { col =>
+    val rowIndexFilterOpt = isRowDeletedColumnOpt.map { col =>
       // Fetch the DV descriptor from the broadcast map and create a row index filter
       val dvDescriptorOpt = partitionedFile.otherConstantMetadataColumnValues
         .get(FILE_ROW_INDEX_FILTER_ID_ENCODED)
@@ -350,9 +350,9 @@ case class DeltaParquetFileFormat(
     }
 
     // We only generate the row index column when predicate pushdown is not enabled.
-    val rowIndexColumnToWrite = if (useMetadataRowIndex) None else rowIndexColumn
+    val rowIndexColumnToWriteOpt = if (useMetadataRowIndex) None else rowIndexColumnOpt
     val metadataColumnsToWrite =
-      Seq(isRowDeletedColumn, rowIndexColumnToWrite).filter(_.nonEmpty).map(_.get)
+      Seq(isRowDeletedColumnOpt, rowIndexColumnToWriteOpt).filter(_.nonEmpty).map(_.get)
 
     // When metadata.row_index is not used there is no way to verify the Parquet index is
     // starting from 0. We disable the splits, so the assumption is ParquetFileFormat respects
@@ -376,20 +376,20 @@ case class DeltaParquetFileFormat(
             // When predicate pushdown is enabled we use _metadata.row_index. Therefore,
             // we only need to construct the isRowDeleted column.
             var index = 0
-            isRowDeletedColumn.foreach { columnMetadata =>
+            isRowDeletedColumnOpt.foreach { columnMetadata =>
               val isRowDeletedVector = writableVectors(index)
               if (useMetadataRowIndex) {
-                rowIndexFilter.get.materializeIntoVectorWithRowIndex(
-                  size, batch.column(rowIndexColumn.get.index), isRowDeletedVector)
+                rowIndexFilterOpt.get.materializeIntoVectorWithRowIndex(
+                  size, batch.column(rowIndexColumnOpt.get.index), isRowDeletedVector)
               } else {
-                rowIndexFilter.get
+                rowIndexFilterOpt.get
                   .materializeIntoVector(rowIndex, rowIndex + size, isRowDeletedVector)
               }
               indexVectorTuples += (columnMetadata.index -> isRowDeletedVector)
               index += 1
             }
 
-            rowIndexColumnToWrite.foreach { columnMetadata =>
+            rowIndexColumnToWriteOpt.foreach { columnMetadata =>
               val rowIndexVector = writableVectors(index)
               // populate the row index column value.
               for (i <- 0 until size) {
@@ -412,14 +412,17 @@ case class DeltaParquetFileFormat(
           // column values. This is not efficient. It should affect only the wide
           // tables. https://github.com/delta-io/delta/issues/2246
           val newRow = columnarRow.copy();
-          isRowDeletedColumn.foreach { columnMetadata =>
-            val rowIndexForFiltering =
-              if (useMetadataRowIndex) columnarRow.getLong(rowIndexColumn.get.index) else rowIndex
-            rowIndexFilter.get.materializeSingleRowWithRowIndex(rowIndexForFiltering, tempVector)
+          isRowDeletedColumnOpt.foreach { columnMetadata =>
+            val rowIndexForFiltering = if (useMetadataRowIndex) {
+              columnarRow.getLong(rowIndexColumnOpt.get.index)
+            } else {
+              rowIndex
+            }
+            rowIndexFilterOpt.get.materializeSingleRowWithRowIndex(rowIndexForFiltering, tempVector)
             newRow.setByte(columnMetadata.index, tempVector.getByte(0))
           }
 
-          rowIndexColumnToWrite
+          rowIndexColumnToWriteOpt
             .foreach(columnMetadata => newRow.setLong(columnMetadata.index, rowIndex))
           rowIndex += 1
 
@@ -429,14 +432,17 @@ case class DeltaParquetFileFormat(
           // Currently the RowIndexFilter only supports writing into a columnar vector
           // and doesn't have methods to get DV value for a specific row index.
           // TODO: This is not efficient, but it is ok given the default reader is vectorized
-          isRowDeletedColumn.foreach { columnMetadata =>
-            val rowIndexForFiltering =
-              if (useMetadataRowIndex) rest.getLong(rowIndexColumn.get.index) else rowIndex
-            rowIndexFilter.get.materializeSingleRowWithRowIndex(rowIndexForFiltering, tempVector)
+          isRowDeletedColumnOpt.foreach { columnMetadata =>
+            val rowIndexForFiltering = if (useMetadataRowIndex) {
+              rest.getLong(rowIndexColumnOpt.get.index)
+            } else {
+              rowIndex
+            }
+            rowIndexFilterOpt.get.materializeSingleRowWithRowIndex(rowIndexForFiltering, tempVector)
             rest.setByte(columnMetadata.index, tempVector.getByte(0))
           }
 
-          rowIndexColumnToWrite
+          rowIndexColumnToWriteOpt
             .foreach(columnMetadata => rest.setLong(columnMetadata.index, rowIndex))
           rowIndex += 1
           rest
