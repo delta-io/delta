@@ -1529,9 +1529,9 @@ trait DeltaSQLConfBase {
     buildConf("deletionVectors.useMetadataRowIndex")
       .internal()
       .doc(
-        """Controls whether we use the metadata row_index column for filtering deleted
-          |rows with deletion vectors. When enabled, it allows predicate pushdown and
-          |file splitting in scans.""".stripMargin)
+        """Controls whether we use the Parquet reader generated row_index column for
+          | filtering deleted rows with deletion vectors. When enabled, it allows
+          | predicate pushdown and file splitting in scans.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
