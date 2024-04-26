@@ -2334,6 +2334,14 @@ trait DeltaErrorsBase
       messageParameters = Array(feature))
   }
 
+  def dropTableFeatureFailedBecauseOfDependentFeatures(
+      feature: String,
+      dependentFeatures: Seq[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+      messageParameters = Array(feature, dependentFeatures.mkString(", "), feature))
+  }
+
   def dropTableFeatureConflictRevalidationFailed(
       conflictingCommit: Option[CommitInfo] = None): DeltaTableFeatureException = {
     val concurrentCommit = DeltaErrors.concurrentModificationExceptionMsg(

@@ -729,6 +729,22 @@ object InCommitTimestampTableFeature
  */
 object VacuumProtocolCheckTableFeature
   extends ReaderWriterFeature(name = "vacuumProtocolCheck")
+  with RemovableFeature {
+
+  val otherFeaturesRequiringThisFeature = Set(ManagedCommitTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
+    VacuumProtocolCheckPreDowngradeCommand(table)
+  }
+
+  // The delta snapshot doesn't have any trace of the [[VacuumProtocolCheckTableFeature]] feature.
+  // Other than it being present in PROTOCOL, which will be handled by the table feature downgrade
+  // command once this method returns true.
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  // None of the actions uses [[VacuumProtocolCheckTableFeature]]
+  override def actionUsesFeature(action: Action): Boolean = false
+}
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing
