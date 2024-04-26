@@ -52,7 +52,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   with PredicateHelper
   with DeltaLogging
   with OptimizeMetadataOnlyDeltaQuery
-  with PreprocessTableWithDVs { self: PrepareDeltaScan =>
+  with SubqueryTransformerHelper { self: PrepareDeltaScan =>
 
   /**
    * Tracks the first-access snapshots of other logs planned by this rule. The snapshots are
@@ -204,7 +204,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     } else {
       prepareDeltaScanWithoutFileSkipping(plan)
     }
-    preprocessTablesWithDVs(updatedPlan)
+    updatedPlan
   }
 
   protected def prepareDeltaScanWithoutFileSkipping(plan: LogicalPlan): LogicalPlan = {
