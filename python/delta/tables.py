@@ -25,7 +25,6 @@ from delta._typing import (
 
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions, SparkSession
-from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.types import DataType, StructType, StructField
 
 
@@ -679,7 +678,7 @@ class DeltaTable(object):
                 e = ("Keys of dict in %s must contain only strings with column names" % argname) + \
                     (", found '%s' of type '%s" % (str(col), str(type(col))))
                 raise TypeError(e)
-            if type(expr) is Column:
+            if isinstance(expr, Column) and hasattr(expr, "_jc"):
                 jmap.put(col, expr._jc)
             elif type(expr) is str:
                 jmap.put(col, functions.expr(expr)._jc)
@@ -696,7 +695,7 @@ class DeltaTable(object):
     ) -> "JavaObject":
         if condition is None:
             jcondition = None
-        elif type(condition) is Column:
+        elif isinstance(condition, Column) and hasattr(condition, "_jc"):
             jcondition = condition._jc
         elif type(condition) is str:
             jcondition = functions.expr(condition)._jc
@@ -1274,6 +1273,12 @@ class DeltaTableBuilder(object):
 
         .. note:: Evolving
         """
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[import, no-redef]
+
         if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
             cols = cols[0]  # type: ignore[assignment]
         for c in cols:
@@ -1311,6 +1316,12 @@ class DeltaTableBuilder(object):
 
         .. note:: Evolving
         """
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[import, no-redef]
+
         if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
             cols = cols[0]  # type: ignore[assignment]
         for c in cols:
@@ -1403,6 +1414,12 @@ class DeltaOptimizeBuilder(object):
         :return: DataFrame containing the OPTIMIZE execution metrics
         :rtype: pyspark.sql.DataFrame
         """
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[import, no-redef]
+
         if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
             cols = cols[0]  # type: ignore[assignment]
         for c in cols:
