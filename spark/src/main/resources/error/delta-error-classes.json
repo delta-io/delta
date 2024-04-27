@@ -164,6 +164,13 @@
     ],
     "sqlState" : "42703"
   },
+  "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE" : {
+    "message" : [
+      "Cannot drop the CHECK constraints table feature.",
+      "The following constraints must be dropped first: <constraints>."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_CANNOT_EVALUATE_EXPRESSION" : {
     "message" : [
       "Cannot evaluate expression: <expression>"

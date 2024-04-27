@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
@@ -269,5 +270,14 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
       metadata.copy(schemaString = cleanedSchema.json) :: Nil,
       DeltaOperations.UpdateColumnMetadata("DROP FEATURE", changes))
     true
+  }
+}
+
+case class CheckConstraintsPreDowngradeTableFeatureCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand {
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val checkConstraintNames = Constraints.getCheckConstraintNames(table.initialSnapshot.metadata)
+    if (checkConstraintNames.isEmpty) return false
+    throw DeltaErrors.cannotDropCheckConstraintFeature(checkConstraintNames)
   }
 }

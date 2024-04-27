@@ -422,4 +422,34 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  test("drop table feature") {
+    withTable("table") {
+      sql("CREATE TABLE table (a INT, b INT) USING DELTA " +
+        "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+      sql("ALTER TABLE table ADD CONSTRAINT c1 CHECK (a > 0)")
+      sql("ALTER TABLE table ADD CONSTRAINT c2 CHECK (b > 0)")
+
+      val error1 = intercept[AnalysisException] {
+        sql("ALTER TABLE table DROP FEATURE checkConstraints")
+      }
+      checkError(
+        error1,
+        errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+        parameters = Map("constraints" -> "`c1`, `c2`")
+      )
+
+      sql("ALTER TABLE table DROP CONSTRAINT c1")
+      val error2 = intercept[AnalysisException] {
+        sql("ALTER TABLE table DROP FEATURE checkConstraints")
+      }
+      checkError(
+        error2,
+        errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+        parameters = Map("constraints" -> "`c2`")
+      )
+
+      sql("ALTER TABLE table DROP CONSTRAINT c2")
+      sql("ALTER TABLE table DROP FEATURE checkConstraints")
+    }
+  }
 }
