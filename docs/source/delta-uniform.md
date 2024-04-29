@@ -31,7 +31,7 @@ To enable UniForm, you must fulfill the following requirements:
 
   Enabling Delta UniForm Iceberg requires "delta-iceberg" to be provided to Spark shell: --packages io.delta:io.delta:delta-iceberg_2.12:<version>
 
-  Enabling Delta UniForm Hudi requires "delta-hudi-assembly" to be provided to Spark shell: --packages io.delta:io.delta:delta-hudi-assembly_2.12:<version>
+  Enabling Delta UniForm Hudi requires "delta-hudi" to be provided to Spark shell: --packages io.delta:io.delta:delta-hudi_2.12:<version>
 
 The following table properties enable UniForm support for Iceberg.
 
