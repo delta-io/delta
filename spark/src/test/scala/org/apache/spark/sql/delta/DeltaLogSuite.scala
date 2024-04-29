@@ -713,4 +713,28 @@ class DeltaLogSuite extends QueryTest
       }
     }
   }
+
+  // This test needs to be extended to Managed Commits once DeltaLogSuite gets extended.
+  test("DeltaFileProviderUtils.getDeltaFilesInVersionRange") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      spark.range(0, 1).write.format("delta").mode("overwrite").save(path)
+      val log = DeltaLog.forTable(spark, new Path(path))
+      val result = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
+        spark, log, startVersion = 1, endVersion = 3)
+      assert(result.map(FileNames.getFileVersion) === Seq(1, 2, 3))
+      val filesAreUnbackfilledArray = result.map(FileNames.isUnbackfilledDeltaFile)
+
+      val (fileV1, fileV2, fileV3) = (result(0), result(1), result(2))
+      assert(FileNames.getFileVersion(fileV1) === 1)
+      assert(FileNames.getFileVersion(fileV2) === 2)
+      assert(FileNames.getFileVersion(fileV3) === 3)
+
+      assert(filesAreUnbackfilledArray === Seq(false, false, false))
+    }
+  }
+
 }
