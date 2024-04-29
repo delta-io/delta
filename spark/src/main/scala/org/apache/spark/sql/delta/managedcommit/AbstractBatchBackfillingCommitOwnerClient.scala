@@ -61,7 +61,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
-    val tablePath = getTablePath(logPath)
+    val tablePath = ManagedCommitUtils.getTablePath(logPath)
     if (commitVersion == 0) {
       throw CommitFailedException(
         retryable = false, conflict = false, message = "Commit version 0 must go via filesystem.")
@@ -76,7 +76,8 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
     }
 
     // Write new commit file in _commits directory
-    val fileStatus = writeCommitFile(logStore, hadoopConf, logPath, commitVersion, actions)
+    val fileStatus = ManagedCommitUtils.writeCommitFile(
+      logStore, hadoopConf, logPath, commitVersion, actions, generateUUID())
 
     // Do the actual commit
     val commitTimestamp = updatedActions.commitInfo.getTimestamp
@@ -106,18 +107,6 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
     }
     logInfo(s"Commit $commitVersion done successfully on table $tablePath")
     commitResponse
-  }
-
-  protected def writeCommitFile(
-      logStore: LogStore,
-      hadoopConf: Configuration,
-      logPath: Path,
-      commitVersion: Long,
-      actions: Iterator[String]): FileStatus = {
-    val uuidStr = generateUUID()
-    val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuidStr))
-    logStore.write(commitPath, actions, overwrite = false, hadoopConf)
-    commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
 
   private def isManagedCommitToFSConversion(
@@ -174,5 +163,4 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       logPath: Path,
       backfilledVersion: Long): Unit
 
-  protected def getTablePath(logPath: Path): Path = logPath.getParent
 }

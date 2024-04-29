@@ -16,10 +16,12 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
-import org.apache.hadoop.fs.FileStatus
+import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFile}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 object ManagedCommitUtils {
 
@@ -85,4 +87,25 @@ object ManagedCommitUtils {
       case 2 => tailFromSnapshot()
     }
   }
+
+  /**
+   * Write a UUID-based commit file for the specified version to the
+   * table at [[logPath]].
+   */
+  def writeCommitFile(
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      commitVersion: Long,
+      actions: Iterator[String],
+      uuid: String): FileStatus = {
+    val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuid))
+    logStore.write(commitPath, actions, overwrite = false, hadoopConf)
+    commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
+  }
+
+  /**
+   * Get the table path from the provided log path.
+   */
+  def getTablePath(logPath: Path): Path = logPath.getParent
 }
