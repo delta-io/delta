@@ -897,6 +897,13 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_DROP_DEPENDENT_FEATURE" : {
+    "message" : [
+      "Cannot drop table feature `<feature>` because some other features (<dependentFeatures>) in this table depends on `<feature>`.",
+      "Consider dropping them first before dropping this feature."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT" : {
     "message" : [
       "Cannot drop <feature> from this table because it is not currently present in the table's protocol."

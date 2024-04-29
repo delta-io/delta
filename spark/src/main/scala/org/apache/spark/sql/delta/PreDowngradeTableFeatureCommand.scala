@@ -15,7 +15,10 @@
  */
 
 package org.apache.spark.sql.delta
+
 import java.util.concurrent.TimeUnit
+
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
@@ -184,6 +187,29 @@ case class InCommitTimestampsPreDowngradeCommand(table: DeltaTableV2)
 
     )
     traceRemovalNeeded
+  }
+}
+
+case class VacuumProtocolCheckPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+
+  /**
+   * Returns true when it performs a cleaning action. When no action was required
+   * it returns false.
+   * For downgrading the [[VacuumProtocolCheckTableFeature]], we don't need remove any traces, we
+   * just need to remove the feature from the [[Protocol]].
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val dependentFeatures = VacuumProtocolCheckTableFeature.otherFeaturesRequiringThisFeature
+    val dependentFeaturesInProtocol =
+      dependentFeatures.filter(table.initialSnapshot.protocol.isFeatureSupported(_))
+    if (dependentFeaturesInProtocol.nonEmpty) {
+      val dependentFeatureNames = dependentFeaturesInProtocol.map(_.name)
+      throw DeltaErrors.dropTableFeatureFailedBecauseOfDependentFeatures(
+        VacuumProtocolCheckTableFeature.name, dependentFeatureNames.toSeq)
+    }
+    false
   }
 }
 
