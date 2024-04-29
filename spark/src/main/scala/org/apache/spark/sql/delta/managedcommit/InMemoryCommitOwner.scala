@@ -109,6 +109,14 @@ class InMemoryCommitOwner(val batchSize: Long)
       commitVersion: Long,
       commitFile: FileStatus,
       commitTimestamp: Long): CommitResponse = {
+    addToMap(logPath, commitVersion, commitFile, commitTimestamp)
+  }
+
+  private[sql] def addToMap(
+      logPath: Path,
+      commitVersion: Long,
+      commitFile: FileStatus,
+      commitTimestamp: Long): CommitResponse = {
     withWriteLock[CommitResponse](logPath) {
       val tableData = perTableMap.get(logPath)
       val expectedVersion = tableData.maxCommitVersion + 1
