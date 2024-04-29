@@ -29,6 +29,10 @@ To enable UniForm, you must fulfill the following requirements:
 
   Enabling Delta UniForm Iceberg requires the Delta table feature `IcebergCompatV2`, a write protocol feature. Only clients that support this table feature can write to enabled tables. You must use <Delta> 3.1 or above to write to Delta tables with this feature enabled.
 
+  Enabling Delta UniForm Iceberg requires "delta-iceberg" to be provided to Spark shell: --packages io.delta:io.delta:delta-iceberg_2.12:<version>
+
+  Enabling Delta UniForm Hudi requires "delta-hudi-assembly" to be provided to Spark shell: --packages io.delta:io.delta:delta-hudi-assembly_2.12:<version>
+
 The following table properties enable UniForm support for Iceberg.
 
 ```
