@@ -1356,6 +1356,24 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     }
   }
 
+  Seq("parquet", "json").foreach { ckptFormat =>
+    val tbl = "tbl"
+    generateGoldenTable(s"v2-checkpoint-$ckptFormat") { tablePath =>
+      withTable(tbl) {
+        withSQLConf(
+          (DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key, "2"),
+          ("spark.databricks.delta.properties.defaults.checkpointInterval", "2"),
+          (DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, ckptFormat)) {
+          spark.conf.set(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, ckptFormat)
+          sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
+          sql(s"ALTER TABLE $tbl SET TBLPROPERTIES('delta.checkpointPolicy' = 'v2')")
+          spark.range(10).repartition(4)
+            .write.format("delta").mode("append").saveAsTable(tbl)
+        }
+      }
+    }
+  }
+
   generateGoldenTable("no-delta-log-folder") { tablePath =>
     spark.range(20).write.format("parquet").save(tablePath)
   }
