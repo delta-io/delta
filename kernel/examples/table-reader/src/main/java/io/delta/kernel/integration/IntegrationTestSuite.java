@@ -97,6 +97,22 @@ public class IntegrationTestSuite {
             Optional.empty(), /* predicate */
             6 /* expected row count */);
 
+        // Basic read: table with JSON V2 checkpoint
+        runAndVerifyRowCount(
+            "basic_read_table_v2_checkpoint_json",
+            "v2-checkpoint-json",
+            Optional.empty(), /* read schema - read all columns */
+            Optional.empty(), /* predicate */
+            10 /* expected row count */);
+
+        // Basic read: table with Parquet V2 checkpoint
+        runAndVerifyRowCount(
+                "basic_read_table_v2_checkpoint_parquet",
+                "v2-checkpoint-parquet",
+                Optional.empty(), /* read schema - read all columns */
+                Optional.empty(), /* predicate */
+                10 /* expected row count */);
+
         // Partition pruning: simple expression
         runAndVerifyRowCount(
             "partition_pruning_simple_filter",
