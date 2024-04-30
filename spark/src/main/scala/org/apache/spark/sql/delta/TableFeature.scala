@@ -646,6 +646,9 @@ object ManagedCommitTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).nonEmpty
   }
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
 }
 
 object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening-preview")
