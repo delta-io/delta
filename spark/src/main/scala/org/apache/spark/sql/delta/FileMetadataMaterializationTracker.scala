@@ -205,7 +205,7 @@ case class FileMetadataMaterializationMetrics(
   override def toString(): String = {
     s"Number of files materialized: $filesMaterializedCount, " +
       s"Number of times over-allocated: $overAllocWaitCount, " +
-      s"Total time spent waiting to acquire over-allocation lock: $overAllocWaitTimeMs, "
+      s"Total time spent waiting to acquire over-allocation lock: $overAllocWaitTimeMs, " +
       s"Files materialized by over allocation: $overAllocFilesMaterializedCount"
   }
 }
