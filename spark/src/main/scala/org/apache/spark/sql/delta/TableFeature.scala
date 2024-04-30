@@ -339,7 +339,8 @@ object TableFeature {
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
       RowTrackingFeature,
-      InCommitTimestampTableFeature)
+      InCommitTimestampTableFeature,
+      VariantTypeTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -502,6 +503,14 @@ object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz
   }
 }
 
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-dev")
+    with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata, spark: SparkSession): Boolean = {
+    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
+  }
+}
+
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
   with FeatureAutomaticallyEnabledByMetadata {
@@ -625,7 +634,7 @@ object V2CheckpointTableFeature
     V2CheckpointPreDowngradeCommand(table)
 }
 
-/** Table feature to represent tables whose commits are managed by separate commit-store */
+/** Table feature to represent tables whose commits are managed by separate commit-owner */
 object ManagedCommitTableFeature
   extends ReaderWriterFeature(name = "managed-commit-dev")
     with FeatureAutomaticallyEnabledByMetadata {
@@ -670,7 +679,7 @@ object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening
  * every writer write a monotonically increasing timestamp inside the commit file.
  */
 object InCommitTimestampTableFeature
-  extends WriterFeature(name = "inCommitTimestamp-dev")
+  extends WriterFeature(name = "inCommitTimestamp-preview")
   with FeatureAutomaticallyEnabledByMetadata
   with RemovableFeature {
 
@@ -720,6 +729,22 @@ object InCommitTimestampTableFeature
  */
 object VacuumProtocolCheckTableFeature
   extends ReaderWriterFeature(name = "vacuumProtocolCheck")
+  with RemovableFeature {
+
+  val otherFeaturesRequiringThisFeature = Set(ManagedCommitTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
+    VacuumProtocolCheckPreDowngradeCommand(table)
+  }
+
+  // The delta snapshot doesn't have any trace of the [[VacuumProtocolCheckTableFeature]] feature.
+  // Other than it being present in PROTOCOL, which will be handled by the table feature downgrade
+  // command once this method returns true.
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  // None of the actions uses [[VacuumProtocolCheckTableFeature]]
+  override def actionUsesFeature(action: Action): Boolean = false
+}
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing

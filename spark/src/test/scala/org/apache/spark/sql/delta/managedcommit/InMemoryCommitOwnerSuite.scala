@@ -33,7 +33,7 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-class InMemoryCommitStoreSuite extends QueryTest
+class InMemoryCommitOwnerSuite extends QueryTest
   with DeltaSQLTestUtils
   with SharedSparkSession
   with LogStoreProvider
@@ -61,14 +61,14 @@ class InMemoryCommitStoreSuite extends QueryTest
   protected def commit(
       version: Long,
       timestamp: Long,
-      tableCommitStore: TableCommitStore): Commit = {
+      tableCommitOwnerClient: TableCommitOwnerClient): Commit = {
     val commitInfo = CommitInfo.empty(version = Some(version)).withTimestamp(timestamp)
     val updatedActions = if (version == 0) {
       getUpdatedActionsForZerothCommit(commitInfo)
     } else {
       getUpdatedActionsForNonZerothCommit(commitInfo)
     }
-    tableCommitStore.commit(
+    tableCommitOwnerClient.commit(
       version,
       Iterator(s"$version", s"$timestamp"),
       updatedActions).commit
@@ -106,7 +106,7 @@ class InMemoryCommitStoreSuite extends QueryTest
 
   private def assertInvariants(
       logPath: Path,
-      cs: InMemoryCommitStore,
+      cs: InMemoryCommitOwner,
       commitTimestampsOpt: Option[Array[Long]] = None): Unit = {
     val maxUntrackedVersion: Int = cs.withReadLock[Int](logPath) {
       val tableData = cs.perTableMap.get(logPath)
@@ -128,26 +128,26 @@ class InMemoryCommitStoreSuite extends QueryTest
       assertBackfilled(version, logPath, commitTimestampsOpt.map(_(version)))}
   }
 
-  test("in-memory-commit-store-builder works as expected") {
-    val builder1 = InMemoryCommitStoreBuilder(5)
+  test("InMemoryCommitOwnerBuilder works as expected") {
+    val builder1 = InMemoryCommitOwnerBuilder(5)
     val cs1 = builder1.build(Map.empty)
-    assert(cs1.isInstanceOf[InMemoryCommitStore])
-    assert(cs1.asInstanceOf[InMemoryCommitStore].batchSize == 5)
+    assert(cs1.isInstanceOf[InMemoryCommitOwner])
+    assert(cs1.asInstanceOf[InMemoryCommitOwner].batchSize == 5)
 
     val cs1_again = builder1.build(Map.empty)
-    assert(cs1_again.isInstanceOf[InMemoryCommitStore])
+    assert(cs1_again.isInstanceOf[InMemoryCommitOwner])
     assert(cs1 == cs1_again)
 
-    val builder2 = InMemoryCommitStoreBuilder(10)
+    val builder2 = InMemoryCommitOwnerBuilder(10)
     val cs2 = builder2.build(Map.empty)
-    assert(cs2.isInstanceOf[InMemoryCommitStore])
-    assert(cs2.asInstanceOf[InMemoryCommitStore].batchSize == 10)
+    assert(cs2.isInstanceOf[InMemoryCommitOwner])
+    assert(cs2.asInstanceOf[InMemoryCommitOwner].batchSize == 10)
     assert(cs2 ne cs1)
 
-    val builder3 = InMemoryCommitStoreBuilder(10)
+    val builder3 = InMemoryCommitOwnerBuilder(10)
     val cs3 = builder3.build(Map.empty)
-    assert(cs3.isInstanceOf[InMemoryCommitStore])
-    assert(cs3.asInstanceOf[InMemoryCommitStore].batchSize == 10)
+    assert(cs3.isInstanceOf[InMemoryCommitOwner])
+    assert(cs3.asInstanceOf[InMemoryCommitOwner].batchSize == 10)
     assert(cs3 ne cs2)
   }
 
@@ -155,8 +155,8 @@ class InMemoryCommitStoreSuite extends QueryTest
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir)
       val logPath = log.logPath
-      val cs = InMemoryCommitStoreBuilder(batchSize = 3).build(Map.empty)
-      val tcs = TableCommitStore(cs, log, Map.empty[String, String])
+      val cs = InMemoryCommitOwnerBuilder(batchSize = 3).build(Map.empty)
+      val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
 
       cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
       assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, -1))
@@ -165,7 +165,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       val e = intercept[CommitFailedException] { commit(version = 0, timestamp = 0, tcs) }
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       store.write(FileNames.unsafeDeltaFile(logPath, 0), Iterator("0", "0"), overwrite = false)
-      // Commit 0 doesn't go through commit-store. So commit-store is not aware of it in getCommits
+      // Commit 0 doesn't go through commit-owner. So commit-owner is not aware of it in getCommits
       // response.
       assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, -1))
       assertBackfilled(0, logPath, Some(0))
@@ -190,7 +190,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       val c6 = commit(6, 6, tcs)
       assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, 6))
       (4 to 6).foreach(i => assertBackfilled(i, logPath, Some(i)))
-      assertInvariants(logPath, tcs.commitStore.asInstanceOf[InMemoryCommitStore])
+      assertInvariants(logPath, tcs.commitOwnerClient.asInstanceOf[InMemoryCommitOwner])
     }
   }
 
@@ -198,9 +198,9 @@ class InMemoryCommitStoreSuite extends QueryTest
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
       val logPath = log.logPath
-      val cs = InMemoryCommitStoreBuilder(batchSize = 1).build(Map.empty)
+      val cs = InMemoryCommitOwnerBuilder(batchSize = 1).build(Map.empty)
       cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
-      val tcs = TableCommitStore(cs, log, Map.empty[String, String])
+      val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
 
       val e = intercept[CommitFailedException] { commit(version = 0, timestamp = 0, tcs) }
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
@@ -217,10 +217,10 @@ class InMemoryCommitStoreSuite extends QueryTest
 
       // Test that out-of-order backfill is rejected
       intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitStore]
+        cs.asInstanceOf[InMemoryCommitOwner]
           .registerBackfill(logPath, 5)
       }
-      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitStore])
+      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitOwner])
     }
   }
 
@@ -228,21 +228,21 @@ class InMemoryCommitStoreSuite extends QueryTest
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
       val logPath = log.logPath
-      val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
+      val cs = InMemoryCommitOwnerBuilder(batchSize = 5).build(Map.empty)
       cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
-      val tcs = TableCommitStore(cs, log, Map.empty[String, String])
+      val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
 
       // Anything other than version-0 or version-1 should be rejected as the first commit
-      // version-0 will be directly backfilled and won't be recorded in InMemoryCommitStore.
-      // version-1 is what commit store is accepting.
+      // version-0 will be directly backfilled and won't be recorded in InMemoryCommitOwner.
+      // version-1 is what commit-owner is accepting.
       assertCommitFail(2, 1, retryable = false, commit(2, 0, tcs))
 
       // commit-0 must be file system based
       store.write(FileNames.unsafeDeltaFile(logPath, 0), Iterator("0", "0"), overwrite = false)
       // Verify that conflict-checker rejects out-of-order commits.
       (1 to 4).foreach(i => commit(i, i, tcs))
-      // A retry of commit 0 fails from commit-store with a conflict and it can't be retried as
-      // commit 0 is upgrading the commit-store.
+      // A retry of commit 0 fails from commit-owner with a conflict and it can't be retried as
+      // commit 0 is upgrading the commit-owner.
       assertCommitFail(0, 5, retryable = false, commit(0, 5, tcs))
       assertCommitFail(4, 5, retryable = true, commit(4, 6, tcs))
 
@@ -252,7 +252,7 @@ class InMemoryCommitStoreSuite extends QueryTest
       assertCommitFail(5, 6, retryable = true, commit(5, 5, tcs))
       assertCommitFail(7, 6, retryable = false, commit(7, 7, tcs))
 
-      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitStore])
+      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitOwner])
     }
   }
 
@@ -260,10 +260,10 @@ class InMemoryCommitStoreSuite extends QueryTest
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
       val logPath = log.logPath
-      val cs = InMemoryCommitStoreBuilder(batchSize = 5).build(Map.empty)
-      val tcs = TableCommitStore(cs, log, Map.empty[String, String])
+      val cs = InMemoryCommitOwnerBuilder(batchSize = 5).build(Map.empty)
+      val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
       intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(logPath, 0)
+        cs.asInstanceOf[InMemoryCommitOwner].registerBackfill(logPath, 0)
       }
       cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
       // commit-0 must be file system based
@@ -271,12 +271,12 @@ class InMemoryCommitStoreSuite extends QueryTest
       (1 to 3).foreach(i => commit(i, i, tcs))
 
       // Test that backfilling is idempotent for already-backfilled commits.
-      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(logPath, 2)
-      cs.asInstanceOf[InMemoryCommitStore].registerBackfill(logPath, 2)
+      cs.asInstanceOf[InMemoryCommitOwner].registerBackfill(logPath, 2)
+      cs.asInstanceOf[InMemoryCommitOwner].registerBackfill(logPath, 2)
 
       // Test that backfilling uncommited commits fail.
       intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitStore].registerBackfill(logPath, 4)
+        cs.asInstanceOf[InMemoryCommitOwner].registerBackfill(logPath, 4)
       }
     }
   }
@@ -286,8 +286,9 @@ class InMemoryCommitStoreSuite extends QueryTest
       val tablePath = new Path(tempDir.getCanonicalPath)
       val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
       val batchSize = 6
-      val cs = InMemoryCommitStoreBuilder(batchSize).build(Map.empty)
-      val tcs = TableCommitStore(cs, DeltaLog.forTable(spark, tablePath), Map.empty[String, String])
+      val cs = InMemoryCommitOwnerBuilder(batchSize).build(Map.empty)
+      val tcs =
+        TableCommitOwnerClient(cs, DeltaLog.forTable(spark, tablePath), Map.empty[String, String])
 
       val numberOfWriters = 10
       val numberOfCommitsPerWriter = 10
@@ -321,7 +322,7 @@ class InMemoryCommitStoreSuite extends QueryTest
                 } finally {
                   assertInvariants(
                     logPath,
-                    cs.asInstanceOf[InMemoryCommitStore],
+                    cs.asInstanceOf[InMemoryCommitOwner],
                     Some(commitTimestamp))
                 }
               }

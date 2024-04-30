@@ -15,16 +15,16 @@
  */
 package io.delta.kernel.internal.actions;
 
-import java.util.Collections;
-import java.util.Map;
+import java.util.*;
+import static java.util.Collections.emptyMap;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.types.MapType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.types.*;
 
-import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.internal.data.GenericRow;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
+import static io.delta.kernel.internal.util.VectorUtils.*;
 
 public class Format {
 
@@ -35,11 +35,11 @@ public class Format {
         final String provider = requireNonNull(vector.getChild(0), rowId, "provider")
             .getString(rowId);
         final Map<String, String> options = vector.getChild(1).isNullAt(rowId) ?
-            Collections.emptyMap() : VectorUtils.toJavaMap(vector.getChild(1).getMap(rowId));
+            Collections.emptyMap() : toJavaMap(vector.getChild(1).getMap(rowId));
         return new Format(provider, options);
     }
 
-    public static final StructType READ_SCHEMA = new StructType()
+    public static final StructType FULL_SCHEMA = new StructType()
         .add("provider", StringType.STRING, false /* nullable */)
         .add("options",
             new MapType(StringType.STRING, StringType.STRING, false),
@@ -54,11 +54,29 @@ public class Format {
         this.options = options;
     }
 
+    public Format() {
+        this.provider = "parquet";
+        this.options = emptyMap();
+    }
+
     public String getProvider() {
         return provider;
     }
 
     public Map<String, String> getOptions() {
         return Collections.unmodifiableMap(options);
+    }
+
+    /**
+     * Encode as a {@link Row} object with the schema {@link Format#FULL_SCHEMA}.
+     *
+     * @return {@link Row} object with the schema {@link Format#FULL_SCHEMA}
+     */
+    public Row toRow() {
+        Map<Integer, Object> formatMap = new HashMap<>();
+        formatMap.put(0, provider);
+        formatMap.put(1, stringStringMapValue(options));
+
+        return new GenericRow(Format.FULL_SCHEMA, formatMap);
     }
 }

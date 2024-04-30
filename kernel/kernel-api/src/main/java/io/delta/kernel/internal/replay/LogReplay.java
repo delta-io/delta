@@ -62,8 +62,8 @@ public class LogReplay {
 
     /** Read schema when searching for the latest Protocol and Metadata. */
     public static final StructType PROTOCOL_METADATA_READ_SCHEMA = new StructType()
-        .add("protocol", Protocol.READ_SCHEMA)
-        .add("metaData", Metadata.READ_SCHEMA);
+        .add("protocol", Protocol.FULL_SCHEMA)
+        .add("metaData", Metadata.FULL_SCHEMA);
 
     /** We don't need to read the entire RemoveFile, only the path and dv info */
     private static StructType REMOVE_FILE_SCHEMA = new StructType()
@@ -72,7 +72,7 @@ public class LogReplay {
 
     /** Read schema when searching for just the transaction identifiers */
     public static final StructType SET_TRANSACTION_READ_SCHEMA = new StructType()
-        .add("txn", SetTransaction.READ_SCHEMA);
+        .add("txn", SetTransaction.FULL_SCHEMA);
 
     private static StructType getAddSchema(boolean shouldReadStats) {
         return shouldReadStats ? AddFile.SCHEMA_WITH_STATS :

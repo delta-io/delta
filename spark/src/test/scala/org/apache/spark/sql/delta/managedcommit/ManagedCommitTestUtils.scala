@@ -59,9 +59,9 @@ trait ManagedCommitTestUtils
   def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
     Seq(1, 2, 10).foreach { backfillBatchSize =>
       test(s"$testName [Backfill batch size: $backfillBatchSize]") {
-        CommitStoreProvider.clearNonDefaultBuilders()
-        CommitStoreProvider.registerBuilder(TrackingInMemoryCommitStoreBuilder(backfillBatchSize))
-        CommitStoreProvider.registerBuilder(InMemoryCommitStoreBuilder(backfillBatchSize))
+        CommitOwnerProvider.clearNonDefaultBuilders()
+        CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(backfillBatchSize))
+        CommitOwnerProvider.registerBuilder(InMemoryCommitOwnerBuilder(backfillBatchSize))
         f(backfillBatchSize)
       }
     }
@@ -102,19 +102,23 @@ trait ManagedCommitTestUtils
   }
 }
 
-case class TrackingInMemoryCommitStoreBuilder(
+case class TrackingInMemoryCommitOwnerBuilder(
     batchSize: Long,
-    defaultCommitStoreOpt: Option[CommitStore] = None) extends CommitStoreBuilder {
-  lazy val trackingInMemoryCommitStore =
-    defaultCommitStoreOpt.getOrElse {
-      new TrackingCommitStore(new PredictableUuidInMemoryCommitStore(batchSize))
+    defaultCommitOwnerClientOpt: Option[CommitOwnerClient] = None) extends CommitOwnerBuilder {
+  lazy val trackingInMemoryCommitOwnerClient =
+    defaultCommitOwnerClientOpt.getOrElse {
+      new TrackingCommitOwnerClient(new PredictableUuidInMemoryCommitOwnerClient(batchSize))
     }
 
   override def name: String = "tracking-in-memory"
-  override def build(conf: Map[String, String]): CommitStore = trackingInMemoryCommitStore
+  override def build(conf: Map[String, String]): CommitOwnerClient = {
+    trackingInMemoryCommitOwnerClient
+  }
 }
 
-class PredictableUuidInMemoryCommitStore(batchSize: Long) extends InMemoryCommitStore(batchSize) {
+class PredictableUuidInMemoryCommitOwnerClient(batchSize: Long)
+  extends InMemoryCommitOwner(batchSize) {
+
   var nextUuidSuffix = 1L
   override def generateUUID(): String = {
     nextUuidSuffix += 1
@@ -122,7 +126,8 @@ class PredictableUuidInMemoryCommitStore(batchSize: Long) extends InMemoryCommit
   }
 }
 
-class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends CommitStore {
+class TrackingCommitOwnerClient(delegatingCommitOwnerClient: InMemoryCommitOwner)
+  extends CommitOwnerClient {
 
   var numCommitsCalled: Int = 0
   var numGetCommitsCalled: Int = 0
@@ -157,7 +162,7 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
-    delegatingCommitStore.commit(
+    delegatingCommitOwnerClient.commit(
       logStore, hadoopConf, logPath, managedCommitTableConf, commitVersion, actions, updatedActions)
   }
 
@@ -166,7 +171,8 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
       managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long] = None): GetCommitsResponse = recordOperation("getCommits") {
-    delegatingCommitStore.getCommits(logPath, managedCommitTableConf, startVersion, endVersion)
+    delegatingCommitOwnerClient.getCommits(
+      logPath, managedCommitTableConf, startVersion, endVersion)
   }
 
   override def backfillToVersion(
@@ -176,11 +182,11 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
       managedCommitTableConf: Map[String, String],
       startVersion: Long,
       endVersion: Option[Long]): Unit = recordOperation("backfillToVersion") {
-    delegatingCommitStore.backfillToVersion(
+    delegatingCommitOwnerClient.backfillToVersion(
       logStore, hadoopConf, logPath, managedCommitTableConf, startVersion, endVersion)
   }
 
-  override def semanticEquals(other: CommitStore): Boolean = this == other
+  override def semanticEquals(other: CommitOwnerClient): Boolean = this == other
 
   def reset(): Unit = {
     numCommitsCalled = 0
@@ -193,7 +199,8 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
       currentVersion: Long,
       currentMetadata: Metadata,
       currentProtocol: Protocol): Map[String, String] = recordOperation("registerTable") {
-    delegatingCommitStore.registerTable(logPath, currentVersion, currentMetadata, currentProtocol)
+    delegatingCommitOwnerClient.registerTable(
+      logPath, currentVersion, currentMetadata, currentProtocol)
   }
 }
 
@@ -222,9 +229,9 @@ trait ManagedCommitBaseSuite extends SparkFunSuite with SharedSparkSession {
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    CommitStoreProvider.clearNonDefaultBuilders()
+    CommitOwnerProvider.clearNonDefaultBuilders()
     managedCommitBackfillBatchSize.foreach { batchSize =>
-      CommitStoreProvider.registerBuilder(TrackingInMemoryCommitStoreBuilder(batchSize))
+      CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(batchSize))
     }
   }
 }

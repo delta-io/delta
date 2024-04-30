@@ -376,10 +376,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   private[delta] var preCommitLogSegment: LogSegment =
     snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
 
-  // The commit store of a table shouldn't change. If it is changed by a concurrent commit, then it
+  // The commit-owner of a table shouldn't change. If it is changed by a concurrent commit, then it
   // will be detected as a conflict and the transaction will anyway fail.
-  private[delta] val readSnapshotTableCommitStoreOpt: Option[TableCommitStore] =
-    snapshot.tableCommitStoreOpt
+  private[delta] val readSnapshotTableCommitOwnerClientOpt: Option[TableCommitOwnerClient] =
+    snapshot.tableCommitOwnerClientOpt
 
   /**
    * Generates a timestamp which is greater than the commit timestamp
@@ -1207,8 +1207,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /**
    * This method makes the necessary changes to Metadata based on managed-commit: If the table is
    * being converted from file-system to managed commits, then it registers the table with the
-   * CommitStore and updates the Metadata with the necessary configuration information from the
-   * CommitStore.
+   * commit-owner and updates the Metadata with the necessary configuration information from the
+   * commit-owner.
    *
    * @return A boolean which represents whether we have updated the table Metadata with
    *         managed-commit information. If no changed were made, returns false.
@@ -1381,14 +1381,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       val fsWriteStartNano = System.nanoTime()
       val jsonActions = allActions.map(_.json)
-      val hadoopConf = deltaLog.newDeltaHadoopConf()
-      val effectiveCommitStore = readSnapshotTableCommitStoreOpt.getOrElse {
-        val fileSystemCommitStore = new FileSystemBasedCommitStore(deltaLog)
-        TableCommitStore(fileSystemCommitStore, deltaLog, snapshot.metadata.managedCommitTableConf)
+      val effectiveTableCommitOwnerClient = readSnapshotTableCommitOwnerClientOpt.getOrElse {
+        TableCommitOwnerClient(
+          commitOwnerClient = new FileSystemBasedCommitOwnerClient(deltaLog),
+          deltaLog = deltaLog,
+          managedCommitTableConf = snapshot.metadata.managedCommitTableConf)
       }
       val updatedActions = UpdatedActions(
         commitInfo, metadata, finalProtocol, snapshot.metadata, snapshot.protocol)
-      val commitResponse = effectiveCommitStore.commit(attemptVersion, jsonActions, updatedActions)
+      val commitResponse =
+        effectiveTableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
       // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
       // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
@@ -1443,7 +1445,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             recordCommitLargeFailure(e, op)
             // Actions of a commit which went in before ours.
             // Requires updating deltaLog to retrieve these actions, as another writer may have used
-            // CommitStore for writing.
+            // CommitOwnerClient for writing.
             val logs = deltaLog.store.readAsIterator(
               DeltaCommitFileProvider(deltaLog.update()).deltaFile(attemptVersion),
               deltaLog.newDeltaHadoopConf())
@@ -1463,8 +1465,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
-   * This method registers the table with the CommitStore if the table is transitioning from
-   * file-system based table to managed-commit table.
+   * This method registers the table with the commit-owner via the [[CommitOwnerClient]] if the
+   * table is transitioning from file-system based table to managed-commit table.
    * @param finalMetadata the effective [[Metadata]] of the table. Note that this refers to the
    *                      new metadata if this commit is updating the table Metadata.
    * @param finalProtocol the effective [[Protocol]] of the table. Note that this refers to the
@@ -1480,30 +1482,31 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val (oldOwnerName, oldOwnerConf) = CommitOwner.getManagedCommitConfs(snapshot.metadata)
     var newManagedCommitTableConf: Option[Map[String, String]] = None
     if (finalMetadata.configuration != snapshot.metadata.configuration || snapshot.version == -1L) {
-      val newCommitStoreOpt = CommitStoreProvider.getCommitStore(finalMetadata, finalProtocol)
-      (newCommitStoreOpt, readSnapshotTableCommitStoreOpt) match {
-        case (Some(newCommitStore), None) =>
+      val newCommitOwnerClientOpt =
+        CommitOwnerProvider.getCommitOwnerClient(finalMetadata, finalProtocol)
+      (newCommitOwnerClientOpt, readSnapshotTableCommitOwnerClientOpt) match {
+        case (Some(newCommitOwnerClient), None) =>
           // FS -> MC conversion
           val (commitOwnerName, commitOwnerConf) = CommitOwner.getManagedCommitConfs(finalMetadata)
           logInfo(s"Table ${deltaLog.logPath} transitioning from file-system based table to " +
-            s"managed-commit table: [commit owner: $commitOwnerName, conf: $commitOwnerConf]")
-          newManagedCommitTableConf = Some(
-            newCommitStore.registerTable(deltaLog.logPath, readVersion, finalMetadata, protocol))
-        case (None, Some(readCommitStore)) =>
+            s"managed-commit table: [commit-owner: $commitOwnerName, conf: $commitOwnerConf]")
+          newManagedCommitTableConf = Some(newCommitOwnerClient.registerTable(
+            deltaLog.logPath, readVersion, finalMetadata, protocol))
+        case (None, Some(readCommitOwnerClient)) =>
           // MC -> FS conversion
           val (newOwnerName, newOwnerConf) = CommitOwner.getManagedCommitConfs(snapshot.metadata)
           logInfo(s"Table ${deltaLog.logPath} transitioning from managed-commit table to " +
-            s"file-system table: [commit owner: $newOwnerName, conf: $newOwnerConf]")
-        case (Some(newCommitStore), Some(readCommitStore))
-            if !readCommitStore.semanticsEquals(newCommitStore) =>
+            s"file-system table: [commit-owner: $newOwnerName, conf: $newOwnerConf]")
+        case (Some(newCommitOwnerClient), Some(readCommitOwnerClient))
+            if !readCommitOwnerClient.semanticsEquals(newCommitOwnerClient) =>
           // MC1 -> MC2 conversion is not allowed.
           // In order to transfer the table from one commit-owner to another, transfer the table
           // from current commit-owner to filesystem first and then filesystem to the commit-owner.
           val (newOwnerName, newOwnerConf) = CommitOwner.getManagedCommitConfs(finalMetadata)
           val message = s"Transition of table ${deltaLog.logPath} from one commit-owner to" +
-            s" another commit-owner is not allowed: [old commit owner: $oldOwnerName," +
-            s" new commit owner: $newOwnerName, old commit owner conf: $oldOwnerConf," +
-            s" new commit owner conf: $newOwnerConf]."
+            s" another commit-owner is not allowed: [old commit-owner: $oldOwnerName," +
+            s" new commit-owner: $newOwnerName, old commit-owner conf: $oldOwnerConf," +
+            s" new commit-owner conf: $newOwnerConf]."
           throw new IllegalStateException(message)
         case _ =>
           // no owner change
@@ -1857,11 +1860,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             // Don't retry if this commit tries to upgrade the table from filesystem to managed
             // commits and the first attempt failed due to a conflict.
             throw DeltaErrors.concurrentWriteException(conflictingCommit = None)
-          case _: FileAlreadyExistsException if readSnapshotTableCommitStoreOpt.isEmpty =>
+          case _: FileAlreadyExistsException if readSnapshotTableCommitOwnerClientOpt.isEmpty =>
             // For filesystem based tables, we use LogStore to do the commit. On a conflict,
             // LogStore returns FileAlreadyExistsException necessitating conflict resolution.
-            // For commit-stores, FileAlreadyExistsException isn't expected under normal operations
-            // and thus retries are not performed if this exception is thrown by CommitStore.
+            // For commit-owners, FileAlreadyExistsException isn't expected under normal operations
+            // and thus retries are not performed if this exception is thrown by CommitOwnerClient.
             shouldCheckForConflicts = true
             // Do nothing, retry with next available attemptVersion
           case ex: CommitFailedException if ex.retryable && ex.conflict =>
@@ -2017,7 +2020,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     postCommitSnapshot
   }
 
-  class FileSystemBasedCommitStore(val deltaLog: DeltaLog) extends CommitStore {
+  class FileSystemBasedCommitOwnerClient(val deltaLog: DeltaLog) extends CommitOwnerClient {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
@@ -2064,12 +2067,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         endVersion: Option[Long]): Unit = {}
 
     /**
-     * FileSystemBasedCommitStore is supposed to be treated as a singleton object for a Delta Log
-     * and is equal to all other instances of FileSystemBasedCommitStore for the same Delta Log.
+     * [[FileSystemBasedCommitOwnerClient]] is supposed to be treated as a singleton object for a
+     * Delta Log and is equal to all other instances of [[FileSystemBasedCommitOwnerClient]] for the
+     * same Delta Log.
      */
-    override def semanticEquals(other: CommitStore): Boolean = {
+    override def semanticEquals(other: CommitOwnerClient): Boolean = {
       other match {
-        case fsCommitStore: FileSystemBasedCommitStore => fsCommitStore.deltaLog == deltaLog
+        case fsCommitOwnerClient: FileSystemBasedCommitOwnerClient =>
+          fsCommitOwnerClient.deltaLog == deltaLog
         case _ => false
       }
     }
@@ -2085,24 +2090,26 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       jsonActions: Iterator[String],
       currentTransactionInfo: CurrentTransactionInfo)
       : (Option[VersionChecksum], Commit) = {
-    val commitStore = readSnapshotTableCommitStoreOpt.getOrElse {
-      val fileSystemCommitStore = new FileSystemBasedCommitStore(deltaLog)
-      TableCommitStore(fileSystemCommitStore, deltaLog, snapshot.metadata.managedCommitTableConf)
+    val commitOwnerClient = readSnapshotTableCommitOwnerClientOpt.getOrElse {
+      TableCommitOwnerClient(
+        new FileSystemBasedCommitOwnerClient(deltaLog),
+        deltaLog,
+        snapshot.metadata.managedCommitTableConf)
     }
     val commitFile =
-      writeCommitFileImpl(attemptVersion, jsonActions, commitStore, currentTransactionInfo)
+      writeCommitFileImpl(attemptVersion, jsonActions, commitOwnerClient, currentTransactionInfo)
     (None, commitFile)
   }
 
   protected def writeCommitFileImpl(
     attemptVersion: Long,
     jsonActions: Iterator[String],
-    tableCommitStore: TableCommitStore,
+    tableCommitOwnerClient: TableCommitOwnerClient,
     currentTransactionInfo: CurrentTransactionInfo
   ): Commit = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
-    val commitResponse = tableCommitStore.commit(attemptVersion, jsonActions, updatedActions)
+    val commitResponse = tableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
     // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
     //  merged.
     val commitTimestamp = commitResponse.commit.fileStatus.getModificationTime
@@ -2200,7 +2207,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
     assert(previousAttemptVersion == preCommitLogSegment.version + 1)
     val (newPreCommitLogSegment, newCommitFileStatuses) =
-      deltaLog.getUpdatedLogSegment(preCommitLogSegment, readSnapshotTableCommitStoreOpt)
+      deltaLog.getUpdatedLogSegment(preCommitLogSegment, readSnapshotTableCommitOwnerClientOpt)
     assert(preCommitLogSegment.version + newCommitFileStatuses.size ==
       newPreCommitLogSegment.version)
     preCommitLogSegment = newPreCommitLogSegment
@@ -2317,4 +2324,59 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       case _ =>
     }
   }
+
+  /**
+   * This method takes care of backfilling any unbackfilled delta files when managed commit is
+   * not enabled on the table (i.e. commit-owner is not present) but there are still unbackfilled
+   * delta files in the table. This can happen if an error occurred during the MC -> FS commit
+   * where the commit-owner was able to register the downgrade commit but it failed to backfill
+   * it. This method must be invoked before doing the next commit as otherwise there will be a
+   * gap in the backfilled commit sequence.
+   */
+  private def backfillWhenManagedCommitDisabled(): Unit = {
+    if (snapshot.tableCommitOwnerClientOpt.nonEmpty) {
+      // Managed commits is enabled on the table. Don't backfill as backfills are managed by
+      // commit-owners.
+      return
+    }
+    val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
+      case UnbackfilledDeltaFile(unbackfilledDeltaFile, version, _) =>
+        (unbackfilledDeltaFile, version)
+    }
+    if (unbackfilledFilesAndVersions.isEmpty) return
+    // Managed commits are disabled on the table but the table still has un-backfilled files.
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+    val overwrite = !deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
+    var numAlreadyBackfilledFiles = 0L
+    unbackfilledFilesAndVersions.foreach { case (unbackfilledDeltaFile, version) =>
+      val backfilledFilePath = unsafeDeltaFile(deltaLog.logPath, version)
+      if (!fs.exists(backfilledFilePath)) {
+        val actionsIter = deltaLog.store.readAsIterator(unbackfilledDeltaFile.getPath, hadoopConf)
+        deltaLog.store.write(
+          backfilledFilePath,
+          actionsIter,
+          overwrite,
+          hadoopConf)
+        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} backfilled to path" +
+          s" ${backfilledFilePath.toString}.")
+      } else {
+        numAlreadyBackfilledFiles += 1
+        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} already backfilled.")
+      }
+    }
+    recordDeltaEvent(
+      deltaLog,
+      opType = "delta.managedCommit.backfillWhenManagedCommitSupportedAndDisabled",
+      data = Map(
+        "numUnbackfilledFiles" -> unbackfilledFilesAndVersions.size,
+        "unbackfilledFiles" -> unbackfilledFilesAndVersions.map(_._1.getPath.toString),
+        "numAlreadyBackfilledFiles" -> numAlreadyBackfilledFiles
+      )
+    )
+  }
+
+  // Backfill any unbackfilled commits if managed commits are disabled -- in the Optimistic
+  // Transaction constructor.
+  backfillWhenManagedCommitDisabled()
 }
