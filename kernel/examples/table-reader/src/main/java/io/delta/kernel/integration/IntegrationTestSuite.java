@@ -107,11 +107,11 @@ public class IntegrationTestSuite {
 
         // Basic read: table with Parquet V2 checkpoint
         runAndVerifyRowCount(
-                "basic_read_table_v2_checkpoint_parquet",
-                "v2-checkpoint-parquet",
-                Optional.empty(), /* read schema - read all columns */
-                Optional.empty(), /* predicate */
-                10 /* expected row count */);
+            "basic_read_table_v2_checkpoint_parquet",
+            "v2-checkpoint-parquet",
+            Optional.empty(), /* read schema - read all columns */
+            Optional.empty(), /* predicate */
+            10 /* expected row count */);
 
         // Partition pruning: simple expression
         runAndVerifyRowCount(
