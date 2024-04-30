@@ -1443,7 +1443,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.generatedColumnsTypeMismatch("col1", IntegerType, StringType)
+        throw DeltaErrors.generatedColumnsExprTypeMismatch("col1", IntegerType, StringType)
       }
       checkErrorMessage(e, Some("DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH"), Some("42K09"),
         Some("The expression type of the generated column col1 is STRING, " +
@@ -1458,19 +1458,41 @@ trait DeltaErrorsSuiteBase
         Some(msg))
     }
     {
-      val e = intercept[DeltaAnalysisException] {
-        val s1 = StructType(Seq(StructField("c0", IntegerType, true)))
-        val s2 = StructType(Seq(StructField("c0", StringType, false)))
-        SchemaMergingUtils.mergeSchemas(s1, s2,
-          allowImplicitConversions = false,
-          keepExistingType = false,
-          allowTypeWidening = false,
-          Set("c0")
-        )
-      }
-      checkErrorMessage(e, Some("DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH"), Some("42K09"),
-        Some("Column c0 is a generated column or a column used by a generated " +
-        "column. The data type is INT. It doesn't accept data type STRING"))
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          throw DeltaErrors.constraintDataTypeMismatch(
+            columnPath = Seq("a", "x"),
+            columnType = ByteType,
+            dataType = IntegerType,
+            constraints = Map("ck1" -> "a > 0", "ck2" -> "hash(b) > 0"))
+        },
+        errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "a.x",
+          "columnType" -> "TINYINT",
+          "dataType" -> "INT",
+          "constraints" -> "ck1 -> a > 0\nck2 -> hash(b) > 0"
+      ))
+    }
+    {
+      checkError(
+        exception = intercept[DeltaAnalysisException] {
+          throw DeltaErrors.generatedColumnsDataTypeMismatch(
+            columnPath = Seq("a", "x"),
+            columnType = ByteType,
+            dataType = IntegerType,
+            generatedColumns = Map(
+              "gen1" -> "a . x + 1",
+              "gen2" -> "3 + a . x"
+            ))
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "a.x",
+          "columnType" -> "TINYINT",
+          "dataType" -> "INT",
+          "generatedColumns" -> "gen1 -> a . x + 1\ngen2 -> 3 + a . x"
+      ))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2939,15 +2961,14 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.foundViolatingConstraintsForColumnChange(
-          "UPDATE", "col1", Map("foo" -> "bar"))
+          "col1", Map("foo" -> "bar"))
       }
       checkErrorMessage(
         e,
-        Some("_LEGACY_ERROR_TEMP_DELTA_0004"),
+        Some("DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE"),
         None,
         Some(
-          s"""Cannot UPDATE column col1 because this column is referenced by the following
-             |check constraint(s):
+          s"""Cannot alter column col1 because this column is referenced by the following check constraint(s):
              |foo -> bar""".stripMargin)
       )
     }
@@ -3001,16 +3022,17 @@ trait DeltaErrorsSuiteBase
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-          "UPDATE", "col1", Seq(StructField("col2", IntegerType)))
+          columnName = "col1",
+          generatedColumns = Map("col2" -> "col1 + 1", "col3" -> "col1 + 2"))
       }
       checkErrorMessage(
         e,
-        Some("_LEGACY_ERROR_TEMP_DELTA_0005"),
+        Some("DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE"),
         None,
         Some(
-          s"""Cannot UPDATE column col1 because this column is referenced by the following
-             |generated column(s):
-             |col2""".stripMargin)
+          s"""Cannot alter column col1 because this column is referenced by the following generated column(s):
+             |col2 -> col1 + 1
+             |col3 -> col1 + 2""".stripMargin)
       )
     }
     {

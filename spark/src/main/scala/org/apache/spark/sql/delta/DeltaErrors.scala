@@ -1765,13 +1765,43 @@ trait DeltaErrorsBase
     )
   }
 
-  def generatedColumnsTypeMismatch(
+  def generatedColumnsExprTypeMismatch(
       column: String,
       columnType: DataType,
       exprType: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
       messageParameters = Array(column, exprType.sql, columnType.sql)
+    )
+  }
+
+  def generatedColumnsDataTypeMismatch(
+      columnPath: Seq[String],
+      columnType: DataType,
+      dataType: DataType,
+      generatedColumns: Map[String, String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+      messageParameters = Array(
+        SchemaUtils.prettyFieldName(columnPath),
+        columnType.sql,
+        dataType.sql,
+        generatedColumns.mkString("\n"))
+    )
+  }
+
+  def constraintDataTypeMismatch(
+      columnPath: Seq[String],
+      columnType: DataType,
+      dataType: DataType,
+      constraints: Map[String, String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+      messageParameters = Array(
+        SchemaUtils.prettyFieldName(columnPath),
+        columnType.sql,
+        dataType.sql,
+        constraints.mkString("\n"))
     )
   }
 
@@ -2079,22 +2109,20 @@ trait DeltaErrorsBase
       messageParameters = columnNames.toArray)
 
   def foundViolatingConstraintsForColumnChange(
-      operation: String,
       columnName: String,
       constraints: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0004",
-      messageParameters = Array(operation, columnName, constraints.mkString("\n"))
+      errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+      messageParameters = Array(columnName, constraints.mkString("\n"))
     )
   }
 
   def foundViolatingGeneratedColumnsForColumnChange(
-      operation: String,
       columnName: String,
-      fields: Seq[StructField]): Throwable = {
+      generatedColumns: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0005",
-      messageParameters = Array(operation, columnName, fields.map(_.name).mkString("\n"))
+      errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+      messageParameters = Array(columnName, generatedColumns.mkString("\n"))
     )
   }
 
@@ -2304,6 +2332,14 @@ trait DeltaErrorsBase
     new DeltaTableFeatureException(
       errorClass = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
       messageParameters = Array(feature))
+  }
+
+  def dropTableFeatureFailedBecauseOfDependentFeatures(
+      feature: String,
+      dependentFeatures: Seq[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+      messageParameters = Array(feature, dependentFeatures.mkString(", "), feature))
   }
 
   def dropTableFeatureConflictRevalidationFailed(
@@ -3271,6 +3307,12 @@ trait DeltaErrorsBase
       "DELTA_CLUSTERING_COLUMNS_MISMATCH",
       Array(providedClusteringColumns, existingClusteringColumns)
     )
+  }
+
+  def clusterByWithPartitionedBy(): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY",
+      Array.empty)
   }
 
   def dropClusteringColumnNotSupported(droppingClusteringCols: Seq[String]): Throwable = {

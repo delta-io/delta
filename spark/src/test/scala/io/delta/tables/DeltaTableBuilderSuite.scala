@@ -18,19 +18,22 @@ package io.delta.tables
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchDatabaseException, TableAlreadyExistsException}
+import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StringType, StructType}
 
-class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest
-    {
+class DeltaTableBuilderSuite
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaSQLCommandTest
+  with ClusteredTableTestUtils {
 
   // Define the information for a default test table used by many tests.
   protected val defaultTestTableSchema = "c1 int, c2 int, c3 string"
@@ -378,10 +381,10 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
   }
 
   test("delta table property case") {
-    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
-    val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
-
     sealed trait DeltaTablePropertySetOperation {
+      val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
+      val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
+
       def setTableProperty(tablePath: String): Unit
 
       def expectedConfig: Map[String, String]
@@ -462,4 +465,33 @@ class DeltaTableBuilderSuite extends QueryTest with SharedSparkSession with Delt
     }
   }
 
+  test("create table with clustering") {
+    withTable("test") {
+      io.delta.tables.DeltaTable.create().tableName("test")
+        .addColumn("c1", "int")
+        .clusterBy("c1")
+        .execute()
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("test"))
+      val metadata = deltaLog.snapshot.metadata
+      verifyClusteringColumns(TableIdentifier("test"), "c1")
+    }
+  }
+
+  test("errors if partition and cluster columns are provided") {
+    withTable("test") {
+      val e = intercept[AnalysisException] {
+        io.delta.tables.DeltaTable.create().tableName("test")
+          .addColumn("c1", "int")
+          .clusterBy("c1")
+          .partitionedBy("c1")
+          .execute()
+      }
+
+      checkError(
+        exception = e,
+        errorClass = "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY"
+      )
+    }
+  }
 }

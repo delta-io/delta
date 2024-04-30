@@ -17,7 +17,7 @@ package io.delta.kernel.internal.util
 
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.expressions._
-import io.delta.kernel.internal.util.PartitionUtils.{rewritePartitionPredicateOnCheckpointFileSchema, rewritePartitionPredicateOnScanFileSchema, splitMetadataAndDataPredicates}
+import io.delta.kernel.internal.util.PartitionUtils._
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -208,6 +208,63 @@ class PartitionUtilsSuite extends AnyFunSuite {
         assert(actCheckpointReaderPushdownPredicate.toString ===
           expCheckpointReaderPushdownPredicate)
       }
+  }
+
+  private val nullFileName = "__HIVE_DEFAULT_PARTITION__"
+  Seq(
+    ofBoolean(true) -> ("true", "true"),
+    ofBoolean(false) -> ("false", "false"),
+    ofNull(BooleanType.BOOLEAN) -> (null, nullFileName),
+    ofByte(24.toByte) -> ("24", "24"),
+    ofNull(ByteType.BYTE) -> (null, nullFileName),
+    ofShort(876.toShort) -> ("876", "876"),
+    ofNull(ShortType.SHORT) -> (null, nullFileName),
+    ofInt(2342342) -> ("2342342", "2342342"),
+    ofNull(IntegerType.INTEGER) -> (null, nullFileName),
+    ofLong(234234223L) -> ("234234223", "234234223"),
+    ofNull(LongType.LONG) -> (null, nullFileName),
+    ofFloat(23423.4223f) -> ("23423.422", "23423.422"),
+    ofNull(FloatType.FLOAT) -> (null, nullFileName),
+    ofDouble(23423.422233d) -> ("23423.422233", "23423.422233"),
+    ofNull(DoubleType.DOUBLE) -> (null, nullFileName),
+    ofString("string_val") -> ("string_val", "string_val"),
+    ofNull(StringType.STRING) -> (null, nullFileName),
+    ofDecimal(new java.math.BigDecimal("23423.234234"), 15, 7) ->
+      ("23423.2342340", "23423.2342340"),
+    ofNull(new DecimalType(15, 7)) -> (null, nullFileName),
+    ofBinary("binary_val".getBytes) -> ("binary_val", "binary_val"),
+    ofNull(BinaryType.BINARY) -> (null, nullFileName),
+    ofDate(4234)  -> ("1981-08-05", "1981-08-05"),
+    ofNull(DateType.DATE) -> (null, nullFileName),
+    ofTimestamp(2342342342232L) ->
+      ("1970-01-28 02:39:02.342232", "1970-01-28+02%3A39%3A02.342232"),
+    ofNull(TimestampType.TIMESTAMP) -> (null, nullFileName),
+    ofTimestampNtz(-2342342342L) ->
+      ("1969-12-31 23:20:58.657658", "1969-12-31+23%3A20%3A58.657658"),
+    ofNull(TimestampNTZType.TIMESTAMP_NTZ) -> (null, nullFileName)
+  ).foreach { case (literal, (expSerializedValue, expFileName)) =>
+    test(s"serialize partition value literal as string: ${literal.getDataType}($literal)") {
+      val result = serializePartitionValue(literal)
+      assert(result === expSerializedValue)
+    }
+
+    test(s"construct partition data output directory: ${literal.getDataType}($literal)") {
+      val result = getTargetDirectory(
+        "/tmp/root",
+        Seq("part1").asJava,
+        Map("part1" -> literal).asJava)
+      assert(result === s"/tmp/root/part1=$expFileName")
+    }
+  }
+
+  test("construct partition data output directory with multiple partition columns") {
+    val result = getTargetDirectory(
+      "/tmp/root",
+      Seq("part1", "part2", "part3").asJava,
+      Map("part1" -> ofInt(12),
+        "part3" -> ofTimestamp(234234234L),
+        "part2" -> ofString("sss")).asJava)
+    assert(result === "/tmp/root/part1=12/part2=sss/part3=1970-01-01+00%3A03%3A54.234234")
   }
 
   private def col(names: String*): Column = {

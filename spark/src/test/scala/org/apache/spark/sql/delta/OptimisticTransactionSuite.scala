@@ -23,7 +23,7 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.managedcommit.{Commit, CommitFailedException, CommitResponse, CommitStore, CommitStoreBuilder, CommitStoreProvider, GetCommitsResponse, InMemoryCommitStore, UpdatedActions}
+import org.apache.spark.sql.delta.managedcommit._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -270,7 +270,7 @@ class OptimisticTransactionSuite
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    CommitStoreProvider.clearNonDefaultBuilders()
+    CommitOwnerProvider.clearNonDefaultBuilders()
   }
 
   test("initial commit without metadata should fail") {
@@ -454,19 +454,19 @@ class OptimisticTransactionSuite
   }
 
   test("Limited retries for non-conflict retryable CommitFailedExceptions") {
-    val commitStoreName = "retryable-non-conflict-commit-store"
+    val commitOwnerName = "retryable-non-conflict-commit-owner"
     var commitAttempts = 0
     val numRetries = "100"
     val numNonConflictRetries = "10"
     val initialNonConflictErrors = 5
     val initialConflictErrors = 5
 
-    object RetryableNonConflictCommitStoreBuilder extends CommitStoreBuilder {
+    object RetryableNonConflictCommitOwnerBuilder$ extends CommitOwnerBuilder {
 
-      override def name: String = commitStoreName
+      override def name: String = commitOwnerName
 
-      val commitStore: InMemoryCommitStore = {
-        new InMemoryCommitStore(batchSize = 1000L) {
+      val commitOwnerClient: InMemoryCommitOwner = {
+        new InMemoryCommitOwner(batchSize = 1000L) {
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
@@ -489,17 +489,17 @@ class OptimisticTransactionSuite
           }
         }
       }
-      override def build(conf: Map[String, String]): CommitStore = commitStore
+      override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
     }
 
-    CommitStoreProvider.registerBuilder(RetryableNonConflictCommitStoreBuilder)
+    CommitOwnerProvider.registerBuilder(RetryableNonConflictCommitOwnerBuilder$)
 
     withSQLConf(
         DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> numRetries,
         DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> numNonConflictRetries) {
       withTempDir { tempDir =>
         val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitStoreName)
+        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitOwnerName)
         log.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
         val testTxn = log.startTransaction()
         intercept[CommitFailedException] { testTxn.commit(Seq.empty, ManualUpdate) }
@@ -510,16 +510,16 @@ class OptimisticTransactionSuite
     }
   }
 
-  test("No retries for FileAlreadyExistsException with Commit Store") {
-    val commitStoreName = "file-already-exists-commit-store"
+  test("No retries for FileAlreadyExistsException with commit-owner") {
+    val commitOwnerName = "file-already-exists-commit-owner"
     var commitAttempts = 0
 
-    object FileAlreadyExistsCommitStoreBuilder extends CommitStoreBuilder {
+    object FileAlreadyExistsCommitOwnerBuilder extends CommitOwnerBuilder {
 
-      override def name: String = commitStoreName
+      override def name: String = commitOwnerName
 
-      lazy val commitStore: CommitStore = {
-        new InMemoryCommitStore(batchSize = 1000L) {
+      lazy val commitOwnerClient: CommitOwnerClient = {
+        new InMemoryCommitOwner(batchSize = 1000L) {
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
@@ -538,21 +538,22 @@ class OptimisticTransactionSuite
           }
         }
       }
-      override def build(conf: Map[String, String]): CommitStore = commitStore
+      override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
     }
 
-    CommitStoreProvider.registerBuilder(FileAlreadyExistsCommitStoreBuilder)
+    CommitOwnerProvider.registerBuilder(FileAlreadyExistsCommitOwnerBuilder)
 
     withSQLConf(
         DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> "100",
         DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> "10") {
       withTempDir { tempDir =>
         val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitStoreName)
+        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitOwnerName)
         log.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
         val testTxn = log.startTransaction()
         intercept[FileAlreadyExistsException] { testTxn.commit(Seq.empty, ManualUpdate) }
-        // Test that there are no retries for the FileAlreadyExistsException in CommitStore.commit()
+        // Test that there are no retries for the FileAlreadyExistsException in
+        // CommitOwnerClient.commit()
         // num-attempts(1) = 1 + num-retries(0)
         assert(commitAttempts == 1)
       }
@@ -824,8 +825,8 @@ class OptimisticTransactionSuite
     test(s"commitLarge should handle Commit Failed Exception with conflict: $conflict") {
       withTempDir { tempDir =>
         val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-        val commitStoreName = "retryable-conflict-commit-store"
-        class RetryableConflictCommitStore extends InMemoryCommitStore(batchSize = 5) {
+        val commitOwnerName = "retryable-conflict-commit-owner"
+        class RetryableConflictCommitOwnerClient extends InMemoryCommitOwner(batchSize = 5) {
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
@@ -842,13 +843,13 @@ class OptimisticTransactionSuite
               logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
           }
         }
-        object RetryableConflictCommitStoreBuilder extends CommitStoreBuilder {
-          lazy val commitStore = new RetryableConflictCommitStore()
-          override def name: String = commitStoreName
-          override def build(conf: Map[String, String]): CommitStore = commitStore
+        object RetryableConflictCommitOwnerBuilder$ extends CommitOwnerBuilder {
+          lazy val commitOwnerClient = new RetryableConflictCommitOwnerClient()
+          override def name: String = commitOwnerName
+          override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
         }
-        CommitStoreProvider.registerBuilder(RetryableConflictCommitStoreBuilder)
-        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitStoreName)
+        CommitOwnerProvider.registerBuilder(RetryableConflictCommitOwnerBuilder$)
+        val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitOwnerName)
         deltaLog.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
         deltaLog.startTransaction().commit(addA :: Nil, ManualUpdate)
         val records = Log4jUsageLogger.track {

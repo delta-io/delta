@@ -538,13 +538,22 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
-  val DELTA_LIST_FROM_COMMIT_STORE_THREAD_POOL_SIZE =
-    buildStaticConf("commitStore.getCommits.threadPoolSize")
+  val MANAGED_COMMIT_GET_COMMITS_THREAD_POOL_SIZE =
+    buildStaticConf("managedCommits.getCommits.threadPoolSize")
       .internal()
-      .doc("The size of the thread pool for listing files from the CommitStore.")
+      .doc("The size of the thread pool for listing files from the commit-owner.")
       .intConf
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
+
+  val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =
+    buildConf("catalog.update.longFieldTruncationThreshold")
+      .internal()
+      .doc(
+        "When syncing table schema to the catalog, Delta will truncate the whole schema " +
+        "if any field is longer than this threshold.")
+      .longConf
+      .createWithDefault(4000)
 
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
@@ -1524,6 +1533,16 @@ trait DeltaSQLConfBase {
                 """.stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val DELETION_VECTORS_USE_METADATA_ROW_INDEX =
+    buildConf("deletionVectors.useMetadataRowIndex")
+      .internal()
+      .doc(
+        """Controls whether we use the Parquet reader generated row_index column for
+          | filtering deleted rows with deletion vectors. When enabled, it allows
+          | predicate pushdown and file splitting in scans.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val WRITE_DATA_FILES_TO_SUBDIR = buildConf("write.dataFilesToSubdir")
     .internal()

@@ -26,13 +26,14 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingCommitStore {
+class InMemoryCommitOwner(val batchSize: Long)
+  extends AbstractBatchBackfillingCommitOwnerClient {
 
   /**
    * @param maxCommitVersion represents the max commit version known for the table. This is
    *                         initialized at the time of pre-registration and updated whenever a
-   *                         commit is successfully added to the commit store.
-   * @param active represents whether this commit-store has ratified any commit or not.
+   *                         commit is successfully added to the commit-owner.
+   * @param active represents whether this commit-owner has ratified any commit or not.
    * |----------------------------|------------------|---------------------------|
    * |        State               | maxCommitVersion |          active           |
    * |----------------------------|------------------|---------------------------|
@@ -53,7 +54,7 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
 
     /**
      * Returns the last ratified commit version for the table. If no commits have been done from
-     * commit store yet, returns -1.
+     * commit-owner yet, returns -1.
      */
     def lastRatifiedCommitVersion: Long = if (!active) -1 else maxCommitVersion
 
@@ -108,6 +109,14 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
       commitVersion: Long,
       commitFile: FileStatus,
       commitTimestamp: Long): CommitResponse = {
+    addToMap(logPath, commitVersion, commitFile, commitTimestamp)
+  }
+
+  private[sql] def addToMap(
+      logPath: Path,
+      commitVersion: Long,
+      commitFile: FileStatus,
+      commitTimestamp: Long): CommitResponse = {
     withWriteLock[CommitResponse](logPath) {
       val tableData = perTableMap.get(logPath)
       val expectedVersion = tableData.maxCommitVersion + 1
@@ -122,7 +131,7 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
       tableData.commitsMap(commitVersion) = commit
       tableData.updateLastRatifiedCommit(commitVersion)
 
-      logInfo(s"Added commit file ${commitFile.getPath} to commit-store.")
+      logInfo(s"Added commit file ${commitFile.getPath} to commit-owner.")
       CommitResponse(commit)
     }
   }
@@ -167,13 +176,13 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
     perTableMap.compute(logPath, (_, existingData) => {
       if (existingData != null) {
         if (existingData.lastRatifiedCommitVersion != -1) {
-          throw new IllegalStateException(s"Table $logPath already exists in the commit store.")
+          throw new IllegalStateException(s"Table $logPath already exists in the commit-owner.")
         }
-        // If lastRatifiedCommitVersion is -1 i.e. the commit store has never attempted any commit
+        // If lastRatifiedCommitVersion is -1 i.e. the commit-owner has never attempted any commit
         // for this table => this table was just pre-registered. If there is another
         // pre-registration request for an older version, we reject it and table can't go backward.
         if (currentVersion < existingData.maxCommitVersion) {
-          throw new IllegalStateException(s"Table $logPath already registered with commit store")
+          throw new IllegalStateException(s"Table $logPath already registered with commit-owner")
         }
       }
       newPerTableData
@@ -181,21 +190,21 @@ class InMemoryCommitStore(val batchSize: Long) extends AbstractBatchBackfillingC
     Map.empty
   }
 
-  override def semanticEquals(other: CommitStore): Boolean = this == other
+  override def semanticEquals(other: CommitOwnerClient): Boolean = this == other
 }
 
 /**
- * The InMemoryCommitStoreBuilder class is responsible for creating singleton instances of
- * InMemoryCommitStore with the specified batchSize.
+ * The [[InMemoryCommitOwnerBuilder]] class is responsible for creating singleton instances of
+ * [[InMemoryCommitOwner]] with the specified batchSize.
  */
-case class InMemoryCommitStoreBuilder(batchSize: Long) extends CommitStoreBuilder {
-  private lazy val inMemoryStore = new InMemoryCommitStore(batchSize)
+case class InMemoryCommitOwnerBuilder(batchSize: Long) extends CommitOwnerBuilder {
+  private lazy val inMemoryStore = new InMemoryCommitOwner(batchSize)
 
-  /** Name of the commit-store */
+  /** Name of the commit-owner */
   def name: String = "in-memory"
 
-  /** Returns a commit store based on the given conf */
-  def build(conf: Map[String, String]): CommitStore = {
+  /** Returns a commit-owner based on the given conf */
+  def build(conf: Map[String, String]): CommitOwnerClient = {
     inMemoryStore
   }
 }

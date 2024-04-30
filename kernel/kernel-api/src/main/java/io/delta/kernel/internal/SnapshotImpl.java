@@ -25,9 +25,11 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -38,6 +40,7 @@ public class SnapshotImpl implements Snapshot {
     private final LogReplay logReplay;
     private final Protocol protocol;
     private final Metadata metadata;
+    private final LogSegment logSegment;
 
     public SnapshotImpl(
             Path logPath,
@@ -49,6 +52,7 @@ public class SnapshotImpl implements Snapshot {
             Optional<SnapshotHint> snapshotHint) {
         this.dataPath = dataPath;
         this.version = version;
+        this.logSegment = logSegment;
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
@@ -90,6 +94,17 @@ public class SnapshotImpl implements Snapshot {
         return protocol;
     }
 
+    public CreateCheckpointIterator getCreateCheckpointIterator(
+            TableClient tableClient) {
+        long minFileRetentionTimestampMillis =
+                System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
+        return new CreateCheckpointIterator(
+                tableClient,
+                logSegment,
+                minFileRetentionTimestampMillis
+        );
+    }
+
     /**
      * Get the latest transaction version for given <i>applicationId</i>. This information comes
      * from the transactions identifiers stored in Delta transaction log. This API is not a public
@@ -102,5 +117,9 @@ public class SnapshotImpl implements Snapshot {
      */
     public Optional<Long> getLatestTransactionVersion(String applicationId) {
         return logReplay.getLatestTransactionIdentifier(applicationId);
+    }
+
+    public LogSegment getLogSegment() {
+        return logSegment;
     }
 }

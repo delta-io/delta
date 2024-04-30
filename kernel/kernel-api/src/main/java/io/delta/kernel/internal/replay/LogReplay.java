@@ -17,7 +17,6 @@
 package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Optional;
 
 import io.delta.kernel.client.TableClient;
@@ -28,14 +27,15 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -62,8 +62,8 @@ public class LogReplay {
 
     /** Read schema when searching for the latest Protocol and Metadata. */
     public static final StructType PROTOCOL_METADATA_READ_SCHEMA = new StructType()
-        .add("protocol", Protocol.READ_SCHEMA)
-        .add("metaData", Metadata.READ_SCHEMA);
+        .add("protocol", Protocol.FULL_SCHEMA)
+        .add("metaData", Metadata.FULL_SCHEMA);
 
     /** We don't need to read the entire RemoveFile, only the path and dv info */
     private static StructType REMOVE_FILE_SCHEMA = new StructType()
@@ -72,11 +72,24 @@ public class LogReplay {
 
     /** Read schema when searching for just the transaction identifiers */
     public static final StructType SET_TRANSACTION_READ_SCHEMA = new StructType()
-        .add("txn", SetTransaction.READ_SCHEMA);
+        .add("txn", SetTransaction.FULL_SCHEMA);
 
     private static StructType getAddSchema(boolean shouldReadStats) {
         return shouldReadStats ? AddFile.SCHEMA_WITH_STATS :
             AddFile.SCHEMA_WITHOUT_STATS;
+    }
+
+    public static String SIDECAR_FIELD_NAME = "sidecar";
+    public static String ADDFILE_FIELD_NAME = "add";
+    public static String REMOVEFILE_FIELD_NAME = "remove";
+
+    public static StructType withSidecarFileSchema(StructType schema) {
+        return schema.add(SIDECAR_FIELD_NAME, SidecarFile.READ_SCHEMA);
+    }
+
+    public static boolean containsAddOrRemoveFileActions(StructType schema) {
+        return schema.fieldNames().contains(ADDFILE_FIELD_NAME) ||
+                schema.fieldNames().contains(REMOVEFILE_FIELD_NAME);
     }
 
     /**
@@ -84,8 +97,8 @@ public class LogReplay {
      */
     public static StructType getAddRemoveReadSchema(boolean shouldReadStats) {
         return new StructType()
-            .add("add", getAddSchema(shouldReadStats))
-            .add("remove", REMOVE_FILE_SCHEMA);
+            .add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats))
+            .add(REMOVEFILE_FIELD_NAME, REMOVE_FILE_SCHEMA);
     }
 
     public static int ADD_FILE_ORDINAL = 0;
@@ -300,20 +313,5 @@ public class LogReplay {
         }
 
         return Optional.empty();
-    }
-
-    /**
-     * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
-     * Visible only for testing.
-     */
-    protected static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
-        String logPathStr = logPath.toString(); // fully qualified path
-        for (FileStatus fileStatus : allFiles) {
-            String filePath = fileStatus.getPath();
-            if (!filePath.startsWith(logPathStr)) {
-                throw new RuntimeException("File (" + filePath + ") doesn't belong in the " +
-                    "transaction log at " + logPathStr + ".");
-            }
-        }
     }
 }

@@ -259,7 +259,8 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     // Compare the columns types defined in the schema and the expression types.
     generatedColumns.zip(dfWithExprs.schema).foreach { case (column, expr) =>
       if (column.dataType != expr.dataType) {
-        throw DeltaErrors.generatedColumnsTypeMismatch(column.name, column.dataType, expr.dataType)
+        throw DeltaErrors.generatedColumnsExprTypeMismatch(
+          column.name, column.dataType, expr.dataType)
       }
     }
   }

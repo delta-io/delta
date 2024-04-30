@@ -3534,6 +3534,78 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     testV2CheckpointTableFeatureDrop(V2Checkpoint.Format.PARQUET, true, true)
   }
 
+  private def testRemoveVacuumProtocolCheckTableFeature(
+      enableFeatureInitially: Boolean,
+      additionalTableProperties: Seq[(String, String)] = Seq.empty,
+      downgradeFailsWithException: Option[String] = None,
+      featureExpectedAtTheEnd: Boolean = false): Unit = {
+    val featureName = VacuumProtocolCheckTableFeature.name
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      val finalAdditionalTableProperty = if (enableFeatureInitially) {
+        additionalTableProperties ++
+          Seq((s"$FEATURE_PROP_PREFIX${featureName}", "supported"))
+      } else {
+        additionalTableProperties
+      }
+      var additionalTablePropertyString =
+        finalAdditionalTableProperty.map { case (k, v) => s"'$k' = '$v'" }.mkString(", ")
+      if (additionalTablePropertyString.nonEmpty) {
+        additionalTablePropertyString = s", $additionalTablePropertyString"
+      }
+      sql(
+        s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
+           |TBLPROPERTIES (
+           |  delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
+           |  delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION
+           |  $additionalTablePropertyString
+           |)""".stripMargin)
+
+      val protocol = deltaLog.update().protocol
+      assert(protocol.minReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
+      assert(protocol.minWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
+      assert(protocol.readerFeatures.get.contains(featureName)
+        === enableFeatureInitially)
+      downgradeFailsWithException match {
+        case Some(exceptionClass) =>
+          val e = intercept[DeltaTableFeatureException] {
+            AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
+              .run(spark)
+          }
+          assert(e.getErrorClass == exceptionClass)
+        case None =>
+          AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
+            .run(spark)
+      }
+      val latestProtocolReaderFeatures = deltaLog.update().protocol.readerFeatures.getOrElse(Set())
+      assert(
+        latestProtocolReaderFeatures.contains(VacuumProtocolCheckTableFeature.name) ===
+          featureExpectedAtTheEnd)
+      assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = featureExpectedAtTheEnd)
+    }
+  }
+
+  test("Remove VacuumProtocolCheckTableFeature when it was enabled") {
+    testRemoveVacuumProtocolCheckTableFeature(enableFeatureInitially = true)
+  }
+
+  test("Removing VacuumProtocolCheckTableFeature should fail when dependent feature " +
+      "Managed Commit is enabled") {
+    testRemoveVacuumProtocolCheckTableFeature(
+      enableFeatureInitially = true,
+      additionalTableProperties = Seq(
+        (s"$FEATURE_PROP_PREFIX${ManagedCommitTableFeature.name}", "supported")),
+      downgradeFailsWithException = Some("DELTA_FEATURE_DROP_DEPENDENT_FEATURE"),
+      featureExpectedAtTheEnd = true)
+  }
+
+  test("Removing VacuumProtocolCheckTableFeature should fail when it is not enabled") {
+    testRemoveVacuumProtocolCheckTableFeature(
+      enableFeatureInitially = false,
+      downgradeFailsWithException = Some("DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
+    )
+  }
+
   private def validateICTRemovalMetrics(
       usageLogs: Seq[UsageRecord],
       expectEnablementProperty: Boolean,
