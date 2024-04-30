@@ -462,6 +462,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       isCreatingNewTable = true
     }
+
+    val identityColumnAllowed =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED)
+    if (!identityColumnAllowed &&
+        ColumnWithDefaultExprUtils.hasIdentityColumn(newMetadataTmp.schema)) {
+      throw DeltaErrors.unsupportedWriterTableFeaturesInTableException(
+        deltaLog.dataPath.toString, Seq(IdentityColumnsTableFeature.name))
+    }
+
     val protocolBeforeUpdate = protocol
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.

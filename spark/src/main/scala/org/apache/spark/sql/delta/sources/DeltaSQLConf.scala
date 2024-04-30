@@ -1744,6 +1744,21 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  ///////////////////
+  // IDENTITY COLUMN
+  ///////////////////
+
+  val DELTA_IDENTITY_COLUMN_ENABLED =
+    buildConf("identityColumn.enabled")
+      .internal()
+      .doc(
+        """
+          | The umbrella config to turn on/off the IDENTITY column support.
+          | If true, enable Delta IDENTITY column write support. If a table has an IDENTITY column,
+          | it is not writable but still readable if this config is set to false.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   ///////////
   // TESTING
