@@ -133,6 +133,22 @@ class SchemaUtilsSuite extends AnyFunSuite {
     }
   }
 
+  test("only duplicate columns are listed in the error message") {
+    val schema = new StructType()
+      .add("top",
+        new StructType().add("a", INTEGER).add("b", INTEGER).add("c", INTEGER)
+      ).add("top",
+        new StructType().add("b", INTEGER).add("c", INTEGER).add("d", INTEGER)
+      ).add("bottom",
+        new StructType().add("b", INTEGER).add("c", INTEGER).add("d", INTEGER)
+      )
+
+    val e = intercept[IllegalArgumentException] {
+      validateSchema(schema, false /* isColumnMappingEnabled */)
+    }
+    assert(e.getMessage.contains("Schema contains duplicate columns: top, top.b, top.c"))
+  }
+
   test("duplicate column name in double nested map") {
     val keyType = new StructType()
       .add("dupColName", INTEGER)

@@ -52,9 +52,10 @@ public class SchemaUtils {
                 .collect(Collectors.toSet());
 
         if (uniqueColNames.size() != flattenColNames.size()) {
+            Set<String> uniqueCols = new HashSet<>();
             String duplicateColumns = flattenColNames.stream()
                     .map(String::toLowerCase)
-                    .filter(n -> !uniqueColNames.add(n))
+                    .filter(n -> !uniqueCols.add(n))
                     .collect(Collectors.joining(", "));
             throw new IllegalArgumentException(
                     "Schema contains duplicate columns: " + duplicateColumns);
@@ -64,7 +65,7 @@ public class SchemaUtils {
         if (!isColumnMappingEnabled) {
             validParquetColumnNames(flattenColNames);
         } else {
-            // when column mapping is enabled, just check the name contains no new line it.
+            // when column mapping is enabled, just check the name contains no new line in it.
             flattenColNames.forEach(name -> checkArgument(
                     !name.contains("\\n"),
                     format("Attribute name '%s' contains invalid new line characters.", name)));
@@ -72,9 +73,17 @@ public class SchemaUtils {
     }
 
     /**
-     * Returns all column names in this schema as a flat list. For example, a schema like: | - a | |
-     * - 1 | | - 2 | - b | - c | | - nest |   | - 3 will get flattened to: "a", "a.1", "a.2", "b",
-     * "c", "c.nest", "c.nest.3"
+     * Returns all column names in this schema as a flat list. For example, a schema like:
+     * <pre>
+     *   | - a
+     *   | | - 1
+     *   | | - 2
+     *   | - b
+     *   | - c
+     *   | | - nest
+     *   |   | - 3
+     *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
+     * </pre>
      */
     private static List<String> flattenNestedFieldNames(StructType schema) {
         List<String> fieldNames = new ArrayList<>();
