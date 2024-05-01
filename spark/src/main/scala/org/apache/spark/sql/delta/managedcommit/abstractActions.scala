@@ -58,7 +58,7 @@ trait AbstractMetadata {
 
 /**
  * Interface for commit info actions in Delta. The commit info at the least needs
- * to provide a commit timestamp for specify when the commmit happened.
+ * to provide a commit timestamp to specify when the commit happened.
  */
 trait AbstractCommitInfo {
   def getCommitTimestamp: Long

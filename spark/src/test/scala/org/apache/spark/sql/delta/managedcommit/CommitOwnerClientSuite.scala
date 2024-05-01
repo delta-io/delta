@@ -237,14 +237,14 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
 
   /**
    * We expect the Protocol action to have the same fields as AbstractProtocol (part of the
-   * CommitStore interface). With this if any change has happened in the Protocol of the table,
-   * the same change is propagated to the CommitStore as AbstractProtocol. The CommitStore can
-   * access the changes using getters and decide to act on the changes based on the spec of
-   * the commit-owner.
+   * CommitOwnerClient interface). With this if any change has happened in the Protocol of the
+   * table, the same change is propagated to the CommitOwnerClient as AbstractProtocol. The
+   * CommitOwnerClient can access the changes using getters and decide to act on the changes
+   * based on the spec of the commit owner.
    *
    * This test case ensures that any new field added in the Protocol action is also accessible in
-   * the CommitStore via the getter. If the new field is something which we do not expect to be
-   * passed to the CommitStore, the test needs to be modified accordingly.
+   * the CommitOwnerClient via the getter. If the new field is something which we do not expect to
+   * be passed to the CommitOwnerClient, the test needs to be modified accordingly.
    */
   test("AbstractProtocol should have getter methods for all fields in Protocol") {
     val missingFields = checkMissing[AbstractProtocol, Protocol]()
@@ -255,14 +255,14 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
 
   /**
    * We expect the Metadata action to have the same fields as AbstractMetadata (part of the
-   * CommitStore interface). With this if any change has happened in the Metadata of the table,
-   * the same change is propagated to the CommitStore as AbstractMetadata. The CommitStore can
-   * access the changes using getters and decide to act on the changes based on the spec of
-   * the commit-owner.
+   * CommitOwnerClient interface). With this if any change has happened in the Metadata of the
+   * table, the same change is propagated to the CommitOwnerClient as AbstractMetadata. The
+   * CommitOwnerClient can access the changes using getters and decide to act on the changes
+   * based on the spec of the commit owner.
    *
    * This test case ensures that any new field added in the Metadata action is also accessible in
-   * the CommitStore via the getter. If the new field is something which we do not expect to be
-   * passed to the CommitStore, the test needs to be modified accordingly.
+   * the CommitOwnerClient via the getter. If the new field is something which we do not expect to
+   * be passed to the CommitOwnerClient, the test needs to be modified accordingly.
    */
   test("BaseMetadata should have getter methods for all fields in Metadata") {
     val missingFields = checkMissing[AbstractMetadata, Metadata]()
