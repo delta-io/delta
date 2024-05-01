@@ -323,7 +323,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
       val ex2 = intercept[Exception] {
         kernelCheckpoint(tc, path, checkpointVersion = 5)
       }
-      assert(ex2.getMessage.contains("Trying to load a non-existent version 5"))
+      assert(ex2.getMessage.contains("Cannot load table version 5 as it does not exist"))
     }
   }
 
@@ -348,8 +348,8 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
       val ex2 = intercept[Exception] {
         kernelCheckpoint(tc, tablePath, checkpointVersion = 5)
       }
-      assert(ex2.getMessage.contains(
-        "Unsupported writer protocol version: 7 with feature: deletionVectors"))
+      assert(ex2.getMessage.contains("Unsupported Delta writer feature") &&
+        ex2.getMessage.contains("writer table feature \"deletionVectors\""))
     }
   }
 

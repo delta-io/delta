@@ -34,7 +34,8 @@ public class TableFeatures {
     // Helper Methods //
     ////////////////////
 
-    public static void validateReadSupportedTable(Protocol protocol, Metadata metadata) {
+    public static void validateReadSupportedTable(
+            Protocol protocol, Metadata metadata, String tablePath) {
         switch (protocol.getMinReaderVersion()) {
             case 1:
                 break;
@@ -54,12 +55,13 @@ public class TableFeatures {
                         case "v2Checkpoint":
                             break;
                         default:
-                            throw DeltaErrors.unsupportedReadFeature(3, readerFeature);
+                            throw DeltaErrors.unsupportedReaderFeature(tablePath, readerFeature);
                     }
                 }
                 break;
             default:
-                throw unsupportedReaderProtocol(protocol.getMinReaderVersion());
+                 throw DeltaErrors.unsupportedReaderProtocol(
+                     tablePath, protocol.getMinReaderVersion());
         }
     }
 
@@ -79,7 +81,8 @@ public class TableFeatures {
     public static void validateWriteSupportedTable(
             Protocol protocol,
             Metadata metadata,
-            StructType tableSchema) {
+            StructType tableSchema,
+            String tablePath) {
         int minWriterVersion = protocol.getMinWriterVersion();
         switch (minWriterVersion) {
             case 1:
@@ -87,20 +90,20 @@ public class TableFeatures {
             case 2:
                 // Append-only and column invariants are the writer features added in version 2
                 // Append-only is supported, but not the invariants
-                validateNoInvariants(minWriterVersion, tableSchema);
+                validateNoInvariants(tableSchema);
                 break;
             case 3:
                 // Check constraints are added in version 3
-                throw unsupportedWriterProtocol(minWriterVersion);
+                throw unsupportedWriterProtocol(tablePath, minWriterVersion);
             case 4:
                 // CDF and generated columns are writer features added in version 4
-                throw unsupportedWriterProtocol(minWriterVersion);
+                throw unsupportedWriterProtocol(tablePath, minWriterVersion);
             case 5:
                 // Column mapping is the only one writer feature added in version 5
-                throw unsupportedWriterProtocol(minWriterVersion);
+                throw unsupportedWriterProtocol(tablePath, minWriterVersion);
             case 6:
                 // Identity is the only one writer feature added in version 6
-                throw unsupportedWriterProtocol(minWriterVersion);
+                throw unsupportedWriterProtocol(tablePath, minWriterVersion);
             case 7:
                 for (String writerFeature : protocol.getWriterFeatures()) {
                     switch (writerFeature) {
@@ -108,20 +111,20 @@ public class TableFeatures {
                         case "appendOnly":
                             break;
                         default:
-                            throw unsupportedWriteFeature(7, writerFeature);
+                            throw unsupportedWriterFeature(tablePath, writerFeature);
                     }
                 }
                 break;
             default:
-                throw unsupportedWriterProtocol(minWriterVersion);
+                throw unsupportedWriterProtocol(tablePath, minWriterVersion);
         }
     }
 
-    private static void validateNoInvariants(int minWriterVersion, StructType tableSchema) {
+    private static void validateNoInvariants(StructType tableSchema) {
         boolean hasInvariants = tableSchema.fields().stream().anyMatch(
                 field -> field.getMetadata().contains("delta.invariants"));
         if (hasInvariants) {
-            throw unsupportedWriteFeature(minWriterVersion, "invariants");
+            throw columnInvariantsNotSupported();
         }
     }
 }

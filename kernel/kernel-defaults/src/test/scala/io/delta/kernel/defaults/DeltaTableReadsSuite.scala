@@ -585,7 +585,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         .getScanBuilder(defaultTableClient)
         .build()
     }
-    assert(e.getMessage.contains("Unsupported reader protocol version"))
+    assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -628,7 +628,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           .getSnapshotAsOfVersion(defaultTableClient, 11)
       }
       assert(e.getMessage.contains(
-        "Trying to load a non-existent version 11. The latest version available is 10"))
+        "Cannot load table version 11 as it does not exist. The latest available version is 10"))
     }
   }
 
@@ -660,7 +660,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         Table.forPath(defaultTableClient, tablePath)
           .getSnapshotAsOfVersion(defaultTableClient, 9)
       }
-      assert(e.getMessage.contains("Unable to reconstruct state at version 9"))
+      assert(e.getMessage.contains("Cannot load table version 9"))
       // Can read version 10
       checkTable(
         path = tablePath,
@@ -774,7 +774,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e1.getMessage.contains(
         s"The provided timestamp ${start + 50 * minuteInMilliseconds} ms " +
-          s"(2018-10-24T22:04:18Z) is after the latest commit"))
+          s"(2018-10-24T22:04:18Z) is after the latest available version"))
       // Timestamp before the first commit fails
       val e2 = intercept[RuntimeException] {
         checkTable(
@@ -785,7 +785,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e2.getMessage.contains(
         s"The provided timestamp ${start - 1L} ms (2018-10-24T21:14:17.999Z) is before " +
-          s"the earliest version available."))
+          s"the earliest available version"))
     }
   }
 

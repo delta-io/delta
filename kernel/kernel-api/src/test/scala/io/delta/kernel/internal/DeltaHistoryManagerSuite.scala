@@ -66,12 +66,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       -1,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, -1, 0).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, -1, 0, 0).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       21,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 21, 20, 2).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
   }
 
@@ -87,12 +87,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       -1,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, -1, 0).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, -1, 0, 0).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       21,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 21, 20, 2).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
   }
 
@@ -106,12 +106,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       8,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, 8, 20).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, 8, 20, 2).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       31,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 31, 30, 3).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 31, 30, 3).getMessage
     )
   }
 
@@ -123,12 +123,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       8,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, 8, 20).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, 8, 20, 2).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       21,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 21, 20, 2).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
   }
 
@@ -142,12 +142,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       8,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, 8, 20).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, 8, 20, 2).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       31,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 31, 30, 3).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 31, 30, 3).getMessage
     )
   }
 

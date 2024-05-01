@@ -59,15 +59,16 @@ public final class DeltaHistoryManager {
         List<Commit> commits = getCommits(tableClient, logPath, earliestRecreatableCommit);
         Commit commit = lastCommitBeforeOrAtTimestamp(commits, timestamp)
             .orElseThrow(() ->
-                DeltaErrors.timestampEarlierThanTableFirstCommitException(
+                DeltaErrors.timestampBeforeFirstAvailableCommit(
                     logPath.getParent().toString(), /* use dataPath */
                     timestamp,
-                    commits.get(0).timestamp)
+                    commits.get(0).timestamp,
+                    commits.get(0).version)
             );
 
         // If timestamp is after the last commit of the table
         if (commit == commits.get(commits.size() - 1) && commit.timestamp < timestamp) {
-            throw DeltaErrors.timestampLaterThanTableLastCommit(
+            throw DeltaErrors.timestampAfterLatestCommit(
                 logPath.getParent().toString(), /* use dataPath */
                 timestamp,
                 commit.timestamp,
@@ -85,7 +86,7 @@ public final class DeltaHistoryManager {
      * We search for the earliest checkpoint we have, or whether we have the 0th delta file. This
      * method assumes that the commits are contiguous.
      */
-    private static long getEarliestRecreatableCommit(TableClient tableClient, Path logPath)
+    public static long getEarliestRecreatableCommit(TableClient tableClient, Path logPath)
             throws TableNotFoundException {
         try (CloseableIterator<FileStatus> files = listFrom(tableClient, logPath, 0)
             .filter(fs ->

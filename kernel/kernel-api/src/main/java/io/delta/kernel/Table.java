@@ -19,6 +19,7 @@ import java.io.IOException;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.client.TableClient;
+import io.delta.kernel.exceptions.KernelException;
 
 import io.delta.kernel.internal.TableImpl;
 
@@ -84,6 +85,8 @@ public interface Table {
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @param versionId snapshot version to retrieve
      * @return an instance of {@link Snapshot}
+     * @throws KernelException if the provided version is less than the first available version
+     *                         or greater than the last available version
      * @since 3.2.0
      */
     Snapshot getSnapshotAsOfVersion(TableClient tableClient, long versionId)
@@ -109,6 +112,8 @@ public interface Table {
      * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
      *                            unix epoch
      * @return an instance of {@link Snapshot}
+     * @throws KernelException if the provided timestamp is before the earliest available version or
+     *                         after the latest available version
      * @since 3.2.0
      */
     Snapshot getSnapshotAsOfTimestamp(TableClient tableClient, long millisSinceEpochUTC)

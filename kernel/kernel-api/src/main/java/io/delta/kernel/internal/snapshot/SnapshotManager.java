@@ -161,8 +161,8 @@ public class SnapshotManager {
         SnapshotImpl snapshot = (SnapshotImpl) getSnapshotAt(tableClient, version);
 
         // Check if writing to the given table protocol version/features is supported in Kernel
-        validateWriteSupportedTable(
-                snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getSchema(tableClient));
+        validateWriteSupportedTable(snapshot.getProtocol(), snapshot.getMetadata(),
+            snapshot.getSchema(tableClient), tablePath.toString());
 
         Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
 
@@ -320,8 +320,10 @@ public class SnapshotManager {
                         // than the versionToLoad then the versionToLoad is not reconstructable
                         // from the existing logs
                         if (output.isEmpty()) {
-                            throw DeltaErrors.nonReconstructableStateException(
-                                tablePath.toString(), versionToLoad.get());
+                            long earliestVersion = DeltaHistoryManager.getEarliestRecreatableCommit(
+                                tableClient, logPath);
+                            throw DeltaErrors.versionBeforeFirstAvailableCommit(
+                                tablePath.toString(), versionToLoad.get(), earliestVersion);
                         }
                         break;
                     }
@@ -632,7 +634,7 @@ public class SnapshotManager {
         }
 
         versionToLoadOpt.filter(v -> v != newVersion).ifPresent(v -> {
-            throw DeltaErrors.nonExistentVersionException(tablePath.toString(), v, newVersion);
+            throw DeltaErrors.versionAfterLatestCommit(tablePath.toString(), v, newVersion);
         });
 
         // We may just be getting a checkpoint file after the filtering

@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.exceptions.KernelException;
 
 /**
  * Thrown when there is no Delta table at the given location.
@@ -24,22 +25,23 @@ import io.delta.kernel.annotation.Evolving;
  * @since 3.0.0
  */
 @Evolving
-public class TableNotFoundException
-    extends Exception {
+public class TableNotFoundException extends KernelException {
 
     private final String tablePath;
 
     public TableNotFoundException(String tablePath) {
-        this.tablePath = tablePath;
+        this(tablePath, null);
     }
 
     public TableNotFoundException(String tablePath, Throwable cause) {
-        super(cause);
+        super(String.format("Delta table at path `%s` is not found", tablePath), cause);
         this.tablePath = tablePath;
     }
 
-    @Override
-    public String getMessage() {
-        return String.format("Delta table at path `%s` is not found", tablePath);
+    /**
+     * @return the provided path where no Delta table was found
+     */
+    public String getTablePath() {
+        return tablePath;
     }
 }
