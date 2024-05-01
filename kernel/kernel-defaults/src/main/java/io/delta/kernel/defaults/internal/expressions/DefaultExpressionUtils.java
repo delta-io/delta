@@ -21,10 +21,10 @@ import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.defaults.internal.data.ValueComparator;
 import io.delta.kernel.defaults.internal.data.vector.*;
 import io.delta.kernel.types.*;
