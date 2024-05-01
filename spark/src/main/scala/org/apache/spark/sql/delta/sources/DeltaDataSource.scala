@@ -158,12 +158,6 @@ class DeltaDataSource
     )
   }
 
-  import org.apache.spark.sql.types.{DataType, VariantShims}
-  // Extend the default `supportsDataType` to allow VariantType.
-  override def supportsDataType(dt: DataType): Boolean = {
-    VariantShims.isVariantType(dt) || super.supportsDataType(dt)
-  }
-
   override def createSink(
       sqlContext: SQLContext,
       parameters: Map[String, String],
