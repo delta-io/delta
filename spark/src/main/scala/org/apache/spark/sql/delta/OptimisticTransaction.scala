@@ -704,6 +704,25 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     MaterializedRowCommitVersion.throwIfMaterializedColumnNameConflictsWithSchema(metadata)
   }
 
+  /**
+   * Some features require their pre-requisite features to not only be present
+   * in the protocol but also be enabled. This method sets the flags required
+   * to enable these pre-requisite features.
+   */
+  private def getMetadataWithDependentFeaturesEnabled(metadata: Metadata): Metadata = {
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).map { _ =>
+      // managed-commits requires ICT to be enabled as per the spec.
+      // If ICT is just in Protocol and not in Metadata,
+      // then it is in a 'supported' state but not enabled.
+      // In order to enable ICT, we have to set the table property in Metadata.
+      val ictEnablementConfigOpt =
+        Option.when(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata))(
+          (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+      val configWithICT = metadata.configuration ++ ictEnablementConfigOpt
+      metadata.copy(configuration = configWithICT)
+    }.getOrElse(metadata)
+  }
+
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
     val requiredProtocolOpt =
       Protocol.upgradeProtocolFromMetadataForExistingTable(spark, metadata, protocol)
@@ -1289,6 +1308,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
 
+    // From this point onwards, newProtocolOpt should not be used.
+    // `newProtocol` or `protocol` should be used instead.
+    // The updateMetadataAndProtocolWithRequiredFeatures method will
+    // directly update the global `newProtocol` if needed.
+    newProtocol = newProtocolOpt
+    // If a feature requires another feature to be enabled, we enable the required
+    // feature in the metadata (if needed) and add it to the protocol.
+    // e.g. Managed Commits requires ICT and VacuumProtocolCheck to be enabled.
+    updateMetadataAndProtocolWithRequiredFeatures(newMetadata)
+
     def recordCommitLargeFailure(ex: Throwable, op: DeltaOperations.Operation): Unit = {
       val managedCommitExceptionOpt = ex match {
         case e: CommitFailedException => Some(e)
@@ -1333,14 +1362,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
-      val finalProtocol = newProtocolOpt.getOrElse(protocol)
       updateMetadataWithManagedCommitConfs()
       updateMetadataWithInCommitTimestamp(commitInfo)
 
       var allActions =
         Iterator(commitInfo, metadata) ++
           nonProtocolMetadataActions ++
-          newProtocolOpt.toIterator
+          newProtocol.toIterator
       allActions = allActions.map { action =>
         commitSize += 1
         action match {
@@ -1358,8 +1386,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             removeFilesHistogram.foreach(_.insert(r.getFileSize))
           case _: SetTransaction =>
             numSetTransaction += 1
-          case m: Metadata =>
-            assertMetadata(m)
           case p: Protocol =>
             recordProtocolChanges(
               "delta.protocol.change",
@@ -1397,7 +1423,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           managedCommitTableConf = snapshot.metadata.managedCommitTableConf)
       }
       val updatedActions = UpdatedActions(
-        commitInfo, metadata, finalProtocol, snapshot.metadata, snapshot.protocol)
+        commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse =
         effectiveTableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
       // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
@@ -1550,6 +1576,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * A metadata update can enable a feature that requires a protocol upgrade.
+   * Furthermore, a feature can have dependencies on other features. This method
+   * enables the dependent features in the metadata.
+   * It then updates the protocol with the features enabled by the metadata.
+   * The global `newMetadata` and `newProtocol` are updated with the new
+   * metadata and protocol if needed.
+   * @param metadataOpt The new metadata that is being set.
+   */
+  protected def updateMetadataAndProtocolWithRequiredFeatures(
+      metadataOpt: Option[Metadata]): Unit = {
+    metadataOpt.foreach { m =>
+      assertMetadata(m)
+      val metadataWithRequiredFeatureEnablementFlags = getMetadataWithDependentFeaturesEnabled(m)
+      setNewProtocolWithFeaturesEnabledByMetadata(metadataWithRequiredFeatureEnablementFlags)
+
+      // Also update `newMetadata` so that the behaviour later is consistent irrespective of whether
+      // metadata was set via `updateMetadata` or `actions`.
+      newMetadata = Some(metadataWithRequiredFeatureEnablementFlags)
+    }
+  }
+
+  /**
    * Prepare for a commit by doing all necessary pre-commit checks and modifications to the actions.
    * @return The finalized set of actions.
    */
@@ -1573,14 +1621,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         metadataChanges.length <= 1, "Cannot change the metadata more than once in a transaction.")
     }
     // There be at most one metadata entry at this point.
-    metadataChanges.foreach { m =>
-      assertMetadata(m)
-      setNewProtocolWithFeaturesEnabledByMetadata(m)
-
-      // Also update `newMetadata` so that the behaviour later is consistent irrespective of whether
-      // metadata was set via `updateMetadata` or `actions`.
-      newMetadata = Some(m)
-    }
+    // Update the global `newMetadata` and `newProtocol` with any extra metadata and protocol
+    // changes needed for pre-requisite features.
+    updateMetadataAndProtocolWithRequiredFeatures(metadataChanges.headOption)
 
     // A protocol change can be *explicit*, i.e. specified as a Protocol action as part of the
     // commit actions, or *implicit*. Implicit protocol changes are mostly caused by setting
