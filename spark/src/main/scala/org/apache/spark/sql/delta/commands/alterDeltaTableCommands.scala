@@ -624,6 +624,13 @@ case class AlterTableChangeColumnDeltaCommand(
           verifyColumnChange(sparkSession, oldColumnForVerification, resolver, txn)
 
           val newField = {
+            if (syncIdentity) {
+              assert(oldColumn == newColumn)
+              val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+              val field = IdentityColumn.syncIdentity(newColumn, df)
+              txn.readWholeTable()
+              field
+            } else {
               // Take the name, comment, nullability and data type from newField
               // It's crucial to keep the old column's metadata, which may contain column mapping
               // metadata.
@@ -633,13 +640,26 @@ case class AlterTableChangeColumnDeltaCommand(
                 case Some(newDefaultValue) => result.withCurrentDefaultValue(newDefaultValue)
                 case None => result.clearCurrentDefaultValue()
               }
-
+              val updatedColumnMetadata =
+                if (!SparkCharVarcharUtils.hasCharVarchar(newColumn.dataType)) {
+                  // Remove the char/varchar property from the metadata that
+                  // indicates that this column is a char/varchar column.
+                  // We construct this throwaway object because
+                  // CharVarcharUtils.cleanAttrMetadata takes an AttributeReference.
+                  val throwAwayAttrRef = AttributeReference(
+                    result.name, result.dataType, nullable = result.nullable, result.metadata)()
+                  CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
+                } else {
+                  result.metadata
+                }
               result
                 .copy(
                   name = newColumn.name,
                   dataType =
                     SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
-                  nullable = newColumn.nullable)
+                  nullable = newColumn.nullable,
+                  metadata = updatedColumnMetadata)
+            }
           }
 
           // Replace existing field with new field
