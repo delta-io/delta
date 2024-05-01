@@ -34,7 +34,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 
 /**
- * Test suite for `io.delta.kernel.Table.checkpoint(TableClient, version)`
+ * Test suite for `io.delta.kernel.Table.checkpoint(engine, version)`
  */
 class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
 
@@ -45,7 +45,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
   Seq(true, false).foreach { includeRemoves =>
     val testMsgUpdate = if (includeRemoves) " and removes" else ""
     test(s"commits containing adds$testMsgUpdate, and no previous checkpoint") {
-      withTempDirAndTableClient { (tablePath, tc) =>
+      withTempDirAndEngine { (tablePath, tc) =>
         addData(tablePath, alternateBetweenAddsAndRemoves = includeRemoves, numberIter = 10)
 
         // before creating checkpoint, read and save the expected results using Spark
@@ -80,7 +80,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
 
       test(s"commits containing adds$testMsgUpdate, and a previous checkpoint " +
         s"created using Spark (actions/perfile): $sparkCheckpointActionPerFile") {
-        withTempDirAndTableClient { (tablePath, tc) =>
+        withTempDirAndEngine { (tablePath, tc) =>
           addData(tablePath, includeRemoves, numberIter = 6)
 
           // checkpoint using Spark
@@ -111,7 +111,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
   }
 
   test("commits with metadata updates") {
-    withTempDirAndTableClient { (tablePath, tc) =>
+    withTempDirAndEngine { (tablePath, tc) =>
       addData(path = tablePath, alternateBetweenAddsAndRemoves = true, numberIter = 16)
 
       // makes the latest table version 16
@@ -142,7 +142,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
   }
 
   test("commits with protocol updates") {
-    withTempDirAndTableClient { (tablePath, tc) =>
+    withTempDirAndEngine { (tablePath, tc) =>
       addData(path = tablePath, alternateBetweenAddsAndRemoves = true, numberIter = 16)
 
       spark.sql(
@@ -176,7 +176,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
   }
 
   test("commits with set transactions") {
-    withTempDirAndTableClient { (tablePath, tc) =>
+    withTempDirAndEngine { (tablePath, tc) =>
       def idempotentAppend(appId: String, version: Int): Unit = {
         spark.range(end = 10).repartition(2).write.format("delta")
           .option("txnAppId", appId)
@@ -221,7 +221,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
 
   Seq(None, Some("2 days"), Some("0 days")).foreach { retentionInterval =>
     test(s"checkpoint contains all not expired tombstones: $retentionInterval") {
-      withTempDirAndTableClient { (tablePath, tc) =>
+      withTempDirAndEngine { (tablePath, tc) =>
         def addFile(path: String): AddFile = AddFile(
           path = path,
           partitionValues = Map.empty,
@@ -297,7 +297,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
   }
 
   test("try creating checkpoint on a non-existent table") {
-    withTempDirAndTableClient { (path, tc) =>
+    withTempDirAndEngine { (path, tc) =>
       Seq(0, 1, 2).foreach { checkpointVersion =>
         val ex = intercept[TableNotFoundException] {
           kernelCheckpoint(tc, path, checkpointVersion)
@@ -309,7 +309,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
 
   test("try creating checkpoint at version that already has a " +
     "checkpoint or a version that doesn't exist") {
-    withTempDirAndTableClient { (path, tc) =>
+    withTempDirAndEngine { (path, tc) =>
       for (_ <- 0 to 3) {
         appendCommit(path)
       }
@@ -329,7 +329,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
   }
 
   test("create a checkpoint on a existing table") {
-    withTempDirAndTableClient { (tablePath, tc) =>
+    withTempDirAndEngine { (tablePath, tc) =>
       copyTable("time-travel-start-start20-start40", tablePath)
 
       // before creating checkpoint, read and save the expected results using Spark
@@ -343,7 +343,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
   }
 
   test("try create a checkpoint on a unsupported table feature table") {
-    withTempDirAndTableClient { (tablePath, tc) =>
+    withTempDirAndEngine { (tablePath, tc) =>
       copyTable("dv-with-columnmapping", tablePath)
 
       val ex2 = intercept[Exception] {
@@ -429,15 +429,15 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
       s"Cannot time travel Delta table to version ${beforeVersion - 1}"))
   }
 
-  def withTempDirAndTableClient(f: (String, Engine) => Unit): Unit = {
-    val tableClient = DefaultEngine.create(new Configuration() {
+  def withTempDirAndEngine(f: (String, Engine) => Unit): Unit = {
+    val engine = DefaultEngine.create(new Configuration() {
       {
         // Set the batch sizes to small so that we get to test the multiple batch scenarios.
         set("delta.kernel.default.parquet.reader.batch-size", "200");
         set("delta.kernel.default.json.reader.batch-size", "200");
       }
     })
-    withTempDir { dir => f(dir.getAbsolutePath, tableClient) }
+    withTempDir { dir => f(dir.getAbsolutePath, engine) }
   }
 
   def checkpointFilePath(tablePath: String, checkpointVersion: Long): String = {

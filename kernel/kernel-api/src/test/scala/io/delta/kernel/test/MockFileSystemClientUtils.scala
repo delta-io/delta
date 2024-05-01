@@ -31,7 +31,7 @@ import scala.collection.JavaConverters._
  *
  * [[MockListFromFileSystemClient]] - mocks the `listFrom` API within [[FileSystemClient]].
  */
-trait MockFileSystemClientUtils extends MockTableClientUtils {
+trait MockFileSystemClientUtils extends MockEngineUtils {
 
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
@@ -86,7 +86,7 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
     }
   }
 
-  /* Create input function for createMockTableClient to implement listFrom from a list of
+  /* Create input function for createMockEngine to implement listFrom from a list of
    * file statuses.
    */
   def listFromProvider(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
@@ -97,11 +97,11 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
    * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
    */
-  def createMockFSListFromTableClient(
+  def createMockFSListFromEngine(
       contents: Seq[FileStatus],
       parquetHandler: ParquetHandler,
       jsonHandler: JsonHandler): Engine = {
-    mockTableClient(fileSystemClient =
+    mockEngine(fileSystemClient =
       new MockListFromFileSystemClient(listFromProvider(contents)),
       parquetHandler = parquetHandler,
       jsonHandler = jsonHandler)
@@ -111,8 +111,8 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
    * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
    */
-  def createMockFSListFromTableClient(contents: Seq[FileStatus]): Engine = {
-    mockTableClient(fileSystemClient =
+  def createMockFSListFromEngine(contents: Seq[FileStatus]): Engine = {
+    mockEngine(fileSystemClient =
       new MockListFromFileSystemClient(listFromProvider(contents)))
   }
 
@@ -120,8 +120,8 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
    * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * [[MockListFromFileSystemClient]].
    */
-  def createMockFSListFromTableClient(listFromProvider: String => Seq[FileStatus]): Engine = {
-    mockTableClient(fileSystemClient = new MockListFromFileSystemClient(listFromProvider))
+  def createMockFSListFromEngine(listFromProvider: String => Seq[FileStatus]): Engine = {
+    mockEngine(fileSystemClient = new MockListFromFileSystemClient(listFromProvider))
   }
 }
 

@@ -32,7 +32,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     timestamp: Long,
     expectedVersion: Long): Unit = {
     val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-      createMockFSListFromTableClient(fileList),
+      createMockFSListFromEngine(fileList),
       logPath,
       timestamp
     )
@@ -46,7 +46,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     expectedErrorMessageContains: String)(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
       DeltaHistoryManager.getActiveCommitAtTimestamp(
-        createMockFSListFromTableClient(fileList),
+        createMockFSListFromEngine(fileList),
         logPath,
         timestamp
       )
@@ -155,7 +155,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Non-existent path
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
-        createMockFSListFromTableClient(p => throw new FileNotFoundException(p)),
+        createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         logPath,
         0
       )
@@ -163,7 +163,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Empty _delta_log directory
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
-        createMockFSListFromTableClient(p => Seq()),
+        createMockFSListFromEngine(p => Seq()),
         logPath,
         0
       )

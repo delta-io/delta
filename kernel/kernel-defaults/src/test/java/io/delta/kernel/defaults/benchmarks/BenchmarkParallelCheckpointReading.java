@@ -112,7 +112,7 @@ public class BenchmarkParallelCheckpointReading {
     @Benchmark
     @BenchmarkMode(Mode.AverageTime)
     public void benchmark(BenchmarkData benchmarkData, Blackhole blackhole) throws Exception {
-        Engine engine = createTableClient(benchmarkData.parallelReaderCount);
+        Engine engine = createEngine(benchmarkData.parallelReaderCount);
         Table table = Table.forPath(engine, testTablePath);
 
         Snapshot snapshot = table.getLatestSnapshot(engine);
@@ -144,7 +144,7 @@ public class BenchmarkParallelCheckpointReading {
         org.openjdk.jmh.Main.main(args);
     }
 
-    private static Engine createTableClient(int numberOfParallelThreads) {
+    private static Engine createEngine(int numberOfParallelThreads) {
         Configuration hadoopConf = new Configuration();
         if (numberOfParallelThreads <= 0) {
             return DefaultEngine.create(hadoopConf);

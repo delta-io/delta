@@ -40,15 +40,15 @@ import java.util.Optional
  *     }
  *   }
  *
- *   val myMockTableClient = mockTableClient(fileSystemClient = myMockFileSystemClient)
+ *   val myMockEngine = mockEngine(fileSystemClient = myMockFileSystemClient)
  * }}}
  */
-trait MockTableClientUtils {
+trait MockEngineUtils {
   /**
-   * Create a mock TableClient with the given components. If a component is not provided, it will
+   * Create a mock Engine with the given components. If a component is not provided, it will
    * throw an exception when accessed.
    */
-  def mockTableClient(
+  def mockEngine(
     fileSystemClient: FileSystemClient = null,
     jsonHandler: JsonHandler = null,
     parquetHandler: ParquetHandler = null,
@@ -102,7 +102,7 @@ trait BaseMockJsonHandler extends JsonHandler {
 /**
  * Base class for mocking [[ParquetHandler]]
  */
-trait BaseMockParquetHandler extends ParquetHandler with MockTableClientUtils {
+trait BaseMockParquetHandler extends ParquetHandler with MockEngineUtils {
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,

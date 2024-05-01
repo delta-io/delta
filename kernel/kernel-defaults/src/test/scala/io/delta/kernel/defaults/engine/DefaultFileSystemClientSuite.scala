@@ -25,7 +25,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
 
-  val fsClient = defaultTableClient.getFileSystemClient
+  val fsClient = defaultEngine.getFileSystemClient
   val fs = FileSystem.get(configuration)
 
   test("list from file") {

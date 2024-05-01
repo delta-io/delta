@@ -53,7 +53,7 @@ public interface Table {
      *
      * @param engine {@link Engine} instance to use in Delta Kernel.
      * @param path        location of the table. Path is resolved to fully
-     *                    qualified path using the given {@code tableClient}.
+     *                    qualified path using the given {@code engine}.
      * @return an instance of {@link Table} representing the Delta table at given path
      */
     static Table forPath(Engine engine, String path) {

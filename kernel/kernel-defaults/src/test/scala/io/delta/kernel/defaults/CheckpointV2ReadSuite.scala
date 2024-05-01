@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, 
 class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
 
-  override lazy val defaultTableClient = DefaultEngine.create(new Configuration() {
+  override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
     {
       // Set the batch sizes to small so that we get to test the multiple batch scenarios.
       set("delta.kernel.default.parquet.reader.batch-size", "2");
@@ -78,7 +78,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
       snapshotFromSpark.protocol.readerFeatureNames)
     assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toSet ==
       snapshotFromSpark.protocol.writerFeatureNames)
-    assert(snapshot.getVersion(defaultTableClient) == snapshotFromSpark.version)
+    assert(snapshot.getVersion(defaultEngine) == snapshotFromSpark.version)
 
     // Validate that snapshot read from most recent checkpoint. For most cases, given a checkpoint
     // interval of 2, this will be the most recent even version.
@@ -93,7 +93,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
 
 
     // Validate AddFiles from sidecars found against Spark connector.
-    val scan = snapshot.getScanBuilder(defaultTableClient).build()
+    val scan = snapshot.getScanBuilder(defaultEngine).build()
     val foundFiles =
       collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
         _.getPath.split('/').last).toSet
