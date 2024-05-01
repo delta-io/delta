@@ -1671,6 +1671,37 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
+  test("data skipping by stats - variant type") {
+    withTable("tbl") {
+      sql("""CREATE TABLE tbl(v VARIANT,
+              v_struct STRUCT<v: VARIANT>,
+              null_v VARIANT,
+              null_v_struct STRUCT<v: VARIANT>) USING DELTA""")
+      sql("""INSERT INTO tbl (SELECT
+          parse_json(cast(id as string)),
+          named_struct('v', parse_json(cast(id as string))),
+          cast(null as variant),
+          named_struct('v', cast(null as variant))
+          FROM range(100))""")
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl", None, None))
+      val hits = Seq(
+        "v IS NOT NULL",
+        "v_struct.v IS NOT NULL",
+        "null_v IS NULL",
+        "null_v_struct.v IS NULL"
+      )
+      val misses = Seq(
+        "v IS NULL",
+        "v_struct.v IS NULL",
+        "null_v IS NOT NULL",
+        "null_v_struct.v IS NOT NULL"
+      )
+      val data = spark.sql("select * from tbl").collect().toSeq.toString
+      checkSkipping(deltaLog, hits, misses, data, false)
+    }
+  }
+
   test(s"Data skipping with delta statistic column rename column") {
     withTable("table") {
       sql(

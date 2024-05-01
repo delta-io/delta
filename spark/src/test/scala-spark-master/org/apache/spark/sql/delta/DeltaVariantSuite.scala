@@ -16,20 +16,31 @@
 
 package org.apache.spark.sql.delta
 
+import scala.collection.mutable.{Seq => MutableSeq}
+import scala.io.Source
+
+import io.delta.tables.DeltaTable
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
 class DeltaVariantSuite
     extends QueryTest
     with SharedSparkSession
-    with DeltaSQLCommandTest {
+    with DeltaSQLCommandTest
+    with DeltaSQLTestUtils
+    with TestsStatistics {
+
+  import testImplicits._
 
   private def getProtocolForTable(table: String): Protocol = {
     val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
@@ -124,6 +135,423 @@ class DeltaVariantSuite
         errorClass = "INVALID_PARTITION_COLUMN_DATA_TYPE",
         parameters = Map("type" -> "\"VARIANT\"")
       )
+    }
+  }
+
+  test("streaming variant delta table") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(100)
+        .selectExpr("parse_json(cast(id as string)) v")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(path)
+
+      val streamingDf = spark.readStream
+        .format("delta")
+        .load(path)
+        .selectExpr("v::int as extractedVal")
+
+      val q = streamingDf.writeStream
+        .format("memory")
+        .queryName("test_table")
+        .start()
+
+      q.processAllAvailable()
+      q.stop()
+
+      val actual = spark.sql("select extractedVal from test_table")
+      val expected = spark.sql("select id from range(100)")
+      checkAnswer(actual, expected.collect())
+    }
+  }
+
+  test("variant works with schema evolution") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(0, 100, 1, 1)
+        .selectExpr("id", "parse_json(cast(id as string)) v")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(path)
+
+      spark.range(100, 200, 1, 1)
+        .selectExpr(
+          "id",
+          "parse_json(cast(id as string)) v",
+          "parse_json(cast(id as string)) v_two"
+        )
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .save(path)
+
+      val expected = spark.range(0, 200, 1, 1).selectExpr(
+        "id",
+        "parse_json(cast(id as string)) v",
+        "case when id >= 100 then parse_json(cast(id as string)) else null end v_two"
+      )
+
+      val read = spark.read.format("delta").load(path)
+      checkAnswer(read, expected.collect())
+    }
+  }
+
+  test("variant cannot be used as a clustering column") {
+    withTable("tbl") {
+      val e = intercept[DeltaAnalysisException] {
+        sql("CREATE TABLE tbl(v variant) USING DELTA CLUSTER BY (v)")
+      }
+      checkError(
+        e,
+        "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+        parameters = Map(
+          "columns" -> "v",
+          "schema" -> """#root
+                         # |-- v: variant (nullable = true)
+                         #""".stripMargin('#')
+        )
+      )
+    }
+  }
+
+  test("describe history works with variant column") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
+      sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+      // Create and insert should result in two table versions.
+      assert(sql("DESCRIBE HISTORY tbl").count() == 2)
+    }
+  }
+
+  test("describe detail works with variant column") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
+      sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
+
+      val tableFeatures = sql("DESCRIBE DETAIL tbl")
+        .selectExpr("tableFeatures")
+        .collect()(0)
+        .getAs[MutableSeq[String]](0)
+      assert(tableFeatures.find(f => f == "variantType-dev").nonEmpty)
+    }
+  }
+
+  test("time travel with variant column works") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      val initialDf = spark.range(0, 100, 1, 1).selectExpr("parse_json(cast(id as string)) v")
+      initialDf
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(path)
+
+      spark.range(100, 150, 1, 1).selectExpr("parse_json(cast(id as string)) v")
+        .write
+        .format("delta")
+        .mode("append")
+        .save(path)
+
+      val timeTravelDf = spark.read.format("delta").option("versionAsOf", "0").load(path)
+      checkAnswer(timeTravelDf, initialDf.collect())
+    }
+  }
+
+  statsTest("optimize variant") {
+    withTable("tbl") {
+      spark.range(0, 100)
+        .selectExpr("case when id % 2 = 0 then parse_json(cast(id as string)) else null end as v")
+        .repartition(100)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("tbl")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+      val startCount = deltaLog.unsafeVolatileSnapshot.numOfFiles
+      val startSizes = deltaLog.unsafeVolatileSnapshot.allFiles.select('size).as[Long].collect()
+      val res = sql("OPTIMIZE tbl")
+      val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
+      assert(metrics.numFilesAdded > 0)
+      assert(metrics.numTableColumnsWithStats == 1)
+
+      val statsDf = getStatsDf(deltaLog, Seq($"numRecords", $"nullCount"))
+      checkAnswer(statsDf, Row(100, Row(50)))
+    }
+  }
+
+  test("Zorder is not supported for Variant") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl USING DELTA AS SELECT id, cast(null as variant) v from range(100)")
+      val e = intercept[SparkException](sql("optimize tbl zorder by (v)"))
+      checkError(
+        e.getCause.asInstanceOf[SparkThrowable],
+        "DATATYPE_MISMATCH.TYPE_CHECK_FAILURE_WITH_HINT",
+        parameters = Map(
+          "msg" -> "cannot sort data type variant",
+          "hint" -> "",
+          "sqlExpr" -> "\"rangepartitionid(v)\""))
+    }
+  }
+
+  test("Table with variant type can use CDF") {
+    withTable("tbl") {
+      sql("""CREATE TABLE tbl USING DELTA TBLPROPERTIES (delta.enableChangeDataFeed = true)
+          AS SELECT parse_json(cast(id as string)) v from range(100)""")
+
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id as string)) as v from range(0, 1))")
+      sql("DELETE FROM tbl WHERE v::int = 0")
+      sql("UPDATE tbl SET v = parse_json('-2') WHERE v::int = 50")
+
+      val deleteCount =
+        spark.sql("select * from table_changes('tbl', 0) where _change_type = 'delete'").count
+      // Both zeros should be deleted.
+      assert(deleteCount == 2)
+
+      val updatePre = spark.sql("""select variant_get(v, '$', 'INT') as intVal
+                                from table_changes('tbl', 0)
+                                where _change_type = 'update_preimage'""")
+        .collect()(0)
+        .getInt(0)
+      assert(updatePre == 50)
+
+      val updatePost = spark.sql("""select variant_get(v, '$', 'INT') as intVal
+                                from table_changes('tbl', 0)
+                                where _change_type = 'update_postimage'""")
+        .collect()(0)
+        .getInt(0)
+      assert(updatePost == -2)
+    }
+  }
+
+  test("Existing table with variant type can enable CDF") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(v variant) USING DELTA")
+      sql("ALTER TABLE tbl SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id as string)) as v from range(0, 100))")
+      sql("DELETE FROM tbl WHERE v::string = '0'")
+      sql("UPDATE tbl SET v = parse_json('-2') WHERE v::int = 50")
+
+       val deleteCount =
+        spark.sql("select * from table_changes('tbl', 1) where _change_type = 'delete'").count
+      // The zero should be deleted.
+      assert(deleteCount == 1)
+
+      val updatePre = spark.sql("""select variant_get(v, '$', 'INT') as intVal
+                                from table_changes('tbl', 1)
+                                where _change_type = 'update_preimage'""")
+        .collect()(0)
+        .getInt(0)
+      assert(updatePre == 50)
+
+      val updatePost = spark.sql("""select variant_get(v, '$', 'INT') as intVal
+                                from table_changes('tbl', 1)
+                                where _change_type = 'update_postimage'""")
+        .collect()(0)
+        .getInt(0)
+      assert(updatePost == -2)
+    }
+  }
+
+  test(s"shallow cloning table with variant") {
+    withTable("tbl", "clone_tbl") {
+      sql("""CREATE TABLE tbl USING DELTA AS
+          SELECT parse_json(cast(id as string)) v FROM range(100)""")
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id as string)) as v from range(0, 10))")
+
+      sql(s"CREATE TABLE IF NOT EXISTS clone_tbl SHALLOW CLONE tbl")
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id as string)) as v from range(0, 10))")
+      sql("INSERT INTO clone_tbl (SELECT parse_json(cast(id as string)) as v from range(0, 10))")
+
+      val origTable = spark.sql("select * from tbl")
+      val clonedTable = spark.sql("select * from clone_tbl")
+      checkAnswer(clonedTable, origTable.collect())
+    }
+  }
+
+  Seq("", "NO STATISTICS").foreach { statsClause =>
+    test(s"Convert to Delta from parquet - $statsClause") {
+      withTempDir { dir =>
+        val path = dir.getAbsolutePath
+
+        spark.range(0, 100).selectExpr("parse_json(cast(id as string)) as v")
+          .write
+          .format("parquet")
+          .mode("overwrite")
+          .save(path)
+
+        sql(s"CONVERT TO DELTA parquet.`$path` $statsClause")
+        // Ensure Delta feature like column renaming works.
+        sql(s"ALTER TABLE delta.`$path` SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        sql(s"ALTER TABLE delta.`$path` RENAME COLUMN v TO new_v")
+
+        val expectedDf = spark.range(0, 100).selectExpr("parse_json(cast(id as string)) as new_v")
+        val actualDf = spark.sql(s"select * from delta.`$path`")
+        checkAnswer(actualDf, expectedDf.collect())
+      }
+    }
+  }
+
+  test("column mapping works") {
+    withTable("tbl") {
+      sql("""CREATE TABLE tbl USING DELTA
+          TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+          AS SELECT parse_json(cast(id as string)) v, parse_json(cast(id as string)) v_two
+          FROM range(5)""")
+      val expectedAnswer = spark.sql("select v from tbl").collect()
+
+      sql("ALTER TABLE tbl RENAME COLUMN v TO new_v")
+      checkAnswer(spark.sql("select new_v from tbl"), expectedAnswer)
+
+      sql("ALTER TABLE tbl DROP COLUMN new_v")
+      // 'SELECT *' from the test table should return the same as `expectedAnswer` because `v` and
+      // `v_two` are initially identical and `v` is dropped, resulting in a single column.
+      checkAnswer(spark.sql("select * from tbl"), expectedAnswer)
+    }
+  }
+
+  // TODO(richardc-db): Spark currently does not throws an exception when trying to create a variant
+  // default column. This is being addressed in Spark PR #46312 and we should re-enable this test
+  // after the Spark PR is merged.
+  ignore("Variant can have default value set") {
+    withTable("tbl") {
+      sql("""CREATE TABLE tbl USING DELTA
+          TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'enabled')
+          AS SELECT parse_json(cast(id as string)) v from range(5)""")
+
+      sql("INSERT INTO tbl VALUES (DEFAULT)")
+      val nullCount = spark.sql("SELECT * FROM tbl WHERE v is null").count()
+      // Default DEFAULT value is null.
+      assert(nullCount == 1)
+
+      // Is the optimizer run here to replace the parse_json with the correct thing?
+      sql("ALTER TABLE tbl ALTER COLUMN v SET DEFAULT (parse_json('{\"k\": \"v\"}'))")
+      sql("INSERT INTO tbl VALUES (DEFAULT)")
+      val valCount = spark.sql("SELECT * FROM tbl WHERE v:k:string = 'v'").count()
+      // DEFAULT value is set to '{k: v}'.
+      assert(valCount == 1)
+    }
+  }
+
+  test("Variant can be used as a source for generated columns") {
+    withTable("tbl") {
+      DeltaTable.create(spark)
+        .tableName("tbl")
+        .addColumn("v", "VARIANT")
+        .addColumn(
+          DeltaTable.columnBuilder(spark, "vInt")
+            .dataType("INT")
+            .generatedAlwaysAs("v::int")
+            .build()
+        )
+        .execute()
+      spark.range(0, 100)
+        .selectExpr("parse_json(cast(id as string)) as v")
+        .write
+        .mode("append")
+        .format("delta")
+        .saveAsTable("tbl")
+      val expectedDf = spark.range(0, 100).selectExpr(
+        "parse_json(cast(id as string)) v",
+        "cast(id as int) vInt"
+      )
+      val actualDf = spark.sql("select * from tbl")
+      checkAnswer(actualDf, expectedDf.collect())
+    }
+  }
+
+  test("Variant cannot be created as a generated column") {
+    withTable("tbl") {
+      val e = intercept[DeltaAnalysisException] {
+        DeltaTable.create(spark)
+          .tableName("tbl")
+          .addColumn("id", "INT")
+          .addColumn(
+            DeltaTable.columnBuilder(spark, "v")
+              .dataType("VARIANT")
+              .generatedAlwaysAs("parse_json(cast(id as string))")
+              .build()
+          )
+          .execute()
+      }
+      checkError(
+        e,
+        "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN",
+        parameters = Map("expression" -> "parse_json(CAST(id AS STRING))")
+      )
+    }
+  }
+
+  test("Variant respects Delta table IS NOT NULL constraints") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(v variant NOT NULL) USING DELTA")
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id as string)) from range(0, 100))")
+      val insertException = intercept[DeltaInvariantViolationException] {
+        sql("INSERT INTO tbl VALUES (cast(null as variant))")
+      }
+      checkError(insertException, "DELTA_NOT_NULL_CONSTRAINT_VIOLATED")
+
+      sql("ALTER TABLE tbl ALTER COLUMN v DROP NOT NULL")
+      // Inserting null value should work now.
+      sql("INSERT INTO tbl VALUES (cast(null as variant))")
+      val nullCount = spark.sql("select * from tbl where v is null").count()
+      assert(nullCount == 1)
+    }
+  }
+
+  test("Variant respects Delta table CHECK constraints") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(v variant) USING DELTA")
+      sql("ALTER TABLE tbl ADD CONSTRAINT variantGTEZero CHECK (variant_get(v, '$', 'INT') >= 0)")
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id as string)) from range(0, 100))")
+
+      val insertException = intercept[DeltaInvariantViolationException] {
+        sql("INSERT INTO tbl (select parse_json(cast(id as string)) from range(-1, 0))")
+      }
+      checkError(insertException, "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES")
+
+      sql("ALTER TABLE tbl DROP CONSTRAINT variantGTEZero")
+      sql("INSERT INTO tbl (select parse_json(cast(id as string)) from range(-1, 0))")
+      val lessThanZeroCount = spark.sql("select * from tbl where v::int < 0").count()
+      // Inserting variant with value less than zero should work after dropping constraint.
+      assert(lessThanZeroCount == 1)
+      val addConstraintException = intercept[DeltaAnalysisException] {
+        sql("ALTER TABLE tbl ADD CONSTRAINT variantGTEZero CHECK (variant_get(v, '$', 'INT') >= 0)")
+      }
+      checkError(
+        addConstraintException,
+        "DELTA_NEW_CHECK_CONSTRAINT_VIOLATION",
+        parameters = Map(
+          "numRows" -> "1",
+          "tableName" -> "spark_catalog.default.tbl",
+          "checkConstraint" -> "variant_get ( v , '$' , 'INT' ) >= 0"
+        )
+      )
+
+      sql("DELETE FROM tbl WHERE variant_get(v, '$', 'INT') < 0")
+      // Adding the constraint should work after deleting the variant that is less than zero.
+      sql("ALTER TABLE tbl ADD CONSTRAINT variantGTEZero CHECK (variant_get(v, '$', 'INT') >= 0)")
+      val newLessThanZeroCount = spark.sql("select * from tbl where v::int < 0").count()
+      assert(newLessThanZeroCount == 0)
+    }
+  }
+
+  // These tests read from Delta tables written by other engines to ensure that delta-spark is
+  // compatible.
+  // The golden tables were written using "variant-table.sql" so running this SQL file
+  // should yield the same results as the golden tables.
+  Seq("variant-writer-one-delta", "variant-writer-two-delta").foreach { tableName =>
+    test(s"read externally written variant tables - $tableName") {
+      val sqlPath = "src/test/resources/delta/variant/variant-table.sql"
+      val query = Source.fromFile(sqlPath).mkString
+      val actualDf = spark.sql(query)
+
+      val tablePath = s"src/test/resources/delta/variant/$tableName"
+      val expected = spark.read.format("delta").load(tablePath).collect()
+      checkAnswer(actualDf, expected)
     }
   }
 }
