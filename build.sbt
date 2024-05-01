@@ -1308,7 +1308,7 @@ def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
   // and during tests (e.g. build/sbt test)
   Seq(
     checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
+    checkstyleSeverityLevel := CheckstyleSeverityLevel.Error,
     (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
     (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
   )
