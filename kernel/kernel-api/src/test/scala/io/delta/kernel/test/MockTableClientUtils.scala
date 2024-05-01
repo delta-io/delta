@@ -160,4 +160,7 @@ trait BaseMockFileSystemClient extends FileSystemClient {
   override def readFiles(
       readRequests: CloseableIterator[FileReadRequest]): CloseableIterator[ByteArrayInputStream] =
     throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def mkdirs(path: String): Boolean =
+    throw new UnsupportedOperationException("not supported in this test suite")
 }

@@ -67,4 +67,14 @@ public interface FileSystemClient {
     CloseableIterator<ByteArrayInputStream> readFiles(
         CloseableIterator<FileReadRequest> readRequests)
         throws IOException;
+
+    /**
+     * Create a directory at the given path including parent directories. This mimicks the behavior
+     * of `mkdir -p` in Unix.
+     *
+     * @param path Full qualified path to create a directory at.
+     * @return true if the directory was created successfully, false otherwise.
+     * @throws IOException for any IO error.
+     */
+    boolean mkdirs(String path) throws IOException;
 }
