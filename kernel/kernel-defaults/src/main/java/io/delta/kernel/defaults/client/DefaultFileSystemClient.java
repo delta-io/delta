@@ -97,6 +97,13 @@ public class DefaultFileSystemClient
                 getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
     }
 
+    @Override
+    public boolean mkdirs(String path) throws IOException {
+        Path pathObject = new Path(path);
+        FileSystem fs = pathObject.getFileSystem(hadoopConf);
+        return fs.mkdirs(pathObject);
+    }
+
     private ByteArrayInputStream getStream(String filePath, int offset, int size) {
         Path path = new Path(filePath);
         try {
