@@ -26,9 +26,9 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.defaults.internal.data.ValueComparator;
 import io.delta.kernel.defaults.internal.data.vector.*;
-import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.*;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.expressions.Expression;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
