@@ -16,10 +16,8 @@
 package io.delta.kernel.internal;
 
 import java.sql.Timestamp;
-import java.util.Optional;
 
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.expressions.Expression;
 
 /**
  * Contains methods to create user-facing Delta exceptions.

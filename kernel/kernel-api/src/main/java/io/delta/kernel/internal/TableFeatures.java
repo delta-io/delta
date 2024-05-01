@@ -60,8 +60,8 @@ public class TableFeatures {
                 }
                 break;
             default:
-                 throw DeltaErrors.unsupportedReaderProtocol(
-                     tablePath, protocol.getMinReaderVersion());
+                throw DeltaErrors.unsupportedReaderProtocol(
+                    tablePath, protocol.getMinReaderVersion());
         }
     }
 
