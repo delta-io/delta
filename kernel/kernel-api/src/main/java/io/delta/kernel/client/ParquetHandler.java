@@ -77,7 +77,6 @@ public interface ParquetHandler {
      * @param directoryPath Location where the data files should be written.
      * @param dataIter      Iterator of data batches to write. It is the responsibility of the calle
      *                      to close the iterator.
-     * @param maxFileSize   Target maximum size of the created Parquet file in bytes.
      * @param statsColumns  List of columns to collect statistics for. The statistics collection is
      *                      optional. If the implementation does not support statistics collection,
      *                      it is ok to return no statistics.
@@ -93,7 +92,6 @@ public interface ParquetHandler {
     CloseableIterator<DataFileStatus> writeParquetFiles(
             String directoryPath,
             CloseableIterator<FilteredColumnarBatch> dataIter,
-            long maxFileSize,
             List<Column> statsColumns) throws IOException;
 
     /**
