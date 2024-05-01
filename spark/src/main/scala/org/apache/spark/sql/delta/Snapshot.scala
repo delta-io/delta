@@ -21,7 +21,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.managedcommit.{CommitOwnerClient, CommitOwnerProvider, TableCommitOwnerClient}
+import org.apache.spark.sql.delta.managedcommit.{CommitOwnerClient, CommitOwnerProvider, ManagedCommitUtils, TableCommitOwnerClient}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -234,7 +234,7 @@ class Snapshot(
    */
   val tableCommitOwnerClientOpt: Option[TableCommitOwnerClient] = initializeTableCommitOwner()
   protected def initializeTableCommitOwner(): Option[TableCommitOwnerClient] = {
-    CommitOwnerProvider.getTableCommitOwner(this)
+    ManagedCommitUtils.getTableCommitOwner(this)
   }
 
   /** Number of columns to collect stats on for data skipping */

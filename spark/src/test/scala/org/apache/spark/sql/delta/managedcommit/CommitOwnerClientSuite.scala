@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
+import scala.reflect.runtime.universe._
+
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, ManagedCommitTableFeature}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.storage.LogStore
@@ -217,5 +219,55 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
     val obj3 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url2"))
     assert(obj1 != obj3)
     assert(!obj1.semanticEquals(obj3))
+  }
+
+  private def checkMissing[Interface: TypeTag, Class: TypeTag](): Set[String] = {
+    val fields = typeOf[Class].decls.collect {
+      case m: MethodSymbol if m.isCaseAccessor => m.name.toString
+    }
+
+    val getters = typeOf[Interface].decls.collect {
+      case m: MethodSymbol if m.isAbstract => m.name.toString
+    }.toSet
+
+    fields.filterNot { field =>
+      getters.contains(s"get${field.capitalize}")
+    }.toSet
+  }
+
+  /**
+   * We expect the Protocol action to have the same fields as AbstractProtocol (part of the
+   * CommitStore interface). With this if any change has happened in the Protocol of the table,
+   * the same change is propagated to the CommitStore as AbstractProtocol. The CommitStore can
+   * access the changes using getters and decide to act on the changes based on the spec of
+   * the commit-owner.
+   *
+   * This test case ensures that any new field added in the Protocol action is also accessible in
+   * the CommitStore via the getter. If the new field is something which we do not expect to be
+   * passed to the CommitStore, the test needs to be modified accordingly.
+   */
+  test("AbstractProtocol should have getter methods for all fields in Protocol") {
+    val missingFields = checkMissing[AbstractProtocol, Protocol]()
+    val expectedMissingFields = Set.empty[String]
+    assert(missingFields == expectedMissingFields,
+      s"Missing getter methods in AbstractProtocol")
+  }
+
+  /**
+   * We expect the Metadata action to have the same fields as AbstractMetadata (part of the
+   * CommitStore interface). With this if any change has happened in the Metadata of the table,
+   * the same change is propagated to the CommitStore as AbstractMetadata. The CommitStore can
+   * access the changes using getters and decide to act on the changes based on the spec of
+   * the commit-owner.
+   *
+   * This test case ensures that any new field added in the Metadata action is also accessible in
+   * the CommitStore via the getter. If the new field is something which we do not expect to be
+   * passed to the CommitStore, the test needs to be modified accordingly.
+   */
+  test("BaseMetadata should have getter methods for all fields in Metadata") {
+    val missingFields = checkMissing[AbstractMetadata, Metadata]()
+    val expectedMissingFields = Set("format")
+    assert(missingFields == expectedMissingFields,
+      s"Missing getter methods in AbstractMetadata")
   }
 }

@@ -18,8 +18,6 @@ package org.apache.spark.sql.delta.managedcommit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaConfigs, ManagedCommitTableFeature, SnapshotDescriptor}
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -49,11 +47,11 @@ case class GetCommitsResponse(commits: Seq[Commit], latestTableVersion: Long)
 
 /** A container class to inform the [[CommitOwnerClient]] about any changes in Protocol/Metadata */
 case class UpdatedActions(
-  commitInfo: CommitInfo,
-  newMetadata: Metadata,
-  newProtocol: Protocol,
-  oldMetadata: Metadata,
-  oldProtocol: Protocol)
+  commitInfo: AbstractCommitInfo,
+  newMetadata: AbstractMetadata,
+  newProtocol: AbstractProtocol,
+  oldMetadata: AbstractMetadata,
+  oldProtocol: AbstractProtocol)
 
 /**
  * [[CommitOwnerClient]] is responsible for managing commits for a managed-commit delta table.
@@ -85,8 +83,8 @@ trait CommitOwnerClient {
   def registerTable(
       logPath: Path,
       currentVersion: Long,
-      currentMetadata: Metadata,
-      currentProtocol: Protocol): Map[String, String] = Map.empty
+      currentMetadata: AbstractMetadata,
+      currentProtocol: AbstractProtocol): Map[String, String] = Map.empty
 
   /**
    * API to commit the given set of `actions` to the table represented by given `logPath` at the
@@ -199,26 +197,6 @@ object CommitOwnerProvider {
     }
   }
 
-  def getCommitOwnerClient(metadata: Metadata, protocol: Protocol): Option[CommitOwnerClient] = {
-    metadata.managedCommitOwnerName.map { commitOwnerStr =>
-      assert(protocol.isFeatureSupported(ManagedCommitTableFeature))
-      CommitOwnerProvider.getCommitOwnerClient(commitOwnerStr, metadata.managedCommitOwnerConf)
-    }
-  }
-
-  def getTableCommitOwner(
-      snapshotDescriptor: SnapshotDescriptor): Option[TableCommitOwnerClient] = {
-    getCommitOwnerClient(
-        snapshotDescriptor.metadata, snapshotDescriptor.protocol).map { commitOwner =>
-      TableCommitOwnerClient(
-        commitOwner,
-        snapshotDescriptor.deltaLog.logPath,
-        snapshotDescriptor.metadata.managedCommitTableConf,
-        snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
-        snapshotDescriptor.deltaLog.store)
-    }
-  }
-
   // Visible only for UTs
   private[delta] def clearNonDefaultBuilders(): Unit = synchronized {
     val initialCommitOwnerNames = initialCommitOwnerBuilders.map(_.name).toSet
@@ -229,13 +207,4 @@ object CommitOwnerProvider {
     // Any new commit-owner builder will be registered here.
   )
   initialCommitOwnerBuilders.foreach(registerBuilder)
-}
-
-object CommitOwner {
-  def getManagedCommitConfs(metadata: Metadata): (Option[String], Map[String, String]) = {
-    metadata.managedCommitOwnerName match {
-      case Some(name) => (Some(name), metadata.managedCommitOwnerConf)
-      case None => (None, Map.empty)
-    }
-  }
 }
