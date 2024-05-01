@@ -200,17 +200,7 @@ case class VacuumProtocolCheckPreDowngradeCommand(table: DeltaTableV2)
    * For downgrading the [[VacuumProtocolCheckTableFeature]], we don't need remove any traces, we
    * just need to remove the feature from the [[Protocol]].
    */
-  override def removeFeatureTracesIfNeeded(): Boolean = {
-    val dependentFeatures = VacuumProtocolCheckTableFeature.otherFeaturesRequiringThisFeature
-    val dependentFeaturesInProtocol =
-      dependentFeatures.filter(table.initialSnapshot.protocol.isFeatureSupported(_))
-    if (dependentFeaturesInProtocol.nonEmpty) {
-      val dependentFeatureNames = dependentFeaturesInProtocol.map(_.name)
-      throw DeltaErrors.dropTableFeatureFailedBecauseOfDependentFeatures(
-        VacuumProtocolCheckTableFeature.name, dependentFeatureNames.toSeq)
-    }
-    false
-  }
+  override def removeFeatureTracesIfNeeded(): Boolean = false
 }
 
 case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
