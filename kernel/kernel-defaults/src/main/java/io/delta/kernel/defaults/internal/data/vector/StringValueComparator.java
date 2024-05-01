@@ -27,13 +27,15 @@ public class StringValueComparator implements ValueComparator {
     ColumnVector v2;
     VectorComparator vectorComparator;
 
-    public StringValueComparator(ColumnVector v1, ColumnVector v2, VectorComparator vectorComparator) {
+    public StringValueComparator(ColumnVector v1, ColumnVector v2,
+                                 VectorComparator vectorComparator) {
         this.v1 = v1;
         this.v2 = v2;
         this.vectorComparator = vectorComparator;
     }
     @Override
     public boolean getCompareResult(int rowId) {
-        return vectorComparator.compare(STRING_COMPARATOR.compare(v1.getString(rowId), v2.getString(rowId)));
+        return vectorComparator.compare(
+                STRING_COMPARATOR.compare(v1.getString(rowId), v2.getString(rowId)));
     }
 }

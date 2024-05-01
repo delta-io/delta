@@ -35,13 +35,15 @@ public class BinaryValueComparator implements ValueComparator {
     ColumnVector v2;
     VectorComparator vectorComparator;
 
-    public BinaryValueComparator(ColumnVector v1, ColumnVector v2, VectorComparator vectorComparator) {
+    public BinaryValueComparator(ColumnVector v1, ColumnVector v2,
+                                 VectorComparator vectorComparator) {
         this.v1 = v1;
         this.v2 = v2;
         this.vectorComparator = vectorComparator;
     }
     @Override
     public boolean getCompareResult(int rowId) {
-        return vectorComparator.compare(BINARY_COMPARTOR.compare(v1.getBinary(rowId), v2.getBinary(rowId)));
+        return vectorComparator.compare(
+                BINARY_COMPARTOR.compare(v1.getBinary(rowId), v2.getBinary(rowId)));
     }
 }

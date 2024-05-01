@@ -24,13 +24,15 @@ public class IntegerValueComparator implements ValueComparator {
     ColumnVector v2;
     VectorComparator vectorComparator;
 
-    public IntegerValueComparator(ColumnVector v1, ColumnVector v2, VectorComparator vectorComparator) {
+    public IntegerValueComparator(ColumnVector v1, ColumnVector v2,
+                                  VectorComparator vectorComparator) {
         this.v1 = v1;
         this.v2 = v2;
         this.vectorComparator = vectorComparator;
     }
     @Override
     public boolean getCompareResult(int rowId) {
-        return vectorComparator.compare(Integer.compare(v1.getInt(rowId), v2.getInt(rowId)));
+        return vectorComparator.compare(
+                Integer.compare(v1.getInt(rowId), v2.getInt(rowId)));
     }
 }

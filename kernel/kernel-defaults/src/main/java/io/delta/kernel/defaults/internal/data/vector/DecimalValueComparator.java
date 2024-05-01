@@ -29,13 +29,15 @@ public class DecimalValueComparator implements ValueComparator {
     ColumnVector v2;
     VectorComparator vectorComparator;
 
-    public DecimalValueComparator(ColumnVector v1, ColumnVector v2, VectorComparator vectorComparator) {
+    public DecimalValueComparator(ColumnVector v1, ColumnVector v2,
+                                  VectorComparator vectorComparator) {
         this.v1 = v1;
         this.v2 = v2;
         this.vectorComparator = vectorComparator;
     }
     @Override
     public boolean getCompareResult(int rowId) {
-        return vectorComparator.compare(BIGDECIMAL_COMPARATOR.compare(v1.getDecimal(rowId), v2.getDecimal(rowId)));
+        return vectorComparator.compare(
+                BIGDECIMAL_COMPARATOR.compare(v1.getDecimal(rowId), v2.getDecimal(rowId)));
     }
 }
