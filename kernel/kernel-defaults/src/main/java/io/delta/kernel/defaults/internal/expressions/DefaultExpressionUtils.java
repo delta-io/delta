@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.internal.expressions;
 import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -34,6 +35,19 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  */
 class DefaultExpressionUtils {
     private DefaultExpressionUtils() {}
+
+    /**
+     * Exception for when the default expression evaluator cannot evaluate an expression.
+     * @param expression the unsupported expression
+     * @param reason reason for why the expression is not supported/cannot be evaluated
+     */
+    static RuntimeException unsupportedExpressionException(Expression expression, String reason) {
+        String message = String.format(
+            "Default expression evaluator cannot evaluate the expression: %s. Reason: %s",
+            expression,
+            reason);
+        return new UnsupportedOperationException(message);
+    }
 
     /**
      * Utility method that calculates the nullability result from given two vectors. Result is

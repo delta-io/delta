@@ -27,10 +27,10 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
 
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
@@ -60,7 +60,7 @@ class ElementAtEvaluator {
                 String reason = format(
                         "lookup key type (%s) is different from the map key type (%s)",
                         lookupKeyType, asMapType.getKeyType());
-                throw DeltaErrors.unsupportedExpression(elementAt, Optional.of(reason));
+                throw unsupportedExpressionException(elementAt, reason);
             }
         }
         return new ScalarExpression(elementAt.getName(), Arrays.asList(mapInput, lookupKey));
