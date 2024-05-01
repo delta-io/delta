@@ -305,6 +305,10 @@ case class AlterTableDropFeatureDeltaCommand(
         throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
       }
 
+      // Validate that the `removableFeature` is not a dependency of any other feature that is
+      // enabled on the table.
+      dependentFeatureCheck(removableFeature, table.initialSnapshot.protocol)
+
       // The removableFeature.preDowngradeCommand needs to adhere to the following requirements:
       //
       // a) Bring the table to a state the validation passes.
@@ -371,6 +375,25 @@ case class AlterTableDropFeatureDeltaCommand(
       txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
       txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, truncateHistory))
       Nil
+    }
+  }
+
+  /**
+   * Checks if the `removableFeature` is a requirement for some other feature that is enabled on the
+   * table. In such a scenario, we need to fail the drop feature command. The dependent features
+   * needs to be dropped first before this `removableFeature` can be removed.
+   */
+  private def dependentFeatureCheck(
+      removableFeature: TableFeature,
+      protocol: Protocol): Unit = {
+    val dependentFeatures = TableFeature.getDependentFeatures(removableFeature)
+    if (dependentFeatures.nonEmpty) {
+      val dependentFeaturesInProtocol = dependentFeatures.filter(protocol.isFeatureSupported)
+      if (dependentFeaturesInProtocol.nonEmpty) {
+        val dependentFeatureNames = dependentFeaturesInProtocol.map(_.name)
+        throw DeltaErrors.dropTableFeatureFailedBecauseOfDependentFeatures(
+          removableFeature.name, dependentFeatureNames.toSeq)
+      }
     }
   }
 }
