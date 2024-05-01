@@ -67,6 +67,13 @@ You can enable UniForm Iceberg on an existing table using the following syntax:
 ```sql
 REORG TABLE table_name APPLY (UPGRADE UNIFORM(ICEBERG_COMPAT_VERSION=2));
 ```
+
+You can enable UniForm Hudi on an existing table using the following syntax:
+
+```sql
+ALTER TABLE table_name SET TBLPROPERTIES ('delta.universalFormat.enabledFormats' = 'hudi');
+```
+
 .. note:: This syntax requires [_](delta-column-mapping.md) to be enabled on the table prior to running on Delta 3.1. This syntax also works to upgrade from the IcbergCompatV1. It may rewrite existing files to make those Iceberg compatible, and it automatically disables and purges Deletion Vectors from the table.
 
 .. important:: When you first enable UniForm, asynchronous metadata generation begins. This task must complete before external clients can query the table using Iceberg or Hudi. See [_](#status).
@@ -130,11 +137,11 @@ spark.read.format("hudi").option("hoodie.metadata.enable", "true").load("PATH_TO
 
 All <Delta>, Iceberg and Hudi allow time travel queries using table versions or timestamps stored in table metadata.
 
-Delta and Iceberg table versions do not align by either the commit timestamp or the version ID, while Delta and Hudi commit timestamp aligns but version ID does not. If you wish to verify which version of a Delta table a given version of an Iceberg/Hudi table corresponds to, you can use the corresponding table properties set on the Iceberg/Hudi table. See [_](#status).
+Delta and Iceberg table versions do not align by either the commit timestamp or the version ID. However, Delta and Hudi commit timestamp align, but version ID does not. If you wish to verify which version of a Delta table a given version of an Iceberg/Hudi table corresponds to, you can use the corresponding table properties set on the Iceberg/Hudi table. See [_](#status).
 
 ## Limitations
 
-.. warning:: UniForm is read-only from an Iceberg/Hudi perspective, though this cannot yet be enforced since UniForm uses HMS as Iceberg catalog, while Hudi stores metadata on the file system. If any external writer (not <Delta>) writes to this Iceberg/Hudi table, this may destroy your Delta table and cause data loss, as the Iceberg/Hudi writer may perform data cleanup or garbage collection that Delta is unaware of.
+.. warning:: UniForm is read-only from an Iceberg and Hudi perspective. This, however, cannot be enforced as for Iceberg, UniForm uses HMS as an Iceberg catalog and for Hudi, metadata is stored on the file system. If any external writer (not <Delta>) writes to this Iceberg/Hudi table, this may destroy your Delta table and cause data loss, as the Iceberg/Hudi writer may perform data cleanup or garbage collection that Delta is unaware of.
 
 The following limitations exist:
 
