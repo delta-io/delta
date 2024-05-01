@@ -44,7 +44,7 @@ class KernelOptTxn(kernelDeltaLog: KernelDeltaLogDelegator, kernelSnapshot: Kern
  * provides features used by flink+startTransaction.
  */
 class KernelDeltaLogDelegator(
-    tableClient: DefaultEngine,
+    engine: DefaultEngine,
     table: TableImpl,
     standaloneDeltaLog: DeltaLogImpl,
     hadoopConf: Configuration,
@@ -68,7 +68,7 @@ class KernelDeltaLogDelegator(
   override def update(): StandaloneSnapshotImpl = {
     // get latest snapshot via kernel
     val kernelSnapshot = try {
-      table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
+      table.getLatestSnapshot(engine).asInstanceOf[SnapshotImplKernel]
     } catch {
       case e: TableNotFoundException =>
         return new StandaloneInitialSnapshotImpl(hadoopConf, logPath, this)
@@ -82,7 +82,7 @@ class KernelDeltaLogDelegator(
       kernelSnapshotWrapper,
       hadoopConf,
       logPath,
-      kernelSnapshot.getVersion(tableClient), // note: tableClient isn't used
+      kernelSnapshot.getVersion(engine), // note: engine isn't used
       this,
       standaloneDeltaLog
     ))
@@ -128,9 +128,9 @@ object KernelDeltaLogDelegator {
     // the kernel does not
     val standaloneDeltaLog = new DeltaLogImpl(hadoopConf, logPath, dataPathFromLog, clock)
     standaloneDeltaLog.ensureLogDirectoryExist()
-    val tableClient = DefaultEngine.create(hadoopConf)
-    val table = Table.forPath(tableClient, dataPath).asInstanceOf[TableImpl]
+    val engine = DefaultEngine.create(hadoopConf)
+    val table = Table.forPath(engine, dataPath).asInstanceOf[TableImpl]
     // Todo: Potentially we could get the resolved paths out of the table above
-    new KernelDeltaLogDelegator(tableClient, table, standaloneDeltaLog, hadoopConf, logPath, dataPathFromLog, clock)
+    new KernelDeltaLogDelegator(engine, table, standaloneDeltaLog, hadoopConf, logPath, dataPathFromLog, clock)
   }
 }
