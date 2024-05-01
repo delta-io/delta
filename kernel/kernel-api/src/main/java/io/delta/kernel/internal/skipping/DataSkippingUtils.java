@@ -34,7 +34,7 @@ public class DataSkippingUtils {
      * return the parsed JSON stats from the scan files.
      */
     public static ColumnarBatch parseJsonStats(
-        Engine engine, FilteredColumnarBatch scanFileBatch, StructType statsSchema) {
+            Engine engine, FilteredColumnarBatch scanFileBatch, StructType statsSchema) {
         ColumnVector statsVector = scanFileBatch.getData()
             .getColumnVector(ADD_FILE_ORDINAL)
             .getChild(ADD_FILE_STATS_ORDINAL);

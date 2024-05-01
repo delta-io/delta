@@ -51,7 +51,7 @@ public final class DeltaHistoryManager {
      * @throws TableNotFoundException when there is no Delta table at the given path
      */
     public static long getActiveCommitAtTimestamp(
-        Engine engine, Path logPath, long timestamp) throws TableNotFoundException {
+            Engine engine, Path logPath, long timestamp) throws TableNotFoundException {
 
         long earliestRecreatableCommit = getEarliestRecreatableCommit(engine, logPath);
 

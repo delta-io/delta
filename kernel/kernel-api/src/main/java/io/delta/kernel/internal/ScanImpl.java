@@ -111,7 +111,7 @@ public class ScanImpl implements Scan {
      * @return the surviving scan files as {@link FilteredColumnarBatch}s
      */
     public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-        Engine engine, boolean includeStats) {
+            Engine engine, boolean includeStats) {
         if (accessedScanFiles) {
             throw new IllegalStateException("Scan files are already fetched from this instance");
         }
