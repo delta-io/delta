@@ -1,4 +1,4 @@
-name: "Delta Spark Tests"
+name: "Delta Spark Local Publishing and Examples Compilation"
 on: [push, pull_request]
 jobs:
   test:
@@ -35,36 +35,18 @@ jobs:
           # the above directories when we use the key for the first time. After that, each run will
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
-          key: delta-sbt-cache-spark3.2-scala${{ matrix.scala }}
+          key: delta-sbt-cache-spark-examples-scala${{ matrix.scala }}
       - name: Install Job dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
           sudo apt install libedit-dev
-          sudo apt install python3-pip --fix-missing
-          sudo pip3 install pipenv==2021.5.29
-          curl https://pyenv.run | bash
-          export PATH="~/.pyenv/bin:$PATH"
-          eval "$(pyenv init -)"
-          eval "$(pyenv virtualenv-init -)"
-          pyenv install 3.8.18
-          pyenv global system 3.8.18
-          pipenv --python 3.8 install
-          pipenv run pip install pyspark==3.5.0
-          pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
-          pipenv run pip install importlib_metadata==3.10.0
-          pipenv run pip install mypy==0.982
-          pipenv run pip install cryptography==37.0.4
-          pipenv run pip install twine==4.0.1
-          pipenv run pip install wheel==0.33.4
-          pipenv run pip install setuptools==41.1.0
-          pipenv run pip install pydocstyle==3.0.0
-          pipenv run pip install pandas==1.1.3
-          pipenv run pip install pyarrow==8.0.0
-          pipenv run pip install numpy==1.20.3
         if: steps.git-diff.outputs.diff
-      - name: Run Scala/Java and Python tests
-        # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
+      - name: Run Delta Spark Local Publishing and Examples Compilation
+        # examples/scala/build.sbt will compile against the local Delta relase version (e.g. 3.2.0-SNAPSHOT).
+        # Thus, we need to publishM2 first so those jars are locally accessible.
         run: |
-          TEST_PARALLELISM_COUNT=2 pipenv run python run-tests.py --group spark
+          build/sbt clean
+          build/sbt "++ $SCALA_VERSION publishM2"
+          cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff
