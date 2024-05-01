@@ -269,6 +269,13 @@ abstract class DeltaCDCSuiteBase
         spark.range(20)
           .withColumn("_change_type", lit("insert"))
           .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+
+      // Make sure this can be analyzed (current_date as "starting" and "ending")
+      cdcRead(
+        new TablePath(tempDir.getAbsolutePath),
+        StartingVersion("string(current_date())"),
+        EndingVersion("string(current_date() + interval 1 day)"))
+
     }
   }
 
