@@ -112,7 +112,6 @@ trait BaseMockParquetHandler extends ParquetHandler with MockTableClientUtils {
   override def writeParquetFiles(
       directoryPath: String,
       dataIter: CloseableIterator[FilteredColumnarBatch],
-      maxFileSize: Long,
       statsColumns: util.List[Column]): CloseableIterator[DataFileStatus] =
     throw new UnsupportedOperationException("not supported in this test suite")
 

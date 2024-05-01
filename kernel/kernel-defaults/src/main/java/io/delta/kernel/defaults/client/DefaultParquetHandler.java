@@ -101,10 +101,9 @@ public class DefaultParquetHandler implements ParquetHandler {
     public CloseableIterator<DataFileStatus> writeParquetFiles(
             String directoryPath,
             CloseableIterator<FilteredColumnarBatch> dataIter,
-            long maxFileSize,
             List<Column> statsColumns) throws IOException {
         ParquetFileWriter batchWriter =
-            new ParquetFileWriter(hadoopConf, new Path(directoryPath), maxFileSize, statsColumns);
+            new ParquetFileWriter(hadoopConf, new Path(directoryPath), statsColumns);
         return batchWriter.write(dataIter);
     }
 
