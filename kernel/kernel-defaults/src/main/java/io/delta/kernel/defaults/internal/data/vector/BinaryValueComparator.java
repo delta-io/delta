@@ -15,10 +15,11 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
+import java.util.Comparator;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.defaults.internal.data.ValueComparator;
 import io.delta.kernel.defaults.internal.expressions.VectorComparator;
-import java.util.Comparator;
 
 public class BinaryValueComparator implements ValueComparator {
     static final Comparator<byte[]> BINARY_COMPARTOR = (leftOp, rightOp) -> {

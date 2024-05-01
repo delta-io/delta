@@ -15,12 +15,12 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
+import java.math.BigDecimal;
+import java.util.Comparator;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.defaults.internal.data.ValueComparator;
 import io.delta.kernel.defaults.internal.expressions.VectorComparator;
-
-import java.math.BigDecimal;
-import java.util.Comparator;
 
 public class DecimalValueComparator implements ValueComparator {
     static final Comparator<BigDecimal> BIGDECIMAL_COMPARATOR = Comparator.naturalOrder();
