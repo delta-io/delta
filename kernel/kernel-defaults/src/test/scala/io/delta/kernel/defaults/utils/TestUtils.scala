@@ -283,7 +283,7 @@ trait TestUtils extends Assertions with SQLHelper {
    * @param path fully qualified path of the table to check
    * @param expectedAnswer expected rows
    * @param readCols subset of columns to read; if null then all columns will be read
-   * @param engine table client to use to read the table
+   * @param engine engine to use to read the table
    * @param expectedSchema expected schema to check for; if null then no check is performed
    * @param filter Filter to select a subset of rows form the table
    * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced

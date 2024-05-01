@@ -300,7 +300,7 @@ class LogReplayMetricsSuite extends QueryTest
 // Helper Classes //
 ////////////////////
 
-/** A table client that records the Delta commit (.json) and checkpoint (.parquet) files read */
+/** An engine that records the Delta commit (.json) and checkpoint (.parquet) files read */
 class MetricsEngine(config: Configuration) extends Engine {
   private val impl = DefaultEngine.create(config)
   private val jsonHandler = new MetricsJsonHandler(config)

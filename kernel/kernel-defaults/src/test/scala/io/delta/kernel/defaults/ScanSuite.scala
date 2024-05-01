@@ -1600,7 +1600,7 @@ object ScanSuite {
   }
 
   /**
-   * Returns a custom table client implementation that doesn't allow "add.stats" in the read schema
+   * Returns a custom engine implementation that doesn't allow "add.stats" in the read schema
    * for parquet or json handlers.
    */
   def engineDisallowedStatsReads: Engine = {
