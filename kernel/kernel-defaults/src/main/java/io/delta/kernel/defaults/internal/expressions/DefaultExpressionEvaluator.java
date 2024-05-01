@@ -32,13 +32,14 @@ import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
+import static io.delta.kernel.defaults.internal.DefaultTableClientErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
-import static io.delta.kernel.defaults.internal.DefaultTableClientErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**

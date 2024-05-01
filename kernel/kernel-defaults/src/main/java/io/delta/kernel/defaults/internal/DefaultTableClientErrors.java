@@ -15,8 +15,9 @@
  */
 package io.delta.kernel.defaults.internal;
 
-import io.delta.kernel.expressions.Expression;
 import static java.lang.String.format;
+
+import io.delta.kernel.expressions.Expression;
 
 public class DefaultTableClientErrors {
 
