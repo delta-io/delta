@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
+import io.delta.kernel.engine.{JsonHandler, ParquetHandler, Engine}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
@@ -42,7 +42,7 @@ import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
-import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
+import io.delta.kernel.defaults.engine.{DefaultJsonHandler, DefaultParquetHandler, DefaultEngine}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
@@ -1467,7 +1467,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     val path = goldenTablePath("data-skipping-basic-stats-all-types")
     val tableClient = tableClientDisallowedStatsReads
 
-    def snapshot(tableClient: TableClient): Snapshot = {
+    def snapshot(tableClient: Engine): Snapshot = {
       Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
     }
 
@@ -1603,9 +1603,9 @@ object ScanSuite {
    * Returns a custom table client implementation that doesn't allow "add.stats" in the read schema
    * for parquet or json handlers.
    */
-  def tableClientDisallowedStatsReads: TableClient = {
+  def tableClientDisallowedStatsReads: Engine = {
     val hadoopConf = new Configuration()
-    new DefaultTableClient(hadoopConf) {
+    new DefaultEngine(hadoopConf) {
 
       override def getParquetHandler: ParquetHandler = {
         new DefaultParquetHandler(hadoopConf) {
@@ -1633,9 +1633,9 @@ object ScanSuite {
     }
   }
 
-  def tableClientVerifyJsonParseSchema(verifyFx: StructType => Unit): TableClient = {
+  def tableClientVerifyJsonParseSchema(verifyFx: StructType => Unit): Engine = {
     val hadoopConf = new Configuration()
-    new DefaultTableClient(hadoopConf) {
+    new DefaultEngine(hadoopConf) {
       override def getJsonHandler: JsonHandler = {
         new DefaultJsonHandler(hadoopConf) {
           override def parseJson(stringVector: ColumnVector, schema: StructType,

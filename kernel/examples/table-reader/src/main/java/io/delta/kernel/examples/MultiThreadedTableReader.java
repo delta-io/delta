@@ -26,7 +26,7 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 
 import io.delta.kernel.*;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.TableClient;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;

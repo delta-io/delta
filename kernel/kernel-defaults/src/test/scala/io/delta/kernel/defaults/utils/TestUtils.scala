@@ -25,10 +25,10 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
-import io.delta.kernel.client.TableClient
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
-import io.delta.kernel.defaults.client.DefaultTableClient
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
@@ -38,6 +38,7 @@ import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
@@ -46,7 +47,7 @@ import org.scalatest.Assertions
 trait TestUtils extends Assertions with SQLHelper {
 
   lazy val configuration = new Configuration()
-  lazy val defaultTableClient = DefaultTableClient.create(configuration)
+  lazy val defaultTableClient = DefaultEngine.create(configuration)
 
   lazy val spark = SparkSession
     .builder()
@@ -122,7 +123,7 @@ trait TestUtils extends Assertions with SQLHelper {
     testFunc(tablePath)
   }
 
-  def latestSnapshot(path: String, tableClient: TableClient = defaultTableClient): Snapshot = {
+  def latestSnapshot(path: String, tableClient: Engine = defaultTableClient): Snapshot = {
     Table.forPath(tableClient, path)
       .getLatestSnapshot(tableClient)
   }
@@ -156,7 +157,7 @@ trait TestUtils extends Assertions with SQLHelper {
     }
   }
 
-  def collectScanFileRows(scan: Scan, tableClient: TableClient = defaultTableClient): Seq[Row] = {
+  def collectScanFileRows(scan: Scan, tableClient: Engine = defaultTableClient): Seq[Row] = {
     scan.getScanFiles(tableClient).toSeq
       .flatMap(_.getRows.toSeq)
   }
@@ -166,7 +167,7 @@ trait TestUtils extends Assertions with SQLHelper {
     readSchema: StructType = null,
     filter: Predicate = null,
     expectedRemainingFilter: Predicate = null,
-    tableClient: TableClient = defaultTableClient): Seq[Row] = {
+    tableClient: Engine = defaultTableClient): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
 
@@ -293,7 +294,7 @@ trait TestUtils extends Assertions with SQLHelper {
     path: String,
     expectedAnswer: Seq[TestRow],
     readCols: Seq[String] = null,
-    tableClient: TableClient = defaultTableClient,
+    tableClient: Engine = defaultTableClient,
     expectedSchema: StructType = null,
     filter: Predicate = null,
     version: Option[Long] = None,

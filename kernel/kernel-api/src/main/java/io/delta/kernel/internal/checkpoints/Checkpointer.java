@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
@@ -81,10 +81,10 @@ public class Checkpointer {
      * Find the last complete checkpoint before (strictly less than) a given version.
      */
     public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
-            TableClient tableClient,
+            Engine engine,
             Path tableLogPath,
             long version) {
-        return findLastCompleteCheckpointBeforeHelper(tableClient, tableLogPath, version)._1;
+        return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version)._1;
     }
 
     /**
@@ -93,7 +93,7 @@ public class Checkpointer {
      */
     protected static Tuple2<Optional<CheckpointInstance>, Long>
             findLastCompleteCheckpointBeforeHelper(
-                    TableClient tableClient,
+                    Engine engine,
                     Path tableLogPath,
                     long version) {
         CheckpointInstance upperBoundCheckpoint = new CheckpointInstance(version);
@@ -111,7 +111,7 @@ public class Checkpointer {
         while (currentVersion >= 0) {
             try {
                 long searchLowerBound = Math.max(0, currentVersion - 1000);
-                CloseableIterator<FileStatus> deltaLogFileIter = tableClient.getFileSystemClient()
+                CloseableIterator<FileStatus> deltaLogFileIter = engine.getFileSystemClient()
                         .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound));
 
                 List<CheckpointInstance> checkpoints = new ArrayList<>();
@@ -181,20 +181,20 @@ public class Checkpointer {
     /**
      * Returns information about the most recent checkpoint.
      */
-    public Optional<CheckpointMetaData> readLastCheckpointFile(TableClient tableClient) {
-        return loadMetadataFromFile(tableClient, 0 /* tries */);
+    public Optional<CheckpointMetaData> readLastCheckpointFile(Engine engine) {
+        return loadMetadataFromFile(engine, 0 /* tries */);
     }
 
     /**
      * Write the given data to last checkpoint metadata file.
-     * @param tableClient {@link TableClient} instance to use for writing
+     * @param engine {@link Engine} instance to use for writing
      * @param checkpointMetaData Checkpoint metadata to write
      * @throws IOException For any I/O issues.
      */
     public void writeLastCheckpointFile(
-            TableClient tableClient,
+            Engine engine,
             CheckpointMetaData checkpointMetaData) throws IOException {
-        tableClient.getJsonHandler()
+        engine.getJsonHandler()
                 .writeJsonFileAtomically(
                         lastCheckpointFilePath.toString(),
                         singletonCloseableIterator(checkpointMetaData.toRow()),
@@ -204,10 +204,10 @@ public class Checkpointer {
     /**
      * Loads the checkpoint metadata from the _last_checkpoint file.
      * <p>
-     * @param tableClient {@link TableClient instance to use}
+     * @param engine {@link Engine instance to use}
      * @param tries Number of times already tried to load the metadata before this call.
      */
-    private Optional<CheckpointMetaData> loadMetadataFromFile(TableClient tableClient, int tries) {
+    private Optional<CheckpointMetaData> loadMetadataFromFile(Engine engine, int tries) {
         if (tries >= 3) {
             // We have tried 3 times and failed. Assume the checkpoint metadata file is corrupt.
             logger.warn(
@@ -222,7 +222,7 @@ public class Checkpointer {
                     lastCheckpointFilePath.toString(), 0 /* size */, 0 /* modTime */);
 
             try (CloseableIterator<ColumnarBatch> jsonIter =
-                         tableClient.getJsonHandler().readJsonFiles(
+                         engine.getJsonHandler().readJsonFiles(
                                  singletonCloseableIterator(lastCheckpointFile),
                                  CheckpointMetaData.READ_SCHEMA,
                                  Optional.empty())) {
@@ -240,7 +240,7 @@ public class Checkpointer {
                         lastCheckpointFilePath,
                         tries);
                 Thread.sleep(1000);
-                return loadMetadataFromFile(tableClient, tries + 1);
+                return loadMetadataFromFile(engine, tries + 1);
             }
         } catch (FileNotFoundException ex) {
             return Optional.empty(); // there is no point retrying
@@ -254,7 +254,7 @@ public class Checkpointer {
                     lastCheckpointFilePath, tries);
             logger.warn(msg, ex);
             // we can retry until max tries are exhausted
-            return loadMetadataFromFile(tableClient, tries + 1);
+            return loadMetadataFromFile(engine, tries + 1);
         }
     }
 }

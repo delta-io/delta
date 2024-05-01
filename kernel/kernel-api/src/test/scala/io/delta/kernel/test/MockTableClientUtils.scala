@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.test
 
-import io.delta.kernel.client._
+import io.delta.kernel.engine._
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.types.{DataType, StructType}
@@ -26,7 +26,7 @@ import java.util
 import java.util.Optional
 
 /**
- * Contains broiler plate code for mocking [[TableClient]] and its sub-interfaces.
+ * Contains broiler plate code for mocking [[Engine]] and its sub-interfaces.
  *
  * A concrete class is created for each sub-interface (e.g. [[FileSystemClient]]) with
  * default implementation (unsupported). Test suites can override a specific API(s)
@@ -52,8 +52,8 @@ trait MockTableClientUtils {
     fileSystemClient: FileSystemClient = null,
     jsonHandler: JsonHandler = null,
     parquetHandler: ParquetHandler = null,
-    expressionHandler: ExpressionHandler = null): TableClient = {
-    new TableClient() {
+    expressionHandler: ExpressionHandler = null): Engine = {
+    new Engine() {
       override def getExpressionHandler: ExpressionHandler =
         Option(expressionHandler).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))

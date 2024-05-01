@@ -92,7 +92,7 @@ while(fileIter.hasNext()) {
 
   // Get the physical read schema of columns to read from the Parquet data files
   StructType physicalReadSchema =
-    ScanStateRow.getPhysicalDataReadSchema(tableClient, scanStateRow);
+    ScanStateRow.getPhysicalDataReadSchema(engine, scanStateRow);
 
   try (CloseableIterator<Row> scanFileRows = scanFileColumnarBatch.getRows()) {
     while (scanFileRows.hasNext()) {
@@ -106,7 +106,7 @@ while(fileIter.hasNext()) {
       // Parquet reader or default Parquet reader provided by the Kernel (which
       // is used in this example).
       CloseableIterator<ColumnarBatch> physicalDataIter =
-        tableClient.getParquetHandler().readParquetFiles(
+        engine.getParquetHandler().readParquetFiles(
           singletonCloseableIterator(fileStatus),
           physicalReadSchema,
           Optional.empty() /* optional predicate the connector can apply to filter data from the reader */
@@ -118,7 +118,7 @@ while(fileIter.hasNext()) {
       try (
          CloseableIterator<FilteredColumnarBatch> transformedData =
            Scan.transformPhysicalData(
-             tableClient,
+             engine,
              scanStateRow,
              scanFileRow,
              physicalDataIter)) {
@@ -173,23 +173,23 @@ We have explored how to do a full table scan. However, the real advantage of usi
 ```java
 import io.delta.kernel.expressions.*;
 
-import io.delta.kernel.defaults.client.*
+import io.delta.kernel.defaults.engine.*
 
-TableClient myTableClient = DefaultTableClient.create(new Configuration());
+TableClient myTableClient=DefaultTableClient.create(new Configuration());
 
-Predicate filter = new Predicate(
-  "=",
-  Arrays.asList(new Column("columnX"), Literal.forInteger(1)));
+    Predicate filter=new Predicate(
+    "=",
+    Arrays.asList(new Column("columnX"),Literal.forInteger(1)));
 
-Scan myFilteredScan = mySnapshot.buildScan(tableClient)
-  .withFilter(myTableClient, filter)
-  .build()
+    Scan myFilteredScan=mySnapshot.buildScan(engine)
+    .withFilter(myTableClient,filter)
+    .build()
 
 // Subset of the given filter that is not guaranteed to be satisfied by
 // Delta Kernel when it returns data. This filter is used by Delta Kernel
 // to do data skipping as much as possible. The connector should use this filter
 // on top of the data returned by Delta Kernel in order for further filtering.
-Optional<Predicate> remainingFilter = myFilteredScan.getRemainingFilter();
+    Optional<Predicate> remainingFilter=myFilteredScan.getRemainingFilter();
 ```
 
 The scan files returned by  `myFilteredScan.getScanFiles(myTableClient)` will have rows representing files only of the required partition. Similarly, you can provide filters for non-partition columns, and if the data in the table is well clustered by those columns, then Delta Kernel will be able to skip files as much as possible.
@@ -454,7 +454,7 @@ import io.delta.kernel.types.*;
 StructType readSchema = ... ;  // convert engine schema
 Predicate filterExpr = ... ;   // convert engine filter expression
 
-Scan myScan = mySnapshot.buildScan(tableClient)
+Scan myScan = mySnapshot.buildScan(engine)
   .withFilter(myTableClient, filterExpr)
   .withReadSchema(myTableClient, readSchema)
   .build()
@@ -536,7 +536,7 @@ Predicate optPredicate = ...;
 
 // Get the physical read schema of columns to read from the Parquet data files
 StructType physicalReadSchema =
-  ScanStateRow.getPhysicalDataReadSchema(tableClient, scanStateRow);
+  ScanStateRow.getPhysicalDataReadSchema(engine, scanStateRow);
 
 // From the scan file row, extract the file path, size and modification metadata
 // needed to read the file.
@@ -561,7 +561,7 @@ CloseableIterator<ColumnarBatch> physicalDataIter =
 // subset of rows deleted
 CloseableIterator<FilteredColumnarBatch> transformedData =
   Scan.transformPhysicalData(
-    tableClient,
+    engine,
     scanState,
     scanFileRow,
     physicalDataIter)) 

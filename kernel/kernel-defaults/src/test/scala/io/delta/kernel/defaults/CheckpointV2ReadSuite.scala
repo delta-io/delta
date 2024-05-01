@@ -19,7 +19,7 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.defaults.client.DefaultTableClient
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, 
 class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
 
-  override lazy val defaultTableClient = DefaultTableClient.create(new Configuration() {
+  override lazy val defaultTableClient = DefaultEngine.create(new Configuration() {
     {
       // Set the batch sizes to small so that we get to test the multiple batch scenarios.
       set("delta.kernel.default.parquet.reader.batch-size", "2");

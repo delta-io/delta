@@ -20,7 +20,7 @@ import java.util.stream.IntStream;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
@@ -74,50 +74,50 @@ public class ScanStateRow extends GenericRow {
 
     /**
      * Utility method to get the logical schema from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
+     * {@link Scan#getScanState(Engine)}.
      *
-     * @param tableClient instance of {@link TableClient} to use.
+     * @param engine instance of {@link Engine} to use.
      * @param scanState   Scan state {@link Row}
      * @return Logical schema to read from the data files.
      */
-    public static StructType getLogicalSchema(TableClient tableClient, Row scanState) {
+    public static StructType getLogicalSchema(Engine engine, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
-        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
+        return engine.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**
      * Utility method to get the physical schema from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
+     * {@link Scan#getScanState(Engine)}.
      *
-     * @param tableClient instance of {@link TableClient} to use.
+     * @param engine instance of {@link Engine} to use.
      * @param scanState   Scan state {@link Row}
      * @return Physical schema to read from the data files.
      */
-    public static StructType getPhysicalSchema(TableClient tableClient, Row scanState) {
+    public static StructType getPhysicalSchema(Engine engine, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
-        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
+        return engine.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**
      * Utility method to get the physical data read schema from the scan state {@link Row}
-     * returned by {@link Scan#getScanState(TableClient)}. This schema is used to request data
+     * returned by {@link Scan#getScanState(Engine)}. This schema is used to request data
      * from the scan files for the query.
      *
-     * @param tableClient instance of {@link TableClient} to use.
+     * @param engine instance of {@link Engine} to use.
      * @param scanState   Scan state {@link Row}
      * @return Physical schema to read from the data files.
      */
-    public static StructType getPhysicalDataReadSchema(TableClient tableClient, Row scanState) {
+    public static StructType getPhysicalDataReadSchema(Engine engine, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("physicalDataReadSchemaString"));
-        return tableClient.getJsonHandler().deserializeStructType(serializedSchema);
+        return engine.getJsonHandler().deserializeStructType(serializedSchema);
     }
 
     /**
      * Get the list of partition column names from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
+     * {@link Scan#getScanState(Engine)}.
      *
      * @param scanState Scan state {@link Row}
      * @return List of partition column names according to the scan state.
@@ -129,7 +129,7 @@ public class ScanStateRow extends GenericRow {
 
     /**
      * Get the column mapping mode from the scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}.
+     * {@link Scan#getScanState(Engine)}.
      */
     public static String getColumnMappingMode(Row scanState) {
         Map<String, String> configuration = VectorUtils.toJavaMap(
@@ -139,7 +139,7 @@ public class ScanStateRow extends GenericRow {
 
     /**
      * Get the table root from scan state {@link Row} returned by
-     * {@link Scan#getScanState(TableClient)}
+     * {@link Scan#getScanState(Engine)}
      *
      * @param scanState Scan state {@link Row}
      * @return Fully qualified path to the location of the table.

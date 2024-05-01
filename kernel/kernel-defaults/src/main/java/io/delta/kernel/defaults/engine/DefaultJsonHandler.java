@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.client;
+package io.delta.kernel.defaults.engine;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -26,7 +26,7 @@ import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 
-import io.delta.kernel.client.JsonHandler;
+import io.delta.kernel.engine.JsonHandler;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;

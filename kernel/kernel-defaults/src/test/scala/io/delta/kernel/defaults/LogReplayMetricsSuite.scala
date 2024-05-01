@@ -18,9 +18,9 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import io.delta.kernel.Table
-import io.delta.kernel.client.{ExpressionHandler, FileSystemClient, TableClient}
+import io.delta.kernel.engine.{ExpressionHandler, FileSystemClient, Engine}
 import io.delta.kernel.data.ColumnarBatch
-import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
+import io.delta.kernel.defaults.engine.{DefaultJsonHandler, DefaultParquetHandler, DefaultEngine}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
@@ -47,8 +47,8 @@ class LogReplayMetricsSuite extends QueryTest
   // Test Helper Methods //
   /////////////////////////
 
-  private def withTempDirAndTableClient(f: (File, MetricsTableClient) => Unit): Unit = {
-    val tableClient = new MetricsTableClient(new Configuration() {
+  private def withTempDirAndTableClient(f: (File, MetricsEngine) => Unit): Unit = {
+    val tableClient = new MetricsEngine(new Configuration() {
       {
         // Set the batch sizes to small so that we get to test the multiple batch scenarios.
         set("delta.kernel.default.parquet.reader.batch-size", "2");
@@ -59,7 +59,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   private def loadPandMCheckMetrics(
-      tableClient: MetricsTableClient,
+      tableClient: MetricsEngine,
       table: Table,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
@@ -75,7 +75,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   private def loadScanFilesCheckMetrics(
-      tableClient: MetricsTableClient,
+      tableClient: MetricsEngine,
       table: Table,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
@@ -94,7 +94,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   def assertMetrics(
-      tableClient: MetricsTableClient,
+      tableClient: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
       expParquetReadSetSizes: Seq[Long]): Unit = {
@@ -301,8 +301,8 @@ class LogReplayMetricsSuite extends QueryTest
 ////////////////////
 
 /** A table client that records the Delta commit (.json) and checkpoint (.parquet) files read */
-class MetricsTableClient(config: Configuration) extends TableClient {
-  private val impl = DefaultTableClient.create(config)
+class MetricsEngine(config: Configuration) extends Engine {
+  private val impl = DefaultEngine.create(config)
   private val jsonHandler = new MetricsJsonHandler(config)
   private val parquetHandler = new MetricsParquetHandler(config)
 

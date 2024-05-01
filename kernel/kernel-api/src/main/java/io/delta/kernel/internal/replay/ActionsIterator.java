@@ -21,7 +21,7 @@ import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.expressions.Predicate;
@@ -48,7 +48,7 @@ import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
  * Users must pass in a `readSchema` to select which actions and sub-fields they want to consume.
  */
 class ActionsIterator implements CloseableIterator<ActionWrapper> {
-    private final TableClient tableClient;
+    private final Engine engine;
 
     private final Optional<Predicate> checkpointPredicate;
 
@@ -76,11 +76,11 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     private boolean closed;
 
     ActionsIterator(
-            TableClient tableClient,
+            Engine engine,
             List<FileStatus> files,
             StructType readSchema,
             Optional<Predicate> checkpointPredicate) {
-        this.tableClient = tableClient;
+        this.engine = engine;
         this.checkpointPredicate = checkpointPredicate;
         this.filesList = new LinkedList<>();
         this.filesList.addAll(
@@ -188,12 +188,12 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
         final CloseableIterator<ColumnarBatch> topLevelIter;
         if (fileName.endsWith(".parquet")) {
-            topLevelIter = tableClient.getParquetHandler().readParquetFiles(
+            topLevelIter = engine.getParquetHandler().readParquetFiles(
                     singletonCloseableIterator(file),
                     modifiedReadSchema,
                     checkpointPredicate);
         } else if (fileName.endsWith(".json")) {
-            topLevelIter = tableClient.getJsonHandler().readJsonFiles(
+            topLevelIter = engine.getJsonHandler().readJsonFiles(
                     singletonCloseableIterator(file),
                     modifiedReadSchema,
                     checkpointPredicate);
@@ -279,7 +279,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     // on (faster metadata & protocol loading in subsequent runs by remembering
                     // the version of the last version where the metadata and protocol are found).
                     final CloseableIterator<ColumnarBatch> dataIter =
-                            tableClient.getJsonHandler().readJsonFiles(
+                            engine.getJsonHandler().readJsonFiles(
                                     singletonCloseableIterator(nextFile),
                                     readSchema,
                                     Optional.empty());
@@ -303,7 +303,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     // optimizations like reading multiple files in parallel.
                     CloseableIterator<FileStatus> checkpointFiles =
                             retrieveRemainingCheckpointFiles(nextLogFile);
-                    CloseableIterator<ColumnarBatch> dataIter = tableClient.getParquetHandler()
+                    CloseableIterator<ColumnarBatch> dataIter = engine.getParquetHandler()
                             .readParquetFiles(checkpointFiles, readSchema, checkpointPredicate);
 
                     long version = checkpointVersion(nextFilePath);

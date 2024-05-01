@@ -22,7 +22,7 @@ import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.StructField;
@@ -93,8 +93,8 @@ public class ScanImpl implements Scan {
      * @return data in {@link ColumnarBatch} batch format. Each row correspond to one survived file.
      */
     @Override
-    public CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient) {
-        return getScanFiles(tableClient, false);
+    public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
+        return getScanFiles(engine, false);
     }
 
     /**
@@ -106,12 +106,12 @@ public class ScanImpl implements Scan {
      * When {@code includeStats=false} the JSON file statistics may or may not be present in the
      * returned columnar batches.
      *
-     * @param tableClient the {@link TableClient} instance to use
+     * @param engine the {@link Engine} instance to use
      * @param includeStats whether to read and include the JSON statistics
      * @return the surviving scan files as {@link FilteredColumnarBatch}s
      */
     public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-            TableClient tableClient, boolean includeStats) {
+        Engine engine, boolean includeStats) {
         if (accessedScanFiles) {
             throw new IllegalStateException("Scan files are already fetched from this instance");
         }
@@ -134,12 +134,12 @@ public class ScanImpl implements Scan {
                                         partitionColToStructFieldMap.get())));
 
         // Apply partition pruning
-        scanFileIter = applyPartitionPruning(tableClient, scanFileIter);
+        scanFileIter = applyPartitionPruning(engine, scanFileIter);
 
         // Apply data skipping
         if (hasDataSkippingFilter) {
             // there was a usable data skipping filter --> apply data skipping
-            scanFileIter = applyDataSkipping(tableClient, scanFileIter, dataSkippingFilter.get());
+            scanFileIter = applyDataSkipping(engine, scanFileIter, dataSkippingFilter.get());
         }
 
         // TODO when !includeStats drop the stats column if present before returning
@@ -147,7 +147,7 @@ public class ScanImpl implements Scan {
     }
 
     @Override
-    public Row getScanState(TableClient tableClient) {
+    public Row getScanState(Engine engine) {
         // Physical equivalent of the logical read schema.
         StructType physicalReadSchema = ColumnMapping.convertToPhysicalSchema(
             readSchema,
@@ -207,7 +207,7 @@ public class ScanImpl implements Scan {
     }
 
     private CloseableIterator<FilteredColumnarBatch> applyPartitionPruning(
-        TableClient tableClient,
+        Engine engine,
         CloseableIterator<FilteredColumnarBatch> scanFileIter) {
         Optional<Predicate> partitionPredicate = getPartitionsFilters();
         if (!partitionPredicate.isPresent()) {
@@ -232,7 +232,7 @@ public class ScanImpl implements Scan {
                 FilteredColumnarBatch next = scanFileIter.next();
                 if (predicateEvaluator == null) {
                     predicateEvaluator =
-                        tableClient.getExpressionHandler().getPredicateEvaluator(
+                        engine.getExpressionHandler().getPredicateEvaluator(
                             next.getData().getSchema(),
                             predicateOnScanFileBatch);
                 }
@@ -258,7 +258,7 @@ public class ScanImpl implements Scan {
     }
 
     private CloseableIterator<FilteredColumnarBatch> applyDataSkipping(
-            TableClient tableClient,
+            Engine engine,
             CloseableIterator<FilteredColumnarBatch> scanFileIter,
             DataSkippingPredicate dataSkippingFilter) {
         // Get the stats schema
@@ -280,15 +280,14 @@ public class ScanImpl implements Scan {
                 Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
-        PredicateEvaluator predicateEvaluator = tableClient
+        PredicateEvaluator predicateEvaluator = engine
             .getExpressionHandler()
             .getPredicateEvaluator(prunedStatsSchema, filterToEval);
 
         return scanFileIter.map(filteredScanFileBatch -> {
 
             ColumnVector newSelectionVector = predicateEvaluator.eval(
-                DataSkippingUtils.parseJsonStats(
-                    tableClient,
+                DataSkippingUtils.parseJsonStats(engine,
                     filteredScanFileBatch,
                     prunedStatsSchema
                 ),

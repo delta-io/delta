@@ -16,21 +16,22 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.client.TableClient
-import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.{CheckpointAlreadyExistsException, Table, TableNotFoundException}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
-
 import java.io.File
+
+import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.engine.Engine
 
 /**
  * Test suite for `io.delta.kernel.Table.checkpoint(TableClient, version)`
@@ -379,7 +380,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  def kernelCheckpoint(tc: TableClient, tablePath: String, checkpointVersion: Long): Unit = {
+  def kernelCheckpoint(tc: Engine, tablePath: String, checkpointVersion: Long): Unit = {
     Table.forPath(tc, tablePath).checkpoint(tc, checkpointVersion)
   }
 
@@ -428,8 +429,8 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
       s"Cannot time travel Delta table to version ${beforeVersion - 1}"))
   }
 
-  def withTempDirAndTableClient(f: (String, TableClient) => Unit): Unit = {
-    val tableClient = DefaultTableClient.create(new Configuration() {
+  def withTempDirAndTableClient(f: (String, Engine) => Unit): Unit = {
+    val tableClient = DefaultEngine.create(new Configuration() {
       {
         // Set the batch sizes to small so that we get to test the multiple batch scenarios.
         set("delta.kernel.default.parquet.reader.batch-size", "200");

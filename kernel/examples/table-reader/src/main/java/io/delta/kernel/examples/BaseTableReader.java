@@ -37,14 +37,14 @@ import org.apache.commons.cli.ParseException;
 import org.apache.hadoop.conf.Configuration;
 
 import io.delta.kernel.TableNotFoundException;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.TableClient;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 
-import io.delta.kernel.defaults.client.DefaultTableClient;
+import io.delta.kernel.defaults.engine.DefaultTableClient;
 
 /**
  * Base class for reading Delta Lake tables using the Delta Kernel APIs.

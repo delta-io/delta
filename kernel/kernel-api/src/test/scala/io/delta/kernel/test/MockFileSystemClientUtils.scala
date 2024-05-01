@@ -17,7 +17,7 @@ package io.delta.kernel.test
 
 import java.util.UUID
 
-import io.delta.kernel.client._
+import io.delta.kernel.engine._
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -94,13 +94,13 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
   }
 
   /**
-   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
    */
   def createMockFSListFromTableClient(
       contents: Seq[FileStatus],
       parquetHandler: ParquetHandler,
-      jsonHandler: JsonHandler): TableClient = {
+      jsonHandler: JsonHandler): Engine = {
     mockTableClient(fileSystemClient =
       new MockListFromFileSystemClient(listFromProvider(contents)),
       parquetHandler = parquetHandler,
@@ -108,19 +108,19 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
   }
 
   /**
-   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
    */
-  def createMockFSListFromTableClient(contents: Seq[FileStatus]): TableClient = {
+  def createMockFSListFromTableClient(contents: Seq[FileStatus]): Engine = {
     mockTableClient(fileSystemClient =
       new MockListFromFileSystemClient(listFromProvider(contents)))
   }
 
   /**
-   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * [[MockListFromFileSystemClient]].
    */
-  def createMockFSListFromTableClient(listFromProvider: String => Seq[FileStatus]): TableClient = {
+  def createMockFSListFromTableClient(listFromProvider: String => Seq[FileStatus]): Engine = {
     mockTableClient(fileSystemClient = new MockListFromFileSystemClient(listFromProvider))
   }
 }

@@ -19,7 +19,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.*;
 import io.delta.kernel.types.*;
 
@@ -32,14 +32,14 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 public class Metadata {
 
     public static Metadata fromColumnVector(
-            ColumnVector vector, int rowId, TableClient tableClient) {
+            ColumnVector vector, int rowId, Engine engine) {
         if (vector.isNullAt(rowId)) {
             return null;
         }
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = tableClient.getJsonHandler().deserializeStructType(schemaJson);
+        StructType schema = engine.getJsonHandler().deserializeStructType(schemaJson);
 
         return new Metadata(
             requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),

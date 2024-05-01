@@ -18,16 +18,16 @@ package io.delta.kernel.internal;
 import java.io.IOException;
 
 import io.delta.kernel.*;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 
 public class TableImpl implements Table {
-    public static Table forPath(TableClient tableClient, String path) {
+    public static Table forPath(Engine engine, String path) {
         String resolvedPath;
         try {
-            resolvedPath = tableClient.getFileSystemClient().resolvePath(path);
+            resolvedPath = engine.getFileSystemClient().resolvePath(path);
         } catch (IOException io) {
             throw new RuntimeException(io);
         }
@@ -45,30 +45,30 @@ public class TableImpl implements Table {
     }
 
     @Override
-    public String getPath(TableClient tableClient) {
+    public String getPath(Engine engine) {
         return tablePath;
     }
 
     @Override
-    public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
-        return snapshotManager.buildLatestSnapshot(tableClient);
+    public Snapshot getLatestSnapshot(Engine engine) throws TableNotFoundException {
+        return snapshotManager.buildLatestSnapshot(engine);
     }
 
     @Override
-    public Snapshot getSnapshotAsOfVersion(TableClient tableClient, long versionId)
+    public Snapshot getSnapshotAsOfVersion(Engine engine, long versionId)
         throws TableNotFoundException {
-        return snapshotManager.getSnapshotAt(tableClient, versionId);
+        return snapshotManager.getSnapshotAt(engine, versionId);
     }
 
     @Override
-    public Snapshot getSnapshotAsOfTimestamp(TableClient tableClient, long millisSinceEpochUTC)
+    public Snapshot getSnapshotAsOfTimestamp(Engine engine, long millisSinceEpochUTC)
         throws TableNotFoundException {
-        return snapshotManager.getSnapshotForTimestamp(tableClient, millisSinceEpochUTC);
+        return snapshotManager.getSnapshotForTimestamp(engine, millisSinceEpochUTC);
     }
 
     @Override
-    public void checkpoint(TableClient tableClient, long version)
+    public void checkpoint(Engine engine, long version)
             throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
-        snapshotManager.checkpoint(tableClient, version);
+        snapshotManager.checkpoint(engine, version);
     }
 }

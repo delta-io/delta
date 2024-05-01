@@ -19,7 +19,7 @@ package io.delta.kernel.internal.replay;
 import java.io.IOException;
 import java.util.Optional;
 
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -115,21 +115,21 @@ public class LogReplay {
 
     private final Path dataPath;
     private final LogSegment logSegment;
-    private final TableClient tableClient;
+    private final Engine engine;
     private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
             Path logPath,
             Path dataPath,
             long snapshotVersion,
-            TableClient tableClient,
+            Engine engine,
             LogSegment logSegment,
             Optional<SnapshotHint> snapshotHint) {
         assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.tableClient = tableClient;
+        this.engine = engine;
         this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint, snapshotVersion);
     }
 
@@ -168,12 +168,11 @@ public class LogReplay {
             boolean shouldReadStats,
             Optional<Predicate> checkpointPredicate) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
-                new ActionsIterator(
-                        tableClient,
+                new ActionsIterator(engine,
                         logSegment.allLogFilesReversed(),
                         getAddRemoveReadSchema(shouldReadStats),
                         checkpointPredicate);
-        return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
+        return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath);
     }
 
     ////////////////////
@@ -204,8 +203,7 @@ public class LogReplay {
         Metadata metadata = null;
 
         try (CloseableIterator<ActionWrapper> reverseIter =
-                     new ActionsIterator(
-                             tableClient,
+                     new ActionsIterator(engine,
                              logSegment.allLogFilesReversed(),
                              PROTOCOL_METADATA_READ_SCHEMA,
                              Optional.empty())) {
@@ -245,7 +243,7 @@ public class LogReplay {
 
                     for (int i = 0; i < metadataVector.getSize(); i++) {
                         if (!metadataVector.isNullAt(i)) {
-                            metadata = Metadata.fromColumnVector(metadataVector, i, tableClient);
+                            metadata = Metadata.fromColumnVector(metadataVector, i, engine);
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
@@ -288,8 +286,7 @@ public class LogReplay {
 
     private Optional<Long> loadLatestTransactionVersion(String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
-                     new ActionsIterator(
-                             tableClient,
+                     new ActionsIterator(engine,
                              logSegment.allLogFilesReversed(),
                              SET_TRANSACTION_READ_SCHEMA,
                              Optional.empty())) {
