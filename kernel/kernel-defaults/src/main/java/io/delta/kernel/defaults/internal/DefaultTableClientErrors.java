@@ -15,14 +15,27 @@
  */
 package io.delta.kernel.defaults.internal;
 
+import io.delta.kernel.expressions.Expression;
 import static java.lang.String.format;
 
 public class DefaultTableClientErrors {
 
-    // TODO update to be table client exception with future exception framework
-    //  (see delta-io/delta#2231)
     public static IllegalArgumentException canNotInstantiateLogStore(String logStoreClassName) {
         return new IllegalArgumentException(
                 format("Can not instantiate `LogStore` class: %s", logStoreClassName));
+    }
+
+    /**
+     * Exception for when the default expression evaluator cannot evaluate an expression.
+     * @param expression the unsupported expression
+     * @param reason reason for why the expression is not supported/cannot be evaluated
+     */
+    public static UnsupportedOperationException unsupportedExpressionException(
+            Expression expression, String reason) {
+        String message = format(
+            "Default expression evaluator cannot evaluate the expression: %s. Reason: %s",
+            expression,
+            reason);
+        return new UnsupportedOperationException(message);
     }
 }

@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import java.util.Arrays;
-import java.util.Optional;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
@@ -30,7 +29,7 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.unsupportedExpressionException;
+import static io.delta.kernel.defaults.internal.DefaultTableClientErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**

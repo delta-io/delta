@@ -38,7 +38,7 @@ import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUti
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.unsupportedExpressionException;
+import static io.delta.kernel.defaults.internal.DefaultTableClientErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
