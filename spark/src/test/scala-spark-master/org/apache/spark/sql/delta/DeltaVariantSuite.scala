@@ -427,7 +427,6 @@ class DeltaVariantSuite
       // Default DEFAULT value is null.
       assert(nullCount == 1)
 
-      // Is the optimizer run here to replace the parse_json with the correct thing?
       sql("ALTER TABLE tbl ALTER COLUMN v SET DEFAULT (parse_json('{\"k\": \"v\"}'))")
       sql("INSERT INTO tbl VALUES (DEFAULT)")
       val valCount = spark.sql("SELECT * FROM tbl WHERE v:k:string = 'v'").count()
