@@ -259,7 +259,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           validateSchema(schema, true /* isColumnMappingEnabled */)
         }
 
-        assert(e.getMessage.contains("invalid character"))
+        assert(e.getMessage.contains("contains one of the unsupported"))
       }
     }
 

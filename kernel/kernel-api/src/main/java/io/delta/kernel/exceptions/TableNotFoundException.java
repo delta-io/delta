@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.exceptions;
 
 import io.delta.kernel.annotation.Evolving;
@@ -32,8 +31,11 @@ public class TableNotFoundException extends KernelException {
         this(tablePath, null);
     }
 
-    public TableNotFoundException(String tablePath, Throwable cause) {
-        super(String.format("Delta table at path `%s` is not found", tablePath), cause);
+    public TableNotFoundException(String tablePath, String context) {
+        super(String.format(
+                "Delta table at path `%s` is not found.%s",
+                tablePath,
+                context == null ? "" : " Context: " + context));
         this.tablePath = tablePath;
     }
 
