@@ -45,8 +45,11 @@ jobs:
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta relase version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.
+        # We publish storage explicitly so that it is available for the Scala 2.13 build. As a java project
+        # it is typically only released when publishing for Scala 2.12.
         run: |
           build/sbt clean
+          build/sbt storage/publishM2
           build/sbt "++ $SCALA_VERSION publishM2"
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff
