@@ -46,7 +46,8 @@ abstract class MergeIntoSuiteBase
     with DeltaTestUtilsForTempViews
     with MergeIntoTestUtils
     with MergeIntoSchemaEvolutionMixin
-    with MergeIntoSchemaEvolutionAllTests {
+    with MergeIntoSchemaEvolutionAllTests
+    with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
@@ -699,6 +700,34 @@ abstract class MergeIntoSuiteBase
         // The target table should have the same number of rows as the source after the merge
         assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
       }
+    }
+  }
+
+  testSparkMasterOnly("Variant type") {
+    withTable("source") {
+      // Insert ("0", 0), ("1", 1)
+      val dstDf = sql(
+        """SELECT parse_json(cast(id as string)) v, id i
+        FROM range(2)""")
+      append(dstDf)
+      // Insert ("1", 2), ("2", 3)
+      // The first row will update, the second will insert.
+      sql(
+        s"""SELECT parse_json(cast(id as string)) v, id + 1 i
+              FROM range(1, 3)""").createOrReplaceTempView("source")
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trgNew",
+        source = "source src",
+        condition = "to_json(src.v) = to_json(trgNew.v)",
+        update = "i = 10 + src.i + trgNew.i, v = trgNew.v",
+        insert = """(i, v) VALUES (i + 100, parse_json('"inserted"'))""")
+
+      checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+        Row(0, "0") :: // No change
+          Row(13, "1") :: // Update
+          Row(103, "\"inserted\"") :: // Insert
+          Nil)
     }
   }
 
