@@ -199,8 +199,8 @@ class TrackingCommitOwnerClient(delegatingCommitOwnerClient: InMemoryCommitOwner
   override def registerTable(
       logPath: Path,
       currentVersion: Long,
-      currentMetadata: Metadata,
-      currentProtocol: Protocol): Map[String, String] = recordOperation("registerTable") {
+      currentMetadata: AbstractMetadata,
+      currentProtocol: AbstractProtocol): Map[String, String] = recordOperation("registerTable") {
     delegatingCommitOwnerClient.registerTable(
       logPath, currentVersion, currentMetadata, currentProtocol)
   }

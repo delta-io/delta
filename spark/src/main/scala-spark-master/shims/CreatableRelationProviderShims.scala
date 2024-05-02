@@ -14,19 +14,10 @@
  * limitations under the License.
  */
 
-name := "benchmarks"
-scalaVersion := "2.12.18"
+package org.apache.spark.sql.sources
 
-lazy val root = (project in file("."))
-  .settings(
-    name := "benchmarks",
-    libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.5.0" % "provided",
-    libraryDependencies += "com.github.scopt" %% "scopt" % "4.0.1",
-    libraryDependencies += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.13.1",
-
-    assemblyMergeStrategy in assembly := {
-      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
-      case x => MergeStrategy.first
-    }
-  )
-  
+/**
+ * Spark 4.0 added additional methods to `CreatableRelationProvider`, such as `supportsDataType`,
+ * that can be overridden by child classes and need to be shimmed when compiling with Spark 3.5.
+ */
+trait CreatableRelationProviderShim extends CreatableRelationProvider

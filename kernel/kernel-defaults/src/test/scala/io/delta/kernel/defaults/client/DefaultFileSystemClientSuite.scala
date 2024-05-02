@@ -20,11 +20,13 @@ import java.io.FileNotFoundException
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.defaults.utils.TestUtils
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
 
   val fsClient = defaultTableClient.getFileSystemClient
+  val fs = FileSystem.get(configuration)
 
   test("list from file") {
     val basePath = fsClient.resolvePath(getTestResourceFilePath("json-files"))
@@ -61,5 +63,21 @@ class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
     val inputPath = "/non-existentfileTable/01.json"
     val resolvedPath = fsClient.resolvePath(inputPath)
     assert("file:" + inputPath === resolvedPath)
+  }
+
+  test("mkdirs") {
+    withTempDir { tempdir =>
+      val dir1 = tempdir + "/test"
+      assert(fsClient.mkdirs(dir1))
+      assert(fs.exists(new Path(dir1)))
+
+      val dir2 = tempdir + "/test1/test2" // nested
+      assert(fsClient.mkdirs(dir2))
+      assert(fs.exists(new Path(dir2)))
+
+      val dir3 = "/non-existentfileTable/sfdsd"
+      assert(!fsClient.mkdirs(dir3))
+      assert(!fs.exists(new Path(dir3)))
+    }
   }
 }
