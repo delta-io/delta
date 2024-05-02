@@ -341,6 +341,18 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test"
     ),
+    // Generate the package object to provide the version information in runtime.
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "kernel" / "Meta.java"
+      IO.write(file,
+        s"""package io.delta.kernel;
+           |
+           |final public class Meta {
+           |  public static final String KERNEL_VERSION = "${version.value}";
+           |}
+           |""".stripMargin)
+      Seq(file)
+    },
     javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
