@@ -1309,8 +1309,8 @@ def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
   Seq(
     checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
     checkstyleSeverityLevel := CheckstyleSeverityLevel.Error,
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
+    (Compile / compile) := ((Compile / compile) dependsOn (Compile / checkstyle)).value,
+    (Test / test) := ((Test / test) dependsOn (Test / checkstyle)).value
   )
 }
 
