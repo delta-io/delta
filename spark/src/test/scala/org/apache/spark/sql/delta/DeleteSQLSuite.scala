@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.Row
@@ -106,7 +105,6 @@ class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, delete = true)
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
   override def excluded: Seq[String] = super.excluded ++
@@ -128,12 +126,5 @@ class DeleteSQLWithDeletionVectorsSuite extends DeleteSQLSuite
       text = "SELECT key, value, 1 FROM tab",
       expectResult = Row(0, 3, 1) :: Nil)
   }
-}
 
-class DeleteSQLWithDeletionVectorsAndPredicatePushdownSuite
-    extends DeleteSQLWithDeletionVectorsSuite {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
-  }
 }

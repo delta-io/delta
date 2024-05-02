@@ -23,7 +23,6 @@ import scala.collection.generic.Sizing
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
-import org.apache.spark.sql.delta.DeltaConfig
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
@@ -42,7 +41,6 @@ import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
@@ -62,7 +60,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       target: LogicalPlan,
       fileIndex: TahoeFileIndex): DataFrame = {
-    Dataset.ofRows(spark, replaceFileIndex(spark, target, fileIndex))
+    Dataset.ofRows(spark, replaceFileIndex(target, fileIndex))
   }
 
   /**
@@ -73,23 +71,13 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
    * the original plan, e.g., resolved references, remain unchanged.
    *
    * In addition we also request a metadata column and a row index column from the Scan to help
-   * generate the Deletion Vectors. When predicate pushdown is enabled, we only request the
-   * metadata column. This is because we can utilize _metadata.row_index instead of generating a
-   * custom one.
+   * generate the Deletion Vectors.
    *
-   * @param spark the active spark session
    * @param target the logical plan in which we replace the file index
    * @param fileIndex the new file index
    */
-  private def replaceFileIndex(
-      spark: SparkSession,
-      target: LogicalPlan,
-      fileIndex: TahoeFileIndex): LogicalPlan = {
-    val useMetadataRowIndex =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
-    // This is only used when predicate pushdown is disabled.
-    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)()
-
+  private def replaceFileIndex(target: LogicalPlan, fileIndex: TahoeFileIndex): LogicalPlan = {
+    val rowIndexCol = AttributeReference(ROW_INDEX_COLUMN_NAME, ROW_INDEX_STRUCT_FIELD.dataType)();
     var fileMetadataCol: AttributeReference = null
 
     val newTarget = target.transformUp {
@@ -97,30 +85,23 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
         fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
-        if (useMetadataRowIndex) {
-          l.copy(
-            relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession),
-            output = l.output :+ fileMetadataCol)
-        } else {
-          val newDataSchema =
-            StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FIELD)
-          val finalOutput = l.output ++ Seq(rowIndexCol, fileMetadataCol)
-          // Disable splitting and filter pushdown in order to generate the row-indexes.
-          val newFormat = format.copy(optimizationsEnabled = false)
-          val newBaseRelation = hfsr.copy(
-            location = fileIndex,
-            dataSchema = newDataSchema,
-            fileFormat = newFormat)(hfsr.sparkSession)
+        val newDataSchema =
+          StructType(hfsr.dataSchema).add(ROW_INDEX_STRUCT_FIELD)
+        val finalOutput = l.output ++ Seq(rowIndexCol, fileMetadataCol)
+        // Disable splitting and filter pushdown in order to generate the row-indexes
+        val newFormat = format.copy(isSplittable = false, disablePushDowns = true)
+        val newBaseRelation = hfsr.copy(
+          location = fileIndex,
+          dataSchema = newDataSchema,
+          fileFormat = newFormat)(hfsr.sparkSession)
 
-          l.copy(relation = newBaseRelation, output = finalOutput)
-        }
+        l.copy(relation = newBaseRelation, output = finalOutput)
       case p @ Project(projectList, _) =>
         if (fileMetadataCol == null) {
           throw new IllegalStateException("File metadata column is not yet created.")
         }
-        val rowIndexColOpt = if (useMetadataRowIndex) None else Some(rowIndexCol)
-        val additionalColumns = Seq(fileMetadataCol) ++ rowIndexColOpt
-        p.copy(projectList = projectList ++ additionalColumns)
+        val newProjectList = projectList ++ Seq(rowIndexCol, fileMetadataCol)
+        p.copy(projectList = newProjectList)
     }
     newTarget
   }
@@ -387,14 +368,8 @@ object DeletionVectorBitmapGenerator {
       condition: Expression,
       fileNameColumnOpt: Option[Column] = None,
       rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
-    val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
-    val useMetadataRowIndex = sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
     val fileNameColumn = fileNameColumnOpt.getOrElse(col(s"${METADATA_NAME}.${FILE_PATH}"))
-    val rowIndexColumn = if (useMetadataRowIndex) {
-      rowIndexColumnOpt.getOrElse(col(s"${METADATA_NAME}.${ParquetFileFormat.ROW_INDEX}"))
-    } else {
-      rowIndexColumnOpt.getOrElse(col(ROW_INDEX_COLUMN_NAME))
-    }
+    val rowIndexColumn = rowIndexColumnOpt.getOrElse(col(ROW_INDEX_COLUMN_NAME))
     val matchedRowsDf = targetDf
       .withColumn(FILE_NAME_COL, fileNameColumn)
       // Filter after getting input file name as the filter might introduce a join and we

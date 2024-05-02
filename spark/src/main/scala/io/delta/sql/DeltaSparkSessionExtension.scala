@@ -136,9 +136,6 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     // Spark 3.5 as later versions apply constant folding after pre-CBO rules.
     extensions.injectPreCBORule { _ => ConstantFolding }
 
-    // Add skip row column and filter.
-    extensions.injectPlannerStrategy(PreprocessTableWithDVsStrategy)
-
     // Tries to load PrepareDeltaSharingScan class with class reflection, when delta-sharing-spark
     // 3.1+ package is installed, this will be loaded and delta sharing batch queries with
     // DeltaSharingFileIndex will be handled by the rule.
