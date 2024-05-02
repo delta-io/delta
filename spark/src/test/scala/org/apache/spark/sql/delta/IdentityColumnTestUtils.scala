@@ -64,5 +64,60 @@ trait IdentityColumnTestUtils
       tblProperties = tblProperties
     )
   }
+
+  /**
+   * Creates and manages a simple identity column table with one other column "value" of type int
+   */
+  protected def withIdentityColumnTable(
+     generatedAsIdentityType: GeneratedAsIdentityType,
+     tableName: String)(f: => Unit): Unit = {
+    withTable(tableName) {
+      createTableWithIdColAndIntValueCol(tableName, generatedAsIdentityType, None, None)
+      f
+    }
+  }
+
+  /**
+   * Helper function to validate values of IDENTITY column `id` in table `tableName`. Returns the
+   * new high water mark. We use minValue and maxValue to filter column `value` to get the set of
+   * values we are checking in this batch.
+   */
+  protected def validateIdentity(
+      tableName: String,
+      expectedRowCount: Long,
+      start: Long,
+      step: Long,
+      minValue: Long,
+      maxValue: Long,
+      oldHighWaterMark: Long): Long = {
+    // Check row count.
+    checkAnswer(
+      sql(s"SELECT COUNT(*) FROM $tableName"),
+      Row(expectedRowCount)
+    )
+    // Check values are unique.
+    checkAnswer(
+      sql(s"SELECT COUNT(DISTINCT id) FROM $tableName"),
+      Row(expectedRowCount)
+    )
+    // Check values follow start and step configuration.
+    checkAnswer(
+      sql(s"SELECT COUNT(*) FROM $tableName WHERE (id - $start) % $step != 0"),
+      Row(0)
+    )
+    // Check values generated in this batch are after previous high water mark.
+    checkAnswer(
+      sql(
+        s"""
+           |SELECT COUNT(*) FROM $tableName
+           |  WHERE (value BETWEEN $minValue and $maxValue)
+           |    AND ((id - $oldHighWaterMark) / $step < 0)
+           |""".stripMargin),
+      Row(0)
+    )
+    // Update high water mark.
+    val func = if (step > 0) "MAX" else "MIN"
+    sql(s"SELECT $func(id) FROM $tableName").collect().head.getLong(0)
+  }
 }
 

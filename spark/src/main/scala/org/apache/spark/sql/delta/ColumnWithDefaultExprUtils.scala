@@ -38,6 +38,10 @@ import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
 /**
  * Provide utilities to handle columns with default expressions.
+ * Currently we support three types of such columns:
+ * (1) GENERATED columns.
+ * (2) IDENTITY columns.
+ * (3) Columns with user-specified default value expression.
  */
 object ColumnWithDefaultExprUtils extends DeltaLogging {
   val USE_NULL_AS_DEFAULT_DELTA_OPTION = "__use_null_as_default"
@@ -60,6 +64,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
 
   // Return if `protocol` satisfies the requirement for IDENTITY columns.
   def satisfiesIdentityColumnProtocol(protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(IdentityColumnsTableFeature) ||
     protocol.minWriterVersion == 6 || protocol.writerFeatureNames.contains("identityColumns")
 
   // Return true if the column `col` has default expressions (and can thus be omitted from the
@@ -68,6 +73,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       protocol: Protocol,
       col: StructField,
       nullAsDefault: Boolean): Boolean = {
+    isIdentityColumn(col) ||
     col.metadata.contains(CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
     (col.nullable && nullAsDefault) ||
     GeneratedColumn.isGeneratedColumn(protocol, col)
@@ -84,6 +90,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       protocol: Protocol,
       metadata: Metadata,
       nullAsDefault: Boolean): Boolean = {
+    hasIdentityColumn(metadata.schema) ||
     metadata.schema.exists { f =>
       f.metadata.contains(CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
         (f.nullable && nullAsDefault)
@@ -102,7 +109,8 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
    * @param data The data to be written into the table.
    * @param nullAsDefault If true, use null literal as the default value for missing columns.
    * @return The data with potentially additional default expressions projected and constraints
-   *         from generated columns if any.
+   *         from generated columns if any. This includes IDENTITY column names for which we
+   *         should track the high water marks.
    */
   def addDefaultExprsOrReturnConstraints(
       deltaLog: DeltaLog,
@@ -114,6 +122,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     val topLevelOutputNames = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
     lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
     val constraints = mutable.ArrayBuffer[Constraint]()
+    // Column names for which we will track high water marks.
     val track = mutable.Set[String]()
     var selectExprs = schema.flatMap { f =>
       GeneratedColumn.getGenerationExpression(f) match {
@@ -128,6 +137,15 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
             Some(new Column(expr).alias(f.name))
           }
         case _ =>
+          if (isIdentityColumn(f)) {
+            if (topLevelOutputNames.contains(f.name)) {
+              Some(SchemaUtils.fieldToColumn(f))
+            } else {
+              // Track high water marks for generated IDENTITY values.
+              track += f.name
+              Some(IdentityColumn.createIdentityColumnGenerationExprAsColumn(f))
+            }
+          } else {
             if (topLevelOutputNames.contains(f.name) ||
                 !data.sparkSession.conf.get(DeltaSQLConf.GENERATED_COLUMN_ALLOW_NULLABLE)) {
               Some(SchemaUtils.fieldToColumn(f))
@@ -137,6 +155,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
               // The actual check for nullability on data is done in the DeltaInvariantCheckerExec
               getDefaultValueExprOrNullLit(f, nullAsDefault).map(new Column(_))
             }
+          }
       }
     }
     val cdcSelectExprs = CDCReader.CDC_COLUMNS_IN_DATA.flatMap { cdcColumnName =>
