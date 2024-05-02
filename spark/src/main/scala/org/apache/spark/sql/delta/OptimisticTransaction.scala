@@ -21,6 +21,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
@@ -238,7 +239,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Tracks the data that could have been seen by recording the partition
    * predicates by which files have been queried by this transaction.
    */
-  protected val readPredicates = new ArrayBuffer[DeltaTableReadPredicate]
+  protected val readPredicates =
+    new java.util.concurrent.ConcurrentLinkedQueue[DeltaTableReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
   protected val readFiles = new HashSet[AddFile]
@@ -884,10 +886,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
-    readPredicates += DeltaTableReadPredicate(
+    readPredicates.add(DeltaTableReadPredicate(
       partitionPredicates = partitionFilters,
       dataPredicates = dataFilters,
       shouldRewriteFilter = shouldRewriteFilter)
+    )
   }
 
   /**
@@ -1127,7 +1130,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
       isBlindAppend = {
-        val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
+        val dependsOnFiles = !readPredicates.isEmpty || readFiles.nonEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
         onlyAddFiles && !dependsOnFiles
@@ -1163,7 +1166,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
-        readPredicates = readPredicates.toSeq,
+        readPredicates = readPredicates.asScala.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
