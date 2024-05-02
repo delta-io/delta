@@ -1212,9 +1212,9 @@ lazy val flink = (project in file("connectors/flink"))
       IO.write(file,
         s"""package io.delta.flink.internal;
            |
-           |final public class Meta {
-           |  public static final String FLINK_VERSION = "${flinkVersion}";
-           |  public static final String CONNECTOR_VERSION = "${version.value}";
+           |public final class Meta {
+           |    public static final String FLINK_VERSION = "${flinkVersion}";
+           |    public static final String CONNECTOR_VERSION = "${version.value}";
            |}
            |""".stripMargin)
       Seq(file)
