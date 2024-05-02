@@ -79,15 +79,16 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
           clauses = insert("*"))
 
         assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-        checkAnswer(
-          readDeltaTable(tempPath).select("value").sort("value"),
-          testCase.expectedResult.select($"value".cast(testCase.toType)).sort("value"))
+        checkAnswerWithTolerance(
+          readDeltaTable(tempPath).select("value"),
+          testCase.expectedResult.select($"value".cast(testCase.toType)),
+          testCase.toType)
       }
     }
   }
 
   for {
-    testCase <- unsupportedTestCases
+    testCase <- unsupportedTestCases ++ alterTableOnlySupportedTestCases
   } {
     test(s"MERGE - unsupported automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
@@ -386,13 +387,14 @@ trait DeltaInsertTypeWideningSchemaEvolutionTeststs extends DeltaTypeWideningTes
         .insertInto(s"delta.`$tempPath`")
 
       assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-      checkAnswer(readDeltaTable(tempPath).select("value").sort("value"),
-        testCase.expectedResult.select($"value".cast(testCase.toType)).sort("value"))
+      checkAnswerWithTolerance(readDeltaTable(tempPath).select("value"),
+        testCase.expectedResult.select($"value".cast(testCase.toType)),
+        testCase.toType)
     }
   }
 
   for {
-    testCase <- unsupportedTestCases
+    testCase <- unsupportedTestCases ++ alterTableOnlySupportedTestCases
   } {
     test(s"INSERT - unsupported automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
@@ -475,6 +477,24 @@ trait DeltaInsertTypeWideningSchemaEvolutionTeststs extends DeltaTypeWideningTes
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }
 
+  test(s"INSERT - fail if type widening gets disabled by a concurrent transaction, int -> long") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+    val insert = createInsertPlan(Seq(1L).toDF("a"))
+    // Disabling type widening after analysis results in inserting data with a wider type into the
+    // table while type widening is actually disabled during execution. This fails here because
+    // `int` and `long` are not interchangeable in Parquet.
+    enableTypeWidening(tempPath, enabled = false)
+    checkError(
+      exception = intercept[DeltaAnalysisException] {
+        Dataset.ofRows(spark, insert).collect()
+      },
+      errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+      parameters = Map(
+        "currentField" -> "a",
+        "updateField" -> "a"
+      )
+    )
+  }
 
   /**
    * There are **many** different ways to run an insert:

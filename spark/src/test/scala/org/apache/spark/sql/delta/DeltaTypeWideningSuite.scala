@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
@@ -62,11 +62,14 @@ class DeltaTypeWideningSuite
  * Test mixin that enables type widening by default for all tests in the suite.
  */
 trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUtils {
+  self: QueryTest =>
+
   import testImplicits._
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
+      .set(TableFeatureProtocolUtils.defaultPropertyKey(TimestampNTZTableFeature), "supported")
       // Ensure we don't silently cast test inputs to null on overflow.
       .set(SQLConf.ANSI_ENABLED.key, "true")
   }
@@ -89,6 +92,19 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUti
 
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
       append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
+
+  // Float/Double partition values are serialized as string leading to loss of
+  // precision. Also checkAnswer treats -0f and 0f as different without tolerance.
+  def checkAnswerWithTolerance(df: DataFrame, expected: DataFrame, dataType: DataType): Unit = {
+    if (Seq(FloatType, DoubleType).contains(dataType)) {
+      checkAggregatesWithTol(
+        df.sort("value"),
+        expected.sort("value").collect(),
+        absTol = 0.001)
+    } else {
+      checkAnswer(df, expected)
+    }
+  }
 }
 
 /**
@@ -147,7 +163,62 @@ trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
       Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int])),
     SupportedTypeEvolutionTestCase(ShortType, IntegerType,
       Seq(1, -1, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short]),
-      Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]))
+      Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int])),
+    SupportedTypeEvolutionTestCase(ShortType, LongType,
+      Seq(1, -1, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short]),
+      Seq(4L, -4L, Long.MinValue, Long.MaxValue, null.asInstanceOf[Long])),
+    SupportedTypeEvolutionTestCase(IntegerType, LongType,
+      Seq(1, -1, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]),
+      Seq(4L, -4L, Long.MinValue, Long.MaxValue, null.asInstanceOf[Long])),
+    SupportedTypeEvolutionTestCase(FloatType, DoubleType,
+      Seq(1234.56789f, -0f, 0f, Float.NaN, Float.NegativeInfinity, Float.PositiveInfinity,
+        Float.MinPositiveValue, Float.MinValue, Float.MaxValue, null.asInstanceOf[Float]),
+      Seq(987654321.987654321d, -0d, 0d, Double.NaN, Double.NegativeInfinity,
+        Double.PositiveInfinity, Double.MinPositiveValue, Double.MinValue, Double.MaxValue,
+        null.asInstanceOf[Double])),
+    SupportedTypeEvolutionTestCase(DateType, TimestampNTZType,
+      Seq("2020-01-01", "2024-02-29", "1312-02-27"),
+      Seq("2020-03-17 15:23:15.123456", "2058-12-31 23:59:59.999", "0001-01-01 00:00:00")),
+    // Larger precision.
+    SupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+      DecimalType(Decimal.MAX_LONG_DIGITS, 2),
+      Seq(BigDecimal("1.23"), BigDecimal("10.34"), null.asInstanceOf[BigDecimal]),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"),
+        null.asInstanceOf[BigDecimal])),
+    // Larger precision and scale, same physical type.
+    SupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS - 1, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS, 3),
+      Seq(BigDecimal("1.23"), BigDecimal("10.34"), null.asInstanceOf[BigDecimal]),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 3) + ".99"),
+        null.asInstanceOf[BigDecimal])),
+    // Larger precision and scale, different physical types.
+    SupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
+      DecimalType(Decimal.MAX_LONG_DIGITS + 1, 3),
+      Seq(BigDecimal("1.23"), BigDecimal("10.34"), null.asInstanceOf[BigDecimal]),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"),
+        null.asInstanceOf[BigDecimal]))
+  )
+
+  // Type changes that are only supported in ALTER TABLE CHANGE COLUMN TYPE but are not considered
+  // for automatic type widening.
+  protected val alterTableOnlySupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
+    SupportedTypeEvolutionTestCase(IntegerType, DoubleType,
+      Seq(1, -1, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]),
+      Seq(987654321.987654321d, -0d, 0d, Double.NaN, Double.NegativeInfinity,
+        Double.PositiveInfinity, Double.MinPositiveValue, Double.MinValue, Double.MaxValue,
+        null.asInstanceOf[Double])),
+    SupportedTypeEvolutionTestCase(ByteType, DecimalType(10, 0),
+      Seq(1, -1, Byte.MinValue, Byte.MaxValue, null.asInstanceOf[Byte]),
+      Seq(BigDecimal("1.23"), BigDecimal("9" * 10), null.asInstanceOf[BigDecimal])),
+    SupportedTypeEvolutionTestCase(ShortType, DecimalType(10, 0),
+      Seq(1, -1, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short]),
+      Seq(BigDecimal("1.23"), BigDecimal("9" * 10), null.asInstanceOf[BigDecimal])),
+    SupportedTypeEvolutionTestCase(IntegerType, DecimalType(10, 0),
+      Seq(1, -1, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]),
+      Seq(BigDecimal("1.23"), BigDecimal("9" * 10), null.asInstanceOf[BigDecimal])),
+    SupportedTypeEvolutionTestCase(LongType, DecimalType(20, 0),
+      Seq(1L, -1L, Long.MinValue, Long.MaxValue, null.asInstanceOf[Int]),
+      Seq(BigDecimal("1.23"), BigDecimal("9" * 20), null.asInstanceOf[BigDecimal]))
   )
 
   /**
@@ -225,7 +296,7 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
   import testImplicits._
 
   for {
-    testCase <- supportedTestCases
+    testCase <- supportedTestCases ++ alterTableOnlySupportedTestCases
     partitioned <- BOOLEAN_DOMAIN
   } {
     test(s"type widening ${testCase.fromType.sql} -> ${testCase.toType.sql}, " +
@@ -239,16 +310,19 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
 
       writeData(testCase.initialValuesDF)
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}")
+
       withAllParquetReaders {
         assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-        checkAnswer(readDeltaTable(tempPath).select("value").sort("value"),
-          testCase.initialValuesDF.select($"value".cast(testCase.toType)).sort("value"))
+        checkAnswerWithTolerance(readDeltaTable(tempPath).select("value"),
+          testCase.initialValuesDF.select($"value".cast(testCase.toType)),
+          testCase.toType)
       }
       writeData(testCase.additionalValuesDF)
       withAllParquetReaders {
-        checkAnswer(
-          readDeltaTable(tempPath).select("value").sort("value"),
-          testCase.expectedResult.sort("value"))
+        checkAnswerWithTolerance(
+          readDeltaTable(tempPath).select("value"),
+          testCase.expectedResult.sort("value"),
+          testCase.toType)
       }
     }
   }
@@ -265,8 +339,6 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
       } else {
         append(testCase.initialValuesDF)
       }
-      sql(s"ALTER TABLE delta.`$tempPath` " +
-        s"SET TBLPROPERTIES('delta.feature.timestampNtz' = 'supported')")
 
       val alterTableSql =
         s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}"
