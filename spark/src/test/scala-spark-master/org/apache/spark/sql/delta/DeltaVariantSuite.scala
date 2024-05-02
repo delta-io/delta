@@ -413,10 +413,7 @@ class DeltaVariantSuite
     }
   }
 
-  // TODO(richardc-db): Spark currently does not throws an exception when trying to create a variant
-  // default column. This is being addressed in Spark PR #46312 and we should re-enable this test
-  // after the Spark PR is merged.
-  ignore("Variant can have default value set") {
+  test("Variant can have default value set") {
     withTable("tbl") {
       sql("""CREATE TABLE tbl USING DELTA
           TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'enabled')
