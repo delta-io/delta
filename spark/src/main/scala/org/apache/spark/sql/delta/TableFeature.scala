@@ -572,14 +572,6 @@ object IdentityColumnsTableFeature
   }
 }
 
-object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-dev")
-    with FeatureAutomaticallyEnabledByMetadata {
-  override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata, spark: SparkSession): Boolean = {
-    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
-  }
-}
-
 object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
     with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(

@@ -17,8 +17,6 @@ package io.delta.kernel.defaults.internal.parquet
 
 import java.math.BigDecimal
 
-import org.apache.spark.sql.DataFrame
-
 import io.delta.golden.GoldenTableUtils.goldenTableFile
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils

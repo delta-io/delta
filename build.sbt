@@ -459,6 +459,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     scalaStyleSettings,
     javaOnlyReleaseSettings,
     Test / javaOptions ++= Seq("-ea"),
+    crossSparkSettings(),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
