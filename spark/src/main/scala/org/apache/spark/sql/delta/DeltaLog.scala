@@ -526,7 +526,20 @@ class DeltaLog private(
     // ensure any partitionSchema changes will be captured, and upon restart, the new snapshot will
     // be initialized with the correct partition schema again.
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
-    val relation = buildHadoopFsRelationWithFileIndex(snapshot, fileIndex, bucketSpec = None)
+    // Drop null type columns from the relation's schema if it's not a streaming query until
+    // null type columns are fully supported.
+    val dropNullTypeColumnsFromSchema = if (isStreaming) {
+      // Can force the legacy behavior(dropping nullType columns) with a flag.
+      SQLConf.get.getConf(DeltaSQLConf.DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    } else {
+      // Allow configurable behavior for non-streaming sources. This is used for testing.
+      SQLConf.get.getConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    }
+    val relation = buildHadoopFsRelationWithFileIndex(
+      snapshot,
+      fileIndex,
+      bucketSpec = None,
+      dropNullTypeColumnsFromSchema = dropNullTypeColumnsFromSchema)
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
@@ -578,8 +591,16 @@ class DeltaLog private(
     }
   }
 
-  def buildHadoopFsRelationWithFileIndex(snapshot: SnapshotDescriptor, fileIndex: TahoeFileIndex,
-      bucketSpec: Option[BucketSpec]): HadoopFsRelation = {
+  def buildHadoopFsRelationWithFileIndex(
+      snapshot: SnapshotDescriptor,
+      fileIndex: TahoeFileIndex,
+      bucketSpec: Option[BucketSpec],
+      dropNullTypeColumnsFromSchema: Boolean = true): HadoopFsRelation = {
+    val dataSchema = if (dropNullTypeColumnsFromSchema) {
+      SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema)
+    } else {
+      snapshot.metadata.schema
+    }
     HadoopFsRelation(
       fileIndex,
       partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
@@ -588,8 +609,8 @@ class DeltaLog private(
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark,
-          SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema))),
+        DeltaTableUtils.removeInternalMetadata(spark, dataSchema)
+      ),
       bucketSpec = bucketSpec,
       fileFormat(snapshot.protocol, snapshot.metadata),
       // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
