@@ -17,10 +17,10 @@ package io.delta.kernel.internal.skipping;
 
 import java.util.*;
 
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;

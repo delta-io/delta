@@ -19,8 +19,8 @@ package io.delta.kernel.internal.replay;
 import java.io.IOException;
 import java.util.*;
 
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.internal.actions.SetTransaction;

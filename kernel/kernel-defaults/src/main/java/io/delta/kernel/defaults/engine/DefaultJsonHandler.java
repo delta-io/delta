@@ -26,8 +26,8 @@ import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 
-import io.delta.kernel.engine.JsonHandler;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.JsonHandler;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;

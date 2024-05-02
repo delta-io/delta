@@ -19,10 +19,10 @@ package io.delta.kernel.internal.replay;
 import java.io.IOException;
 import java.util.Optional;
 
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;

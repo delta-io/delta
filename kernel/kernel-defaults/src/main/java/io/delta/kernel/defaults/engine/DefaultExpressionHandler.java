@@ -20,8 +20,8 @@ import java.util.Optional;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Predicate;

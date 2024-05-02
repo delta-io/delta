@@ -19,8 +19,8 @@ import java.util.HashMap;
 import java.util.Map;
 
 import io.delta.kernel.Scan;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;

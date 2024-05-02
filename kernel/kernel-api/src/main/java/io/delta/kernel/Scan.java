@@ -20,8 +20,8 @@ import java.io.IOException;
 import java.util.Optional;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;

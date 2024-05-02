@@ -19,8 +19,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.data.GenericRow;

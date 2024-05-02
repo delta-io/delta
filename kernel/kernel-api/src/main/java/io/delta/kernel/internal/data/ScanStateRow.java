@@ -20,8 +20,8 @@ import java.util.stream.IntStream;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
