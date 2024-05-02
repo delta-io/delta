@@ -6,7 +6,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -16,7 +15,6 @@ import io.delta.flink.internal.table.CatalogExceptionHelper.InvalidDdlOptions;
 import io.delta.flink.internal.table.CatalogExceptionHelper.MismatchedDdlOptionAndDeltaTableProperty;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.flink.table.api.Schema;
-import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.CatalogTable;
 import org.apache.flink.table.catalog.Column;
@@ -25,6 +23,7 @@ import org.apache.flink.table.catalog.Column.MetadataColumn;
 import org.apache.flink.table.catalog.Column.PhysicalColumn;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.catalog.ResolvedCatalogTable;
+import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.catalog.exceptions.CatalogException;
 import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.types.DataType;
@@ -225,40 +224,6 @@ public final class DeltaCatalogTableHelper {
     }
 
     /**
-     * Prepare catalog table to store in metastore. This table will have only selected
-     * options from DDL and an empty schema.
-     */
-    public static DeltaMetastoreTable prepareMetastoreTable(
-            CatalogBaseTable table,
-            String deltaTablePath) {
-        // Store only path, table name and connector type in metastore.
-        // For computed and meta columns are not supported.
-        Map<String, String> optionsToStoreInMetastore = new HashMap<>();
-        optionsToStoreInMetastore.put(FactoryUtil.CONNECTOR.key(),
-            DeltaDynamicTableFactory.DELTA_CONNECTOR_IDENTIFIER);
-        optionsToStoreInMetastore.put(DeltaTableConnectorOptions.TABLE_PATH.key(),
-            deltaTablePath);
-
-        // Flink's Hive catalog calls CatalogTable::getSchema method (deprecated) and apply null
-        // check on the resul.
-        // The default implementation for this method returns null, and the DefaultCatalogTable
-        // returned by CatalogTable.of( ) does not override it,
-        // hence we need to have our own wrapper that will return empty TableSchema when
-        // getSchema method is called.
-        return new DeltaMetastoreTable(
-            CatalogTable.of(
-                // by design don't store schema in metastore. Also watermark and primary key will
-                // not be stored in metastore and for now it will not be supported by Delta
-                // connector SQL.
-                Schema.newBuilder().build(),
-                table.getComment(),
-                Collections.emptyList(),
-                optionsToStoreInMetastore
-            )
-        );
-    }
-
-    /**
      * Validates DDL options against existing delta table properties. If there is any mismatch (i.e.
      * same key, different value) and `allowOverride` is set to false throws an exception. Else,
      * returns a Map of the union of the existing delta table properties along with any new table
@@ -325,6 +290,41 @@ public final class DeltaCatalogTableHelper {
     }
 
     /**
+     * Prepare catalog table to store in metastore. This table will have only selected
+     * options from DDL and an empty schema.
+     */
+    public static ResolvedCatalogTable prepareMetastoreTable(
+            CatalogBaseTable table,
+            String deltaTablePath) {
+        // Store only path, table name and connector type in metastore.
+        // For computed and meta columns are not supported.
+        Map<String, String> optionsToStoreInMetastore = new HashMap<>();
+        optionsToStoreInMetastore.put(FactoryUtil.CONNECTOR.key(),
+            DeltaDynamicTableFactory.DELTA_CONNECTOR_IDENTIFIER);
+        optionsToStoreInMetastore.put(DeltaTableConnectorOptions.TABLE_PATH.key(),
+            deltaTablePath);
+
+        // Flink's Hive catalog calls CatalogTable::getSchema method (deprecated) and apply null
+        // check on the resul.
+        // The default implementation for this method returns null, and the DefaultCatalogTable
+        // returned by CatalogTable.of( ) does not override it,
+        // hence we need to have our own wrapper that will return empty TableSchema when
+        // getSchema method is called.
+        return new ResolvedCatalogTable(
+            CatalogTable.of(
+                // by design don't store schema in metastore. Also watermark and primary key will
+                // not be stored in metastore and for now it will not be supported by Delta
+                // connector SQL.
+                Schema.newBuilder().build(),
+                table.getComment(),
+                Collections.emptyList(),
+                optionsToStoreInMetastore
+            ),
+            ResolvedSchema.of()
+        );
+    }
+
+    /**
      * Validate DDL options to check whether any invalid table properties or job-specific options
      * where used. This method will throw the {@link CatalogException} if provided ddlOptions
      * contain any key that starts with
@@ -359,71 +359,6 @@ public final class DeltaCatalogTableHelper {
         }
         if (invalidDdlOptions.hasInvalidOptions()) {
             throw CatalogExceptionHelper.invalidDdlOptionException(invalidDdlOptions);
-        }
-    }
-
-    /**
-     * This class is used to store table information in Metastore. It basically ensures that {@link
-     * CatalogTable#getSchema()} and {@link CatalogTable#getUnresolvedSchema()} will return an empty
-     * schema objects since we don't want to store any schema information in metastore for Delta
-     * tables.
-     */
-    public static class DeltaMetastoreTable implements CatalogTable {
-
-        private final CatalogTable decoratedTable;
-
-        private DeltaMetastoreTable(CatalogTable decoratedTable) {
-            this.decoratedTable = decoratedTable;
-        }
-
-        @Override
-        public boolean isPartitioned() {
-            return decoratedTable.isPartitioned();
-        }
-
-        @Override
-        public List<String> getPartitionKeys() {
-            return Collections.emptyList();
-        }
-
-        @Override
-        public CatalogTable copy(Map<String, String> map) {
-            return decoratedTable.copy(map);
-        }
-
-        @Override
-        public Map<String, String> getOptions() {
-            return decoratedTable.getOptions();
-        }
-
-        @Override
-        public TableSchema getSchema() {
-            return TableSchema.builder().build();
-        }
-
-        @Override
-        public Schema getUnresolvedSchema() {
-            return Schema.newBuilder().build();
-        }
-
-        @Override
-        public String getComment() {
-            return decoratedTable.getComment();
-        }
-
-        @Override
-        public CatalogBaseTable copy() {
-            return decoratedTable.copy();
-        }
-
-        @Override
-        public Optional<String> getDescription() {
-            return decoratedTable.getDescription();
-        }
-
-        @Override
-        public Optional<String> getDetailedDescription() {
-            return decoratedTable.getDetailedDescription();
         }
     }
 }
