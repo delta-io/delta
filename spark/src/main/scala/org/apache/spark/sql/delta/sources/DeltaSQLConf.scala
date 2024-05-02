@@ -1295,6 +1295,20 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
+    buildConf("streaming.createDataFrame.dropNullColumns")
+      .internal()
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
+    buildConf("createDataFrame.dropNullColumns")
+      .internal()
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(
@@ -1744,6 +1758,21 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  ///////////////////
+  // IDENTITY COLUMN
+  ///////////////////
+
+  val DELTA_IDENTITY_COLUMN_ENABLED =
+    buildConf("identityColumn.enabled")
+      .internal()
+      .doc(
+        """
+          | The umbrella config to turn on/off the IDENTITY column support.
+          | If true, enable Delta IDENTITY column write support. If a table has an IDENTITY column,
+          | it is not writable but still readable if this config is set to false.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   ///////////
   // TESTING

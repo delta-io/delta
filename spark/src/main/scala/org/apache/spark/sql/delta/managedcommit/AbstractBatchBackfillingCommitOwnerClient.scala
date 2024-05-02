@@ -20,6 +20,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
@@ -80,7 +81,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       logStore, hadoopConf, logPath, commitVersion, actions, generateUUID())
 
     // Do the actual commit
-    val commitTimestamp = updatedActions.commitInfo.getTimestamp
+    val commitTimestamp = updatedActions.commitInfo.asInstanceOf[CommitInfo].getTimestamp
     var commitResponse =
       commitImpl(
         logStore,
@@ -112,8 +113,10 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
   private def isManagedCommitToFSConversion(
       commitVersion: Long,
       updatedActions: UpdatedActions): Boolean = {
-    val oldMetadataHasManagedCommits = updatedActions.oldMetadata.managedCommitOwnerName.nonEmpty
-    val newMetadataHasManagedCommits = updatedActions.newMetadata.managedCommitOwnerName.nonEmpty
+    val oldMetadataHasManagedCommits = updatedActions.oldMetadata.asInstanceOf[Metadata]
+      .managedCommitOwnerName.nonEmpty
+    val newMetadataHasManagedCommits = updatedActions.newMetadata.asInstanceOf[Metadata]
+      .managedCommitOwnerName.nonEmpty
     oldMetadataHasManagedCommits && !newMetadataHasManagedCommits && commitVersion > 0
   }
 

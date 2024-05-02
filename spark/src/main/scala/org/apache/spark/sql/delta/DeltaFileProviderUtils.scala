@@ -58,10 +58,14 @@ object DeltaFileProviderUtils {
       deltaLog: DeltaLog,
       startVersion: Long,
       endVersion: Long): Seq[FileStatus] = {
-    val result = deltaLog
-      .listFrom(startVersion)
-      .collect { case DeltaFile(fs, v) if v <= endVersion => (fs, v) }
-      .toSeq
+    // Pass `failOnDataLoss = false` as we are doing an explicit validation on the result ourselves
+    // to identify that there are no gaps.
+    val result =
+      deltaLog
+        .getChangeLogFiles(startVersion, endVersion, failOnDataLoss = false)
+        .map(_._2)
+        .collect { case DeltaFile(fs, v) => (fs, v) }
+        .toSeq
     // Verify that we got the entire range requested
     if (result.size.toLong != endVersion - startVersion + 1) {
       throw DeltaErrors.deltaVersionsNotContiguousException(spark, result.map(_._2))

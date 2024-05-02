@@ -16,6 +16,23 @@
 
 package org.apache.spark.sql.delta
 
+trait ChainableExecutionObserver[O] {
+  /**
+   * The next txn observer for this thread.
+   * The next observer is used to test threads that perform multiple transactions, i.e.
+   * commands that perform multiple commits.
+   */
+  @volatile protected var nextObserver: Option[O] = None
+
+  /** Set the next observer for this thread. */
+  def setNextObserver(nextTxnObserver: O): Unit = {
+    nextObserver = Some(nextTxnObserver)
+  }
+
+  /** Update the observer of this thread with the next observer. */
+  def advanceToNextThreadObserver(): Unit
+}
+
 /**
  * Track different stages of the execution of a transaction.
  *
@@ -23,7 +40,8 @@ package org.apache.spark.sql.delta
  *
  * The default is a no-op implementation.
  */
-trait TransactionExecutionObserver {
+trait TransactionExecutionObserver
+  extends ChainableExecutionObserver[TransactionExecutionObserver] {
   /*
    * This is called outside the transaction object,
    * since it wraps its creation.
@@ -59,6 +77,11 @@ trait TransactionExecutionObserver {
    *         This occurs when there is an Exception thrown during the transaction's body.
    */
   def transactionAborted(): Unit
+
+  override def advanceToNextThreadObserver(): Unit = {
+    TransactionExecutionObserver.threadObserver.set(
+      nextObserver.getOrElse(NoOpTransactionExecutionObserver))
+  }
 }
 
 object TransactionExecutionObserver {

@@ -112,7 +112,6 @@ trait BaseMockParquetHandler extends ParquetHandler with MockTableClientUtils {
   override def writeParquetFiles(
       directoryPath: String,
       dataIter: CloseableIterator[FilteredColumnarBatch],
-      maxFileSize: Long,
       statsColumns: util.List[Column]): CloseableIterator[DataFileStatus] =
     throw new UnsupportedOperationException("not supported in this test suite")
 
@@ -159,5 +158,8 @@ trait BaseMockFileSystemClient extends FileSystemClient {
 
   override def readFiles(
       readRequests: CloseableIterator[FileReadRequest]): CloseableIterator[ByteArrayInputStream] =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def mkdirs(path: String): Boolean =
     throw new UnsupportedOperationException("not supported in this test suite")
 }

@@ -26,6 +26,7 @@ import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.{ArrayType, DataType, MapType, StructType}
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
 
@@ -188,8 +189,10 @@ trait ParquetSuiteBase extends TestUtils {
     location: String,
     targetFileSize: Long = 1024 * 1024,
     statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
+    val conf = new Configuration(configuration);
+    conf.setLong(ParquetFileWriter.TARGET_FILE_SIZE_CONF, targetFileSize)
     val parquetWriter = new ParquetFileWriter(
-      configuration, new Path(location), targetFileSize, statsColumns.asJava)
+      conf, new Path(location), statsColumns.asJava)
 
     parquetWriter.write(toCloseableIterator(filteredData.asJava.iterator())).toSeq
   }

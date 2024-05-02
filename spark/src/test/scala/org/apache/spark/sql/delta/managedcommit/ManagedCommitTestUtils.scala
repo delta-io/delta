@@ -16,9 +16,9 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaTestUtilsBase}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -48,10 +48,12 @@ trait ManagedCommitTestUtils
    */
   def withoutManagedCommitsDefaultTableProperties(f: => Unit): Unit = {
     val commitOwnerKey = MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey
-    val oldCommitOwnerValue = spark.conf.get(commitOwnerKey)
+    val oldCommitOwnerValue = spark.conf.getOption(commitOwnerKey)
     spark.conf.unset(commitOwnerKey)
     try { f } finally {
-      spark.conf.set(commitOwnerKey, oldCommitOwnerValue)
+      oldCommitOwnerValue.foreach {
+        spark.conf.set(commitOwnerKey, _)
+      }
     }
   }
 
@@ -197,8 +199,8 @@ class TrackingCommitOwnerClient(delegatingCommitOwnerClient: InMemoryCommitOwner
   override def registerTable(
       logPath: Path,
       currentVersion: Long,
-      currentMetadata: Metadata,
-      currentProtocol: Protocol): Map[String, String] = recordOperation("registerTable") {
+      currentMetadata: AbstractMetadata,
+      currentProtocol: AbstractProtocol): Map[String, String] = recordOperation("registerTable") {
     delegatingCommitOwnerClient.registerTable(
       logPath, currentVersion, currentMetadata, currentProtocol)
   }
@@ -233,5 +235,11 @@ trait ManagedCommitBaseSuite extends SparkFunSuite with SharedSparkSession {
     managedCommitBackfillBatchSize.foreach { batchSize =>
       CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(batchSize))
     }
+  }
+
+  protected def isICTEnabledForNewTables: Boolean = {
+    spark.conf.getOption(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey).nonEmpty ||
+      spark.conf.getOption(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
   }
 }

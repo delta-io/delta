@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.skipping.clustering
 import java.io.File
 
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
@@ -503,7 +503,8 @@ trait ClusteredTableCreateOrReplaceDDLSuite
 
 trait ClusteredTableDDLSuiteBase
   extends ClusteredTableCreateOrReplaceDDLSuite
-    with DeltaSQLCommandTest {
+    with DeltaSQLCommandTest
+    with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
 
@@ -718,6 +719,22 @@ trait ClusteredTableDDLSuiteBase
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot3, Seq.empty)
 
     }
+  }
+
+  testSparkMasterOnly("Variant is not supported") {
+    val e = intercept[DeltaAnalysisException] {
+      createOrReplaceClusteredTable("CREATE", testTable, "id long, v variant", "v")
+    }
+    checkError(
+      e,
+      "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+      parameters = Map(
+        "columns" -> "v",
+        "schema" -> """root
+                      | |-- id: long (nullable = true)
+                      | |-- v: variant (nullable = true)
+                      |""".stripMargin)
+    )
   }
 }
 
