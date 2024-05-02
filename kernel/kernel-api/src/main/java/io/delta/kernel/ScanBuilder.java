@@ -32,6 +32,9 @@ public interface ScanBuilder {
     /**
      * Apply the given filter expression to prune any files that do not contain data satisfying
      * the given filter.
+     * Since the data returned by the Delta Kernel is not guaranteed to satisfy all filters,
+     * you should use {@link Scan#getRemainingFilter()} to retrieve remaining predicates that need to be
+     * evaluated on the returned data.
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @param predicate   a {@link Predicate} to prune the metadata or data.
