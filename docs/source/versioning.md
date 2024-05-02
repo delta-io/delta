@@ -106,6 +106,7 @@ The following table shows minimum protocol versions required for <Delta> feature
    Timestamp without Timezone,7,3,[TimestampNTZType](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)
    Iceberg Compatibility V1,7,2,[IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
    V2 Checkpoints,7,3,[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
+   Vacuum Protocol Check,7,3,[Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check)
 
 <a id="upgrade"></a>
 
