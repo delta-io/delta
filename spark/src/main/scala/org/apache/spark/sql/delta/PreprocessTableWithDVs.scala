@@ -16,16 +16,23 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.RowIndexFilter
+import java.net.URI
+
+import org.apache.spark.sql.delta.{RowIndexFilter, RowIndexFilterType}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 
-import org.apache.spark.sql.Column
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.sql.{Column, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.SerializableConfiguration
 
 /**
  * Plan transformer to inject a filter that removes the rows marked as deleted according to
@@ -47,6 +54,8 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
  *     to generate the row index. This is a cost we need to pay until we upgrade to latest
  *     Apache Spark which contains Parquet reader changes that automatically generate the
  *     row_index irrespective of the file splitting and filter pushdowns.
+ *   - The scan created also contains a broadcast variable of Parquet File -> DV File map.
+ *     The Parquet reader created uses this map to find the DV file corresponding to the data file.
  *   - Filter created filters out rows with __skip_row equals to 0
  *   - And at the end we have a Project to keep the plan node output same as before the rule is
  *     applied.
@@ -84,20 +93,20 @@ object ScanWithDeletionVectors {
 
     // See if the relation is already modified to include DV reads as part of
     // a previous invocation of this rule on this table
-    if (fileFormat.hasTablePath) return None
+    if (fileFormat.hasDeletionVectorMap) return None
 
     // See if any files actually have a DV
-    val filesWithDVs = index
-      .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
-      .filter(_.deletionVector != null)
-    if (filesWithDVs.isEmpty) return None
+    val spark = SparkSession.getActiveSession.get
+    val filePathToDVBroadcastMap = createBroadcastDVMap(spark, index)
+    if (filePathToDVBroadcastMap.value.isEmpty) return None
 
     // Get the list of columns in the output of the `LogicalRelation` we are
     // trying to modify. At the end of the plan, we need to return a
     // `LogicalRelation` that has the same output as this `LogicalRelation`
     val planOutput = scan.output
 
-    val newScan = createScanWithSkipRowColumn(scan, fileFormat, index, hadoopRelation)
+    val newScan = createScanWithSkipRowColumn(
+      spark, scan, fileFormat, index, filePathToDVBroadcastMap, hadoopRelation)
 
     // On top of the scan add a filter that filters out the rows which have
     // skip row column value non-zero
@@ -112,9 +121,11 @@ object ScanWithDeletionVectors {
    * an extra column which indicates whether the row needs to be skipped or not.
    */
   private def createScanWithSkipRowColumn(
+      spark: SparkSession,
       inputScan: LogicalRelation,
       fileFormat: DeltaParquetFileFormat,
       tahoeFileIndex: TahoeFileIndex,
+      filePathToDVBroadcastMap: Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]],
       hadoopFsRelation: HadoopFsRelation): LogicalRelation = {
     // Create a new `LogicalRelation` that has modified `DeltaFileFormat` and output with an extra
     // column to indicate whether to skip the row or not
@@ -130,7 +141,11 @@ object ScanWithDeletionVectors {
     // operator after the data is read from the underlying file reader.
     val newDataSchema = hadoopFsRelation.dataSchema.add(skipRowField)
 
-    val newFileFormat = fileFormat.disableSplittingAndPushdown(tahoeFileIndex.path.toString)
+    val hadoopConfBroadcast = spark.sparkContext.broadcast(
+      new SerializableConfiguration(tahoeFileIndex.deltaLog.newDeltaHadoopConf()))
+
+    val newFileFormat = fileFormat.copyWithDVInfo(
+      tahoeFileIndex.path.toString, filePathToDVBroadcastMap, hadoopConfBroadcast)
     val newRelation = hadoopFsRelation.copy(
       fileFormat = newFileFormat,
       dataSchema = newDataSchema)(hadoopFsRelation.sparkSession)
@@ -150,5 +165,34 @@ object ScanWithDeletionVectors {
 
     val filterExp = keepRow(new Column(skipRowColumnRef)).expr
     Filter(filterExp, newScan)
+  }
+
+  private def createBroadcastDVMap(
+      spark: SparkSession,
+      tahoeFileIndex: TahoeFileIndex)
+    : Broadcast[Map[URI, DeletionVectorDescriptorWithFilterType]] = {
+    val filterTypes = tahoeFileIndex.rowIndexFilters.getOrElse(Map.empty)
+
+    // Given there is no way to find the final filters, just select all files in the
+    // file index and create the DV map.
+    val filesWithDVs = tahoeFileIndex
+      .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
+      .filter(_.deletionVector != null)
+    // Attach filter types to FileActions, so that later [[DeltaParquetFileFormat]] could pick it up
+    // to decide which kind of rows should be filtered out. This info is necessary for reading CDC
+    // rows that have been deleted (marked in DV), in which case marked rows must be kept rather
+    // than filtered out. In such a case, the `filterTypes` map will be populated by [[CDCReader]]
+    // to indicate IF_NOT_CONTAINED filter should be used. In other cases, `filterTypes` will be
+    // empty, so we generate IF_CONTAINED as the default DV behavior.
+    val filePathToDVMap = filesWithDVs.map { addFile =>
+      val key = absolutePath(tahoeFileIndex.path.toString, addFile.path).toUri
+      val filterType =
+        filterTypes.getOrElse(addFile.path, RowIndexFilterType.IF_CONTAINED)
+      val value =
+        DeletionVectorDescriptorWithFilterType(addFile.deletionVector, filterType)
+      key -> value
+    }.toMap
+
+    spark.sparkContext.broadcast(filePathToDVMap)
   }
 }
