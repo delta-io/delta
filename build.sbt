@@ -20,6 +20,8 @@ import java.nio.file.Files
 import Mima._
 import Unidoc._
 
+import sbtprotoc.ProtocPlugin.autoImport._
+
 // Scala versions
 val scala212 = "2.12.18"
 val scala213 = "2.13.13"
@@ -38,6 +40,8 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+connectClient / sparkVersion := getSparkVersion()
+connectServer / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -56,6 +60,9 @@ val tezVersion = "0.9.2"
 val hadoopVersionForHive2 = "2.7.2"
 val hive2Version = "2.3.3"
 val tezVersionForHive2 = "0.8.4"
+
+val protoVersion = "3.25.1"
+val grpcVersion = "1.62.2"
 
 scalaVersion := default_scala_version.value
 
@@ -179,6 +186,58 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     //    issue above.
   )
 }
+
+lazy val connectCommon = (project in file("connect/common"))
+  .settings(
+    name := "delta-connect-common",
+    commonSettings,
+    // It needs this to compile for some reason. Even though it does not depend on Spark.
+    crossSparkSettings(),
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
+      "com.google.protobuf" % "protobuf-java" % protoVersion,
+      "javax.annotation" % "javax.annotation-api" % "1.3.2",
+    ),
+    PB.protocVersion := protoVersion,
+    Compile / PB.targets := Seq(
+      PB.gens.java -> (Compile / sourceManaged).value,
+      PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
+    ),
+  )
+
+lazy val connectClient = (project in file("connect/client"))
+  .dependsOn(connectCommon)
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .settings(
+    name := "delta-connect-client",
+    commonSettings,
+    releaseSettings,
+    crossSparkSettings(),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
+
+      // Test deps
+      // "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests",
+    ),
+  )
+
+lazy val connectServer = (project in file("connect/server"))
+  .dependsOn(connectCommon)
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .settings(
+    name := "delta-connect-server",
+    commonSettings,
+    releaseSettings,
+    crossSparkSettings(),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
+    ),
+  )
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)

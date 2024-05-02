@@ -1,0 +1,133 @@
+load("//maven-trees:build_profile.bzl", "MAVEN_TREE", "MAVEN_TREES")
+load("//maven-trees:cross_scala_lib.bzl", "cross_scala_lib")
+load("//maven-trees:databricks_test.bzl", "cross_tree_runtime_test")
+load("@universe//bazel/rules:jar-jar-links.bzl", "jarjar_links")
+load("@universe//bazel/rules:cross_scala_lib.bzl", "build_target_name")
+load("@universe//third_party/armeria:jarjar_links.bzl", "ARMERIA_JARJAR_LINKS_CONFIG", "ARMERIA_JARJAR_LINKS_EXCLUDE", "ARMERIA_JARJAR_LINKS_RENAMES")
+load("//:versions.bzl", "RUNTIME_DEFAULT_SCALA_VERSION", "SCALA_VERSIONS_COMPATIBILITY_LIST")
+
+cross_scala_lib(
+    name = "delta_connect_server_lib_unshaded",
+    cross_scala_versions = SCALA_VERSIONS_COMPATIBILITY_LIST,
+    srcs = glob(["src/main/scala/**/*.scala"]),
+    cross_deps = [
+        "//common/utils:common-utils",
+        "//core:core",
+        "//sql/catalyst:catalyst",
+        "//sql/core:core",
+        "//connector/connect/server:connect-prepare",
+        "//connector/connect/common:common-files",
+    ],
+    deps = [
+        "//connector/connect/common:spark_connect_proto_lib_unshaded",
+        "//connector/delta/common:delta_connect_proto_lib_unshaded",
+        "{parent}/com.fasterxml.jackson.core/jackson-databind",
+        "{parent}/org.scala-lang/scala-reflect_{scala}",
+        "{parent}/org.slf4j/slf4j-api",
+    ],
+    enforce_scalafmt = False,
+    visibility = ["//visibility:private"],
+    strict_classpath_conflicts = False,
+)
+
+[
+    jarjar_links(
+        name = build_target_name("delta_connect_server_lib_shaded", tree, scala),
+        deps = [
+            "//connector/connect/common:spark_connect_proto_lib_unshaded",
+            "//connector/delta/common:delta_connect_proto_lib_unshaded",
+            "@universe//maven-trees/armeria/com.google.protobuf/protobuf-java",
+            "@universe//maven-trees/armeria/com.google.protobuf/protobuf-java-util",
+        ],
+        jars = [
+            ":" + build_target_name("delta_connect_server_lib_unshaded", tree, scala),
+        ],
+        config = ARMERIA_JARJAR_LINKS_CONFIG,
+        exclude = ARMERIA_JARJAR_LINKS_EXCLUDE,
+        renames = ARMERIA_JARJAR_LINKS_RENAMES,
+        visibility = ["//visibility:private"],
+    )
+    for tree in MAVEN_TREES
+    for scala in SCALA_VERSIONS_COMPATIBILITY_LIST
+]
+
+[
+    alias(
+        name = build_target_name("delta_connect_server_lib_shaded", None, scala),
+        actual = build_target_name("delta_connect_server_lib_shaded", MAVEN_TREE, scala),
+        visibility = ["//visibility:private"],
+    )
+    for scala in SCALA_VERSIONS_COMPATIBILITY_LIST
+]
+
+[
+    alias(
+        name = build_target_name("delta_connect_server_lib_shaded", tree, None),
+        actual = build_target_name("delta_connect_server_lib_shaded", tree, RUNTIME_DEFAULT_SCALA_VERSION),
+        visibility = ["//visibility:private"],
+    )
+    for tree in MAVEN_TREES
+]
+
+alias(
+    name = build_target_name("delta_connect_server_lib_shaded", None, None),
+    actual = build_target_name("delta_connect_server_lib_shaded", MAVEN_TREE, RUNTIME_DEFAULT_SCALA_VERSION),
+    visibility = ["//visibility:private"],
+)
+
+[
+    alias(
+        name = build_target_name("server", tree, scala),
+        actual = build_target_name("delta_connect_server_lib_shaded", tree, scala),
+        visibility = ["//visibility:public"],
+    )
+    for tree in MAVEN_TREES + [None]
+    for scala in SCALA_VERSIONS_COMPATIBILITY_LIST + [None]
+]
+
+cross_scala_lib(
+    name = "delta_connect_server_test",
+    srcs = glob(["src/test/scala/**/*.scala"]),
+    cross_deps = [
+        ":delta_connect_server_lib_unshaded",
+        "//common/utils:common-utils",
+        "//core:core",
+        "//core:core_test",
+        "//sql/catalyst:catalyst",
+        "//sql/catalyst:catalyst_test",
+        "//sql/core:core",
+        "//sql/core:core_test_utils",
+        "//connector/connect/server:connect-prepare",
+    ],
+    deps = [
+        "//connector/connect/common:spark_connect_proto_lib_unshaded",
+        "//connector/delta/common:delta_connect_proto_lib_unshaded",
+        "{parent}/org.scalactic/scalactic_{scala}",
+        "{parent}/org.apache.logging.log4j/log4j-core",
+        "{parent}/org.apache.hadoop/hadoop-client-api",
+        "{parent}/com.fasterxml.jackson.core/jackson-databind",
+        "{parent}/org.scala-lang/scala-reflect_{scala}",
+        "{parent}/org.scalatest/scalatest-core_{scala}",
+        "{parent}/org.apache.logging.log4j/log4j-api",
+        "{parent}/org.slf4j/slf4j-api",
+        "{parent}/com.fasterxml.jackson.core/jackson-annotations",
+        "{parent}/org.scalatest/scalatest-funsuite_{scala}",
+        "{parent}/org.scalatest/scalatest-compatible",
+    ],
+    visibility = ["//visibility:private"],
+    enforce_scalafmt = False,
+    strict_classpath_conflicts = False,
+)
+
+SCALATEST_SUITES = [
+    "io.delta.connect.DeltaConnectPlannerSuite",
+]
+
+cross_tree_runtime_test(
+    size = "large",
+    cross_deps = [
+        ":delta_connect_server_test",
+    ],
+    full_name = True,
+    suites = SCALATEST_SUITES,
+)
