@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaLog, ManagedCommitTableFeature, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFile}
@@ -108,4 +109,32 @@ object ManagedCommitUtils {
    * Get the table path from the provided log path.
    */
   def getTablePath(logPath: Path): Path = logPath.getParent
+
+  def getCommitOwnerClient(metadata: Metadata, protocol: Protocol): Option[CommitOwnerClient] = {
+    metadata.managedCommitOwnerName.map { commitOwnerStr =>
+      assert(protocol.isFeatureSupported(ManagedCommitTableFeature))
+      CommitOwnerProvider.getCommitOwnerClient(commitOwnerStr, metadata.managedCommitOwnerConf)
+    }
+  }
+
+  def getTableCommitOwner(
+      snapshotDescriptor: SnapshotDescriptor): Option[TableCommitOwnerClient] = {
+    getCommitOwnerClient(snapshotDescriptor.metadata, snapshotDescriptor.protocol).map {
+      commitOwner =>
+        TableCommitOwnerClient(
+          commitOwner,
+          snapshotDescriptor.deltaLog.logPath,
+          snapshotDescriptor.metadata.managedCommitTableConf,
+          snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
+          snapshotDescriptor.deltaLog.store
+        )
+    }
+  }
+
+  def getManagedCommitConfs(metadata: Metadata): (Option[String], Map[String, String]) = {
+    metadata.managedCommitOwnerName match {
+      case Some(name) => (Some(name), metadata.managedCommitOwnerConf)
+      case None => (None, Map.empty)
+    }
+  }
 }
