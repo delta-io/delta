@@ -163,7 +163,7 @@ trait SnapshotManagement { self: DeltaLog =>
       val threadPool = SnapshotManagement.commitOwnerGetCommitsThreadPool
       def getCommitsTask(async: Boolean): GetCommitsResponse = {
         recordFrameProfile("DeltaLog", s"CommitOwnerClient.getCommits.async=$async") {
-          tableCommitOwnerClient.getCommits(startVersion, endVersion = versionToLoad)
+          tableCommitOwnerClient.getCommits(Some(startVersion), endVersion = versionToLoad)
         }
       }
       val unbackfilledCommitsResponseFuture =

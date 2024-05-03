@@ -347,7 +347,7 @@ class ManagedCommitSuite
       override def getCommits(
         logPath: Path,
         managedCommitTableConf: Map[String, String],
-        startVersion: Long,
+        startVersion: Option[Long],
         endVersion: Option[Long]): GetCommitsResponse = {
         if (failAttempts.contains(numGetCommitsCalled + 1)) {
           numGetCommitsCalled += 1
@@ -634,46 +634,51 @@ class ManagedCommitSuite
     val trackingCommitOwnerClient = new TrackingCommitOwnerClient(
         new InMemoryCommitOwner(batchSize = 10) {
           override def registerTable(
-            logPath: Path,
-            currentVersion: Long,
-            currentMetadata: AbstractMetadata,
-            currentProtocol: AbstractProtocol): Map[String, String] = {
+              logPath: Path,
+              currentVersion: Long,
+              currentMetadata: AbstractMetadata,
+              currentProtocol: AbstractProtocol): Map[String, String] = {
             super.registerTable(logPath, currentVersion, currentMetadata, currentProtocol)
             tableConf
           }
 
           override def getCommits(
-            logPath: Path,
-            managedCommitTableConf: Map[String, String],
-            startVersion: Long,
-            endVersion: Option[Long]): GetCommitsResponse = {
+              logPath: Path,
+              managedCommitTableConf: Map[String, String],
+              startVersion: Option[Long],
+              endVersion: Option[Long]): GetCommitsResponse = {
             assert(managedCommitTableConf === tableConf)
             super.getCommits(logPath, managedCommitTableConf, startVersion, endVersion)
           }
 
           override def commit(
-            logStore: LogStore,
-            hadoopConf: Configuration,
-            logPath: Path,
-            managedCommitTableConf: Map[String, String],
-            commitVersion: Long,
-            actions: Iterator[String],
-            updatedActions: UpdatedActions): CommitResponse = {
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              logPath: Path,
+              managedCommitTableConf: Map[String, String],
+              commitVersion: Long,
+              actions: Iterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
             assert(managedCommitTableConf === tableConf)
             super.commit(logStore, hadoopConf, logPath, managedCommitTableConf,
               commitVersion, actions, updatedActions)
           }
 
           override def backfillToVersion(
-            logStore: LogStore,
-            hadoopConf: Configuration,
-            logPath: Path,
-            managedCommitTableConf: Map[String, String],
-            startVersion: Long,
-            endVersionOpt: Option[Long]): Unit = {
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              logPath: Path,
+              managedCommitTableConf: Map[String, String],
+              version: Long,
+              lastKnownBackfilledVersionOpt: Option[Long]): Unit = {
             assert(managedCommitTableConf === tableConf)
             super.backfillToVersion(
-              logStore, hadoopConf, logPath, managedCommitTableConf, startVersion, endVersionOpt)
+              logStore,
+              hadoopConf,
+              logPath,
+              managedCommitTableConf,
+              version,
+              lastKnownBackfilledVersionOpt)
           }
         }
     )
@@ -947,8 +952,8 @@ class ManagedCommitSuite
             hadoopConf: Configuration,
             logPath: Path,
             managedCommitTableConf: Map[String, String],
-            startVersion: Long,
-            endVersion: Option[Long]): Unit = { }
+            version: Long,
+            lastKnownBackfilledVersionOpt: Option[Long]): Unit = { }
       })
     CommitOwnerProvider.clearNonDefaultBuilders()
     val builder =

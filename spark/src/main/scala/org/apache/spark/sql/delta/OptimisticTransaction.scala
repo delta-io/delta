@@ -2109,7 +2109,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     override def getCommits(
         logPath: Path,
         managedCommitTableConf: Map[String, String],
-        startVersion: Long,
+        startVersion: Option[Long],
         endVersion: Option[Long]): GetCommitsResponse =
       GetCommitsResponse(Seq.empty, -1)
 
@@ -2118,8 +2118,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         hadoopConf: Configuration,
         logPath: Path,
         managedCommitTableConf: Map[String, String],
-        startVersion: Long,
-        endVersion: Option[Long]): Unit = {}
+        version: Long,
+        lastKnownBackfilledVersion: Option[Long] = None): Unit = {}
 
     /**
      * [[FileSystemBasedCommitOwnerClient]] is supposed to be treated as a singleton object for a

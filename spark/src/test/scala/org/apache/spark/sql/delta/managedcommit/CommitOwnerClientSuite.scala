@@ -32,7 +32,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest {
 
-  trait TestCommitOwnerClientBase extends CommitOwnerClient {
+  private trait TestCommitOwnerClientBase extends CommitOwnerClient {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
@@ -47,7 +47,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
     override def getCommits(
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
+      startVersion: Option[Long],
       endVersion: Option[Long] = None): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
 
     override def backfillToVersion(
@@ -55,14 +55,14 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
         hadoopConf: Configuration,
         logPath: Path,
         managedCommitTableConf: Map[String, String],
-        startVersion: Long,
-        endVersion: Option[Long]): Unit = {}
+        version: Long,
+        lastKnownBackfilledVersion: Option[Long]): Unit = {}
 
     override def semanticEquals(other: CommitOwnerClient): Boolean = this == other
   }
 
-  class TestCommitOwnerClient1 extends TestCommitOwnerClientBase
-  class TestCommitOwnerClient2 extends TestCommitOwnerClientBase
+  private class TestCommitOwnerClient1 extends TestCommitOwnerClientBase
+  private class TestCommitOwnerClient2 extends TestCommitOwnerClientBase
 
   override def beforeEach(): Unit = {
     super.beforeEach()

@@ -119,22 +119,28 @@ trait CommitOwnerClient {
   def getCommits(
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
+      startVersion: Option[Long] = None,
       endVersion: Option[Long] = None): GetCommitsResponse
 
   /**
-   * API to ask the Commit-Owner to backfill all commits >= 'startVersion' and <= `endVersion`.
+   * API to ask the Commit-Owner to backfill all commits > `lastKnownBackfilledVersion` and
+   * <= `endVersion`.
    *
    * If this API returns successfully, that means the backfill must have been completed, although
    * the Commit-Owner may not be aware of it yet.
+   *
+   * @param version The version till which the Commit-Owner should backfill.
+   * @param lastKnownBackfilledVersion The last known version that was backfilled by Commit-Owner
+   *                                   before this API was called. If it's None or invalid, then the
+   *                                   Commit-Owner should backfill from the beginning of the table.
    */
   def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
-      endVersion: Option[Long]): Unit
+      version: Long,
+      lastKnownBackfilledVersion: Option[Long]): Unit
 
   /**
    * Determines whether this [[CommitOwnerClient]] is semantically equal to another

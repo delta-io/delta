@@ -71,9 +71,14 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
     val fs = logPath.getFileSystem(hadoopConf)
     if (batchSize <= 1) {
       // Backfill until `commitVersion - 1`
-      logInfo(s"Making sure commits are backfilled until $commitVersion version for" +
+      logInfo(s"Making sure commits are backfilled until ${commitVersion - 1} version for" +
         s" table ${tablePath.toString}")
-      backfillToVersion(logStore, hadoopConf, logPath, managedCommitTableConf)
+      backfillToVersion(
+        logStore,
+        hadoopConf,
+        logPath,
+        managedCommitTableConf,
+        commitVersion - 1)
     }
 
     // Write new commit file in _commits directory
@@ -104,7 +109,12 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
     } else if (commitVersion % batchSize == 0 || mcToFsConversion) {
       logInfo(s"Making sure commits are backfilled till $commitVersion version for" +
         s"table ${tablePath.toString}")
-      backfillToVersion(logStore, hadoopConf, logPath, managedCommitTableConf)
+      backfillToVersion(
+        logStore,
+        hadoopConf,
+        logPath,
+        managedCommitTableConf,
+        commitVersion)
     }
     logInfo(s"Commit $commitVersion done successfully on table $tablePath")
     commitResponse
@@ -127,9 +137,15 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       hadoopConf: Configuration,
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long = 0,
-      endVersionOpt: Option[Long] = None): Unit = {
-    getCommits(logPath, managedCommitTableConf, startVersion, endVersionOpt)
+      version: Long,
+      lastKnownBackfilledVersionOpt: Option[Long] = None): Unit = {
+    // Confirm the last backfilled version by checking the backfilled delta file's existence.
+    val validLastKnownBackfilledVersionOpt = lastKnownBackfilledVersionOpt.filter { version =>
+      val fs = logPath.getFileSystem(hadoopConf)
+      fs.exists(FileNames.unsafeDeltaFile(logPath, version))
+    }
+    val startVersionOpt = validLastKnownBackfilledVersionOpt.map(_ + 1)
+    getCommits(logPath, managedCommitTableConf, startVersionOpt, Some(version))
       .commits
       .foreach { commit =>
         backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)

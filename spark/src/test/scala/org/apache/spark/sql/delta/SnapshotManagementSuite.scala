@@ -510,7 +510,7 @@ case class ConcurrentBackfillCommitOwnerClient(
   override def getCommits(
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
+      startVersion: Option[Long],
       endVersion: Option[Long]): GetCommitsResponse = {
     if (ConcurrentBackfillCommitOwnerClient.beginConcurrentBackfills) {
       CountDownLatchLogStore.listFromCalled.await()
