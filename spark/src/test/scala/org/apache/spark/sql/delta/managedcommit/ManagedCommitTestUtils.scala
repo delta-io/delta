@@ -171,7 +171,7 @@ class TrackingCommitOwnerClient(delegatingCommitOwnerClient: InMemoryCommitOwner
   override def getCommits(
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
+      startVersion: Option[Long],
       endVersion: Option[Long] = None): GetCommitsResponse = recordOperation("getCommits") {
     delegatingCommitOwnerClient.getCommits(
       logPath, managedCommitTableConf, startVersion, endVersion)
@@ -182,10 +182,10 @@ class TrackingCommitOwnerClient(delegatingCommitOwnerClient: InMemoryCommitOwner
       hadoopConf: Configuration,
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
-      endVersion: Option[Long]): Unit = recordOperation("backfillToVersion") {
+      version: Long,
+      lastKnownBackfilledVersion: Option[Long]): Unit = recordOperation("backfillToVersion") {
     delegatingCommitOwnerClient.backfillToVersion(
-      logStore, hadoopConf, logPath, managedCommitTableConf, startVersion, endVersion)
+      logStore, hadoopConf, logPath, managedCommitTableConf, version, lastKnownBackfilledVersion)
   }
 
   override def semanticEquals(other: CommitOwnerClient): Boolean = this == other

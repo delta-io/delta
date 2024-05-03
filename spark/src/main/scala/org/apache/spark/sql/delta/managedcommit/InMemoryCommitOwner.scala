@@ -139,19 +139,21 @@ class InMemoryCommitOwner(val batchSize: Long)
   override def getCommits(
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
+      startVersion: Option[Long],
       endVersion: Option[Long]): GetCommitsResponse = {
     withReadLock[GetCommitsResponse](logPath) {
       val tableData = perTableMap.get(logPath)
+      val effectiveStartVersion = startVersion.getOrElse(0L)
       // Calculate the end version for the range, or use the last key if endVersion is not provided
-      val effectiveEndVersion =
-        endVersion.getOrElse(tableData.commitsMap.lastOption.map(_._1).getOrElse(startVersion))
-      val commitsInRange = tableData.commitsMap.range(startVersion, effectiveEndVersion + 1)
+      val effectiveEndVersion = endVersion.getOrElse(
+        tableData.commitsMap.lastOption.map(_._1).getOrElse(effectiveStartVersion))
+      val commitsInRange = tableData.commitsMap.range(
+        effectiveStartVersion, effectiveEndVersion + 1)
       GetCommitsResponse(commitsInRange.values.toSeq, tableData.lastRatifiedCommitVersion)
     }
   }
 
-  override protected[delta] def registerBackfill(
+  override protected[sql] def registerBackfill(
       logPath: Path,
       backfilledVersion: Long): Unit = {
     withWriteLock(logPath) {
