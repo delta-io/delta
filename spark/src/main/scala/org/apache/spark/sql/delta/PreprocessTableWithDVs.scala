@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.RowIndexFilter
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
+
+import org.apache.spark.sql.execution.datasources.FileFormat.METADATA_NAME
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.types.StructType
 
 /**
  * Plan transformer to inject a filter that removes the rows marked as deleted according to
@@ -37,16 +41,11 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
  * After rule:
  *   <Parent Node> ->
  *     Project(key, value) ->
- *       Filter (udf(__skip_row == 0) ->
+ *       Filter (__skip_row == 0) ->
  *         Delta Scan (key, value, __skip_row)
  *   - Here we insert a new column `__skip_row` in Delta scan. This value is populated by the
  *     Parquet reader using the DV corresponding to the Parquet file read
  *     (See [[DeltaParquetFileFormat]]) and it contains 0 if we want to keep the row.
- *     The scan created also disables Parquet file splitting and filter pushdowns, because
- *     in order to generate the __skip_row, we need to read the rows in a file consecutively
- *     to generate the row index. This is a cost we need to pay until we upgrade to latest
- *     Apache Spark which contains Parquet reader changes that automatically generate the
- *     row_index irrespective of the file splitting and filter pushdowns.
  *   - Filter created filters out rows with __skip_row equals to 0
  *   - And at the end we have a Project to keep the plan node output same as before the rule is
  *     applied.
@@ -79,14 +78,11 @@ object ScanWithDeletionVectors {
     require(!index.isInstanceOf[TahoeLogFileIndex],
       "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
 
-    // If the table has no DVs enabled, no change needed
-    if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
-
     // See if the relation is already modified to include DV reads as part of
     // a previous invocation of this rule on this table
     if (fileFormat.hasTablePath) return None
 
-    // See if any files actually have a DV
+    // See if any files actually have a DV.
     val filesWithDVs = index
       .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
       .filter(_.deletionVector != null)
@@ -97,7 +93,8 @@ object ScanWithDeletionVectors {
     // `LogicalRelation` that has the same output as this `LogicalRelation`
     val planOutput = scan.output
 
-    val newScan = createScanWithSkipRowColumn(scan, fileFormat, index, hadoopRelation)
+    val spark = SparkSession.getActiveSession.get
+    val newScan = createScanWithSkipRowColumn(spark, scan, fileFormat, index, hadoopRelation)
 
     // On top of the scan add a filter that filters out the rows which have
     // skip row column value non-zero
@@ -107,30 +104,68 @@ object ScanWithDeletionVectors {
     // remove the skip row column
     Some(Project(planOutput, rowIndexFilter))
   }
+
+  /**
+   * Helper function that adds row_index column to _metadata if missing.
+   */
+  private def addRowIndexIfMissing(attribute: AttributeReference): AttributeReference = {
+    require(attribute.name == METADATA_NAME)
+
+    val dataType = attribute.dataType.asInstanceOf[StructType]
+    if (dataType.fieldNames.contains(ParquetFileFormat.ROW_INDEX)) return attribute
+
+    val newDatatype = dataType.add(ParquetFileFormat.ROW_INDEX_FIELD)
+    attribute.copy(
+      dataType = newDatatype)(exprId = attribute.exprId, qualifier = attribute.qualifier)
+  }
+
   /**
    * Helper method that creates a new `LogicalRelation` for existing scan that outputs
    * an extra column which indicates whether the row needs to be skipped or not.
    */
   private def createScanWithSkipRowColumn(
+      spark: SparkSession,
       inputScan: LogicalRelation,
       fileFormat: DeltaParquetFileFormat,
       tahoeFileIndex: TahoeFileIndex,
       hadoopFsRelation: HadoopFsRelation): LogicalRelation = {
+    val useMetadataRowIndex =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
+
     // Create a new `LogicalRelation` that has modified `DeltaFileFormat` and output with an extra
     // column to indicate whether to skip the row or not
 
     // Add a column for SKIP_ROW to the base output. Value of 0 means the row needs be kept, any
     // other values mean the row needs be skipped.
     val skipRowField = IS_ROW_DELETED_STRUCT_FIELD
-    val newScanOutput = inputScan.output :+
-      AttributeReference(skipRowField.name, skipRowField.dataType)()
+
+    val scanOutputWithMetadata = if (useMetadataRowIndex) {
+      // When predicate pushdown is enabled, make sure the output contains metadata.row_index.
+      if (inputScan.output.map(_.name).contains(METADATA_NAME)) {
+        // If the scan already contains a metadata column without a row_index, add it.
+        inputScan.output.collect {
+          case a: AttributeReference if a.name == METADATA_NAME => addRowIndexIfMissing(a)
+          case o => o
+        }
+      } else {
+        inputScan.output :+ fileFormat.createFileMetadataCol()
+      }
+    } else {
+      inputScan.output
+    }
+
+    val newScanOutput =
+      scanOutputWithMetadata :+ AttributeReference(skipRowField.name, skipRowField.dataType)()
 
     // Data schema and scan schema could be different. The scan schema may contain additional
     // columns such as `_metadata.file_path` (metadata columns) which are populated in Spark scan
     // operator after the data is read from the underlying file reader.
     val newDataSchema = hadoopFsRelation.dataSchema.add(skipRowField)
 
-    val newFileFormat = fileFormat.disableSplittingAndPushdown(tahoeFileIndex.path.toString)
+    val newFileFormat = fileFormat.copyWithDVInfo(
+      tablePath = tahoeFileIndex.path.toString,
+      optimizationsEnabled = useMetadataRowIndex)
+
     val newRelation = hadoopFsRelation.copy(
       fileFormat = newFileFormat,
       dataSchema = newDataSchema)(hadoopFsRelation.sparkSession)
@@ -145,10 +180,6 @@ object ScanWithDeletionVectors {
       s"Expected only one column with name=$IS_ROW_DELETED_COLUMN_NAME")
     val skipRowColumnRef = skipRowColumnRefs.head
 
-    val keepRow = DeltaUDF.booleanFromByte( _ == RowIndexFilter.KEEP_ROW_VALUE)
-      .asNondeterministic() // To avoid constant folding the filter based on stats.
-
-    val filterExp = keepRow(new Column(skipRowColumnRef)).expr
-    Filter(filterExp, newScan)
+    Filter(EqualTo(skipRowColumnRef, Literal(RowIndexFilter.KEEP_ROW_VALUE)), newScan)
   }
 }
