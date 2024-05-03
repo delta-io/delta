@@ -1514,22 +1514,24 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def registerTableForManagedCommitsIfNeeded(
       finalMetadata: Metadata,
       finalProtocol: Protocol): Option[Map[String, String]] = {
-    val (oldOwnerName, oldOwnerConf) = CommitOwner.getManagedCommitConfs(snapshot.metadata)
+    val (oldOwnerName, oldOwnerConf) = ManagedCommitUtils.getManagedCommitConfs(snapshot.metadata)
     var newManagedCommitTableConf: Option[Map[String, String]] = None
     if (finalMetadata.configuration != snapshot.metadata.configuration || snapshot.version == -1L) {
       val newCommitOwnerClientOpt =
-        CommitOwnerProvider.getCommitOwnerClient(finalMetadata, finalProtocol)
+        ManagedCommitUtils.getCommitOwnerClient(finalMetadata, finalProtocol)
       (newCommitOwnerClientOpt, readSnapshotTableCommitOwnerClientOpt) match {
         case (Some(newCommitOwnerClient), None) =>
           // FS -> MC conversion
-          val (commitOwnerName, commitOwnerConf) = CommitOwner.getManagedCommitConfs(finalMetadata)
+          val (commitOwnerName, commitOwnerConf) =
+            ManagedCommitUtils.getManagedCommitConfs(finalMetadata)
           logInfo(s"Table ${deltaLog.logPath} transitioning from file-system based table to " +
             s"managed-commit table: [commit-owner: $commitOwnerName, conf: $commitOwnerConf]")
           newManagedCommitTableConf = Some(newCommitOwnerClient.registerTable(
             deltaLog.logPath, readVersion, finalMetadata, protocol))
         case (None, Some(readCommitOwnerClient)) =>
           // MC -> FS conversion
-          val (newOwnerName, newOwnerConf) = CommitOwner.getManagedCommitConfs(snapshot.metadata)
+          val (newOwnerName, newOwnerConf) =
+            ManagedCommitUtils.getManagedCommitConfs(snapshot.metadata)
           logInfo(s"Table ${deltaLog.logPath} transitioning from managed-commit table to " +
             s"file-system table: [commit-owner: $newOwnerName, conf: $newOwnerConf]")
         case (Some(newCommitOwnerClient), Some(readCommitOwnerClient))
@@ -1537,7 +1539,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           // MC1 -> MC2 conversion is not allowed.
           // In order to transfer the table from one commit-owner to another, transfer the table
           // from current commit-owner to filesystem first and then filesystem to the commit-owner.
-          val (newOwnerName, newOwnerConf) = CommitOwner.getManagedCommitConfs(finalMetadata)
+          val (newOwnerName, newOwnerConf) =
+            ManagedCommitUtils.getManagedCommitConfs(finalMetadata)
           val message = s"Transition of table ${deltaLog.logPath} from one commit-owner to" +
             s" another commit-owner is not allowed: [old commit-owner: $oldOwnerName," +
             s" new commit-owner: $newOwnerName, old commit-owner conf: $oldOwnerConf," +

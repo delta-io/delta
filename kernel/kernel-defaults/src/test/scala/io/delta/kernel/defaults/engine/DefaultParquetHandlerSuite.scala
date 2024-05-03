@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.client
+package io.delta.kernel.defaults.engine
 
 import io.delta.golden.GoldenTableUtils.goldenTableFile
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase

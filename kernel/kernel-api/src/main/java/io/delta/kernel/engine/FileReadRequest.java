@@ -13,10 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package io.delta.kernel.engine;
+
+import io.delta.kernel.annotation.Evolving;
 
 /**
- * Interfaces to allow the connector to bring their own implementation of functions such
- * as reading parquet files, listing files in a file system, parsing a JSON string etc. to Delta
- * Kernel.
+ * Represents a request to read a range of bytes from a given file.
  */
-package io.delta.kernel.client;
+@Evolving
+public interface FileReadRequest {
+    /**
+     * Get the fully qualified path of the file from which to read the data.
+     */
+    String getPath();
+
+    /**
+     * Get the start offset in the file from where to start reading the data.
+     */
+    int getStartOffset();
+
+    /**
+     * Get the length of the data to read from the file starting at the <i>startOffset</i>.
+     */
+    int getReadLength();
+}

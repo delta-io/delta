@@ -45,7 +45,7 @@ libraryDependencySchemes += "org.scala-lang.modules" %% "scala-xml" % VersionSch
 
 addSbtPlugin("net.aichler" % "sbt-jupiter-interface" % "0.9.1")
 
-addSbtPlugin("com.etsy" % "sbt-checkstyle-plugin" % "3.1.1")
+addSbtPlugin("software.purpledragon" % "sbt-checkstyle-plugin" % "4.0.1")
 // By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the
 // same version as Spark
-dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "8.43"
+dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "9.3"

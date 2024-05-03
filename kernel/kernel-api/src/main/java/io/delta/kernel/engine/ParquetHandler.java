@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.client;
+package io.delta.kernel.engine;
 
 import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;

@@ -235,8 +235,9 @@ sealed trait RemovableFeature { self: TableFeature =>
 
     // Check if commits between 0 version and toVersion contain any traces of the feature.
     val allHistoricalDeltaFiles = deltaLog
-      .listFrom(0L)
-      .takeWhile(file => FileNames.getFileVersionOpt(file.getPath).forall(_ <= toVersion))
+      .getChangeLogFiles(0)
+      .takeWhile { case (version, _) => version <= toVersion }
+      .map { case (_, file) => file }
       .filter(FileNames.isDeltaFile)
       .toSeq
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, allHistoricalDeltaFiles)
@@ -351,6 +352,7 @@ object TableFeature {
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
+        TestRemovableWriterFeatureWithDependency,
         TestRemovableLegacyWriterFeature,
         TestRemovableReaderWriterFeature,
         TestRemovableLegacyReaderWriterFeature,
@@ -367,9 +369,22 @@ object TableFeature {
     featureMap
   }
 
+  private val allDependentFeaturesMap: Map[TableFeature, Set[TableFeature]] = {
+    val dependentFeatureTuples =
+      allSupportedFeaturesMap.values.toSeq.flatMap(f => f.requiredFeatures.map(_ -> f))
+    dependentFeatureTuples
+      .groupBy(_._1)
+      .mapValues(_.map(_._2).toSet)
+      .toMap
+  }
+
   /** Get a [[TableFeature]] object by its name. */
   def featureNameToFeature(featureName: String): Option[TableFeature] =
     allSupportedFeaturesMap.get(featureName.toLowerCase(Locale.ROOT))
+
+  /** Returns a set of [[TableFeature]]s that require the given feature to be enabled. */
+  def getDependentFeatures(feature: TableFeature): Set[TableFeature] =
+    allDependentFeaturesMap.getOrElse(feature, Set.empty)
 
   /**
    * Extracts the removed (explicit) feature names by comparing new and old protocols.
@@ -734,8 +749,6 @@ object VacuumProtocolCheckTableFeature
   extends ReaderWriterFeature(name = "vacuumProtocolCheck")
   with RemovableFeature {
 
-  val otherFeaturesRequiringThisFeature = Set(ManagedCommitTableFeature)
-
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
     VacuumProtocolCheckPreDowngradeCommand(table)
   }
@@ -823,6 +836,31 @@ private[sql] object TestRemovableWriterFeature
     TestWriterFeaturePreDowngradeCommand(table)
 
   override def actionUsesFeature(action: Action): Boolean = false
+}
+
+private[sql] object TestRemovableWriterFeatureWithDependency
+  extends WriterFeature(name = "testRemovableWriterFeatureWithDependency")
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableWriterFeatureWithDependency321_"
+  override def metadataRequiresFeatureToBeEnabled(
+    metadata: Metadata,
+    spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  /** Make sure the property is not enabled on the table. */
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !snapshot.metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(TestRemovableReaderWriterFeature, TestRemovableWriterFeature)
 }
 
 private[sql] object TestRemovableReaderWriterFeature

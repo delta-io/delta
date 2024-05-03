@@ -1295,6 +1295,20 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
+    buildConf("streaming.createDataFrame.dropNullColumns")
+      .internal()
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
+    buildConf("createDataFrame.dropNullColumns")
+      .internal()
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(

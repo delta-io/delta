@@ -636,8 +636,8 @@ class ManagedCommitSuite
           override def registerTable(
             logPath: Path,
             currentVersion: Long,
-            currentMetadata: Metadata,
-            currentProtocol: Protocol): Map[String, String] = {
+            currentMetadata: AbstractMetadata,
+            currentProtocol: AbstractProtocol): Map[String, String] = {
             super.registerTable(logPath, currentVersion, currentMetadata, currentProtocol)
             tableConf
           }

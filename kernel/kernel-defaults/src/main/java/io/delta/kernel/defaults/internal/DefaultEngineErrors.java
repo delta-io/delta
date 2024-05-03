@@ -17,9 +17,9 @@ package io.delta.kernel.defaults.internal;
 
 import static java.lang.String.format;
 
-public class DefaultTableClientErrors {
+public class DefaultEngineErrors {
 
-    // TODO update to be table client exception with future exception framework
+    // TODO update to be engine exception with future exception framework
     //  (see delta-io/delta#2231)
     public static IllegalArgumentException canNotInstantiateLogStore(String logStoreClassName) {
         return new IllegalArgumentException(

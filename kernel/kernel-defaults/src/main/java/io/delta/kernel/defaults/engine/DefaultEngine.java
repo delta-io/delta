@@ -13,20 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.client;
+package io.delta.kernel.defaults.engine;
 
 import org.apache.hadoop.conf.Configuration;
 
-import io.delta.kernel.client.*;
+import io.delta.kernel.engine.*;
 
 /**
- * Default implementation of {@link TableClient} based on Hadoop APIs.
+ * Default implementation of {@link Engine} based on Hadoop APIs.
  */
-public class DefaultTableClient
-    implements TableClient {
+public class DefaultEngine
+    implements Engine {
     private final Configuration hadoopConf;
 
-    protected DefaultTableClient(Configuration hadoopConf) {
+    protected DefaultEngine(Configuration hadoopConf) {
         this.hadoopConf = hadoopConf;
     }
 
@@ -51,12 +51,12 @@ public class DefaultTableClient
     }
 
     /**
-     * Create an instance of {@link DefaultTableClient}.
+     * Create an instance of {@link DefaultEngine}.
      *
      * @param hadoopConf Hadoop configuration to use.
-     * @return an instance of {@link DefaultTableClient}.
+     * @return an instance of {@link DefaultEngine}.
      */
-    public static DefaultTableClient create(Configuration hadoopConf) {
-        return new DefaultTableClient(hadoopConf);
+    public static DefaultEngine create(Configuration hadoopConf) {
+        return new DefaultEngine(hadoopConf);
     }
 }

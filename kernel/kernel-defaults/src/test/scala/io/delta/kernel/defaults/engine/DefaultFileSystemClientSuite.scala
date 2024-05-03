@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.client
+package io.delta.kernel.defaults.engine
 
 import java.io.FileNotFoundException
 
@@ -25,7 +25,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
 
-  val fsClient = defaultTableClient.getFileSystemClient
+  val fsClient = defaultEngine.getFileSystemClient
   val fs = FileSystem.get(configuration)
 
   test("list from file") {
