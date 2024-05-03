@@ -19,7 +19,8 @@ import java.io.IOException;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
-
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 

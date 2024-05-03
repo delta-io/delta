@@ -13,33 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package io.delta.kernel.exceptions;
 
-package io.delta.kernel;
+import static java.lang.String.format;
 
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Thrown when there is no Delta table at the given location.
+ * Thrown when trying to create a checkpoint at version {@code v}, but there already exists
+ * a checkpoint at version {@code v}.
  *
- * @since 3.0.0
+ * @since 3.2.0
  */
 @Evolving
-public class TableNotFoundException
-    extends Exception {
-
-    private final String tablePath;
-
-    public TableNotFoundException(String tablePath) {
-        this.tablePath = tablePath;
-    }
-
-    public TableNotFoundException(String tablePath, Throwable cause) {
-        super(cause);
-        this.tablePath = tablePath;
-    }
-
-    @Override
-    public String getMessage() {
-        return String.format("Delta table at path `%s` is not found", tablePath);
+public class CheckpointAlreadyExistsException extends KernelException {
+    public CheckpointAlreadyExistsException(long version) {
+        super(format("Checkpoint for given version %d already exists in the table", version));
     }
 }

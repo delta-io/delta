@@ -20,9 +20,9 @@ package io.delta.standalone.internal
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
-import io.delta.kernel.{Table, TableNotFoundException}
+import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.{TableImpl, SnapshotImpl => SnapshotImplKernel}
 import io.delta.standalone.VersionLog
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}

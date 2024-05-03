@@ -22,8 +22,8 @@ import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.delta.kernel.TableNotFoundException;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
@@ -59,15 +59,16 @@ public final class DeltaHistoryManager {
         List<Commit> commits = getCommits(engine, logPath, earliestRecreatableCommit);
         Commit commit = lastCommitBeforeOrAtTimestamp(commits, timestamp)
             .orElseThrow(() ->
-                DeltaErrors.timestampEarlierThanTableFirstCommitException(
+                DeltaErrors.timestampBeforeFirstAvailableCommit(
                     logPath.getParent().toString(), /* use dataPath */
                     timestamp,
-                    commits.get(0).timestamp)
+                    commits.get(0).timestamp,
+                    commits.get(0).version)
             );
 
         // If timestamp is after the last commit of the table
         if (commit == commits.get(commits.size() - 1) && commit.timestamp < timestamp) {
-            throw DeltaErrors.timestampLaterThanTableLastCommit(
+            throw DeltaErrors.timestampAfterLatestCommit(
                 logPath.getParent().toString(), /* use dataPath */
                 timestamp,
                 commit.timestamp,
@@ -85,7 +86,7 @@ public final class DeltaHistoryManager {
      * We search for the earliest checkpoint we have, or whether we have the 0th delta file. This
      * method assumes that the commits are contiguous.
      */
-    private static long getEarliestRecreatableCommit(Engine engine, Path logPath)
+    public static long getEarliestRecreatableCommit(Engine engine, Path logPath)
             throws TableNotFoundException {
         try (CloseableIterator<FileStatus> files = listFrom(engine, logPath, 0)
             .filter(fs ->

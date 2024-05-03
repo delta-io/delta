@@ -30,6 +30,8 @@ import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -160,8 +162,8 @@ public class SnapshotManager {
         SnapshotImpl snapshot = (SnapshotImpl) getSnapshotAt(engine, version);
 
         // Check if writing to the given table protocol version/features is supported in Kernel
-        validateWriteSupportedTable(
-                snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getSchema(engine));
+        validateWriteSupportedTable(snapshot.getProtocol(), snapshot.getMetadata(),
+            snapshot.getSchema(engine), tablePath.toString());
 
         Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
 
@@ -317,8 +319,10 @@ public class SnapshotManager {
                         // than the versionToLoad then the versionToLoad is not reconstructable
                         // from the existing logs
                         if (output.isEmpty()) {
-                            throw DeltaErrors.nonReconstructableStateException(
-                                tablePath.toString(), versionToLoad.get());
+                            long earliestVersion = DeltaHistoryManager.getEarliestRecreatableCommit(
+                                engine, logPath);
+                            throw DeltaErrors.versionBeforeFirstAvailableCommit(
+                                tablePath.toString(), versionToLoad.get(), earliestVersion);
                         }
                         break;
                     }
@@ -624,7 +628,7 @@ public class SnapshotManager {
         }
 
         versionToLoadOpt.filter(v -> v != newVersion).ifPresent(v -> {
-            throw DeltaErrors.nonExistentVersionException(tablePath.toString(), v, newVersion);
+            throw DeltaErrors.versionAfterLatestCommit(tablePath.toString(), v, newVersion);
         });
 
         // We may just be getting a checkpoint file after the filtering
