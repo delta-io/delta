@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel;
+package io.delta.kernel.exceptions;
 
 import static java.lang.String.format;
 
@@ -26,7 +26,7 @@ import io.delta.kernel.annotation.Evolving;
  * @since 3.2.0
  */
 @Evolving
-public class CheckpointAlreadyExistsException extends IllegalArgumentException {
+public class CheckpointAlreadyExistsException extends KernelException {
     public CheckpointAlreadyExistsException(long version) {
         super(format("Checkpoint for given version %d already exists in the table", version));
     }

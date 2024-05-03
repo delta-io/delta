@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.{CheckpointAlreadyExistsException, Table, TableNotFoundException}
+import io.delta.kernel.Table
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -32,6 +32,7 @@ import java.io.File
 
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
 
 /**
  * Test suite for `io.delta.kernel.Table.checkpoint(engine, version)`

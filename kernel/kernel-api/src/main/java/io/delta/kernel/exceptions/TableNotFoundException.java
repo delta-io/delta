@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
-package io.delta.kernel;
+package io.delta.kernel.exceptions;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.exceptions.KernelException;
 
 /**
  * Thrown when there is no Delta table at the given location.

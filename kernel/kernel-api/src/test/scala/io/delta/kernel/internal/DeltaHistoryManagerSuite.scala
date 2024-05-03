@@ -19,10 +19,9 @@ import java.io.FileNotFoundException
 
 import scala.reflect.ClassTag
 
+import io.delta.kernel.exceptions.TableNotFoundException
 import org.scalatest.funsuite.AnyFunSuite
-
 import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.TableNotFoundException
 import io.delta.kernel.test.MockFileSystemClientUtils
 
 class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {

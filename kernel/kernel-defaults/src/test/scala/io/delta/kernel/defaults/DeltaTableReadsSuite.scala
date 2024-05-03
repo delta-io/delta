@@ -16,12 +16,13 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
 import io.delta.kernel.types.{LongType, StructType}
-import io.delta.kernel.{Table, TableNotFoundException}
+import io.delta.kernel.Table
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
