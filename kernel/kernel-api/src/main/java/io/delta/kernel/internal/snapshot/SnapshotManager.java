@@ -16,8 +16,8 @@
 
 package io.delta.kernel.internal.snapshot;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
+import java.io.*;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -28,9 +28,8 @@ import static java.lang.String.format;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.TableNotFoundException;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.*;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -38,10 +37,13 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
+import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
 import static io.delta.kernel.internal.fs.Path.getName;
+import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class SnapshotManager {
@@ -99,57 +101,97 @@ public class SnapshotManager {
     /**
      * Construct the latest snapshot for given table.
      *
-     * @param tableClient Instance of {@link TableClient} to use.
+     * @param engine Instance of {@link Engine} to use.
      * @return
      * @throws TableNotFoundException
      */
-    public Snapshot buildLatestSnapshot(TableClient tableClient)
+    public Snapshot buildLatestSnapshot(Engine engine)
         throws TableNotFoundException {
-        return getSnapshotAtInit(tableClient);
+        return getSnapshotAtInit(engine);
     }
 
     /**
      * Construct the snapshot for the given table at the version provided.
      *
-     * @param tableClient Instance of {@link TableClient} to use.
+     * @param engine Instance of {@link Engine} to use.
      * @param version     The snapshot version to construct
      * @return a {@link Snapshot} of the table at version {@code version}
      * @throws TableNotFoundException
      */
     public Snapshot getSnapshotAt(
-            TableClient tableClient,
+            Engine engine,
             long version) throws TableNotFoundException {
 
-        Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(
-            tableClient,
+        Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(engine,
             Optional.empty(), /* startCheckpointOpt */
             Optional.of(version) /* versionToLoadOpt */);
 
         return logSegmentOpt
-            .map(logSegment -> createSnapshot(logSegment, tableClient))
+            .map(logSegment -> createSnapshot(logSegment, engine))
             .orElseThrow(() -> new TableNotFoundException(tablePath.toString()));
     }
 
     /**
      * Construct the snapshot for the given table at the provided timestamp.
      *
-     * @param tableClient         Instance of {@link TableClient} to use.
+     * @param engine         Instance of {@link Engine} to use.
      * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
      *                            unix epoch
      * @return a {@link Snapshot} of the table at the provided timestamp
      * @throws TableNotFoundException
      */
     public Snapshot getSnapshotForTimestamp(
-            TableClient tableClient, long millisSinceEpochUTC) throws TableNotFoundException {
+            Engine engine, long millisSinceEpochUTC) throws TableNotFoundException {
         long startTimeMillis = System.currentTimeMillis();
         long versionToRead = DeltaHistoryManager.getActiveCommitAtTimestamp(
-                tableClient, logPath, millisSinceEpochUTC);
+            engine, logPath, millisSinceEpochUTC);
         logger.info("{}: Took {}ms to fetch version at timestamp {}",
                 tablePath,
                 System.currentTimeMillis() - startTimeMillis,
                 millisSinceEpochUTC);
 
-        return getSnapshotAt(tableClient, versionToRead);
+        return getSnapshotAt(engine, versionToRead);
+    }
+
+    public void checkpoint(Engine engine, long version)
+            throws TableNotFoundException, IOException {
+        logger.info("{}: Starting checkpoint for version: {}", tablePath, version);
+        // Get the snapshot corresponding the version
+        SnapshotImpl snapshot = (SnapshotImpl) getSnapshotAt(engine, version);
+
+        // Check if writing to the given table protocol version/features is supported in Kernel
+        validateWriteSupportedTable(
+                snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getSchema(engine));
+
+        Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
+
+        long numberOfAddFiles = 0;
+        try (CreateCheckpointIterator checkpointDataIter =
+                     snapshot.getCreateCheckpointIterator(engine)) {
+            // Write the iterator actions to the checkpoint using the Parquet handler
+            engine.getParquetHandler()
+                    .writeParquetFileAtomically(
+                            checkpointPath.toString(),
+                            checkpointDataIter);
+
+            logger.info("{}: Checkpoint file is written for version: {}", tablePath, version);
+
+            // Get the metadata of the checkpoint file
+            numberOfAddFiles = checkpointDataIter.getNumberOfAddActions();
+        } catch (FileAlreadyExistsException faee) {
+            throw new CheckpointAlreadyExistsException(version);
+        }
+
+        CheckpointMetaData checkpointMetaData =
+                new CheckpointMetaData(version, numberOfAddFiles, Optional.empty());
+
+        Checkpointer checkpointer = new Checkpointer(logPath);
+        checkpointer.writeLastCheckpointFile(engine, checkpointMetaData);
+
+        logger.info("{}: Last checkpoint metadata file is written for version: {}",
+                tablePath, version);
+
+        logger.info("{}: Finished checkpoint for version: {}", tablePath, version);
     }
 
     ////////////////////
@@ -174,11 +216,11 @@ public class SnapshotManager {
      * Get an iterator of files in the _delta_log directory starting with the startVersion.
      */
     private CloseableIterator<FileStatus> listFrom(
-            TableClient tableClient,
+            Engine engine,
             long startVersion)
             throws IOException {
         logger.debug("{}: startVersion: {}", tablePath, startVersion);
-        return tableClient
+        return engine
             .getFileSystemClient()
             .listFrom(FileNames.listingPrefix(logPath, startVersion));
     }
@@ -200,13 +242,12 @@ public class SnapshotManager {
      * with the startVersion. Returns None if no files are found or the directory is missing.
      */
     private Optional<CloseableIterator<FileStatus>> listFromOrNone(
-        TableClient tableClient,
+        Engine engine,
         long startVersion) {
         // LIST the directory, starting from the provided lower bound (treat missing dir as empty).
         // NOTE: "empty/missing" is _NOT_ equivalent to "contains no useful commit files."
         try {
-            CloseableIterator<FileStatus> results = listFrom(
-                tableClient,
+            CloseableIterator<FileStatus> results = listFrom(engine,
                 startVersion);
             if (results.hasNext()) {
                 return Optional.of(results);
@@ -234,7 +275,7 @@ public class SnapshotManager {
      * None if the listing returned no files at all.
      */
     protected final Optional<List<FileStatus>> listDeltaAndCheckpointFiles(
-        TableClient tableClient,
+        Engine engine,
         long startVersion,
         Optional<Long> versionToLoad) {
         versionToLoad.ifPresent(v ->
@@ -247,8 +288,7 @@ public class SnapshotManager {
             ));
         logger.debug("startVersion: {}, versionToLoad: {}", startVersion, versionToLoad);
 
-        return listFromOrNone(
-            tableClient,
+        return listFromOrNone(engine,
             startVersion).map(fileStatusesIter -> {
                 final List<FileStatus> output = new ArrayList<>();
 
@@ -294,28 +334,27 @@ public class SnapshotManager {
      * Load the Snapshot for this Delta table at initialization. This method uses the
      * `lastCheckpoint` file as a hint on where to start listing the transaction log directory.
      */
-    private SnapshotImpl getSnapshotAtInit(TableClient tableClient)
+    private SnapshotImpl getSnapshotAtInit(Engine engine)
         throws TableNotFoundException {
         Checkpointer checkpointer = new Checkpointer(logPath);
         Optional<CheckpointMetaData> lastCheckpointOpt =
-            checkpointer.readLastCheckpointFile(tableClient);
+            checkpointer.readLastCheckpointFile(engine);
         if (!lastCheckpointOpt.isPresent()) {
             logger.warn("{}: Last checkpoint file is missing or corrupted. " +
                     "Will search for the checkpoint files directly.", tablePath);
         }
         Optional<LogSegment> logSegmentOpt =
-            getLogSegmentFrom(tableClient, lastCheckpointOpt);
+            getLogSegmentFrom(engine, lastCheckpointOpt);
 
         return logSegmentOpt
             .map(logSegment -> createSnapshot(
-                logSegment,
-                tableClient))
+                logSegment, engine))
             .orElseThrow(() -> new TableNotFoundException(tablePath.toString()));
     }
 
     private SnapshotImpl createSnapshot(
             LogSegment initSegment,
-            TableClient tableClient) {
+            Engine engine) {
         final String startingFromStr = initSegment
             .checkpointVersionOpt
             .map(v -> format("starting from checkpoint version %s.", v))
@@ -323,12 +362,14 @@ public class SnapshotManager {
         logger.info("{}: Loading version {} {}", tablePath, initSegment.version, startingFromStr);
 
         long startTimeMillis = System.currentTimeMillis();
+
+        assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
+
         final SnapshotImpl snapshot = new SnapshotImpl(
             logPath,
             tablePath,
             initSegment.version,
-            initSegment,
-            tableClient,
+            initSegment, engine,
             initSegment.lastCommitTimestamp,
             Optional.ofNullable(latestSnapshotHint.get())
         );
@@ -340,7 +381,7 @@ public class SnapshotManager {
                 startingFromStr);
 
         final SnapshotHint hint = new SnapshotHint(
-            snapshot.getVersion(tableClient),
+            snapshot.getVersion(engine),
             snapshot.getProtocol(),
             snapshot.getMetadata());
 
@@ -356,10 +397,9 @@ public class SnapshotManager {
      * @param startingCheckpoint A checkpoint that we can start our listing from
      */
     private Optional<LogSegment> getLogSegmentFrom(
-        TableClient tableClient,
+        Engine engine,
         Optional<CheckpointMetaData> startingCheckpoint) {
-        return getLogSegmentForVersion(
-            tableClient,
+        return getLogSegmentForVersion(engine,
             startingCheckpoint.map(x -> x.version),
             Optional.empty());
     }
@@ -381,7 +421,7 @@ public class SnapshotManager {
      * startCheckpoint. None, if the delta log directory was missing or empty.
      */
     public Optional<LogSegment> getLogSegmentForVersion(
-        TableClient tableClient,
+        Engine engine,
         Optional<Long> startCheckpoint,
         Optional<Long> versionToLoad) {
         // Only use startCheckpoint if it is <= versionToLoad
@@ -394,7 +434,7 @@ public class SnapshotManager {
             long beforeVersion = versionToLoad.get() + 1;
             long startTimeMillis = System.currentTimeMillis();
             startCheckpointToUse =
-                    findLastCompleteCheckpointBefore(tableClient, logPath, beforeVersion)
+                    findLastCompleteCheckpointBefore(engine, logPath, beforeVersion)
                     .map(x -> x.version);
 
             logger.info("{}: Took {}ms to load last checkpoint before version {}",
@@ -410,15 +450,14 @@ public class SnapshotManager {
 
         long startTimeMillis = System.currentTimeMillis();
         final Optional<List<FileStatus>> newFiles =
-            listDeltaAndCheckpointFiles(tableClient, startVersion, versionToLoad);
+            listDeltaAndCheckpointFiles(engine, startVersion, versionToLoad);
         logger.info("{}: Took {}ms to list the files after starting checkpoint",
                 tablePath,
                 System.currentTimeMillis() - startTimeMillis);
 
         startTimeMillis = System.currentTimeMillis();
         try {
-            return getLogSegmentForVersion(
-                    tableClient,
+            return getLogSegmentForVersion(engine,
                     startCheckpointToUse,
                     versionToLoad,
                     newFiles);
@@ -434,7 +473,7 @@ public class SnapshotManager {
      * and will then try to construct a new LogSegment using that.
      */
     protected Optional<LogSegment> getLogSegmentForVersion(
-        TableClient tableClient,
+        Engine engine,
         Optional<Long> startCheckpointOpt,
         Optional<Long> versionToLoadOpt,
         Optional<List<FileStatus>> filesOpt) {
@@ -473,8 +512,7 @@ public class SnapshotManager {
         } else if (newFiles.isEmpty()) {
             // The directory may be deleted and recreated and we may have stale state in our
             // DeltaLog singleton, so try listing from the first version
-            return getLogSegmentForVersion(
-                tableClient,
+            return getLogSegmentForVersion(engine,
                 Optional.empty(),
                 versionToLoadOpt);
         }

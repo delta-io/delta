@@ -252,17 +252,17 @@ class DeltaColumnRenameSuite extends QueryTest
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
-      assertException("Cannot rename column a") {
+      assertException("Cannot alter column a") {
         spark.sql("alter table t1 rename column a to a1")
       }
 
-      assertException("Cannot rename column arr") {
+      assertException("Cannot alter column arr") {
         spark.sql("alter table t1 rename column arr to arr1")
       }
 
 
       // cannot rename b because its child is referenced
-      assertException("Cannot rename column b") {
+      assertException("Cannot alter column b") {
         spark.sql("alter table t1 rename column b to b1")
       }
 
@@ -316,7 +316,7 @@ class DeltaColumnRenameSuite extends QueryTest
       spark.sql("alter table t1 add constraint" +
         " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
 
-      assertException("Cannot rename column map") {
+      assertException("Cannot alter column map") {
         spark.sql("alter table t1 rename column map to map1")
       }
 
@@ -363,19 +363,19 @@ class DeltaColumnRenameSuite extends QueryTest
 
       simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
 
-      assertException("Cannot rename column a") {
+      assertException("Cannot alter column a") {
         spark.sql("alter table t1 rename column a to a1")
       }
 
-      assertException("Cannot rename column b") {
+      assertException("Cannot alter column b") {
         spark.sql("alter table t1 rename column b to b1")
       }
 
-      assertException("Cannot rename column b.d") {
+      assertException("Cannot alter column b.d") {
         spark.sql("alter table t1 rename column b.d to d1")
       }
 
-      assertException("Cannot rename column arr") {
+      assertException("Cannot alter column arr") {
         spark.sql("alter table t1 rename column arr to arr1")
       }
 

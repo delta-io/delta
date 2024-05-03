@@ -239,6 +239,41 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
             print("Failed Iceberg tests in %s" % (test_file))
             raise
 
+def run_uniform_hudi_integration_tests(root_dir, version, extra_maven_repo, use_local):
+    print("\n\n##### Running Uniform hudi tests on version %s #####" % str(version))
+    # clear_artifact_cache()
+    if use_local:
+        run_cmd(["build/sbt", "publishM2"])
+        run_cmd(["build/sbt", "hudi/assembly"])
+
+    test_dir = path.join(root_dir, path.join("hudi", "integration_tests"))
+
+    print("attn " + root_dir)
+    # Add more tests here if needed ...
+    test_files_names = ["write_uniform_hudi.py"]
+    test_files = [path.join(test_dir, f) for f in test_files_names]
+
+    python_root_dir = path.join(root_dir, "python")
+    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    package = ','.join([
+        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)])
+    jars = path.join(root_dir, "hudi/target/scala-2.12/delta-hudi-assembly_2.12-%s.jar" % (version))
+
+    repo = extra_maven_repo if extra_maven_repo else ""
+
+    for test_file in test_files:
+        try:
+            cmd = ["spark-submit",
+                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                   "--packages", package,
+                   "--jars", jars,
+                   "--repositories", repo, test_file]
+            print("\nRunning Uniform Hudi tests in %s\n=============" % test_file)
+            print("Command: %s" % " ".join(cmd))
+            run_cmd(cmd, stream_output=True)
+        except:
+            print("Failed Uniform Hudi tests in %s" % (test_file))
+            raise
 
 def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
@@ -433,6 +468,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the Iceberg integration tests (and only them)")
     parser.add_argument(
+        "--run-uniform-hudi-integration-tests",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run the Uniform Hudi integration tests (and only them)")
+    parser.add_argument(
         "--iceberg-spark-version",
         required=False,
         default="3.5",
@@ -463,6 +504,11 @@ if __name__ == "__main__":
         run_iceberg_integration_tests(
             root_dir, args.version,
             args.iceberg_spark_version, args.iceberg_lib_version, args.maven_repo, args.use_local)
+        quit()
+
+    if args.run_uniform_hudi_integration_tests:
+        run_uniform_hudi_integration_tests(
+            root_dir, args.version, args.maven_repo, args.use_local)
         quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:

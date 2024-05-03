@@ -19,15 +19,17 @@ import java.util.Optional;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -38,22 +40,23 @@ public class SnapshotImpl implements Snapshot {
     private final LogReplay logReplay;
     private final Protocol protocol;
     private final Metadata metadata;
+    private final LogSegment logSegment;
 
     public SnapshotImpl(
             Path logPath,
             Path dataPath,
             long version,
             LogSegment logSegment,
-            TableClient tableClient,
+            Engine engine,
             long timestamp,
             Optional<SnapshotHint> snapshotHint) {
         this.dataPath = dataPath;
         this.version = version;
+        this.logSegment = logSegment;
         this.logReplay = new LogReplay(
             logPath,
             dataPath,
-            version,
-            tableClient,
+            version, engine,
             logSegment,
             snapshotHint);
         this.protocol = logReplay.getProtocol();
@@ -61,24 +64,23 @@ public class SnapshotImpl implements Snapshot {
     }
 
     @Override
-    public long getVersion(TableClient tableClient) {
+    public long getVersion(Engine engine) {
         return version;
     }
 
     @Override
-    public StructType getSchema(TableClient tableClient) {
+    public StructType getSchema(Engine engine) {
         return getMetadata().getSchema();
     }
 
     @Override
-    public ScanBuilder getScanBuilder(TableClient tableClient) {
+    public ScanBuilder getScanBuilder(Engine engine) {
         return new ScanBuilderImpl(
             dataPath,
             protocol,
             metadata,
-            getSchema(tableClient),
-            logReplay,
-            tableClient
+            getSchema(engine),
+            logReplay, engine
         );
     }
 
@@ -88,6 +90,16 @@ public class SnapshotImpl implements Snapshot {
 
     public Protocol getProtocol() {
         return protocol;
+    }
+
+    public CreateCheckpointIterator getCreateCheckpointIterator(
+            Engine engine) {
+        long minFileRetentionTimestampMillis =
+                System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
+        return new CreateCheckpointIterator(engine,
+                logSegment,
+                minFileRetentionTimestampMillis
+        );
     }
 
     /**
@@ -102,5 +114,9 @@ public class SnapshotImpl implements Snapshot {
      */
     public Optional<Long> getLatestTransactionVersion(String applicationId) {
         return logReplay.getLatestTransactionIdentifier(applicationId);
+    }
+
+    public LogSegment getLogSegment() {
+        return logSegment;
     }
 }

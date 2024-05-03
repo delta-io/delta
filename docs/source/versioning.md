@@ -22,6 +22,7 @@ The following <Delta> features break forward compatibility. Features are enabled
    Table features,[Delta Lake 2.3.0](https://github.com/delta-io/delta/releases/tag/v2.3.0),[_](#table-features)
    Timestamp without Timezone,[Delta Lake 2.4.0](https://github.com/delta-io/delta/releases/tag/v2.4.0),[TimestampNTZType](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)
    Iceberg Compatibility V1, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
+   Iceberg Compatibility V2, [Delta Lake 3.1.0](https://github.com/delta-io/delta/releases/tag/v3.1.0),[IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v2)
    V2 Checkpoints, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
    Domain metadata, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[Domain Metadata Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata)
    Clustering, [Delta Lake 3.1.0](https://github.com/delta-io/delta/releases/tag/v3.1.0),[_](/delta-clustering.md)
@@ -106,6 +107,7 @@ The following table shows minimum protocol versions required for <Delta> feature
    Timestamp without Timezone,7,3,[TimestampNTZType](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)
    Iceberg Compatibility V1,7,2,[IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
    V2 Checkpoints,7,3,[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
+   Vacuum Protocol Check,7,3,[Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check)
    Row Tracking,7,3,[_](/delta-row-tracking.md)
 
 <a id="upgrade"></a>

@@ -398,6 +398,12 @@
     ],
     "sqlState" : "54000"
   },
+  "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY" : {
+    "message" : [
+      "Clustering and partitioning cannot both be specified. Please remove partitionedBy if you want to create a Delta table with clustering."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
     "message" : [
       "Data skipping is not supported for partition column '<column>'."
@@ -528,6 +534,20 @@
       "<oldConstraint>"
     ],
     "sqlState" : "42710"
+  },
+  "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH" : {
+    "message" : [
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following check constraint(s):",
+      "<constraints>"
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot alter column <columnName> because this column is referenced by the following check constraint(s):",
+      "<constraints>"
+    ],
+    "sqlState" : "42K09"
   },
   "DELTA_CONSTRAINT_DOES_NOT_EXIST" : {
     "message" : [
@@ -877,6 +897,13 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_DROP_DEPENDENT_FEATURE" : {
+    "message" : [
+      "Cannot drop table feature `<feature>` because some other features (<dependentFeatures>) in this table depends on `<feature>`.",
+      "Consider dropping them first before dropping this feature."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT" : {
     "message" : [
       "Cannot drop <feature> from this table because it is not currently present in the table's protocol."
@@ -990,7 +1017,15 @@
   },
   "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH" : {
     "message" : [
-      "Column <columnName> is a generated column or a column used by a generated column. The data type is <columnType>. It doesn't accept data type <dataType>"
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following generated column(s):",
+      "<generatedColumns>"
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot alter column <columnName> because this column is referenced by the following generated column(s):",
+      "<generatedColumns>"
     ],
     "sqlState" : "42K09"
   },
@@ -1085,6 +1120,24 @@
       }
     },
     "sqlState" : "KD00E"
+  },
+  "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP" : {
+    "message" : [
+      "IDENTITY column step cannot be 0."
+    ],
+    "sqlState" : "42611"
+  },
+  "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE" : {
+    "message" : [
+      "DataType <dataType> is not supported for IDENTITY columns."
+    ],
+    "sqlState" : "428H2"
+  },
+  "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION" : {
+    "message" : [
+      "IDENTITY column cannot be specified with a generated column expression."
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_ILLEGAL_FILE_FOUND" : {
     "message" : [
@@ -2806,20 +2859,6 @@
       "Delta configuration:",
       "<configuration>",
       "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0004" : {
-    "message" : [
-      "Cannot <operation> column <columnName> because this column is referenced by the following",
-      "check constraint(s):",
-      "<constraints>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0005" : {
-    "message" : [
-      "Cannot <operation> column <columnName> because this column is referenced by the following",
-      "generated column(s):",
-      "<generatedColumns>"
     ]
   },
   "_LEGACY_ERROR_TEMP_DELTA_0006" : {

@@ -20,18 +20,16 @@ import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
-import io.delta.kernel.internal.util.{FileNames, Utils}
-import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockTableClientUtils}
-import io.delta.kernel.types.{DataType, LongType, StructType}
+import io.delta.kernel.internal.util.Utils
+import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockEngineUtils, VectorTestUtils}
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.{FileNotFoundException, IOException}
 import java.util.Optional
 
-class CheckpointerSuite extends AnyFunSuite
-    with MockFileSystemClientUtils
-    with MockTableClientUtils {
+class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -40,7 +38,7 @@ class CheckpointerSuite extends AnyFunSuite
   test("load a valid last checkpoint metadata file") {
     val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockTableClient(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assertValidCheckpointMetadata(lastCheckpoint)
     assert(jsonHandler.currentFailCount == 0)
   }
@@ -48,7 +46,7 @@ class CheckpointerSuite extends AnyFunSuite
   test("load a zero-sized last checkpoint metadata file") {
     val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockTableClient(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
   }
@@ -56,7 +54,7 @@ class CheckpointerSuite extends AnyFunSuite
   test("load an invalid last checkpoint metadata file") {
     val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(INVALID_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockTableClient(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
   }
@@ -64,7 +62,7 @@ class CheckpointerSuite extends AnyFunSuite
   test("retry last checkpoint metadata loading - succeeds at third attempt") {
     val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 2)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockTableClient(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assertValidCheckpointMetadata(lastCheckpoint)
     assert(jsonHandler.currentFailCount == 2)
   }
@@ -72,7 +70,7 @@ class CheckpointerSuite extends AnyFunSuite
   test("retry last checkpoint metadata loading - exceeds max failures") {
     val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 4)
     val lastCheckpoint = new Checkpointer(VALID_LAST_CHECKPOINT_FILE_TABLE)
-      .readLastCheckpointFile(mockTableClient(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 3) // 3 is the max retries
   }
@@ -80,7 +78,7 @@ class CheckpointerSuite extends AnyFunSuite
   test("try to load last checkpoint metadata when the file is missing") {
     val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE)
-      .readLastCheckpointFile(mockTableClient(jsonHandler = jsonHandler))
+      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
   }
@@ -204,8 +202,8 @@ class CheckpointerSuite extends AnyFunSuite
       beforeVersion: Long,
       expCheckpointVersion: Long,
       expNumFilesListed: Long): Unit = {
-    val tableClient = createMockFSListFromTableClient(deltaLogFiles)
-    val result = findLastCompleteCheckpointBeforeHelper(tableClient, logPath, beforeVersion)
+    val engine = createMockFSListFromEngine(deltaLogFiles)
+    val result = findLastCompleteCheckpointBeforeHelper(engine, logPath, beforeVersion)
     assert(result._1.isPresent, s"Checkpoint should be found for version=$beforeVersion")
     assert(
       result._1.get().version === expCheckpointVersion,
@@ -217,14 +215,14 @@ class CheckpointerSuite extends AnyFunSuite
       deltaLogFiles: Seq[FileStatus],
       beforeVersion: Long,
       expNumFilesListed: Long): Unit = {
-    val tableClient = createMockFSListFromTableClient(deltaLogFiles)
-    val result = findLastCompleteCheckpointBeforeHelper(tableClient, logPath, beforeVersion)
+    val engine = createMockFSListFromEngine(deltaLogFiles)
+    val result = findLastCompleteCheckpointBeforeHelper(engine, logPath, beforeVersion)
     assert(!result._1.isPresent, s"No checkpoint should be found for version=$beforeVersion")
     assert(result._2 == expNumFilesListed, s"Invalid number of files listed: $beforeVersion")
   }
 }
 
-object CheckpointerSuite {
+object CheckpointerSuite extends VectorTestUtils {
   val SAMPLE_LAST_CHECKPOINT_FILE_CONTENT: ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
@@ -252,18 +250,6 @@ object CheckpointerSuite {
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
   val LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE = new Path("/filenotfoundtable")
-
-  def longVector(values: Long*): ColumnVector = new ColumnVector {
-    override def getDataType: DataType = LongType.LONG
-
-    override def getSize: Int = 1
-
-    override def close(): Unit = {}
-
-    override def isNullAt(rowId: Int): Boolean = false
-
-    override def getLong(rowId: Int): Long = values(rowId)
-  }
 }
 
 /** `maxFailures` allows how many times to fail before returning the valid data */

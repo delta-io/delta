@@ -53,23 +53,46 @@ import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readD
  * {@link ParquetWriter} through {@link RecordConsumer}.
  */
 public class ParquetFileWriter {
+    public static final String TARGET_FILE_SIZE_CONF =
+            "delta.kernel.default.parquet.writer.targetMaxFileSize";
+    public static final long DEFAULT_TARGET_FILE_SIZE = 128 * 1024 * 1024; // 128MB
+
     private final Configuration configuration;
+    private final boolean writeAsSingleFile;
     private final Path location;
     private final long targetMaxFileSize;
     private final List<Column> statsColumns;
+
     private long currentFileNumber; // used to generate the unique file names.
 
+    /**
+     * Create writer to write data into one or more files depending upon the
+     * {@code delta.kernel.default.parquet.writer.targetMaxFileSize} value and the given data.
+     */
     public ParquetFileWriter(
             Configuration configuration,
             Path location,
-            long targetMaxFileSize,
             List<Column> statsColumns) {
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.location = requireNonNull(location, "directory is null");
+        // Default target file size is 128 MB.
+        this.targetMaxFileSize =
+                configuration.getLong(TARGET_FILE_SIZE_CONF, DEFAULT_TARGET_FILE_SIZE);
         checkArgument(
                 targetMaxFileSize > 0, "Invalid target Parquet file size: " + targetMaxFileSize);
-        this.targetMaxFileSize = targetMaxFileSize;
         this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
+        this.writeAsSingleFile = false;
+    }
+
+    /**
+     * Create writer to write the data exactly into one file.
+     */
+    public ParquetFileWriter(Configuration configuration, Path destPath) {
+        this.configuration = requireNonNull(configuration, "configuration is null");
+        this.writeAsSingleFile = true;
+        this.location = requireNonNull(destPath, "destPath is null");
+        this.targetMaxFileSize = Long.MAX_VALUE;
+        this.statsColumns = Collections.emptyList();
     }
 
     /**
@@ -131,12 +154,15 @@ public class ParquetFileWriter {
 
                 Path filePath = generateNextFilePath();
                 assert batchWriteSupport != null : "batchWriteSupport is not initialized";
-                try (ParquetWriter<Integer> writer =
-                             createWriter(filePath, batchWriteSupport)) {
+                try (ParquetWriter<Integer> writer = createWriter(filePath, batchWriteSupport)) {
                     boolean maxFileSizeReached;
                     do {
                         consumeNextRow(writer);
-                        maxFileSizeReached = writer.getDataSize() >= targetMaxFileSize;
+                        // If we are writing a single file, then don't need to check for the current
+                        // file size. Otherwise see if the current file size reached the target file
+                        // size.
+                        maxFileSizeReached =
+                                !writeAsSingleFile && writer.getDataSize() >= targetMaxFileSize;
                         // Keep writing until max file is reached or no more data to write
                     } while (!maxFileSizeReached && hasNextRow());
                 } catch (IOException e) {
@@ -289,6 +315,10 @@ public class ParquetFileWriter {
      * Generate the next file path to write the data.
      */
     private Path generateNextFilePath() {
+        if (writeAsSingleFile) {
+            checkArgument(currentFileNumber++ == 0, "expected to write just one file");
+            return location;
+        }
         String fileName = String.format("%s-%03d.parquet", UUID.randomUUID(), currentFileNumber++);
         return new Path(location, fileName);
     }

@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{DataType, LongType, StructField}
@@ -73,8 +75,46 @@ case class TestColumnSpec(
   }
 }
 
+object GeneratedAsIdentityType extends Enumeration {
+  type GeneratedAsIdentityType = Value
+  val GeneratedAlways, GeneratedByDefault = Value
+}
 
-trait DDLTestUtils extends QueryTest with SharedSparkSession {
+case class IdentityColumnSpec(
+    generatedAsIdentityType: GeneratedAsIdentityType.GeneratedAsIdentityType,
+    startsWith: Option[Long] = None,
+    incrementBy: Option[Long] = None,
+    colName: String = "id",
+    dataType: DataType = LongType,
+    comment: Option[String] = None)
+  extends ColumnSpec {
+
+  override def ddl: String = {
+    throw new UnsupportedOperationException(
+      "DDL generation is not supported for identity columns yet")
+  }
+
+  override def structField(spark: SparkSession): StructField = {
+    var col = io.delta.tables.DeltaTable.columnBuilder(spark, colName)
+      .dataType(dataType)
+    val start = startsWith.getOrElse(IdentityColumn.defaultStart.toLong)
+    val step = incrementBy.getOrElse(IdentityColumn.defaultStep.toLong)
+    col = generatedAsIdentityType match {
+      case GeneratedAsIdentityType.GeneratedAlways =>
+        col.generatedAlwaysAsIdentity(start, step)
+      case GeneratedAsIdentityType.GeneratedByDefault =>
+        col.generatedByDefaultAsIdentity(start, step)
+    }
+
+    comment.foreach { c =>
+      col = col.comment(c)
+    }
+
+    col.build()
+  }
+}
+
+trait DDLTestUtils extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
   protected object DDLType extends Enumeration {
     val CREATE, REPLACE, CREATE_OR_REPLACE = Value
   }
@@ -157,7 +197,7 @@ trait SQLDDLTestUtils extends DDLTestUtils {
   }
 }
 
-trait ScalaDLLTestUtils extends DDLTestUtils {
+trait ScalaDDLTestUtils extends DDLTestUtils {
   protected def runDDL(
       ddlType: DDLType.Value,
       tableName: String,

@@ -24,13 +24,13 @@ addSbtPlugin("com.github.sbt" % "sbt-unidoc" % "0.5.0")
 
 addSbtPlugin("com.eed3si9n" % "sbt-assembly" % "2.1.0")
 
-addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.9.2")
+addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.1.3")
 
 addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.8.3")
 
 addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.9.15")
 
-addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.6")
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.11")
 //Upgrade sbt-scoverage to 2.0.3+ because 2.0.0 is not compatible to Scala 2.12.17:
 //sbt.librarymanagement.ResolveException: Error downloading org.scoverage:scalac-scoverage-plugin_2.12.17:2.0.0
 
@@ -45,7 +45,7 @@ libraryDependencySchemes += "org.scala-lang.modules" %% "scala-xml" % VersionSch
 
 addSbtPlugin("net.aichler" % "sbt-jupiter-interface" % "0.9.1")
 
-addSbtPlugin("com.etsy" % "sbt-checkstyle-plugin" % "3.1.1")
+addSbtPlugin("software.purpledragon" % "sbt-checkstyle-plugin" % "4.0.1")
 // By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the
 // same version as Spark
-dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "8.43"
+dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "9.3"

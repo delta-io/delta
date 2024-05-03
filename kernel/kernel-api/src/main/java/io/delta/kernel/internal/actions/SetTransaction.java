@@ -15,18 +15,21 @@
  */
 package io.delta.kernel.internal.actions;
 
-import java.util.Optional;
+import java.util.*;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+
+import io.delta.kernel.internal.data.GenericRow;
 
 /**
  * Delta log action representing a transaction identifier action.
  */
 public class SetTransaction {
-    public static final StructType READ_SCHEMA = new StructType()
+    public static final StructType FULL_SCHEMA = new StructType()
         .add("appId", StringType.STRING, false /* nullable */)
         .add("version", LongType.LONG, false /* nullable*/)
         .add("lastUpdated", LongType.LONG, true /* nullable*/);
@@ -46,10 +49,7 @@ public class SetTransaction {
     private final long version;
     private final Optional<Long> lastUpdated;
 
-    public SetTransaction(
-        String appId,
-        Long version,
-        Optional<Long> lastUpdated) {
+    public SetTransaction(String appId, Long version, Optional<Long> lastUpdated) {
         this.appId = appId;
         this.version = version;
         this.lastUpdated = lastUpdated;
@@ -65,5 +65,19 @@ public class SetTransaction {
 
     public Optional<Long> getLastUpdated() {
         return lastUpdated;
+    }
+
+    /**
+     * Encode as a {@link Row} object with the schema {@link SetTransaction#FULL_SCHEMA}.
+     *
+     * @return {@link Row} object with the schema {@link SetTransaction#FULL_SCHEMA}
+     */
+    public Row toRow() {
+        Map<Integer, Object> setTransactionMap = new HashMap<>();
+        setTransactionMap.put(0, appId);
+        setTransactionMap.put(1, version);
+        setTransactionMap.put(2, lastUpdated.orElse(null));
+
+        return new GenericRow(SetTransaction.FULL_SCHEMA, setTransactionMap);
     }
 }

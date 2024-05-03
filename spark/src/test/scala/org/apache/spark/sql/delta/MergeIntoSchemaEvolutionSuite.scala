@@ -25,7 +25,7 @@ import org.apache.spark.sql.functions.{array, current_date, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructType}
+import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -58,12 +58,14 @@ trait MergeIntoSchemaEvolutionMixin {
       clauses: Seq[MergeClause] = Seq.empty,
       expected: => DataFrame = null,
       expectedWithoutEvolution: => DataFrame = null,
+      expectedSchema: StructType = null,
+      expectedSchemaWithoutEvolution: StructType = null,
       expectErrorContains: String = null,
       expectErrorWithoutEvolutionContains: String = null,
       confs: Seq[(String, String)] = Seq(),
       partitionCols: Seq[String] = Seq.empty): Unit = {
 
-    def executeMergeAndAssert(df: DataFrame, error: String): Unit = {
+    def executeMergeAndAssert(df: DataFrame, schema: StructType, error: String): Unit = {
       append(targetData, partitionCols)
       withTempView("source") {
         sourceData.createOrReplaceTempView("source")
@@ -76,21 +78,29 @@ trait MergeIntoSchemaEvolutionMixin {
         } else {
           executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
           checkAnswer(spark.read.format("delta").load(tempPath), df.collect())
-          assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
-            df.schema.asNullable)
+          if (schema != null) {
+            assert(spark.read.format("delta").load(tempPath).schema === schema)
+          } else {
+            // Check against the schema of the expected result df if no explicit schema was
+            // provided. Nullability of fields will vary depending on the actual data in the df so
+            // we ignore it.
+            assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
+              df.schema.asNullable)
+          }
         }
       }
     }
 
     test(s"schema evolution - $name - with evolution disabled") {
       withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
-        executeMergeAndAssert(expectedWithoutEvolution, expectErrorWithoutEvolutionContains)
+        executeMergeAndAssert(expectedWithoutEvolution, expectedSchemaWithoutEvolution,
+          expectErrorWithoutEvolutionContains)
       }
     }
 
     test(s"schema evolution - $name") {
       withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
-        executeMergeAndAssert(expected, expectErrorContains)
+        executeMergeAndAssert(expected, expectedSchema, expectErrorContains)
       }
     }
   }
@@ -126,6 +136,7 @@ trait MergeIntoSchemaEvolutionMixin {
         } else {
           null
         },
+      expectedSchema = resultSchema,
       expectErrorContains = expectErrorContains,
       expectedWithoutEvolution =
         if (resultWithoutEvolution != null) {
@@ -133,6 +144,7 @@ trait MergeIntoSchemaEvolutionMixin {
         } else {
           null
         },
+      expectedSchemaWithoutEvolution = targetSchema,
       expectErrorWithoutEvolutionContains = expectErrorWithoutEvolutionContains,
       confs = confs
     )
@@ -742,6 +754,18 @@ trait MergeIntoSchemaEvolutionBaseTests {
       .asInstanceOf[List[(Integer, (Integer, Integer, Integer))]].toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
     expectErrorWithoutEvolutionContains = "Cannot cast"
+  )
+
+  testEvolution("add non-nullable column to target schema")(
+    targetData = Seq(1, 2).toDF("key"),
+    sourceData = Seq((1, 10), (3, 30)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = ((1, 10) :: (2, null) :: (3, 30) :: Nil)
+      .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    expectedSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", IntegerType, nullable = true),
+    expectedWithoutEvolution = Seq(1, 2, 3).toDF("key")
   )
 
   testEvolution("extra nested column in source - update - single target partition")(
@@ -3125,7 +3149,7 @@ trait MergeIntoNestedStructEvolutionTests {
     expectErrorWithoutEvolutionContains = "cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
-  testNestedStructsEvolution("add non-nullable column to target schema")(
+  testNestedStructsEvolution("add non-nullable struct field to target schema")(
     target = """{ "key": "A" }""",
     source = """{ "key": "B", "value": 4}""",
     targetSchema = new StructType()
@@ -3135,9 +3159,11 @@ trait MergeIntoNestedStructEvolutionTests {
       .add("value", IntegerType, nullable = false),
     clauses = update("*") :: Nil,
     result = """{ "key": "A", "value": null }""".stripMargin,
+    // Even though `value` is non-nullable in the source, it must be nullable in the target as
+    // existing rows will contain null values.
     resultSchema = new StructType()
       .add("key", StringType)
-      .add("value", IntegerType, nullable = false),
+      .add("value", IntegerType, nullable = true),
     resultWithoutEvolution = """{ "key": "A" }""")
 
   testNestedStructsEvolution("struct in array with storeAssignmentPolicy = STRICT")(

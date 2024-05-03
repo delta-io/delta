@@ -19,12 +19,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.ArrayValue;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.*;
 
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
@@ -33,14 +32,14 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 public class Metadata {
 
     public static Metadata fromColumnVector(
-            ColumnVector vector, int rowId, TableClient tableClient) {
+            ColumnVector vector, int rowId, Engine engine) {
         if (vector.isNullAt(rowId)) {
             return null;
         }
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = tableClient.getJsonHandler().deserializeStructType(schemaJson);
+        StructType schema = engine.getJsonHandler().deserializeStructType(schemaJson);
 
         return new Metadata(
             requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
@@ -58,11 +57,11 @@ public class Metadata {
         );
     }
 
-    public static final StructType READ_SCHEMA = new StructType()
+    public static final StructType FULL_SCHEMA = new StructType()
         .add("id", StringType.STRING, false /* nullable */)
         .add("name", StringType.STRING, true /* nullable */)
         .add("description", StringType.STRING, true /* nullable */)
-        .add("format", Format.READ_SCHEMA, false /* nullable */)
+        .add("format", Format.FULL_SCHEMA, false /* nullable */)
         .add("schemaString", StringType.STRING, false /* nullable */)
         .add("partitionColumns",
             new ArrayType(StringType.STRING, false /* contains null */),
@@ -163,6 +162,25 @@ public class Metadata {
 
     public Map<String, String> getConfiguration() {
         return Collections.unmodifiableMap(configuration.get());
+    }
+
+    /**
+     * Encode as a {@link Row} object with the schema {@link Metadata#FULL_SCHEMA}.
+     *
+     * @return {@link Row} object with the schema {@link Metadata#FULL_SCHEMA}
+     */
+    public Row toRow() {
+        Map<Integer, Object> metadataMap = new HashMap<>();
+        metadataMap.put(0, id);
+        metadataMap.put(1, name.orElse(null));
+        metadataMap.put(2, description.orElse(null));
+        metadataMap.put(3, format.toRow());
+        metadataMap.put(4, schemaString);
+        metadataMap.put(5, partitionColumns);
+        metadataMap.put(6, createdTime.orElse(null));
+        metadataMap.put(7, configurationMapValue);
+
+        return new GenericRow(Metadata.FULL_SCHEMA, metadataMap);
     }
 
     /**
