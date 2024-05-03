@@ -502,7 +502,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val ENABLE_DELETION_VECTORS_CREATION = buildConfig[Boolean](
     key = "enableDeletionVectors",
-    defaultValue = "true",
+    defaultValue = "false",
     fromString = _.toBoolean,
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
