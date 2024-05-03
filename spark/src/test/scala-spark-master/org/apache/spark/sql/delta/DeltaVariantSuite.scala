@@ -426,7 +426,7 @@ class DeltaVariantSuite
 
       sql("ALTER TABLE tbl ALTER COLUMN v SET DEFAULT (parse_json('{\"k\": \"v\"}'))")
       sql("INSERT INTO tbl VALUES (DEFAULT)")
-      val valCount = spark.sql("SELECT * FROM tbl WHERE v:k:string = 'v'").count()
+      val valCount = spark.sql("SELECT * FROM tbl WHERE v:k::string = 'v'").count()
       // DEFAULT value is set to '{k: v}'.
       assert(valCount == 1)
     }
