@@ -37,14 +37,14 @@ import org.apache.commons.cli.ParseException;
 import org.apache.hadoop.conf.Configuration;
 
 import io.delta.kernel.TableNotFoundException;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 
-import io.delta.kernel.defaults.client.DefaultTableClient;
+import io.delta.kernel.defaults.engine.DefaultEngine;
 
 /**
  * Base class for reading Delta Lake tables using the Delta Kernel APIs.
@@ -53,11 +53,11 @@ public abstract class BaseTableReader {
     public static final int DEFAULT_LIMIT = 20;
 
     protected final String tablePath;
-    protected final TableClient tableClient;
+    protected final Engine engine;
 
     public BaseTableReader(String tablePath) {
         this.tablePath = requireNonNull(tablePath);
-        this.tableClient = DefaultTableClient.create(new Configuration());
+        this.engine = DefaultEngine.create(new Configuration());
     }
 
     /**

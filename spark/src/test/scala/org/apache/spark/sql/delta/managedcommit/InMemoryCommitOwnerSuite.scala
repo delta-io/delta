@@ -159,7 +159,7 @@ class InMemoryCommitOwnerSuite extends QueryTest
       val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
 
       cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
-      assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, -1))
+      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, -1))
 
       // Commit 0 must be done by file-system
       val e = intercept[CommitFailedException] { commit(version = 0, timestamp = 0, tcs) }
@@ -167,28 +167,28 @@ class InMemoryCommitOwnerSuite extends QueryTest
       store.write(FileNames.unsafeDeltaFile(logPath, 0), Iterator("0", "0"), overwrite = false)
       // Commit 0 doesn't go through commit-owner. So commit-owner is not aware of it in getCommits
       // response.
-      assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, -1))
+      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, -1))
       assertBackfilled(0, logPath, Some(0))
 
       val c1 = commit(1, 1, tcs)
       val c2 = commit(2, 2, tcs)
-      assert(tcs.getCommits(0).commits.takeRight(2) == Seq(c1, c2))
+      assert(tcs.getCommits().commits.takeRight(2) == Seq(c1, c2))
 
       // All 3 commits are backfilled since batchSize == 3
       val c3 = commit(3, 3, tcs)
-      assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, 3))
+      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, 3))
       (1 to 3).foreach(i => assertBackfilled(i, logPath, Some(i)))
 
       // Test that startVersion and endVersion are respected in getCommits
       val c4 = commit(4, 4, tcs)
       val c5 = commit(5, 5, tcs)
-      assert(tcs.getCommits(4) == GetCommitsResponse(Seq(c4, c5), 5))
-      assert(tcs.getCommits(4, Some(4)) == GetCommitsResponse(Seq(c4), 5))
-      assert(tcs.getCommits(5) == GetCommitsResponse(Seq(c5), 5))
+      assert(tcs.getCommits(Some(4)) == GetCommitsResponse(Seq(c4, c5), 5))
+      assert(tcs.getCommits(Some(4), Some(4)) == GetCommitsResponse(Seq(c4), 5))
+      assert(tcs.getCommits(Some(5)) == GetCommitsResponse(Seq(c5), 5))
 
       // Commit [4, 6] are backfilled since batchSize == 3
       val c6 = commit(6, 6, tcs)
-      assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, 6))
+      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, 6))
       (4 to 6).foreach(i => assertBackfilled(i, logPath, Some(i)))
       assertInvariants(logPath, tcs.commitOwnerClient.asInstanceOf[InMemoryCommitOwner])
     }
@@ -205,13 +205,13 @@ class InMemoryCommitOwnerSuite extends QueryTest
       val e = intercept[CommitFailedException] { commit(version = 0, timestamp = 0, tcs) }
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       store.write(FileNames.unsafeDeltaFile(logPath, 0), Iterator("0", "0"), overwrite = false)
-      assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, -1))
+      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, -1))
       assertBackfilled(version = 0, logPath, Some(0L))
 
       // Test that all commits are immediately backfilled
       (1 to 3).foreach { version =>
         commit(version, version, tcs)
-        assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, version))
+        assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, version))
         assertBackfilled(version, logPath, Some(version))
       }
 
@@ -248,7 +248,7 @@ class InMemoryCommitOwnerSuite extends QueryTest
 
       // Verify that the conflict-checker still works even when everything has been backfilled
       commit(5, 5, tcs)
-      assert(tcs.getCommits(0) == GetCommitsResponse(Seq.empty, 5))
+      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, 5))
       assertCommitFail(5, 6, retryable = true, commit(5, 5, tcs))
       assertCommitFail(7, 6, retryable = false, commit(7, 7, tcs))
 
@@ -306,7 +306,7 @@ class InMemoryCommitOwnerSuite extends QueryTest
             override def run(): Unit = {
               var currentWriterCommits = 0
               while (currentWriterCommits < numberOfCommitsPerWriter) {
-                val nextVersion = tcs.getCommits(0).latestTableVersion + 1
+                val nextVersion = tcs.getCommits().latestTableVersion + 1
                 try {
                   val currentTimestamp = runningTimestamp.getAndIncrement()
                   val commitResponse = commit(nextVersion, currentTimestamp, tcs)

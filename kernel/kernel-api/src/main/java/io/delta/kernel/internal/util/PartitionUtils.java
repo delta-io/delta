@@ -28,9 +28,9 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import static java.util.Arrays.asList;
 
-import io.delta.kernel.client.ExpressionHandler;
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
@@ -191,7 +191,7 @@ public class PartitionUtils {
     /**
      * Utility method to rewrite the partition predicate referring to the table schema as predicate
      * referring to the {@code partitionValues} in scan files read from Delta log. The scan file
-     * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(TableClient)}.
+     * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(Engine)}.
      * <p>
      * E.g. given predicate on partition columns:
      *   {@code p1 = 'new york' && p2 >= 26} where p1 is of type string and p2 is of int

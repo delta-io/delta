@@ -43,7 +43,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       endVersion: Long): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     deltaLog.update().tableCommitOwnerClientOpt.foreach { tableCommitOwnerClient =>
-      tableCommitOwnerClient.backfillToVersion(startVersion = 0, Some(endVersion))
+      tableCommitOwnerClient.backfillToVersion(endVersion)
     }
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = 0,

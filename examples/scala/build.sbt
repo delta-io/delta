@@ -18,10 +18,17 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala212 = "2.12.17"
-val scala213 = "2.13.8"
-val deltaVersion = "3.0.0"
+val scala212 = "2.12.18"
+val scala213 = "2.13.13"
 val icebergVersion = "1.4.1"
+val defaultDeltaVersion = {
+  val versionFileContent = IO.read(file("../../version.sbt"))
+  val versionRegex = """.*version\s*:=\s*"([^"]+)".*""".r
+  versionRegex.findFirstMatchIn(versionFileContent) match {
+    case Some(m) => m.group(1)
+    case None => throw new Exception("Could not parse version from version.sbt")
+  }
+}
 
 def getMajorMinor(version: String): (Int, Int) = {
   val majorMinor = Try {
@@ -58,7 +65,7 @@ val getScalaVersion = settingKey[String](
   s"get scala version from environment variable SCALA_VERSION. If it doesn't exist, use $scala213"
 )
 val getDeltaVersion = settingKey[String](
-  s"get delta version from environment variable DELTA_VERSION. If it doesn't exist, use $deltaVersion"
+  s"get delta version from environment variable DELTA_VERSION. If it doesn't exist, use $defaultDeltaVersion"
 )
 val getDeltaArtifactName = settingKey[String](
   s"get delta artifact name based on the delta version. either `delta-core` or `delta-spark`."
@@ -68,13 +75,14 @@ val getIcebergSparkRuntimeArtifactName = settingKey[String](
 )
 getScalaVersion := {
   sys.env.get("SCALA_VERSION") match {
-    case Some("2.12") =>
+    case Some("2.12") | Some(`scala212`) =>
       scala212
-    case Some("2.13") =>
+    case Some("2.13") | Some(`scala213`) =>
       scala213
     case Some(v) =>
       println(
-        s"[warn] Invalid  SCALA_VERSION. Expected 2.12 or 2.13 but got $v. Fallback to $scala213."
+        s"[warn] Invalid  SCALA_VERSION. Expected one of {2.12, $scala212, 2.13, $scala213} but " +
+        s"got $v. Fallback to $scala213."
       )
       scala213
     case None =>
@@ -88,10 +96,11 @@ version := "0.1.0"
 getDeltaVersion := {
   sys.env.get("DELTA_VERSION") match {
     case Some(v) =>
-      println(s"Using Delta version $v")
+      println(s"Using DELTA_VERSION Delta version $v")
       v
     case None =>
-      deltaVersion
+      println(s"Using default Delta version $defaultDeltaVersion")
+      defaultDeltaVersion
   }
 }
 

@@ -38,7 +38,8 @@ abstract class UpdateSuiteBase
   with SharedSparkSession
   with DeltaDMLTestUtils
   with DeltaSQLTestUtils
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
   protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
@@ -957,4 +958,14 @@ abstract class UpdateSuiteBase
     expectedResult = Seq(Row(0, 3), Row(2, 3))
   )
 
+  testSparkMasterOnly("Variant type") {
+    val df = sql(
+      """SELECT parse_json(cast(id as string)) v, id i
+        FROM range(2)""")
+    append(df)
+    executeUpdate(target = s"delta.`$tempPath`",
+        where = "to_json(v) = '1'", set = "i = 10, v = parse_json('123')")
+    checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+        Seq(Row(0, "0"), Row(10, "123")))
+  }
 }

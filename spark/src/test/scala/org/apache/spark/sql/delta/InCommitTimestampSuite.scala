@@ -25,7 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.managedcommit.{CommitOwnerProvider, ManagedCommitBaseSuite, TrackingInMemoryCommitOwnerBuilder}
+import org.apache.spark.sql.delta.managedcommit.{CommitOwnerProvider, ManagedCommitBaseSuite, ManagedCommitTestUtils, TrackingInMemoryCommitOwnerBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -39,7 +39,8 @@ class InCommitTimestampSuite
   extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with DeltaTestUtilsBase {
+    with DeltaTestUtilsBase
+    with ManagedCommitTestUtils {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -66,7 +67,9 @@ class InCommitTimestampSuite
     }
   }
 
-  test("Create a non-inCommitTimestamp table and then enable timestamp") {
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset(
+    "Create a non-inCommitTimestamp table and then enable timestamp") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
@@ -257,7 +260,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("Enablement tracking works when ICT is enabled post commit 0") {
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset("Enablement tracking works when ICT is enabled post commit 0") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
@@ -283,7 +287,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("Conflict resolution of enablement version") {
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset("Conflict resolution of enablement version") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
@@ -318,7 +323,9 @@ class InCommitTimestampSuite
     }
   }
 
-  test("commitLarge should correctly set the enablement tracking properties") {
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset(
+    "commitLarge should correctly set the enablement tracking properties") {
     withTempDir { tempDir =>
       spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
@@ -548,7 +555,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("DeltaHistoryManager.getActiveCommitAtTime: " +
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset("DeltaHistoryManager.getActiveCommitAtTime: " +
     "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
@@ -632,7 +640,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("DeltaHistoryManager.getHistory --- " +
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset("DeltaHistoryManager.getHistory --- " +
       "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
@@ -967,7 +976,7 @@ class InCommitTimestampWithManagedCommitSuite
       val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
       val unbackfilledCommits =
         tableCommitOwnerClient
-          .getCommits(1)
+          .getCommits(Some(1))
           .commits
           .map { commit => DeltaHistoryManager.Commit(commit.version, commit.commitTimestamp)}
       val commits = (Seq(commit0) ++ unbackfilledCommits).toList

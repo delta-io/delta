@@ -28,7 +28,8 @@ import org.apache.spark.sql.types.StructType
 abstract class DeleteSuiteBase extends QueryTest
   with SharedSparkSession
   with DeltaDMLTestUtils
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
 
@@ -532,4 +533,16 @@ abstract class DeleteSuiteBase extends QueryTest
     text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
     expectResult = Row(0, 3) :: Nil
   )
+
+  testSparkMasterOnly("Variant type") {
+    val dstDf = sql(
+      """SELECT parse_json(cast(id as string)) v, id i
+      FROM range(3)""")
+    append(dstDf)
+
+    executeDelete(target = s"delta.`$tempPath`", where = "to_json(v) = '1'")
+
+    checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+      Seq(Row(0, "0"), Row(2, "2")))
+  }
 }

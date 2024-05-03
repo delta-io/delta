@@ -53,6 +53,10 @@ import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readD
  * {@link ParquetWriter} through {@link RecordConsumer}.
  */
 public class ParquetFileWriter {
+    public static final String TARGET_FILE_SIZE_CONF =
+            "delta.kernel.default.parquet.writer.targetMaxFileSize";
+    public static final long DEFAULT_TARGET_FILE_SIZE = 128 * 1024 * 1024; // 128MB
+
     private final Configuration configuration;
     private final boolean writeAsSingleFile;
     private final Path location;
@@ -63,18 +67,19 @@ public class ParquetFileWriter {
 
     /**
      * Create writer to write data into one or more files depending upon the
-     * {@code targetMaxFileSize} value and the given data.
+     * {@code delta.kernel.default.parquet.writer.targetMaxFileSize} value and the given data.
      */
     public ParquetFileWriter(
             Configuration configuration,
             Path location,
-            long targetMaxFileSize,
             List<Column> statsColumns) {
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.location = requireNonNull(location, "directory is null");
+        // Default target file size is 128 MB.
+        this.targetMaxFileSize =
+                configuration.getLong(TARGET_FILE_SIZE_CONF, DEFAULT_TARGET_FILE_SIZE);
         checkArgument(
                 targetMaxFileSize > 0, "Invalid target Parquet file size: " + targetMaxFileSize);
-        this.targetMaxFileSize = targetMaxFileSize;
         this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
         this.writeAsSingleFile = false;
     }

@@ -21,15 +21,15 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala212 = "2.12.17"
-val scala213 = "2.13.8"
+val scala212 = "2.12.18"
+val scala213 = "2.13.13"
 val all_scala_versions = Seq(scala212, scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
-// sbt 'set default_scala_version := 2.13.8' [commands]
+// sbt 'set default_scala_version := 2.13.13' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
@@ -200,7 +200,7 @@ lazy val spark = (project in file("spark"))
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
-      "junit" % "junit" % "4.12" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
@@ -315,7 +315,7 @@ lazy val sharing = (project in file("sharing"))
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
-      "junit" % "junit" % "4.12" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
@@ -337,10 +337,37 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test"
     ),
+    // Generate the package object to provide the version information in runtime.
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "kernel" / "Meta.java"
+      IO.write(file,
+        s"""/*
+           | * Copyright (2024) The Delta Lake Project Authors.
+           | *
+           | * Licensed under the Apache License, Version 2.0 (the "License");
+           | * you may not use this file except in compliance with the License.
+           | * You may obtain a copy of the License at
+           | *
+           | * http://www.apache.org/licenses/LICENSE-2.0
+           | *
+           | * Unless required by applicable law or agreed to in writing, software
+           | * distributed under the License is distributed on an "AS IS" BASIS,
+           | * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+           | * See the License for the specific language governing permissions and
+           | * limitations under the License.
+           | */
+           |package io.delta.kernel;
+           |
+           |public final class Meta {
+           |    public static final String KERNEL_VERSION = "${version.value}";
+           |}
+           |""".stripMargin)
+      Seq(file)
+    },
     javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
@@ -364,7 +391,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "junit" % "junit" % "4.13" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
@@ -1212,9 +1239,9 @@ lazy val flink = (project in file("connectors/flink"))
       IO.write(file,
         s"""package io.delta.flink.internal;
            |
-           |final public class Meta {
-           |  public static final String FLINK_VERSION = "${flinkVersion}";
-           |  public static final String CONNECTOR_VERSION = "${version.value}";
+           |public final class Meta {
+           |    public static final String FLINK_VERSION = "${flinkVersion}";
+           |    public static final String CONNECTOR_VERSION = "${version.value}";
            |}
            |""".stripMargin)
       Seq(file)
@@ -1308,9 +1335,9 @@ def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
   // and during tests (e.g. build/sbt test)
   Seq(
     checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
+    checkstyleSeverityLevel := CheckstyleSeverityLevel.Error,
+    (Compile / compile) := ((Compile / compile) dependsOn (Compile / checkstyle)).value,
+    (Test / test) := ((Test / test) dependsOn (Test / checkstyle)).value
   )
 }
 

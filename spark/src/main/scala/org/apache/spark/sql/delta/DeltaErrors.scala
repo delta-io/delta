@@ -2445,6 +2445,22 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
   }
 
+  def identityColumnWithGenerationExpression(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION", Array.empty)
+  }
+
+  def identityColumnIllegalStep(): Throwable = {
+    new DeltaAnalysisException(errorClass = "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP", Array.empty)
+  }
+
+  def identityColumnDataTypeNotSupported(unsupportedType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(unsupportedType.typeName)
+    )
+  }
+
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,

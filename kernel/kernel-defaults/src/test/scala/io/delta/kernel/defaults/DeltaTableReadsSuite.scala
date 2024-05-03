@@ -189,7 +189,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   test("invalid path") {
     val invalidPath = "/path/to/non-existent-directory"
-    val table = Table.forPath(defaultTableClient, invalidPath)
+    val table = Table.forPath(defaultEngine, invalidPath)
 
     def expectTableNotFoundException(fn: () => Unit): Unit = {
       val ex = intercept[TableNotFoundException] {
@@ -198,11 +198,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       assert(ex.getMessage().contains(s"Delta table at path `file:$invalidPath` is not found"))
     }
 
-    expectTableNotFoundException(() => table.getLatestSnapshot(defaultTableClient))
+    expectTableNotFoundException(() => table.getLatestSnapshot(defaultEngine))
     expectTableNotFoundException(() =>
-      table.getSnapshotAsOfTimestamp(defaultTableClient, 1))
+      table.getSnapshotAsOfTimestamp(defaultEngine, 1))
     expectTableNotFoundException(() =>
-      table.getSnapshotAsOfVersion(defaultTableClient, 1))
+      table.getSnapshotAsOfVersion(defaultEngine, 1))
   }
 
   test("table deleted after the `Table` creation") {
@@ -211,11 +211,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       val target = new File(temp.getCanonicalPath)
       FileUtils.copyDirectory(source, target)
 
-      val table = Table.forPath(defaultTableClient, target.getCanonicalPath)
+      val table = Table.forPath(defaultEngine, target.getCanonicalPath)
       // delete the table and try to get the snapshot. Expect a failure.
       FileUtils.deleteDirectory(target)
       val ex = intercept[TableNotFoundException] {
-        table.getLatestSnapshot(defaultTableClient)
+        table.getLatestSnapshot(defaultEngine)
       }
       assert(ex.getMessage.contains(
         s"Delta table at path `file:${target.getCanonicalPath}` is not found"))
@@ -264,8 +264,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val path = "file:" + goldenTablePath("data-reader-partition-values")
 
     // for now we don't support timestamp type partition columns so remove from read columns
-    val readCols = Table.forPath(defaultTableClient, path).getLatestSnapshot(defaultTableClient)
-      .getSchema(defaultTableClient)
+    val readCols = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
+      .getSchema(defaultEngine)
       .withoutField("as_timestamp")
       .fields()
       .asScala
@@ -582,7 +582,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   test("table protocol version greater than reader protocol version") {
     val e = intercept[Exception] {
       latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
-        .getScanBuilder(defaultTableClient)
+        .getScanBuilder(defaultEngine)
         .build()
     }
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
@@ -624,8 +624,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       )
       // Cannot read a version that does not exist
       val e = intercept[RuntimeException] {
-        Table.forPath(defaultTableClient, path)
-          .getSnapshotAsOfVersion(defaultTableClient, 11)
+        Table.forPath(defaultEngine, path)
+          .getSnapshotAsOfVersion(defaultEngine, 11)
       }
       assert(e.getMessage.contains(
         "Cannot load table version 11 as it does not exist. The latest available version is 10"))
@@ -657,8 +657,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
       // Cannot read a version that has been truncated
       val e = intercept[RuntimeException] {
-        Table.forPath(defaultTableClient, tablePath)
-          .getSnapshotAsOfVersion(defaultTableClient, 9)
+        Table.forPath(defaultEngine, tablePath)
+          .getSnapshotAsOfVersion(defaultEngine, 9)
       }
       assert(e.getMessage.contains("Cannot load table version 9"))
       // Can read version 10
@@ -793,8 +793,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     withTempDir { dir =>
       new File(dir, "_delta_log").mkdirs()
       intercept[TableNotFoundException] {
-        Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAsOfTimestamp(defaultTableClient, 0L)
+        Table.forPath(defaultEngine, dir.getCanonicalPath)
+          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
       }
     }
   }
@@ -802,8 +802,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   test("getSnapshotAtTimestamp: empty folder no _delta_log dir") {
     withTempDir { dir =>
       intercept[TableNotFoundException] {
-        Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAsOfTimestamp(defaultTableClient, 0L)
+        Table.forPath(defaultEngine, dir.getCanonicalPath)
+          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
       }
     }
   }
@@ -812,8 +812,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     withTempDir { dir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(dir.getCanonicalPath)
       intercept[TableNotFoundException] {
-        Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAsOfTimestamp(defaultTableClient, 0L)
+        Table.forPath(defaultEngine, dir.getCanonicalPath)
+          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
       }
     }
   }

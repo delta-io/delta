@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 import java.net.URI
+import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.{Date, Locale}
@@ -29,13 +30,14 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -46,7 +48,7 @@ import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{ManualClock, Utils}
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
@@ -129,17 +131,26 @@ trait DeltaTimeTravelTests extends QueryTest
           .saveAsTable(table)
       }
       val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(table))
-      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri)
-      file.setLastModified(commitList.head)
+      val filePath = FileNames.unsafeDeltaFile(deltaLog.logPath, 0)
+      if (isICTEnabledForNewTables) {
+        InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, commits.headOption)
+      } else {
+        val file = new File(filePath.toUri)
+        file.setLastModified(commits.head)
+      }
       commitList = commits.slice(1, commits.length) // we already wrote the first commit here
       var startVersion = deltaLog.snapshot.version + 1
       commitList.foreach { ts =>
         val rangeStart = startVersion * 10
         val rangeEnd = rangeStart + 10
         spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").saveAsTable(table)
-        val file = new File(DeltaCommitFileProvider(
-          deltaLog.update()).deltaFile(startVersion).toUri)
-        file.setLastModified(ts)
+        val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
+        if (isICTEnabledForNewTables) {
+          InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
+        } else {
+          val file = new File(filePath.toUri)
+          file.setLastModified(ts)
+        }
         startVersion += 1
       }
     }
@@ -404,6 +415,11 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
+    if (isICTEnabledForNewTables) {
+      // ICT Timestamps are always monotonically increasing. Therefore,
+      // this test is not needed when ICT is enabled.
+      cancel("This test is not compatible with InCommitTimestamps.")
+    }
     val tblName = "delta_table"
     withTable(tblName) {
       val start = 1540415658000L

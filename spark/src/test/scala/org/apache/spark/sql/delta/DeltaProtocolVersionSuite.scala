@@ -2825,6 +2825,74 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("Remove a feature which is a dependency of other features") {
+    // TestRemovableWriterFeatureWithDependency has two dependencies:
+    // 1. TestRemovableReaderWriterFeature
+    // 2. TestRemovableWriterFeature
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      // Scenario-1: Create a table with `TestRemovableWriterFeature` feature and validate that we
+      // can drop it.
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
+           |)""".stripMargin)
+
+      var protocol = deltaLog.update().protocol
+      assert(protocol === protocolWithWriterFeature(TestRemovableWriterFeature))
+      AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        TestRemovableWriterFeature.name).run(spark)
+      assert(deltaLog.update().protocol === Protocol(1, 1))
+
+      // Scenario-2: Create a table with `TestRemovableWriterFeatureWithDependency` feature. This
+      // will enable 2 dependent features also.
+      sql(
+        s"""ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES (
+           |delta.feature.${TestRemovableWriterFeatureWithDependency.name} = 'supported'
+           |)""".stripMargin)
+      protocol = deltaLog.update().protocol
+      Seq(
+        TestRemovableWriterFeatureWithDependency,
+        TestRemovableReaderWriterFeature,
+        TestRemovableWriterFeature
+      ).foreach(f => assert(protocol.isFeatureSupported(f)))
+      // Now we should not be able to drop `TestRemovableWriterFeature` as it is a dependency of
+      // `TestRemovableWriterFeatureWithDependency`.
+      // Although we should be able to drop `TestRemovableReaderWriterFeature` as it is not a
+      // dependency of any other feature.
+      val e1 = intercept[DeltaTableFeatureException] {
+        AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          TestRemovableWriterFeature.name).run(spark)
+      }
+      checkError(
+        exception = e1,
+        errorClass = "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+        parameters = Map(
+          "feature" -> TestRemovableWriterFeature.name,
+          "dependentFeatures" -> TestRemovableWriterFeatureWithDependency.name))
+      AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        TestRemovableWriterFeatureWithDependency.name).run(spark)
+      protocol = deltaLog.update().protocol
+      assert(!protocol.isFeatureSupported(TestRemovableWriterFeatureWithDependency))
+      assert(protocol.isFeatureSupported(TestRemovableWriterFeature))
+      assert(protocol.isFeatureSupported(TestRemovableReaderWriterFeature))
+
+      // Once the dependent feature is removed, we should be able to drop
+      // `TestRemovableWriterFeature` also.
+      AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        TestRemovableWriterFeature.name).run(spark)
+      protocol = deltaLog.update().protocol
+      assert(!protocol.isFeatureSupported(TestRemovableWriterFeatureWithDependency))
+      assert(!protocol.isFeatureSupported(TestRemovableWriterFeature))
+      assert(protocol.isFeatureSupported(TestRemovableReaderWriterFeature))
+    }
+  }
+
   test(s"Truncate history while dropping a writer feature") {
     withTempDir { dir =>
       val table = s"delta.`${dir.getCanonicalPath}`"

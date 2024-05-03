@@ -835,7 +835,8 @@ class OptimisticTransactionSuite
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
-            if (updatedActions.commitInfo.operation == DeltaOperations.OP_RESTORE) {
+            if (updatedActions.commitInfo.asInstanceOf[CommitInfo].operation
+                == DeltaOperations.OP_RESTORE) {
               deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
               throw CommitFailedException(retryable = true, conflict, message = "")
             }
