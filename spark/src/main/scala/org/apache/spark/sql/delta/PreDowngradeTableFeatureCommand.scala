@@ -246,22 +246,15 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     val numFilesToRewrite = TypeWidening.numFilesRequiringRewrite(table.initialSnapshot)
     if (numFilesToRewrite == 0L) return 0L
 
-    // Get the table Id and catalog from the delta table to build a ResolvedTable plan for the reorg
-    // command.
+    // Wrap `table` in a ResolvedTable that can be passed to DeltaReorgTableCommand. The catalog &
+    // table ID won't be used by DeltaReorgTableCommand.
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
-    val tableId = table.spark
-      .sessionState
-      .sqlParser
-      .parseTableIdentifier(table.name).nameParts.asIdentifier
     val catalog = table.spark.sessionState.catalogManager.currentCatalog.asTableCatalog
+    val tableId = Seq(table.name()).asIdentifier
 
     val reorg = DeltaReorgTableCommand(
-      ResolvedTable.create(
-        catalog,
-        tableId,
-        table
-      ),
-      DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None)
+      target = ResolvedTable.create(catalog, tableId, table),
+      reorgTableSpec = DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None)
     )(Nil)
 
     reorg.run(table.spark)
