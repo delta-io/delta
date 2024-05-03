@@ -1226,6 +1226,9 @@ If Schema is large, the schema will be broken down into multiple parts. Appendin
   }
   ```
 
+.. note::
+    By default, if the table schema has a field longer than 4000 characters, an empty schema will be stored in HMS. This truncation threshold can be increased by setting `spark.databricks.delta.catalog.update.longFieldTruncationThreshold` to a larger number.
+
 <a id="table-metadata"></a>
 
 ## Table metadata
