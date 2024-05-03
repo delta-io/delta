@@ -122,7 +122,7 @@ class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
       ),
       """{
         |"c0":{"24":200,"25":201},
-        |"c1":{"25":203},
+        |"c1":{"27":null,"25":203},
         |"c3":{}
         |}""".stripMargin
     ),

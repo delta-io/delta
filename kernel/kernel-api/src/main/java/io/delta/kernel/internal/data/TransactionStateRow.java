@@ -29,6 +29,7 @@ import io.delta.kernel.internal.util.VectorUtils;
 
 public class TransactionStateRow extends GenericRow {
     private static final StructType SCHEMA = new StructType()
+            .add("logicalSchemaString", StringType.STRING)
             .add("partitionColumns", new ArrayType(StringType.STRING, false))
             .add("tablePath", StringType.STRING);
 
@@ -39,6 +40,7 @@ public class TransactionStateRow extends GenericRow {
 
     public static TransactionStateRow of(Metadata metadata, String tablePath) {
         HashMap<Integer, Object> valueMap = new HashMap<>();
+        valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
         valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
         valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
         return new TransactionStateRow(valueMap);
@@ -49,10 +51,23 @@ public class TransactionStateRow extends GenericRow {
     }
 
     /**
+     * Get the logical schema of the table from the transaction state {@link Row} returned by
+     * {@link Transaction#getTransactionState(Engine)}}
+     *
+     * @param engine           {@link Engine} instance to use for parsing the schema
+     * @param transactionState Transaction state state {@link Row}
+     * @return Logical schema of the table as {@link StructType}
+     */
+    public static StructType getLogicalSchema(Engine engine, Row transactionState) {
+        return engine.getJsonHandler().deserializeStructType(
+                transactionState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString")));
+    }
+
+    /**
      * Get the list of partition column names from the write state {@link Row} returned by
      * {@link Transaction#getTransactionState(Engine)}
      *
-     * @param transactionState Scan state {@link Row}
+     * @param transactionState Transaction state state {@link Row}
      * @return List of partition column names according to the scan state.
      */
     public static List<String> getPartitionColumnsList(Row transactionState) {

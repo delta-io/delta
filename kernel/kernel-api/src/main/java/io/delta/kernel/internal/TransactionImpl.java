@@ -24,6 +24,7 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -158,7 +159,9 @@ public class TransactionImpl
     }
 
     private boolean isBlindAppend() {
-        return isNewTable; // Later can add more conditions to determine if it is a blind append
+        // For now, Kernel just supports blind append.
+        // Change this when read-after-write is supported.
+        return true;
     }
 
     private Map<String, String> getOperationParameters() {
@@ -170,5 +173,17 @@ public class TransactionImpl
             return Collections.singletonMap("partitionBy", partitionBy);
         }
         return Collections.emptyMap();
+    }
+
+    /**
+     * Get the part of the schema of the table that needs the statistics to be collected per file.
+     *
+     * @param engine      {@link Engine} instance to use.
+     * @param transactionState State of the transaction
+     * @return
+     */
+    public static List<Column> getStatisticsColumns(Engine engine, Row transactionState) {
+        // TODO: implement this once we start supporting collecting stats
+        return Collections.emptyList();
     }
 }

@@ -38,6 +38,8 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseKeys;
+import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class PartitionUtils {
@@ -109,6 +111,51 @@ public class PartitionUtils {
         }
 
         return dataBatch;
+    }
+
+    /**
+     * Convert the given partition values to a {@link MapValue} that can be serialized to a Delta
+     * commit file.
+     *
+     * @param partitionValueMap Expected the partition column names to be same case as in the
+     *                          schema. We want to preserve the case of the partition column names
+     *                          when serializing to the Delta commit file.
+     * @return {@link MapValue} representing the serialized partition values that can be written to
+     * a Delta commit file.
+     */
+    public static MapValue serializePartitionMap(Map<String, Literal> partitionValueMap) {
+        if (partitionValueMap == null || partitionValueMap.isEmpty()) {
+            return VectorUtils.stringStringMapValue(Collections.emptyMap());
+        }
+
+        Map<String, String> serializedPartValues = new HashMap<>();
+        for(Map.Entry<String, Literal> entry : partitionValueMap.entrySet()) {
+            serializedPartValues.put(
+                    entry.getKey(), // partition column name
+                    serializePartitionValue(entry.getValue())); // serialized partition value as str
+        }
+
+        return VectorUtils.stringStringMapValue(serializedPartValues);
+    }
+
+    /**
+     * Validate {@code partitionValues} contains values for every partition column.
+     *
+     * @param partitionColNames List of partition columns.
+     * @param partitionValues  Map of partition column to value map.
+     */
+    public static void validatePartitionValues(
+            List<String> partitionColNames,
+            Map<String, Literal> partitionValues) {
+        final Map<String, Literal> partitionValuesLowerCaseName = toLowerCaseKeys(partitionValues);
+        Set<String> partColsLowerCase = toLowerCaseSet(partitionColNames);
+        if (!partColsLowerCase.equals(partitionValuesLowerCaseName.keySet())) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Partition values provided are not matching the partition columns. " +
+                                    "Partition columns: %s, Partition values: %s",
+                            partitionColNames, partitionValues));
+        }
     }
 
     /**

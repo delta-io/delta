@@ -16,13 +16,18 @@
 package io.delta.kernel.internal.util;
 
 import java.io.IOException;
+import java.net.URI;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Collection;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -30,6 +35,8 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterator;
+
+import io.delta.kernel.internal.fs.Path;
 
 public class InternalUtils {
     private static final LocalDate EPOCH_DAY = LocalDate.ofEpochDay(0);
@@ -151,5 +158,32 @@ public class InternalUtils {
                 "Expected a non-null value for column: " + columnName);
         }
         return vector;
+    }
+
+    /**
+     * Relativize the given child path with respect to the given root URI. If the child path is
+     * already a relative path, it is returned as is.
+     *
+     * @param child
+     * @param root Root directory as URI. Relativization is done with respect to this root.
+     *             The relativize operation requires conversion to URI, so the caller is expected to
+     *             convert the root directory to URI once and use it for relativizing for multiple
+     *             child paths.
+     * @return
+     */
+    public static Path relativizePath(Path child, URI root) {
+        if (child.isAbsolute()) {
+            return new Path(root.relativize(child.toUri()));
+        }
+        return child;
+    }
+
+    public static Set<String> toLowerCaseSet(Collection<String> set) {
+        return set.stream().map(String::toLowerCase).collect(Collectors.toSet());
+    }
+
+    public static <T> Map<String, T> toLowerCaseKeys(Map<String, T> map) {
+        return map.entrySet().stream()
+            .collect(Collectors.toMap(e -> e.getKey().toLowerCase(), Map.Entry::getValue));
     }
 }

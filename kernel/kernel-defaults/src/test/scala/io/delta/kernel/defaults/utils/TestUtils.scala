@@ -455,6 +455,16 @@ trait TestUtils extends Assertions with SQLHelper {
     }
   }
 
+  def withSparkTimeZone(timeZone: String)(fn: () => Unit): Unit = {
+    val prevTimeZone = spark.conf.get("spark.sql.session.timeZone")
+    try {
+      spark.conf.set("spark.sql.session.timeZone", timeZone)
+      fn()
+    } finally {
+      spark.conf.set("spark.sql.session.timeZone", prevTimeZone)
+    }
+  }
+
   /**
    * Builds a MapType ColumnVector from a sequence of maps.
    */
