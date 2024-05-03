@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.errors.QueryErrorsBase
@@ -1009,6 +1010,38 @@ trait DeltaTypeWideningTableFeatureTests {
     dropTableFeature(ExpectedOutcome.SUCCESS)
     assert(getNumAddFilesSinceVersion(version = 0) === 0)
     checkAnswer(readDeltaTable(tempPath), Seq.empty)
+  }
+
+  test("drop feature using sql with multipart identifier") {
+    withTempDatabase { databaseName =>
+      val tableName = "test_table"
+      withTable(tableName) {
+        sql(s"CREATE TABLE $databaseName.$tableName (a byte) USING DELTA " +
+          s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'true')")
+        sql(s"INSERT INTO  $databaseName.$tableName VALUES (1)")
+        sql(s"ALTER TABLE $databaseName.$tableName CHANGE COLUMN a TYPE INT")
+        sql(s"INSERT INTO  $databaseName.$tableName VALUES (2)")
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some(databaseName)))
+
+        checkError(
+          exception = intercept[DeltaTableFeatureException] {
+            sql(s"ALTER TABLE $databaseName.$tableName " +
+              s"DROP FEATURE '${TypeWideningTableFeature.name}'"
+            ).collect()
+          },
+          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          parameters = Map(
+            "feature" -> TypeWideningTableFeature.name,
+            "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
+            "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
+              .fromMetaData(deltaLog.unsafeVolatileMetadata).toString,
+            "truncateHistoryLogRetentionPeriod" ->
+              DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+                .fromMetaData(deltaLog.unsafeVolatileMetadata).toString)
+        )
+      }
+    }
   }
 
   // Rewriting the data when dropping the table feature relies on the default row commit version
