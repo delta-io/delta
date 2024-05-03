@@ -15,6 +15,8 @@ Row tracking allows <Delta> to track row-level lineage in a <Delta> table. When 
 
 ## Enable row tracking
 
+.. warning:: Tables created with row tracking enabled have the row tracking <Delta> table feature enabled at creation and use <Delta> writer version 7. Table protocol versions cannot be downgraded, and tables with row tracking enabled are not writeable by <Delta> clients that do not support all enabled <Delta> writer protocol table features. See [_](/versioning.md).
+
 You must explicitly enable row tracking using one of the following methods:
 
 - **New table**: Set the table property `delta.enableRowTracking = true` in the `CREATE TABLE` command.
@@ -33,7 +35,7 @@ You must explicitly enable row tracking using one of the following methods:
 
   -- Using a CLONE statement to copy configuration
   CREATE TABLE graduate CLONE student;
-```
+  ```
 
 - **Existing table**: Set the table property `'delta.enableRowTracking' = 'true'` in the `ALTER TABLE` command.
 
@@ -60,15 +62,21 @@ You must explicitly enable row tracking using one of the following methods:
 
 .. important:: Enabling row tracking on existing table will automatically assign row ids and row commit versions to all existing rows in the table. This process may cause multiple new versions of the table to be created and may take a long time.
 
-.. warning:: Tables created with row tracking enabled have the row tracking <Delta> table feature enabled at creation and use <Delta> writer version 7. Table protocol versions cannot be downgraded, and tables with row tracking enabled are not writeable by <Delta> clients that do not support all enabled <Delta> writer protocol table features. See [_](/versioning.md).
-
 ### Row tracking storage
 
 Enabling row tracking may increase the size of the table. <Delta> stores row tracking metadata fields in hidden metadata columns in the data files. Some operations, such as insert-only operations do not use these hidden columns and instead track the row ids and row commit versions using metadata in the <Delta> log. Data reorganization operations such as `OPTIMIZE` and `REORG` cause the row ids and row commit versions to be tracked using the hidden metadata column, even when they were stored using metadata.
 
 ## Read row tracking metadata fields
 
-The row ids and row commit versions metadata fields are not automatically included when reading the table. Instead, these metadata fields must be manually selected from the hidden `_metadata` column which is available for all tables in <AS>.
+Row tracking adds the following metadata fields that can be accessed when reading a table:
+
+| Column name                    | Type | Values                                                           |
+|--------------------------------|------|------------------------------------------------------------------|
+| `_metadata.row_id`             | Long | The unique identifier of the row.                                |
+| `_metadata.row_commit_version` | Long | The table version at which the row was last inserted or updated. |
+
+The row ids and row commit versions metadata fields are not automatically included when reading the table.
+Instead, these metadata fields must be manually selected from the hidden `_metadata` column which is available for all tables in <AS>.
 
 .. code-language-tabs::
   ```sql
@@ -85,15 +93,6 @@ The row ids and row commit versions metadata fields are not automatically includ
     .select("_metadata.row_id", "_metadata.row_commit_version", "*")
   ```
 
-## What is the schema of the row tracking metadata fields?
-
-Row tracking adds the following metadata fields that can be accessed when reading a table:
-
-| Column name                    | Type | Values                                                                       |
-|--------------------------------|------|------------------------------------------------------------------------------|
-| `_metadata.row_id`             | Long | The unique identifier of the row.                                            |
-| `_metadata.row_commit_version` | Long | The table version at which the row was last inserted or updated. |
-
 ## Disable row tracking
 
 Row tracking can be disabled to reduce the storage overhead of the metadata fields. After disabling row tracking the metadata fields remain available, but all rows always get assigned a new id and commit version whenever they are touched by an operation.
@@ -109,5 +108,7 @@ ALTER TABLE table_name SET TBLPROPERTIES (delta.enableRowTracking = false);
 The following limitations exist:
 
 - The row ids and row commit versions metadata fields cannot be accessed while reading the [Change data feed](/delta/delta-change-data-feed.md).
+- Row Tracking can currently only be enabled when creating the table or when the table is empty. Enabling row tracking on a non-empty table is currently not supported.
+- Once the Row Tracking feature is added to the table it cannot be removed without recreating the table.
 
 .. include:: /shared/replacements.md
