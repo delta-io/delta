@@ -1224,9 +1224,9 @@ lazy val flink = (project in file("connectors/flink"))
       IO.write(file,
         s"""package io.delta.flink.internal;
            |
-           |final public class Meta {
-           |  public static final String FLINK_VERSION = "${flinkVersion}";
-           |  public static final String CONNECTOR_VERSION = "${version.value}";
+           |public final class Meta {
+           |    public static final String FLINK_VERSION = "${flinkVersion}";
+           |    public static final String CONNECTOR_VERSION = "${version.value}";
            |}
            |""".stripMargin)
       Seq(file)
@@ -1320,9 +1320,9 @@ def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
   // and during tests (e.g. build/sbt test)
   Seq(
     checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
-    checkstyleSeverityLevel := Some(CheckstyleSeverityLevel.Error),
-    (Compile / checkstyle) := (Compile / checkstyle).triggeredBy(Compile / compile).value,
-    (Test / checkstyle) := (Test / checkstyle).triggeredBy(Test / compile).value
+    checkstyleSeverityLevel := CheckstyleSeverityLevel.Error,
+    (Compile / compile) := ((Compile / compile) dependsOn (Compile / checkstyle)).value,
+    (Test / test) := ((Test / test) dependsOn (Test / checkstyle)).value
   )
 }
 
