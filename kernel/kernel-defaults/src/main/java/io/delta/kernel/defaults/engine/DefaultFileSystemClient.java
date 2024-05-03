@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.client;
+package io.delta.kernel.defaults.engine;
 
 import java.io.*;
 
@@ -22,8 +22,8 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
-import io.delta.kernel.client.FileReadRequest;
-import io.delta.kernel.client.FileSystemClient;
+import io.delta.kernel.engine.FileReadRequest;
+import io.delta.kernel.engine.FileSystemClient;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 

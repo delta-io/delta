@@ -16,23 +16,23 @@
 package io.delta.kernel.defaults
 
 import java.io.File
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.hadoop.conf.Configuration
+
 import io.delta.kernel.types.{LongType, StructType}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.defaults.client.DefaultTableClient
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-
 import io.delta.kernel.Table
-
-import java.util.Optional
 
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
-  override lazy val defaultTableClient = DefaultTableClient.create(new Configuration() {{
+  override lazy val defaultEngine = DefaultEngine.create(new Configuration() {{
     // Set the batch sizes to small so that we get to test the multiple batch scenarios.
     set("delta.kernel.default.parquet.reader.batch-size", "2");
     set("delta.kernel.default.json.reader.batch-size", "2");
@@ -87,7 +87,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     test(s"missing $action should fail") {
       val path = goldenTablePath(s"deltalog-state-reconstruction-without-$action")
       val e = intercept[IllegalStateException] {
-        latestSnapshot(path).getSchema(defaultTableClient)
+        latestSnapshot(path).getSchema(defaultEngine)
       }
       assert(e.getMessage.contains(s"No $action found"))
     }
@@ -100,7 +100,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     test(s"missing $action should fail missing from checkpoint") {
       val path = goldenTablePath(s"deltalog-state-reconstruction-from-checkpoint-missing-$action")
       val e = intercept[IllegalStateException] {
-        latestSnapshot(path).getSchema(defaultTableClient)
+        latestSnapshot(path).getSchema(defaultEngine)
       }
       assert(e.getMessage.contains(s"No $action found"))
     }
@@ -109,11 +109,11 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("fetches the latest protocol and metadata") {
     val path = goldenTablePath("log-replay-latest-metadata-protocol")
     val snapshot = latestSnapshot(path)
-    val scanStateRow = snapshot.getScanBuilder(defaultTableClient).build()
-      .getScanState(defaultTableClient)
+    val scanStateRow = snapshot.getScanBuilder(defaultEngine).build()
+      .getScanState(defaultEngine)
 
     // schema is updated
-    assert(ScanStateRow.getLogicalSchema(defaultTableClient, scanStateRow)
+    assert(ScanStateRow.getLogicalSchema(defaultEngine, scanStateRow)
       .fieldNames().asScala.toSet == Set("col1", "col2")
     )
 
@@ -126,8 +126,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("standalone DeltaLogSuite: 'checkpoint'") {
     val path = goldenTablePath("checkpoint")
     val snapshot = latestSnapshot(path)
-    assert(snapshot.getVersion(defaultTableClient) == 14)
-    val scan = snapshot.getScanBuilder(defaultTableClient).build()
+    assert(snapshot.getVersion(defaultEngine) == 14)
+    val scan = snapshot.getScanBuilder(defaultEngine).build()
     assert(collectScanFileRows(scan).length == 1)
   }
 
@@ -144,9 +144,9 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       expectedFiles: Array[File],
       expectedVersion: Int): Unit = {
       val snapshot = latestSnapshot(tablePath)
-      assert(snapshot.getVersion(defaultTableClient) == expectedVersion)
+      assert(snapshot.getVersion(defaultEngine) == expectedVersion)
       val scanFileRows = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient).build())
+        snapshot.getScanBuilder(defaultEngine).build())
       assert(scanFileRows.length == expectedFiles.length)
       val scanFilePaths = scanFileRows
         .map(InternalScanFileUtils.getAddFileStatus)
@@ -199,9 +199,9 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     // Repartition into 2 files
     withGoldenTable("snapshot-repartitioned") { tablePath =>
       val snapshot = latestSnapshot(tablePath)
-      assert(snapshot.getVersion(defaultTableClient) == 5)
+      assert(snapshot.getVersion(defaultEngine) == 5)
       val scanFileRows = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient).build())
+        snapshot.getScanBuilder(defaultEngine).build())
       assert(scanFileRows.length == 2)
     }
 
@@ -216,7 +216,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("DV cases with same path different DV keys") {
     val snapshot = latestSnapshot(goldenTablePath("log-replay-dv-key-cases"))
     val scanFileRows = collectScanFileRows(
-      snapshot.getScanBuilder(defaultTableClient).build()
+      snapshot.getScanBuilder(defaultEngine).build()
     )
     assert(scanFileRows.length == 1) // there should only be 1 add file
     val dv = InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFileRows.head)
@@ -227,14 +227,14 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     withGoldenTable("log-replay-special-characters-a") { path =>
       val snapshot = latestSnapshot(path)
       val scanFileRows = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient).build()
+        snapshot.getScanBuilder(defaultEngine).build()
       )
       assert(scanFileRows.isEmpty)
     }
     withGoldenTable("log-replay-special-characters-b") { path =>
       val snapshot = latestSnapshot(path)
       val scanFileRows = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient).build()
+        snapshot.getScanBuilder(defaultEngine).build()
       )
       assert(scanFileRows.length == 1)
       val addFileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRows.head)
@@ -247,8 +247,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   ignore("path should be canonicalized - normal characters") {
     Seq("canonicalized-paths-normal-a", "canonicalized-paths-normal-b").foreach { path =>
       val snapshot = latestSnapshot(goldenTablePath(path))
-      assert(snapshot.getVersion(defaultTableClient) == 1)
-      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder(defaultTableClient).build())
+      assert(snapshot.getVersion(defaultEngine) == 1)
+      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder(defaultEngine).build())
       assert(scanFileRows.isEmpty)
     }
   }
@@ -256,8 +256,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   ignore("path should be canonicalized - special characters") {
     Seq("canonicalized-paths-special-a", "canonicalized-paths-special-b").foreach { path =>
       val snapshot = latestSnapshot(goldenTablePath(path))
-      assert(snapshot.getVersion(defaultTableClient) == 1)
-      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder(defaultTableClient).build())
+      assert(snapshot.getVersion(defaultEngine) == 1)
+      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder(defaultEngine).build())
       assert(scanFileRows.isEmpty)
     }
   }
@@ -274,7 +274,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("delete and re-add same file in different transactions") {
     val path = goldenTablePath("delete-re-add-same-file-different-transactions")
     val snapshot = latestSnapshot(path)
-    val scan = snapshot.getScanBuilder(defaultTableClient).build()
+    val scan = snapshot.getScanBuilder(defaultEngine).build()
 
     val foundFiles = collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus)
 
@@ -289,9 +289,9 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
 
   test("get the last transaction version for appID") {
     val unresolvedPath = goldenTablePath("deltalog-getChanges")
-    val table = Table.forPath(defaultTableClient, unresolvedPath)
+    val table = Table.forPath(defaultEngine, unresolvedPath)
 
-    val snapshot = table.getLatestSnapshot(defaultTableClient)
+    val snapshot = table.getLatestSnapshot(defaultEngine)
     assert(snapshot.isInstanceOf[SnapshotImpl])
     val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
 

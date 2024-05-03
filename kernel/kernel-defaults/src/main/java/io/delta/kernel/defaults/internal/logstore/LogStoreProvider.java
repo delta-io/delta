@@ -20,7 +20,7 @@ import java.util.*;
 import io.delta.storage.*;
 import org.apache.hadoop.conf.Configuration;
 
-import io.delta.kernel.defaults.internal.DefaultTableClientErrors;
+import io.delta.kernel.defaults.internal.DefaultEngineErrors;
 
 /**
  * Utility class to provide the correct {@link LogStore} based on the scheme of the path.
@@ -66,7 +66,7 @@ public class LogStoreProvider {
                         .getConstructor(Configuration.class)
                         .newInstance(hadoopConf);
             } catch (Exception e) {
-                throw DefaultTableClientErrors.canNotInstantiateLogStore(classNameFromConfig);
+                throw DefaultEngineErrors.canNotInstantiateLogStore(classNameFromConfig);
             }
         }
 
@@ -85,7 +85,7 @@ public class LogStoreProvider {
                     .getConstructor(Configuration.class)
                     .newInstance(hadoopConf);
         } catch (Exception e) {
-            throw DefaultTableClientErrors.canNotInstantiateLogStore(defaultClassName);
+            throw DefaultEngineErrors.canNotInstantiateLogStore(defaultClassName);
         }
     }
 
