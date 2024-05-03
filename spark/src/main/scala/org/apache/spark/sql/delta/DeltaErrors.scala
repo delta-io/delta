@@ -3183,7 +3183,7 @@ trait DeltaErrorsBase
       icebergCompatVersion: Int,
       cause: Throwable): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "",
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.REWRITE_DATA_FAILED",
       messageParameters = Array(
         icebergCompatVersion.toString,
         icebergCompatVersion.toString
