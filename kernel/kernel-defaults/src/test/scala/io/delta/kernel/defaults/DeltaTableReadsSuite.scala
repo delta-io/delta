@@ -16,12 +16,13 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
 import io.delta.kernel.types.{LongType, StructType}
-import io.delta.kernel.{Table, TableNotFoundException}
+import io.delta.kernel.Table
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
@@ -585,7 +586,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         .getScanBuilder(defaultEngine)
         .build()
     }
-    assert(e.getMessage.contains("Unsupported reader protocol version"))
+    assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -628,7 +629,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           .getSnapshotAsOfVersion(defaultEngine, 11)
       }
       assert(e.getMessage.contains(
-        "Trying to load a non-existent version 11. The latest version available is 10"))
+        "Cannot load table version 11 as it does not exist. The latest available version is 10"))
     }
   }
 
@@ -660,7 +661,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         Table.forPath(defaultEngine, tablePath)
           .getSnapshotAsOfVersion(defaultEngine, 9)
       }
-      assert(e.getMessage.contains("Unable to reconstruct state at version 9"))
+      assert(e.getMessage.contains("Cannot load table version 9"))
       // Can read version 10
       checkTable(
         path = tablePath,
@@ -774,7 +775,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e1.getMessage.contains(
         s"The provided timestamp ${start + 50 * minuteInMilliseconds} ms " +
-          s"(2018-10-24T22:04:18Z) is after the latest commit"))
+          s"(2018-10-24T22:04:18Z) is after the latest available version"))
       // Timestamp before the first commit fails
       val e2 = intercept[RuntimeException] {
         checkTable(
@@ -785,7 +786,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e2.getMessage.contains(
         s"The provided timestamp ${start - 1L} ms (2018-10-24T21:14:17.999Z) is before " +
-          s"the earliest version available."))
+          s"the earliest available version"))
     }
   }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2024) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,21 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel;
-
-import static java.lang.String.format;
-
-import io.delta.kernel.annotation.Evolving;
+package io.delta.kernel.exceptions;
 
 /**
- * Thrown when trying to create a checkpoint at version {@code v}, but there already exists
- * a checkpoint at version {@code v}.
- *
- * @since 3.2.0
+ * Thrown when Kernel cannot execute the requested operation due to the operation being invalid
+ * or unsupported.
  */
-@Evolving
-public class CheckpointAlreadyExistsException extends IllegalArgumentException {
-    public CheckpointAlreadyExistsException(long version) {
-        super(format("Checkpoint for given version %d already exists in the table", version));
+public class KernelException extends RuntimeException {
+
+    public KernelException() {
+        super();
+    }
+
+    public KernelException(String message) {
+        super(message);
+    }
+
+    public KernelException(Throwable cause) {
+        super(cause);
+    }
+
+    public KernelException(String message, Throwable cause) {
+        super(message, cause);
     }
 }
