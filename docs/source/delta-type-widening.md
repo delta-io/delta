@@ -6,7 +6,7 @@ description: Learn about type widening in Delta.
 
 .. note:: This feature is available in preview in <Delta> 3.2.
 
-The type widening feature allows changing the type of columns in a Delta table to a wider type without the need to rewrite the underlying Parquet files.
+The type widening feature allows changing the type of columns in a Delta table to a wider type. This enables manual type changes using the `ALTER TABLE CHANGE COLUMN` command and automatic type migration with schema evolution in MERGE INTO and INSERT commands.
 
 ## Supported type changes
 
@@ -34,7 +34,13 @@ Alternatively, you can enable type widening during table creation:
   CREATE TABLE T(c1 INT) USING DELTA TBLPROPERTIES('delta.enableTypeWidening' = 'true')
   ```
 
-Disabling type widening prevents future type changes from being applied to the table. It doesn't affect type changes previously applied and in particular, it doesn't allow clients that don't support the type widening table feature to read and write to the table.
+To disable type widening:
+
+  ```sql
+  ALTER TABLE <table_name> SET TBLPROPERTIES ('delta.enableTypeWidening' = 'false')
+  ```
+
+Disabling type widening prevents future type changes from being applied to the table. It doesn't affect type changes previously applied and in particular, it doesn't remove the type widening table feature and doesn't allow clients that don't support the type widening table feature to read and write to the table.
 
 To remove the type widening table feature from the table and allow other clients that don't support this feature to read and write to the table, see [_](#removing-the-type-widening-table-feature).
 
