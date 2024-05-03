@@ -14,6 +14,7 @@
 # limitations under the License.
 #
 
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING, cast, overload, Any, Dict, Iterable, Optional, Union, NoReturn, List, Tuple
 )
@@ -25,7 +26,7 @@ from delta._typing import (
 
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions, SparkSession
-from pyspark.sql.types import DataType, StructType, StructField
+from pyspark.sql.types import DataType, StructType, StructField, LongType
 
 
 if TYPE_CHECKING:
@@ -1060,6 +1061,19 @@ class DeltaMergeBuilder(object):
                 DeltaTable._condition_to_jcolumn(condition))
 
 
+@dataclass
+class IdentityGenerator:
+    """
+    Identity generator specifications for the identity column in the Delta table.
+    :param start: the start for the identity column. Default is 1.
+    :type start: int
+    :param step: the step for the identity column. Default is 1.
+    :type step: int
+    """
+    start: int = 1
+    step: int = 1
+
+
 class DeltaTableBuilder(object):
     """
     Builder to specify how to create / replace a Delta table.
@@ -1164,7 +1178,8 @@ class DeltaTableBuilder(object):
         colName: str,
         dataType: Union[str, DataType],
         nullable: bool = True,
-        generatedAlwaysAs: Optional[str] = None,
+        generatedAlwaysAs: Optional[Union[str, IdentityGenerator]] = None,
+        generatedByDefaultAs: Optional[IdentityGenerator] = None,
         comment: Optional[str] = None,
     ) -> "DeltaTableBuilder":
         """
@@ -1177,9 +1192,15 @@ class DeltaTableBuilder(object):
         :param nullable: whether column is nullable
         :type nullable: bool
         :param generatedAlwaysAs: a SQL expression if the column is always generated
-                                  as a function of other columns.
+                                  as a function of other columns;
+                                  an IdentityGenerator object if the column is always
+                                  generated using identity generator
                                   See online documentation for details on Generated Columns.
-        :type generatedAlwaysAs: str
+        :type generatedAlwaysAs: str or delta.tables.IdentityGenerator
+        :param generatedByDefaultAs: an IdentityGenerator object to generate identity values
+                                     if the user does not provide values for the column
+                                  See online documentation for details on Generated Columns.
+        :type generatedByDefaultAs: delta.tables.IdentityGenerator
         :param comment: the column comment
         :type comment: str
 
@@ -1203,11 +1224,52 @@ class DeltaTableBuilder(object):
         if type(nullable) is not bool:
             self._raise_type_error("Column nullable must be bool.", [nullable])
         _col_jbuilder = _col_jbuilder.nullable(nullable)
+
+        if generatedAlwaysAs is not None and generatedByDefaultAs is not None:
+            raise ValueError(
+                "generatedByDefaultAs cannot be set with generatedAlwaysAs.",
+                [generatedByDefaultAs, generatedAlwaysAs]
+            )
         if generatedAlwaysAs is not None:
-            if type(generatedAlwaysAs) is not str:
-                self._raise_type_error("Column generation expression must be str.",
-                                       [generatedAlwaysAs])
-            _col_jbuilder = _col_jbuilder.generatedAlwaysAs(generatedAlwaysAs)
+            if type(generatedAlwaysAs) is str:
+                _col_jbuilder = _col_jbuilder.generatedAlwaysAs(generatedAlwaysAs)
+            elif type(generatedAlwaysAs) is IdentityGenerator:
+                if dataType != LongType():
+                    self._raise_type_error(
+                        "Column identity generation requires the column to be integer.",
+                        [dataType],
+                    )
+                if generatedAlwaysAs.step == 0:
+                    raise ValueError(
+                        "Column identity generation requires step to be non-zero."
+                    )
+                _col_jbuilder = _col_jbuilder.generatedAlwaysAsIdentity(
+                    generatedAlwaysAs.start, generatedAlwaysAs.step
+                )
+            else:
+                self._raise_type_error(
+                    "Column generation expression must be str or IdentityGenerator.",
+                    [generatedAlwaysAs]
+                )
+        elif generatedByDefaultAs is not None:
+            if type(generatedByDefaultAs) is not IdentityGenerator:
+                self._raise_type_error(
+                    "Column generation by default expression must be IdentityGenerator.",
+                    [generatedByDefaultAs]
+                )
+            if dataType != LongType():
+                self._raise_type_error(
+                    "Column identity generation requires the column to be integer.",
+                    [dataType],
+                )
+            if generatedByDefaultAs.step == 0:
+                raise ValueError(
+                    "Column identity generation requires step to be non-zero."
+                )
+            _col_jbuilder = _col_jbuilder.generatedByDefaultAsIdentity(
+                generatedByDefaultAs.start, generatedByDefaultAs.step
+            )
+
         if comment is not None:
             if type(comment) is not str:
                 self._raise_type_error("Column comment must be str.", [comment])
