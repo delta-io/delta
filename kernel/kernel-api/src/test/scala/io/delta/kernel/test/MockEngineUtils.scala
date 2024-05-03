@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.test
 
-import io.delta.kernel.client._
+import io.delta.kernel.engine._
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.types.{DataType, StructType}
@@ -26,7 +26,7 @@ import java.util
 import java.util.Optional
 
 /**
- * Contains broiler plate code for mocking [[TableClient]] and its sub-interfaces.
+ * Contains broiler plate code for mocking [[Engine]] and its sub-interfaces.
  *
  * A concrete class is created for each sub-interface (e.g. [[FileSystemClient]]) with
  * default implementation (unsupported). Test suites can override a specific API(s)
@@ -40,20 +40,20 @@ import java.util.Optional
  *     }
  *   }
  *
- *   val myMockTableClient = mockTableClient(fileSystemClient = myMockFileSystemClient)
+ *   val myMockEngine = mockEngine(fileSystemClient = myMockFileSystemClient)
  * }}}
  */
-trait MockTableClientUtils {
+trait MockEngineUtils {
   /**
-   * Create a mock TableClient with the given components. If a component is not provided, it will
+   * Create a mock Engine with the given components. If a component is not provided, it will
    * throw an exception when accessed.
    */
-  def mockTableClient(
+  def mockEngine(
     fileSystemClient: FileSystemClient = null,
     jsonHandler: JsonHandler = null,
     parquetHandler: ParquetHandler = null,
-    expressionHandler: ExpressionHandler = null): TableClient = {
-    new TableClient() {
+    expressionHandler: ExpressionHandler = null): Engine = {
+    new Engine() {
       override def getExpressionHandler: ExpressionHandler =
         Option(expressionHandler).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))
@@ -102,7 +102,7 @@ trait BaseMockJsonHandler extends JsonHandler {
 /**
  * Base class for mocking [[ParquetHandler]]
  */
-trait BaseMockParquetHandler extends ParquetHandler with MockTableClientUtils {
+trait BaseMockParquetHandler extends ParquetHandler with MockEngineUtils {
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,

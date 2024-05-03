@@ -17,10 +17,10 @@ package io.delta.kernel.internal.skipping;
 
 import java.util.*;
 
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;
@@ -34,11 +34,11 @@ public class DataSkippingUtils {
      * return the parsed JSON stats from the scan files.
      */
     public static ColumnarBatch parseJsonStats(
-            TableClient tableClient, FilteredColumnarBatch scanFileBatch, StructType statsSchema) {
+            Engine engine, FilteredColumnarBatch scanFileBatch, StructType statsSchema) {
         ColumnVector statsVector = scanFileBatch.getData()
             .getColumnVector(ADD_FILE_ORDINAL)
             .getChild(ADD_FILE_STATS_ORDINAL);
-        return tableClient.getJsonHandler()
+        return engine.getJsonHandler()
             .parseJson(statsVector, statsSchema, scanFileBatch.getSelectionVector());
     }
 

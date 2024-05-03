@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.client
+package io.delta.kernel.defaults.engine
 
 import java.math.{BigDecimal => JBigDecimal}
 import java.util.Optional
@@ -34,7 +34,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
   val jsonHandler = new DefaultJsonHandler(new Configuration {
     set("delta.kernel.default.json.reader.batch-size", "1")
   })
-  val fsClient = defaultTableClient.getFileSystemClient
+  val fsClient = defaultEngine.getFileSystemClient
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Tests for parseJson for statistics eligible types (additional in TestDefaultJsonHandler.java)

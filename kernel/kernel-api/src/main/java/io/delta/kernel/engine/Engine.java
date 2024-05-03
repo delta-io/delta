@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.client;
+package io.delta.kernel.engine;
 
 import io.delta.kernel.annotation.Evolving;
 
@@ -26,7 +26,7 @@ import io.delta.kernel.annotation.Evolving;
  * @since 3.0.0
  */
 @Evolving
-public interface TableClient {
+public interface Engine {
 
     /**
      * Get the connector provided {@link ExpressionHandler}.

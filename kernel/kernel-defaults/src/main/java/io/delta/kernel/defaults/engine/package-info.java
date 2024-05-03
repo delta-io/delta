@@ -15,7 +15,7 @@
  */
 
 /**
- * Default implementation of {@link io.delta.kernel.client.TableClient} interface and
- * the sub-interfaces exposed by the {@link io.delta.kernel.client.TableClient}.
+ * Default implementation of {@link io.delta.kernel.engine.Engine} interface and
+ * the sub-interfaces exposed by the {@link io.delta.kernel.engine.Engine}.
  */
-package io.delta.kernel.defaults.client;
+package io.delta.kernel.defaults.engine;

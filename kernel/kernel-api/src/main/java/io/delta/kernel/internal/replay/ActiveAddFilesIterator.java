@@ -19,10 +19,10 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.*;
 
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.StringType;
@@ -50,7 +50,7 @@ import static io.delta.kernel.internal.replay.LogReplayUtils.prepareSelectionVec
  * (have not been tombstoned).
  */
 class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
-    private final TableClient tableClient;
+    private final Engine engine;
     private final Path tableRoot;
 
     private final CloseableIterator<ActionWrapper> iter;
@@ -68,10 +68,10 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     private boolean closed;
 
     ActiveAddFilesIterator(
-            TableClient tableClient,
+            Engine engine,
             CloseableIterator<ActionWrapper> iter,
             Path tableRoot) {
-        this.tableClient = tableClient;
+        this.engine = engine;
         this.tableRoot = tableRoot;
         this.iter = iter;
         this.tombstonesFromJson = new HashSet<>();
@@ -217,7 +217,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
         // Step 4: TODO: remove this step. This is a temporary requirement until the path
         //         in `add` is converted to absolute path.
         if (tableRootVectorGenerator == null) {
-            tableRootVectorGenerator = tableClient.getExpressionHandler()
+            tableRootVectorGenerator = engine.getExpressionHandler()
                 .getEvaluator(
                     scanAddFiles.getSchema(),
                     Literal.ofString(tableRoot.toUri().toString()),
@@ -230,7 +230,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
             tableRootVector);
 
         Optional<ColumnVector> selectionColumnVector = atLeastOneUnselected ?
-            Optional.of(tableClient.getExpressionHandler()
+            Optional.of(engine.getExpressionHandler()
                 .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize())) :
             Optional.empty();
         next = Optional.of(new FilteredColumnarBatch(scanAddFiles, selectionColumnVector));

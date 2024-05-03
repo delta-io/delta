@@ -56,15 +56,15 @@ public class SingleThreadedTableReader
     @Override
     public int show(int limit, Optional<List<String>> columnsOpt, Optional<Predicate> predicate)
         throws TableNotFoundException, IOException {
-        Table table = Table.forPath(tableClient, tablePath);
-        Snapshot snapshot = table.getLatestSnapshot(tableClient);
-        StructType readSchema = pruneSchema(snapshot.getSchema(tableClient), columnsOpt);
+        Table table = Table.forPath(engine, tablePath);
+        Snapshot snapshot = table.getLatestSnapshot(engine);
+        StructType readSchema = pruneSchema(snapshot.getSchema(engine), columnsOpt);
 
-        ScanBuilder scanBuilder = snapshot.getScanBuilder(tableClient)
-            .withReadSchema(tableClient, readSchema);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder(engine)
+            .withReadSchema(engine, readSchema);
 
         if (predicate.isPresent()) {
-            scanBuilder = scanBuilder.withFilter(tableClient, predicate.get());
+            scanBuilder = scanBuilder.withFilter(engine, predicate.get());
         }
 
         return readData(readSchema, scanBuilder.build(), limit);
@@ -95,13 +95,13 @@ public class SingleThreadedTableReader
     private int readData(StructType readSchema, Scan scan, int maxRowCount) throws IOException {
         printSchema(readSchema);
 
-        Row scanState = scan.getScanState(tableClient);
-        CloseableIterator<FilteredColumnarBatch> scanFileIter = scan.getScanFiles(tableClient);
+        Row scanState = scan.getScanState(engine);
+        CloseableIterator<FilteredColumnarBatch> scanFileIter = scan.getScanFiles(engine);
 
         int readRecordCount = 0;
         try {
             StructType physicalReadSchema =
-                ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
+                ScanStateRow.getPhysicalDataReadSchema(engine, scanState);
             while (scanFileIter.hasNext()) {
                 FilteredColumnarBatch scanFilesBatch = scanFileIter.next();
                 try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
@@ -110,14 +110,14 @@ public class SingleThreadedTableReader
                         FileStatus fileStatus =
                             InternalScanFileUtils.getAddFileStatus(scanFileRow);
                         CloseableIterator<ColumnarBatch> physicalDataIter =
-                            tableClient.getParquetHandler().readParquetFiles(
+                            engine.getParquetHandler().readParquetFiles(
                                 singletonCloseableIterator(fileStatus),
                                 physicalReadSchema,
                                 Optional.empty());
                         try (
                             CloseableIterator<FilteredColumnarBatch> transformedData =
                                 Scan.transformPhysicalData(
-                                    tableClient,
+                                    engine,
                                     scanState,
                                     scanFileRow,
                                     physicalDataIter)) {
