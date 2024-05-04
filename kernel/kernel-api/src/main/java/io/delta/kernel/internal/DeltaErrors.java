@@ -143,20 +143,20 @@ public final class DeltaErrors {
         return new KernelException(format(msgT, colName, dataType));
     }
 
-    public static IllegalArgumentException duplicateColumnsInSchema(
+    public static KernelException duplicateColumnsInSchema(
             StructType schema,
             List<String> duplicateColumns) {
         String msg = format(
             "Schema contains duplicate columns: %s.\nSchema: %s",
             String.join(", ", duplicateColumns),
             schema);
-        return new IllegalArgumentException(msg);
+        return new KernelException(msg);
     }
 
-    public static IllegalArgumentException invalidColumnName(
+    public static KernelException invalidColumnName(
             String columnName,
             String unsupportedChars) {
-        return new IllegalArgumentException(format(
+        return new KernelException(format(
                 "Column name '%s' contains one of the unsupported (%s) characters.",
                 columnName,
                 unsupportedChars));

@@ -17,6 +17,14 @@ package io.delta.kernel.exceptions;
 
 import java.util.Optional;
 
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Thrown when trying to create a Delta table at a location where a Delta table already exists.
+ *
+ * @since 3.2.0
+ */
+@Evolving
 public class TableAlreadyExistsException extends KernelException {
     private final String tablePath;
     private final Optional<String> context;

@@ -21,7 +21,7 @@ import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.TableAlreadyExistsException
+import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException, TableNotFoundException}
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
@@ -49,10 +49,10 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
-      val ex = intercept[IllegalArgumentException] {
+      val ex = intercept[TableNotFoundException] {
         txnBuilder.build(engine)
       }
-      assert(ex.getMessage.contains("Must provide a new schema."))
+      assert(ex.getMessage.contains("Must provide a new schema to write to a new table"))
     }
   }
 
@@ -63,10 +63,10 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
         .createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
         .withPartitionColumns(engine, Seq("part1", "part2").asJava)
 
-      val ex = intercept[IllegalArgumentException] {
+      val ex = intercept[TableNotFoundException] {
         txnBuilder.build(engine)
       }
-      assert(ex.getMessage.contains("Must provide a new schema."))
+      assert(ex.getMessage.contains("Must provide a new schema to write to a new table"))
     }
   }
 
@@ -74,12 +74,12 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val ex = intercept[IllegalArgumentException] {
+      val ex = intercept[KernelException] {
         txnBuilder
           .withSchema(engine, new StructType().add("ts_ntz", TIMESTAMP_NTZ))
           .build(engine)
       }
-      assert(ex.getMessage.contains("Unsupported data type: timestamp_ntz"))
+      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: timestamp_ntz"))
     }
   }
 
@@ -106,8 +106,8 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
             .withPartitionColumns(engine, Seq("part1", "part2").asJava)
             .build(engine)
         }
-        assert(ex.getMessage.contains("Table already exists, but provided new partition columns. " +
-          "Partition columns can only be set on a new table."))
+        assert(ex.getMessage.contains("Table already exists, but provided new partition columns." +
+          " Partition columns can only be set on a new table."))
       }
     }
   }
@@ -158,13 +158,14 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
         .add("c1", DATE)
         .add("c2", new DecimalType(14, 2))
 
-      val ex = intercept[IllegalArgumentException] {
+      val ex = intercept[KernelException] {
         txnBuilder
           .withSchema(engine, schema)
           .withPartitionColumns(engine, Seq("p1", "c1").asJava)
           .build(engine)
       }
-      assert(ex.getMessage.contains("Unsupported partition column (p1) with type: array[integer]"))
+      assert(ex.getMessage.contains(
+        "Kernel doesn't support writing data with partition column (p1) of type: array[integer]"))
     }
   }
 
