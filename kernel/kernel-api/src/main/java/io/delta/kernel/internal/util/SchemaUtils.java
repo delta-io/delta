@@ -17,10 +17,11 @@ package io.delta.kernel.internal.util;
 
 import java.util.*;
 import java.util.stream.Collectors;
-import static java.lang.String.format;
 
 import io.delta.kernel.types.*;
 
+import io.delta.kernel.internal.DeltaErrors;
+import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
@@ -33,8 +34,8 @@ public class SchemaUtils {
     }
 
     /**
-     * Validate the schema. This method checks if the schema has no duplicate columns and the names
-     * contain only valid characters.
+     * Validate the schema. This method checks if the schema has no duplicate columns, the names
+     * contain only valid characters and the data types are supported.
      *
      * @param schema                 the schema to validate
      * @param isColumnMappingEnabled whether column mapping is enabled. When column mapping is
@@ -44,6 +45,8 @@ public class SchemaUtils {
      * @throws IllegalArgumentException if the schema is invalid
      */
     public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
+        checkArgument(schema.length() > 0, "Schema should contain at least one column");
+
         List<String> flattenColNames = flattenNestedFieldNames(schema);
 
         // check there are no duplicate column names in the schema
@@ -53,12 +56,11 @@ public class SchemaUtils {
 
         if (uniqueColNames.size() != flattenColNames.size()) {
             Set<String> uniqueCols = new HashSet<>();
-            String duplicateColumns = flattenColNames.stream()
+            List<String> duplicateColumns = flattenColNames.stream()
                     .map(String::toLowerCase)
                     .filter(n -> !uniqueCols.add(n))
-                    .collect(Collectors.joining(", "));
-            throw new IllegalArgumentException(
-                    "Schema contains duplicate columns: " + duplicateColumns);
+                    .collect(Collectors.toList());
+            throw DeltaErrors.duplicateColumnsInSchema(schema, duplicateColumns);
         }
 
         // Check the column names are valid
@@ -66,10 +68,70 @@ public class SchemaUtils {
             validParquetColumnNames(flattenColNames);
         } else {
             // when column mapping is enabled, just check the name contains no new line in it.
-            flattenColNames.forEach(name -> checkArgument(
-                    !name.contains("\\n"),
-                    format("Attribute name '%s' contains invalid new line characters.", name)));
+            flattenColNames.forEach(name -> {
+                if (name.contains("\\n")) {
+                    throw invalidColumnName(name, "\\n");
+                }
+            });
         }
+
+        validateSupportedType(schema);
+    }
+
+    /**
+     * Verify the partition columns exists in the table schema and a supported data type for a
+     * partition column.
+     *
+     * @param schema
+     * @param partitionCols
+     */
+    public static void validatePartitionColumns(StructType schema, List<String> partitionCols) {
+        // partition columns are always the top-level columns
+        Map<String, DataType> columnNameToType = schema.fields().stream()
+                .collect(Collectors.toMap(
+                        field -> field.getName().toLowerCase(Locale.ROOT),
+                        StructField::getDataType));
+
+        partitionCols.stream().forEach(partitionCol -> {
+            DataType dataType = columnNameToType.get(partitionCol.toLowerCase(Locale.ROOT));
+            checkArgument(
+                    dataType != null,
+                    "Partition column " + partitionCol + " not found in the schema");
+
+            if (!(dataType instanceof BooleanType ||
+                    dataType instanceof ByteType ||
+                    dataType instanceof ShortType ||
+                    dataType instanceof IntegerType ||
+                    dataType instanceof LongType ||
+                    dataType instanceof FloatType ||
+                    dataType instanceof DoubleType ||
+                    dataType instanceof DecimalType ||
+                    dataType instanceof StringType ||
+                    dataType instanceof BinaryType ||
+                    dataType instanceof DateType ||
+                    dataType instanceof TimestampType)) {
+                throw unsupportedPartitionDataType(partitionCol, dataType);
+            }
+        });
+    }
+
+    /**
+     * Delta expects partition column names to be same case preserving as the name in the schema.
+     * E.g: Schema: (a INT, B STRING) and partition columns: (b). In this case we store the
+     * schema as (a INT, B STRING) and partition columns as (B).
+     *
+     * This method expects the inputs are already validated (i.e. schema contains all the partition
+     * columns).
+     */
+    public static List<String> casePreservingPartitionColNames(
+            StructType tableSchema,
+            List<String> partitionColumns) {
+        Map<String, String> columnNameMap = new HashMap<>();
+        tableSchema.fieldNames().forEach(colName ->
+                columnNameMap.put(colName.toLowerCase(Locale.ROOT), colName));
+        return partitionColumns.stream()
+                .map(colName -> columnNameMap.get(colName.toLowerCase(Locale.ROOT)))
+                .collect(Collectors.toList());
     }
 
     /**
@@ -90,7 +152,8 @@ public class SchemaUtils {
         for (StructField field : schema.fields()) {
             String escapedName = escapeDots(field.getName());
             fieldNames.add(escapedName);
-            fieldNames.addAll(flattenNestedFieldNamesRecursive(escapedName, field.getDataType()));
+            fieldNames.addAll(
+                    flattenNestedFieldNamesRecursive(escapedName, field.getDataType()));
         }
         return fieldNames;
     }
@@ -113,7 +176,8 @@ public class SchemaUtils {
             fieldNames.addAll(
                     flattenNestedFieldNamesRecursive(prefix + ".key", mapType.getKeyType()));
             fieldNames.addAll(
-                    flattenNestedFieldNamesRecursive(prefix + ".value", mapType.getValueType()));
+                    flattenNestedFieldNamesRecursive(prefix + ".value",
+                            mapType.getValueType()));
         }
         return fieldNames;
     }
@@ -125,10 +189,44 @@ public class SchemaUtils {
     protected static void validParquetColumnNames(List<String> columnNames) {
         for (String name : columnNames) {
             // ,;{}()\n\t= and space are special characters in Parquet schema
-            checkArgument(
-                    !name.matches(".*[ ,;{}()\n\t=].*"),
-                    format("Attribute name '%s' contains invalid character(s) among" +
-                            " ' ,;{}()\\n\\t='.", name));
+            if (name.matches(".*[ ,;{}()\n\t=].*")) {
+                throw invalidColumnName(name, "[ ,;{}()\\n\\t=]");
+            }
         }
     }
+
+    /**
+     * Validate the supported data types. Once we start supporting additional types, take input the
+     * protocol features and validate the schema.
+     *
+     * @param dataType the data type to validate
+     */
+    protected static void validateSupportedType(DataType dataType) {
+        if (dataType instanceof BooleanType ||
+                dataType instanceof ByteType ||
+                dataType instanceof ShortType ||
+                dataType instanceof IntegerType ||
+                dataType instanceof LongType ||
+                dataType instanceof FloatType ||
+                dataType instanceof DoubleType ||
+                dataType instanceof DecimalType ||
+                dataType instanceof StringType ||
+                dataType instanceof BinaryType ||
+                dataType instanceof DateType ||
+                dataType instanceof TimestampType) {
+            // supported types
+            return;
+        } else if (dataType instanceof StructType) {
+            ((StructType) dataType).fields()
+                    .forEach(field -> validateSupportedType(field.getDataType()));
+        } else if (dataType instanceof ArrayType) {
+            validateSupportedType(((ArrayType) dataType).getElementType());
+        } else if (dataType instanceof MapType) {
+            validateSupportedType(((MapType) dataType).getKeyType());
+            validateSupportedType(((MapType) dataType).getValueType());
+        } else {
+            throw unsupportedDataType(dataType);
+        }
+    }
+
 }

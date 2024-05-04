@@ -25,6 +25,8 @@ import java.util.function.Function;
 
 import io.delta.kernel.annotation.Evolving;
 
+import io.delta.kernel.internal.util.Utils;
+
 /**
  * Closeable extension of {@link Iterator}
  *
@@ -99,6 +101,38 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
             public void close()
                 throws IOException {
                 delegate.close();
+            }
+        };
+    }
+
+    /**
+     * Combine the current iterator with another iterator. The resulting iterator will return all
+     * elements from the current iterator followed by all elements from the other iterator.
+     *
+     * @param other the other iterator to combine with
+     * @return a new iterator that combines the current iterator with the other iterator
+     */
+    default CloseableIterator<T> combine(CloseableIterator<T> other) {
+
+        CloseableIterator<T> delegate = this;
+        return new CloseableIterator<T>() {
+            @Override
+            public boolean hasNext() {
+                return delegate.hasNext() || other.hasNext();
+            }
+
+            @Override
+            public T next() {
+                if (delegate.hasNext()) {
+                    return delegate.next();
+                } else {
+                    return other.next();
+                }
+            }
+
+            @Override
+            public void close() throws IOException {
+                Utils.closeCloseables(delegate, other);
             }
         };
     }

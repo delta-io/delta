@@ -13,11 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package io.delta.kernel.exceptions;
 
-package io.delta.kernel.internal.lang;
+import io.delta.kernel.annotation.Evolving;
 
-import io.delta.kernel.utils.CloseableIterator;
-
-public interface CloseableIterable<T> {
-    CloseableIterator<T> iterator();
+/**
+ * Thrown when a concurrent transaction has written data after the current transaction has started.
+ *
+ * @since 3.2.0
+ */
+@Evolving
+public class ConcurrentWriteException extends KernelException {
+    public ConcurrentWriteException() {
+        super("Transaction has encountered a conflict and can not be committed. " +
+                "Query needs to be re-executed using the latest version of the table.");
+    }
 }

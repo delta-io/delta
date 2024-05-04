@@ -16,8 +16,12 @@
 package io.delta.kernel.internal;
 
 import java.sql.Timestamp;
+import java.util.List;
+import static java.lang.String.format;
 
-import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.exceptions.*;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructType;
 
 /**
  * Contains methods to create user-facing Delta exceptions.
@@ -130,8 +134,45 @@ public final class DeltaErrors {
         return new KernelException(message);
     }
 
-    /* ------------------------ HELPER METHODS ----------------------------- */
+    public static KernelException unsupportedDataType(DataType dataType) {
+        return new KernelException("Kernel doesn't support writing data of type: " + dataType);
+    }
 
+    public static KernelException unsupportedPartitionDataType(String colName, DataType dataType) {
+        String msgT = "Kernel doesn't support writing data with partition column (%s) of type: %s";
+        return new KernelException(format(msgT, colName, dataType));
+    }
+
+    public static KernelException duplicateColumnsInSchema(
+            StructType schema,
+            List<String> duplicateColumns) {
+        String msg = format(
+            "Schema contains duplicate columns: %s.\nSchema: %s",
+            String.join(", ", duplicateColumns),
+            schema);
+        return new KernelException(msg);
+    }
+
+    public static KernelException invalidColumnName(
+            String columnName,
+            String unsupportedChars) {
+        return new KernelException(format(
+                "Column name '%s' contains one of the unsupported (%s) characters.",
+                columnName,
+                unsupportedChars));
+    }
+
+    public static KernelException requiresSchemaForNewTable(String tablePath) {
+        return new TableNotFoundException(
+                tablePath,
+                "Must provide a new schema to write to a new table.");
+    }
+
+    public static KernelException tableAlreadyExists(String tablePath, String message) {
+        return new TableAlreadyExistsException(tablePath, message);
+    }
+
+    /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
     }

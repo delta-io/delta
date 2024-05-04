@@ -40,6 +40,7 @@ import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
@@ -365,18 +366,26 @@ public class SnapshotManager {
             .orElse(".");
         logger.info("{}: Loading version {} {}", tablePath, initSegment.version, startingFromStr);
 
+
+        LogReplay logReplay = new LogReplay(
+            logPath,
+            tablePath,
+            initSegment.version,
+            engine,
+            initSegment,
+            Optional.ofNullable(latestSnapshotHint.get()));
+
         long startTimeMillis = System.currentTimeMillis();
 
         assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
 
         final SnapshotImpl snapshot = new SnapshotImpl(
-            logPath,
             tablePath,
-            initSegment.version,
-            initSegment, engine,
-            initSegment.lastCommitTimestamp,
-            Optional.ofNullable(latestSnapshotHint.get())
-        );
+            initSegment,
+            logReplay,
+            logReplay.getProtocol(),
+            logReplay.getMetadata());
+
         logger.info(
                 "{}: Took {}ms to construct the snapshot (loading protocol and metadata) for {} {}",
                 tablePath,
