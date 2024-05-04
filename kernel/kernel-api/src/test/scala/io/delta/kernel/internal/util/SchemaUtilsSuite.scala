@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.util
 
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.util.SchemaUtils.validateSchema
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.{ArrayType, MapType, StringType, StructType}
@@ -24,7 +25,7 @@ import java.util.Locale
 
 class SchemaUtilsSuite extends AnyFunSuite {
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
-    val e = intercept[IllegalArgumentException] {
+    val e = intercept[KernelException] {
       f
     }
     val msg = e.getMessage.toLowerCase(Locale.ROOT)
@@ -143,7 +144,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         new StructType().add("b", INTEGER).add("c", INTEGER).add("d", INTEGER)
       )
 
-    val e = intercept[IllegalArgumentException] {
+    val e = intercept[KernelException] {
       validateSchema(schema, false /* isColumnMappingEnabled */)
     }
     assert(e.getMessage.contains("Schema contains duplicate columns: top, top.b, top.c"))
@@ -250,7 +251,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
         val schema = new StructType().add(name, INTEGER)
-        val e = intercept[IllegalArgumentException] {
+        val e = intercept[KernelException] {
           validateSchema(schema, false /* isColumnMappingEnabled */)
         }
 
