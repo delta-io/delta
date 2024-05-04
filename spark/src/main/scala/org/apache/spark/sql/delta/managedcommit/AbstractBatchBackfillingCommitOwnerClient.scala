@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.managedcommit
 import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.TransactionExecutionObserver
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.storage.LogStore
@@ -62,6 +62,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
+    val executionObserver = TransactionExecutionObserver.threadObserver.get()
     val tablePath = ManagedCommitUtils.getTablePath(logPath)
     if (commitVersion == 0) {
       throw CommitFailedException(
@@ -99,6 +100,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
 
     val mcToFsConversion = isManagedCommitToFSConversion(commitVersion, updatedActions)
     // Backfill if needed
+    executionObserver.beginBackfill()
     if (batchSize <= 1) {
       // Always backfill when batch size is configured as 1
       backfill(logStore, hadoopConf, logPath, commitVersion, fileStatus)

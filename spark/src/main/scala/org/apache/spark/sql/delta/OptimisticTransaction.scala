@@ -1427,8 +1427,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       val updatedActions = UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
-      val commitResponse =
+      val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
+      }
       // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
       // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
@@ -2094,9 +2095,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
+      // Get thread local observer for Fuzz testing purpose.
+      val executionObserver = TransactionExecutionObserver.threadObserver.get()
       val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
+      executionObserver.beginBackfill()
       // TODO(managed-commits): Integrate with ICT and pass the correct commitTimestamp
       CommitResponse(Commit(
         commitVersion,
@@ -2174,7 +2178,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   ): Commit = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
-    val commitResponse = tableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
+    val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
+      tableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
+    }
     // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
     //  merged.
     val commitTimestamp = commitResponse.getCommit.getFileStatus.getModificationTime

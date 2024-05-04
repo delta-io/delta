@@ -66,6 +66,9 @@ trait TransactionExecutionObserver
   /** Called before the first `doCommit` attempt. */
   def beginDoCommit(): Unit
 
+  /** Called after publishing the commit file but before the `backfill` attempt. */
+  def beginBackfill(): Unit
+
   /** Called once a commit succeeded. */
   def transactionCommitted(): Unit
 
@@ -119,6 +122,8 @@ object NoOpTransactionExecutionObserver extends TransactionExecutionObserver {
   override def preparingCommit[T](f: => T): T = f
 
   override def beginDoCommit(): Unit = ()
+
+  override def beginBackfill(): Unit = ()
 
   override def transactionCommitted(): Unit = ()
 
