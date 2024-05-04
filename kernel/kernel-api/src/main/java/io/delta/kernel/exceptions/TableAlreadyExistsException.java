@@ -15,34 +15,34 @@
  */
 package io.delta.kernel.exceptions;
 
+import java.util.Optional;
+
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Thrown when there is no Delta table at the given location.
+ * Thrown when trying to create a Delta table at a location where a Delta table already exists.
  *
- * @since 3.0.0
+ * @since 3.2.0
  */
 @Evolving
-public class TableNotFoundException extends KernelException {
-
+public class TableAlreadyExistsException extends KernelException {
     private final String tablePath;
+    private final Optional<String> context;
 
-    public TableNotFoundException(String tablePath) {
+    public TableAlreadyExistsException(String tablePath, String context) {
+        this.tablePath = tablePath;
+        this.context = Optional.ofNullable(context);
+    }
+
+    public TableAlreadyExistsException(String tablePath) {
         this(tablePath, null);
     }
 
-    public TableNotFoundException(String tablePath, String context) {
-        super(String.format(
-                "Delta table at path `%s` is not found.%s",
+    @Override
+    public String getMessage() {
+        return String.format(
+                "Delta table already exists at `%s`.%s",
                 tablePath,
-                context == null ? "" : " Context: " + context));
-        this.tablePath = tablePath;
-    }
-
-    /**
-     * @return the provided path where no Delta table was found
-     */
-    public String getTablePath() {
-        return tablePath;
+                context.map(c -> " Context: " + c).orElse(""));
     }
 }

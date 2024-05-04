@@ -72,4 +72,20 @@ public class TableImpl implements Table {
             throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
         snapshotManager.checkpoint(engine, version);
     }
+
+    @Override
+    public TransactionBuilder createTransactionBuilder(
+            Engine engine,
+            String engineInfo,
+            Operation operation) {
+        return new TransactionBuilderImpl(this, engineInfo, operation);
+    }
+
+    protected Path getDataPath() {
+        return new Path(tablePath);
+    }
+
+    protected Path getLogPath() {
+        return new Path(tablePath, "_delta_log");
+    }
 }

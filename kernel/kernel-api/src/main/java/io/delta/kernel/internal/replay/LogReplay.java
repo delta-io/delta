@@ -187,7 +187,7 @@ public class LogReplay {
      * delta files newer than the hint to search for any new P & M. If we don't find them, we can
      * just use the P and/or M from the hint.
      */
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+    protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
             Optional<SnapshotHint> snapshotHint,
             long snapshotVersion) {
 
