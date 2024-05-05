@@ -22,11 +22,12 @@ import io.delta.kernel._
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException, TableNotFoundException}
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.expressions.Literal.{ofDouble, ofInt, ofNull, ofTimestamp}
+import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.DateType.DATE
@@ -38,12 +39,11 @@ import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterator
-import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.Optional
 import scala.collection.JavaConverters._
 
-class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuiteBase {
+class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   val OBJ_MAPPER = new ObjectMapper()
   val testEngineInfo = "test-engine"
 
@@ -252,9 +252,9 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
   // Create table and insert data tests (CTAS & INSERT)
   ///////////////////////////////////////////////////////////////////////////
   test("insert into table - table created from scratch") {
-    withTempDir { tempDir =>
-      val tblPath = tempDir.getAbsolutePath
+    withTempDirAndEngine { (tblPath, engine) =>
       val commitResult0 = appendData(
+        engine,
         tblPath,
         isNewTable = true,
         testSchema,
@@ -271,56 +271,52 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
   }
 
   test("insert into table - already existing table") {
-    withTempDir { tempDir =>
-      val tblPath = tempDir.getAbsolutePath
+    withTempDirAndEngine { (tblPath, engine) =>
+      val commitResult0 = appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        testSchema,
+        partCols = Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1)
+      )
 
-      {
-        val commitResult0 = appendData(
-          tblPath,
-          isNewTable = true,
-          testSchema,
-          partCols = Seq.empty,
-          data = Seq(Map.empty[String, Literal] -> dataBatches1)
-        )
+      verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty, operation = WRITE)
+      verifyWrittenContent(tblPath, testSchema, dataBatches1.flatMap(_.toTestRows))
 
-        verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty, operation = WRITE)
-        verifyWrittenContent(tblPath, testSchema, dataBatches1.flatMap(_.toTestRows))
-      }
-      {
-        val commitResult1 = appendData(
-          tblPath,
-          data = Seq(Map.empty[String, Literal] -> dataBatches2)
-        )
+      val commitResult1 = appendData(
+        engine,
+        tblPath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2)
+      )
 
-        val expAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
+      val expAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
 
-        verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
-        verifyWrittenContent(tblPath, testSchema, expAnswer)
-      }
+      verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
+      verifyWrittenContent(tblPath, testSchema, expAnswer)
     }
   }
 
   test("insert into table - fails when committing the same txn twice") {
-    withTempDir { tempDir =>
-      val tblPath = tempDir.getAbsolutePath
-      val table = Table.forPath(defaultEngine, tblPath)
+    withTempDirAndEngine { (tblPath, engine) =>
+      val table = Table.forPath(engine, tblPath)
 
       val txn = createWriteTxnBuilder(table)
-        .withSchema(defaultEngine, testSchema)
-        .build(defaultEngine)
+        .withSchema(engine, testSchema)
+        .build(engine)
 
-      val txnState = txn.getTransactionState(defaultEngine)
+      val txnState = txn.getTransactionState(engine)
       val stagedFiles = stageData(txnState, Map.empty, dataBatches1)
 
       val stagedActionsIterable = inMemoryIterable(stagedFiles)
-      val commitResult = txn.commit(defaultEngine, stagedActionsIterable)
+      val commitResult = txn.commit(engine, stagedActionsIterable)
       assert(commitResult.getVersion == 0)
 
       // try to commit the same transaction and expect failure
       val ex = intercept[IllegalStateException] {
-        txn.commit(defaultEngine, stagedActionsIterable)
+        txn.commit(engine, stagedActionsIterable)
       }
       assert(ex.getMessage.contains(
         "Transaction is already attempted to commit. Create a new transaction."))
@@ -328,10 +324,9 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
   }
 
   test("insert into partitioned table - table created from scratch") {
-    withTempDir { tempDir =>
-      val tblPath = tempDir.getAbsolutePath
-
+    withTempDirAndEngine { (tblPath, engine) =>
       val commitResult0 = appendData(
+        engine,
         tblPath,
         isNewTable = true,
         testPartitionSchema,
@@ -352,12 +347,12 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
   }
 
   test("insert into partitioned table - already existing table") {
-    withTempDir { tempDir =>
-      val tblPath = tempDir.getAbsolutePath
+    withTempDirAndEngine { (tblPath, engine) =>
       val partitionCols = Seq("part1", "part2")
 
       {
         val commitResult0 = appendData(
+          engine,
           tblPath,
           isNewTable = true,
           testPartitionSchema,
@@ -373,6 +368,7 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
       }
       {
         val commitResult1 = appendData(
+          engine,
           tblPath,
           data = Seq(Map("part1" -> ofInt(4), "part2" -> ofInt(5)) -> dataPartitionBatches2)
         )
@@ -388,9 +384,7 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
   }
 
   test("insert into partitioned table - handling case sensitivity of partition columns") {
-    withTempDir { tempDir =>
-      val tblPath = tempDir.getAbsolutePath
-
+    withTempDirAndEngine { (tblPath, engine) =>
       val schema = new StructType()
         .add("id", INTEGER)
         .add("Name", STRING)
@@ -415,21 +409,6 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
       val v0Part1Data =
         generateData(schema, expPartCols, v0Part1Values, batchSize = 100, numBatches = 7)
 
-      val expV0Data = v0Part0Data.flatMap(_.toTestRows) ++ v0Part1Data.flatMap(_.toTestRows)
-
-      {
-        val commitResult0 = appendData(
-          tblPath,
-          isNewTable = true,
-          schema,
-          partCols,
-          Seq(v0Part0Values -> v0Part0Data, v0Part1Values -> v0Part1Data))
-
-        verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tblPath, version = 0, expPartCols, operation = WRITE)
-        verifyWrittenContent(tblPath, schema, expV0Data)
-      }
-
       val v1Part0Values = Map(
         "PART1" -> ofNull(DOUBLE),
         "pART2" -> ofTimestamp(1231212L))
@@ -442,24 +421,237 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
       val v1Part1Data =
         generateData(schema, expPartCols, v1Part1Values, batchSize = 100, numBatches = 7)
 
+      val dataPerVersion = Map(
+        0 -> Seq(v0Part0Values -> v0Part0Data, v0Part1Values -> v0Part1Data),
+        1 -> Seq(v1Part0Values -> v1Part0Data, v1Part1Values -> v1Part1Data)
+      )
+
+      val expV0Data = v0Part0Data.flatMap(_.toTestRows) ++ v0Part1Data.flatMap(_.toTestRows)
       val expV1Data = v1Part0Data.flatMap(_.toTestRows) ++ v1Part1Data.flatMap(_.toTestRows)
 
-      {
-        val commitResult1 = appendData(
+      for(i <- 0 until 2) {
+        val commitResult = appendData(
+          engine,
           tblPath,
-          data = Seq(v1Part0Values -> v1Part0Data, v1Part1Values -> v1Part1Data))
+          isNewTable = i == 0,
+          schema,
+          partCols,
+          dataPerVersion(i))
 
-        verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-        // For just inserts, we don't write the `partitionBy` in the commit info op parameters
-        // That is the behavior of the Delta-Spark
-        verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
-        verifyWrittenContent(tblPath, schema, expV0Data ++ expV1Data)
+        verifyCommitResult(commitResult, expVersion = i, expIsReadyForCheckpoint = false)
+        // partition cols are not written in the commit info for inserts
+        val partitionBy = if (i == 0) expPartCols else null
+        verifyCommitInfo(tblPath, version = i, partitionBy, operation = WRITE)
+        verifyWrittenContent(tblPath, schema, if (i == 0) expV0Data else expV0Data ++ expV1Data)
       }
     }
   }
 
-  def withTempDirAndEngine(f: (String, Engine) => Unit): Unit = {
-    withTempDir { dir => f(dir.getAbsolutePath, defaultEngine) }
+  Seq(10, 2).foreach { checkpointInterval =>
+    test(s"insert into partitioned table - isReadyForCheckpoint(interval=$checkpointInterval)") {
+      withTempDirAndEngine { (tblPath, engine) =>
+        val schema = new StructType()
+          .add("id", INTEGER)
+          .add("Name", STRING)
+          .add("Part1", DOUBLE) // partition column
+          .add("parT2", TIMESTAMP) // partition column
+
+        val partCols = Seq("Part1", "parT2")
+        val partValues = Map("PART1" -> ofDouble(1.0), "pART2" -> ofTimestamp(1231212L))
+        val data = Seq(
+          partValues -> generateData(schema, partCols, partValues, batchSize = 200, numBatches = 3))
+
+        // create a table first
+        appendData(engine, tblPath, isNewTable = true, schema, partCols, data) // version 0
+        var expData = data.map(_._2).flatMap(_.flatMap(_.toTestRows))
+        var currentTableVersion = 0
+
+        if (checkpointInterval != 10) {
+          // If it is not the default interval alter the table using Spark to set a
+          // custom checkpoint interval
+          setCheckpointInterval(tblPath, interval = checkpointInterval) // version 1
+          currentTableVersion = 1
+        }
+
+        def isCheckpointExpected(version: Long): Boolean = {
+          version != 0 && version % checkpointInterval == 0
+        }
+
+        for (i <- currentTableVersion + 1 until 31) {
+          val commitResult = appendData(engine, tblPath, data = data)
+
+          val parquetFileCount = dataFileCount(tblPath)
+          assert(parquetFileCount > 0)
+          checkpointIfReady(engine, tblPath, commitResult, expSize = parquetFileCount)
+
+          verifyCommitResult(commitResult, expVersion = i, isCheckpointExpected(i))
+
+          expData = expData ++ data.map(_._2).flatMap(_.flatMap(_.toTestRows))
+        }
+
+        // expect the checkpoints created at expected versions
+        Seq.range(0, 31).filter(isCheckpointExpected(_)).foreach { version =>
+          assertCheckpointExists(tblPath, atVersion = version)
+        }
+
+        // delete all commit files before version 30 in both cases and expect the read to pass as
+        // there is a checkpoint at version 30 and should be used for state reconstruction.
+        deleteDeltaFilesBefore(tblPath, beforeVersion = 30)
+        verifyWrittenContent(tblPath, schema, expData)
+      }
+    }
+  }
+
+  test("insert into table - all supported types data") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val parquetAllTypes = goldenTablePath("parquet-all-types")
+      val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
+
+      val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+      val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
+
+      appendData(engine, tblPath, isNewTable = true, schema, Seq.empty, dataWithPartInfo)
+      var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
+
+      val checkpointInterval = 4
+      setCheckpointInterval(tblPath, checkpointInterval)
+
+      for (i <- 2 until 5) {
+        // insert until a checkpoint is required
+        val commitResult = appendData(engine, tblPath, data = dataWithPartInfo)
+
+        expData = expData ++ dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
+        checkpointIfReady(engine, tblPath, commitResult, expSize = i /* one file per version */)
+
+        verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
+        verifyCommitInfo(tblPath, version = i, null, operation = WRITE)
+        verifyWrittenContent(tblPath, schema, expData)
+      }
+      assertCheckpointExists(tblPath, atVersion = checkpointInterval)
+    }
+  }
+
+  test("insert into partitioned table - all supported partition column types data") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val parquetAllTypes = goldenTablePath("parquet-all-types")
+      val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
+      val partCols = Seq(
+        "byteType",
+        "shortType",
+        "integerType",
+        "longType",
+        "floatType",
+        "doubleType",
+        "decimal",
+        "booleanType",
+        "stringType",
+        "binaryType",
+        "dateType",
+        "timestampType"
+      )
+      val casePreservingPartCols =
+        casePreservingPartitionColNames(schema, partCols.asJava).asScala.to[Seq]
+
+      // get the partition values from the data batch at the given rowId
+      def getPartitionValues(batch: ColumnarBatch, rowId: Int): Map[String, Literal] = {
+        casePreservingPartCols.map { partCol =>
+          val colIndex = schema.indexOf(partCol)
+          val vector = batch.getColumnVector(colIndex)
+
+          val literal = if (vector.isNullAt(rowId)) {
+            Literal.ofNull(vector.getDataType)
+          } else {
+            vector.getDataType match {
+              case _: ByteType => Literal.ofByte(vector.getByte(rowId))
+              case _: ShortType => Literal.ofShort(vector.getShort(rowId))
+              case _: IntegerType => Literal.ofInt(vector.getInt(rowId))
+              case _: LongType => Literal.ofLong(vector.getLong(rowId))
+              case _: FloatType => Literal.ofFloat(vector.getFloat(rowId))
+              case _: DoubleType => Literal.ofDouble(vector.getDouble(rowId))
+              case dt: DecimalType =>
+                Literal.ofDecimal(vector.getDecimal(rowId), dt.getPrecision, dt.getScale)
+              case _: BooleanType => Literal.ofBoolean(vector.getBoolean(rowId))
+              case _: StringType => Literal.ofString(vector.getString(rowId))
+              case _: BinaryType => Literal.ofBinary(vector.getBinary(rowId))
+              case _: DateType => Literal.ofDate(vector.getInt(rowId))
+              case _: TimestampType => Literal.ofTimestamp(vector.getLong(rowId))
+              case _ =>
+                throw new IllegalArgumentException(s"Unsupported type: ${vector.getDataType}")
+            }
+          }
+          (partCol, literal)
+        }.toMap
+      }
+
+      val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+
+      // From the above table read data, convert each row as a new batch with partition info
+      // Take the values of the partitionCols from the data and create a new batch with the
+      // selection vector to just select a single row.
+      var dataWithPartInfo = Seq.empty[(Map[String, Literal], Seq[FilteredColumnarBatch])]
+
+      data.foreach { filteredBatch =>
+        val batch = filteredBatch.getData
+        Seq.range(0, batch.getSize).foreach { rowId =>
+          val partValues = getPartitionValues(batch, rowId)
+          val filteredBatch = new FilteredColumnarBatch(
+            batch,
+            Optional.of(selectSingleElement(batch.getSize, rowId)))
+          dataWithPartInfo = dataWithPartInfo :+ (partValues, Seq(filteredBatch))
+        }
+      }
+
+      appendData(engine, tblPath, isNewTable = true, schema, partCols, dataWithPartInfo)
+      verifyCommitInfo(tblPath, version = 0, casePreservingPartCols, operation = WRITE)
+
+      var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
+
+      val checkpointInterval = 2
+      setCheckpointInterval(tblPath, checkpointInterval) // version 1
+
+      for (i <- 2 until 4) {
+        // insert until a checkpoint is required
+        val commitResult = appendData(engine, tblPath, data = dataWithPartInfo)
+
+        expData = expData ++ dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
+
+        val fileCount = dataFileCount(tblPath)
+        checkpointIfReady(engine, tblPath, commitResult, expSize = fileCount)
+
+        verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
+        verifyCommitInfo(tblPath, version = i, partitionCols = null, operation = WRITE)
+        verifyWrittenContent(tblPath, schema, expData)
+      }
+
+      assertCheckpointExists(tblPath, atVersion = checkpointInterval)
+    }
+  }
+
+  test("insert into table - given data schema mismatch") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val ex = intercept[KernelException] {
+        val data = Seq(Map.empty[String, Literal] -> dataPartitionBatches1) // data schema mismatch
+        appendData(engine, tblPath, isNewTable = true, testSchema, partCols = Seq.empty, data)
+      }
+      assert(ex.getMessage.contains("The schema of the data to be written to " +
+        "the table doesn't match the table schema"))
+    }
+  }
+
+  test("insert into table - missing partition column info") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val ex = intercept[KernelException] {
+        appendData(engine,
+          tblPath,
+          isNewTable = true,
+          testPartitionSchema,
+          testPartitionColumns,
+          data = Seq(Map("part1" -> ofInt(1)) -> dataPartitionBatches1) // missing part2
+        )
+      }
+      assert(ex.getMessage.contains(
+        "Partition values provided are not matching the partition columns."))
+    }
   }
 
   def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {
@@ -470,8 +662,8 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
     checkTable(path, expData)
 
     // verify data using Spark reader.
-    // Spark reads the timestamp partition columns in local timezone vs. Kernel reads in UTC.
-    // So, we need to set the timezone to UTC before reading the data using Spark.
+    // Spark reads the timestamp partition columns in local timezone vs. Kernel reads in UTC. We
+    // need to set the timezone to UTC before reading the data using Spark to make the tests pass
     withSparkTimeZone("UTC") { () =>
       val resultSpark = spark.sql(s"SELECT * FROM delta.`$path`").collect().map(TestRow(_))
       checkAnswer(resultSpark, expData)
@@ -603,27 +795,28 @@ class DeltaTableWritesSuite extends AnyFunSuite with TestUtils with ParquetSuite
   }
 
   def appendData(
+    engine: Engine = defaultEngine,
     tablePath: String,
     isNewTable: Boolean = false,
     schema: StructType = null,
     partCols: Seq[String] = null,
     data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
 
-    var txnBuilder = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
+    var txnBuilder = createWriteTxnBuilder(Table.forPath(engine, tablePath))
 
     if (isNewTable) {
-      txnBuilder = txnBuilder.withSchema(defaultEngine, schema)
-        .withPartitionColumns(defaultEngine, partCols.asJava)
+      txnBuilder = txnBuilder.withSchema(engine, schema)
+        .withPartitionColumns(engine, partCols.asJava)
     }
 
-    val txn = txnBuilder.build(defaultEngine)
-    val txnState = txn.getTransactionState(defaultEngine)
+    val txn = txnBuilder.build(engine)
+    val txnState = txn.getTransactionState(engine)
 
     val actions = data.map { case (partValues, partData) =>
       stageData(txnState, partValues, partData)
     }
 
     val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
-    txn.commit(defaultEngine, combineActions)
+    txn.commit(engine, combineActions)
   }
 }

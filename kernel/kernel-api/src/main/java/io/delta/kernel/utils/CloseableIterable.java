@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.util.*;
 import java.util.function.Consumer;
 
+import io.delta.kernel.exceptions.KernelException;
+
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 /**
@@ -70,7 +72,13 @@ public interface CloseableIterable<T> extends Iterable<T>, Closeable {
                 elements.add(iter.next());
             }
         } catch (Exception e) {
-            throw new RuntimeException(e);
+            // TODO: we may need utility methods to throw the KernelException as is
+            // without wrapping in RuntimeException.
+            if (e instanceof KernelException) {
+                throw (KernelException) e;
+            } else {
+                throw new RuntimeException(e);
+            }
         }
         return new CloseableIterable<T>() {
             @Override

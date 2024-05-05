@@ -31,6 +31,7 @@ import static java.util.Arrays.asList;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ExpressionHandler;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
@@ -150,7 +151,7 @@ public class PartitionUtils {
         final Map<String, Literal> partitionValuesLowerCaseName = toLowerCaseKeys(partitionValues);
         Set<String> partColsLowerCase = toLowerCaseSet(partitionColNames);
         if (!partColsLowerCase.equals(partitionValuesLowerCaseName.keySet())) {
-            throw new IllegalArgumentException(
+            throw new KernelException(
                     String.format(
                             "Partition values provided are not matching the partition columns. " +
                                     "Partition columns: %s, Partition values: %s",

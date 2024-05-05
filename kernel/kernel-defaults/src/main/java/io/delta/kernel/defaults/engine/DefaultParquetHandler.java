@@ -121,7 +121,7 @@ public class DefaultParquetHandler implements ParquetHandler {
             String filePath,
             CloseableIterator<FilteredColumnarBatch> data) throws IOException {
         try {
-            Path targetPath = new Path(filePath);
+            Path targetPath = new Path(URI.create(filePath));
             LogStore logStore =
                     LogStoreProvider.getLogStore(hadoopConf, targetPath.toUri().getScheme());
 
