@@ -38,7 +38,9 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 
 public class PartitionUtils {
     private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
@@ -109,6 +111,87 @@ public class PartitionUtils {
         }
 
         return dataBatch;
+    }
+
+    /**
+     * Convert the given partition values to a {@link MapValue} that can be serialized to a Delta
+     * commit file.
+     *
+     * @param partitionValueMap Expected the partition column names to be same case as in the
+     *                          schema. We want to preserve the case of the partition column names
+     *                          when serializing to the Delta commit file.
+     * @return {@link MapValue} representing the serialized partition values that can be written to
+     * a Delta commit file.
+     */
+    public static MapValue serializePartitionMap(Map<String, Literal> partitionValueMap) {
+        if (partitionValueMap == null || partitionValueMap.isEmpty()) {
+            return VectorUtils.stringStringMapValue(Collections.emptyMap());
+        }
+
+        Map<String, String> serializedPartValues = new HashMap<>();
+        for(Map.Entry<String, Literal> entry : partitionValueMap.entrySet()) {
+            serializedPartValues.put(
+                    entry.getKey(), // partition column name
+                    serializePartitionValue(entry.getValue())); // serialized partition value as str
+        }
+
+        return VectorUtils.stringStringMapValue(serializedPartValues);
+    }
+
+    /**
+     * Validate {@code partitionValues} contains values for every partition column in the table
+     * and the type of the value is correct. Once validated the partition values are sanitized
+     * to match the case of the partition column names in the table schema and returned
+     *
+     * @param tableSchema       Schema of the table.
+     * @param partitionColNames Partition column name. These should be from the table metadata
+     *                          that retain the same case as in the table schema.
+     * @param partitionValues   Map of partition column to value map given by the connector
+     * @return Sanitized partition values.
+     */
+    public static Map<String, Literal> validateAndSanitizePartitionValues(
+            StructType tableSchema,
+            List<String> partitionColNames,
+            Map<String, Literal> partitionValues) {
+
+        if (!toLowerCaseSet(partitionColNames)
+                .equals(toLowerCaseSet(partitionValues.keySet()))) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Partition values provided are not matching the partition columns. " +
+                                    "Partition columns: %s, Partition values: %s",
+                            partitionColNames, partitionValues));
+        }
+
+        // Convert the partition column names in given `partitionValues` to schema case. Schema
+        // case is the exact case the column name was given by the connector when creating the
+        // table. Comparing the column names is case-insensitive, but preserve the case as stored
+        // in the table metadata when writing the partition column name to DeltaLog
+        // (`partitionValues` in `AddFile`) or generating the target directory for writing the
+        // data belonging to a partition.
+        Map<String, Literal> schemaCasePartitionValues =
+                casePreservingPartitionColNames(partitionColNames, partitionValues);
+
+        // validate types are the same
+        schemaCasePartitionValues.entrySet().forEach(entry -> {
+            String partColName = entry.getKey();
+            Literal partValue = entry.getValue();
+            StructField partColField = tableSchema.get(partColName);
+
+            // this shouldn't happen as we have already validated the partition column names
+            checkArgument(
+                    partColField != null,
+                    "Partition column " + partColName + " is not present in the table schema");
+            DataType partColType = partColField.getDataType();
+
+            if (!partColType.equivalent(partValue.getDataType())) {
+                throw new IllegalArgumentException(String.format(
+                        "Partition column %s is of type %s but the value provided is of type %s",
+                        partColName, partColType, partValue.getDataType()));
+            }
+        });
+
+        return schemaCasePartitionValues;
     }
 
     /**

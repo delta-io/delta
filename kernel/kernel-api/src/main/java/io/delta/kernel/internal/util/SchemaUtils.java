@@ -18,6 +18,7 @@ package io.delta.kernel.internal.util;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.DeltaErrors;
@@ -132,6 +133,50 @@ public class SchemaUtils {
         return partitionColumns.stream()
                 .map(colName -> columnNameMap.get(colName.toLowerCase(Locale.ROOT)))
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Convert the partition column names in {@code partitionValues} map into the same case as the
+     * column in the table metadata. Delta expects the partition column names to preserve the case
+     * same as the table schema.
+     *
+     * @param partitionColNames List of partition columns in the table metadata. The names preserve
+     *                          the case as given by the connector when the table is created.
+     * @param partitionValues   Map of partition column name to partition value. Convert the
+     *                          partition column name to be same case preserving name as its
+     *                          equivalent column in the {@code partitionColName}. Column name
+     *                          comparison is case-insensitive.
+     * @return Rewritten {@code partitionValues} map with names case preserved.
+     */
+    public static Map<String, Literal> casePreservingPartitionColNames(
+            List<String> partitionColNames,
+            Map<String, Literal> partitionValues) {
+        Map<String, String> partitionColNameMap = new HashMap<>();
+        partitionColNames.forEach(colName ->
+                partitionColNameMap.put(colName.toLowerCase(Locale.ROOT), colName));
+
+        return partitionValues.entrySet().stream()
+                .collect(Collectors.toMap(
+                        entry -> partitionColNameMap.get(
+                                entry.getKey().toLowerCase(Locale.ROOT)),
+                        Map.Entry::getValue));
+    }
+
+    /**
+     * Search (case-insensitive) for the given {@code colName} in the {@code schema} and return its
+     * position in the {@code schema}.
+     *
+     * @param schema  {@link StructType}
+     * @param colName Name of the column whose index is needed.
+     * @return Valid index or -1 if not found.
+     */
+    public static int findColIndex(StructType schema, String colName) {
+        for (int i = 0; i < schema.length(); i++) {
+            if (schema.at(i).getName().equalsIgnoreCase(colName)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

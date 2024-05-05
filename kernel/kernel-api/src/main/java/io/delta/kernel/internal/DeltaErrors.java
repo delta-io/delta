@@ -172,6 +172,22 @@ public final class DeltaErrors {
         return new TableAlreadyExistsException(tablePath, message);
     }
 
+    public static KernelException dataSchemaMismatch(
+            String tablePath,
+            StructType tableSchema,
+            StructType dataSchema) {
+        String msgT = "The schema of the data to be written to the table doesn't match " +
+                "the table schema. \nTable: %s\nTable schema: %s, \nData schema: %s";
+        return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
+    }
+
+    public static KernelException partitionColumnMissingInData(
+            String tablePath,
+            String partitionColumn) {
+        String msgT = "Missing partition column '%s' in the data to be written to the table '%s'.";
+        return new KernelException(format(msgT, partitionColumn, tablePath));
+    }
+
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
