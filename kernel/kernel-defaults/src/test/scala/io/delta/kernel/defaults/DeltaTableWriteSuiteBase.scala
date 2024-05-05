@@ -16,17 +16,11 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.InternalScanFileUtils
-import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.CloseableIterator
-import io.delta.kernel.{Scan, Table, TransactionCommitResult}
+import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
+import io.delta.kernel.{Table, TransactionCommitResult}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -35,7 +29,6 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.File
 import java.nio.file.{Files, Paths}
-import java.util.Optional
 import scala.collection.JavaConverters._
 
 /**
@@ -78,38 +71,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     }
     assert(ex.getMessage().contains(
       s"Cannot time travel Delta table to version ${beforeVersion - 1}"))
-  }
-
-  def readTableUsingKernel(
-    engine: Engine,
-    tablePath: String,
-    readSchema: StructType): Seq[FilteredColumnarBatch] = {
-    val scan = Table.forPath(engine, tablePath)
-      .getLatestSnapshot(engine)
-      .getScanBuilder(engine)
-      .withReadSchema(engine, readSchema)
-      .build()
-    val scanState = scan.getScanState(engine)
-
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
-    var result: Seq[FilteredColumnarBatch] = Nil
-    scan.getScanFiles(engine).forEach { fileColumnarBatch =>
-      fileColumnarBatch.getRows.forEach { scanFile =>
-        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFile)
-        val physicalDataIter = engine.getParquetHandler.readParquetFiles(
-          singletonCloseableIterator(fileStatus),
-          physicalDataReadSchema,
-          Optional.empty())
-        var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
-        try {
-          dataBatches = Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter)
-          dataBatches.forEach { dataBatch => result = result :+ dataBatch }
-        } finally {
-          Utils.closeCloseables(dataBatches)
-        }
-      }
-    }
-    result
   }
 
   def setCheckpointInterval(tablePath: String, interval: Int): Unit = {

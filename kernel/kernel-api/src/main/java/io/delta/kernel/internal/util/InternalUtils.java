@@ -181,9 +181,4 @@ public class InternalUtils {
     public static Set<String> toLowerCaseSet(Collection<String> set) {
         return set.stream().map(String::toLowerCase).collect(Collectors.toSet());
     }
-
-    public static <T> Map<String, T> toLowerCaseKeys(Map<String, T> map) {
-        return map.entrySet().stream()
-            .collect(Collectors.toMap(e -> e.getKey().toLowerCase(), Map.Entry::getValue));
-    }
 }

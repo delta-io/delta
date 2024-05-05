@@ -36,9 +36,8 @@ import static io.delta.kernel.internal.DeltaErrors.partitionColumnMissingInData;
 import static io.delta.kernel.internal.TransactionImpl.getStatisticsColumns;
 import static io.delta.kernel.internal.data.TransactionStateRow.*;
 import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
-import static io.delta.kernel.internal.util.PartitionUtils.validatePartitionValues;
+import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.SchemaUtils.findColIndex;
 
 /**
@@ -118,8 +117,9 @@ public interface Transaction {
             Row transactionState,
             CloseableIterator<FilteredColumnarBatch> dataIter,
             Map<String, Literal> partitionValues) {
+        StructType tableSchema = getLogicalSchema(engine, transactionState);
         List<String> partitionColNames = getPartitionColumnsList(transactionState);
-        validatePartitionValues(partitionColNames, partitionValues);
+        validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
 
         // TODO: add support for:
         // - enforcing the constraints
@@ -131,7 +131,6 @@ public interface Transaction {
         // tables, we may conditionally skip this step.
 
         // TODO: set the correct schema once writing into column mapping enabled table is supported.
-        StructType tableSchema = getLogicalSchema(engine, transactionState);
         String tablePath = getTablePath(transactionState);
         return dataIter.map(
                 filteredBatch -> {
@@ -139,7 +138,7 @@ public interface Transaction {
                     if (!data.getSchema().equals(tableSchema)) {
                         throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
                     }
-                    for (String partitionColName : partitionValues.keySet()) {
+                    for (String partitionColName : partitionColNames) {
                         int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
                         if (partitionColIndex < 0) {
                             throw partitionColumnMissingInData(tablePath, partitionColName);
@@ -168,26 +167,20 @@ public interface Transaction {
             Engine engine,
             Row transactionState,
             Map<String, Literal> partitionValues) {
+        StructType tableSchema = getLogicalSchema(engine, transactionState);
         List<String> partitionColNames = getPartitionColumnsList(transactionState);
-        validatePartitionValues(partitionColNames, partitionValues);
 
-        // Convert the partition column names in given `partitionValues` to schema case. Schema
-        // case is the exact case the column name was given by the connector when creating the
-        // table. Comparing the column names is case-insensitive, but preserve the case as stored
-        // in the table metadata when writing the partition column name to DeltaLog
-        // (`partitionValues` in `AddFile`) or generating the target directory for writing the
-        // data belonging to a partition.
-        final Map<String, Literal> partitionValuesSchemaCase =
-                casePreservingPartitionColNames(partitionColNames, partitionValues);
+        partitionValues =
+                validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
 
         String targetDirectory = getTargetDirectory(
                 getTablePath(transactionState),
                 partitionColNames,
-                partitionValuesSchemaCase);
+                partitionValues);
 
         return new DataWriteContextImpl(
                 targetDirectory,
-                partitionValuesSchemaCase,
+                partitionValues,
                 getStatisticsColumns(engine, transactionState));
     }
 

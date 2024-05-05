@@ -42,6 +42,7 @@ import io.delta.kernel.utils.CloseableIterator
 
 import java.util.Optional
 import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
 
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   val OBJ_MAPPER = new ObjectMapper()
@@ -640,7 +641,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - missing partition column info") {
     withTempDirAndEngine { (tblPath, engine) =>
-      val ex = intercept[KernelException] {
+      val ex = intercept[IllegalArgumentException] {
         appendData(engine,
           tblPath,
           isNewTable = true,
@@ -651,6 +652,24 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       }
       assert(ex.getMessage.contains(
         "Partition values provided are not matching the partition columns."))
+    }
+  }
+
+  test("insert into partitioned table - invalid type of partition value") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val ex = intercept[IllegalArgumentException] {
+        // part2 type should be int, be giving a string value
+        val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofString("sdsd"))
+          -> dataPartitionBatches1)
+        appendData(engine,
+          tblPath,
+          isNewTable = true,
+          testPartitionSchema,
+          testPartitionColumns,
+          data)
+      }
+      assert(ex.getMessage.contains(
+        "Partition column part2 is of type integer but the value provided is of type string"))
     }
   }
 
