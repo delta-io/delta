@@ -117,6 +117,10 @@ public interface Transaction {
             Row transactionState,
             CloseableIterator<FilteredColumnarBatch> dataIter,
             Map<String, Literal> partitionValues) {
+
+        // Note: `partitionValues` are not used as of now in this API, but taking the partition
+        // values as input forces the connector to not pass data from multiple partitions this
+        // API in a single call.
         StructType tableSchema = getLogicalSchema(engine, transactionState);
         List<String> partitionColNames = getPartitionColumnsList(transactionState);
         validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
