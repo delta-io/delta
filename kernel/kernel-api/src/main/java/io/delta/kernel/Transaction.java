@@ -15,17 +15,30 @@
  */
 package io.delta.kernel;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
+
+import io.delta.kernel.internal.DataWriteContextImpl;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.DeltaErrors.dataSchemaMismatch;
+import static io.delta.kernel.internal.DeltaErrors.partitionColumnMissingInData;
+import static io.delta.kernel.internal.TransactionImpl.getStatisticsColumns;
+import static io.delta.kernel.internal.data.TransactionStateRow.*;
+import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
+import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.SchemaUtils.findColIndex;
 
 /**
  * Represents a transaction to mutate a Delta table.
@@ -104,7 +117,41 @@ public interface Transaction {
             Row transactionState,
             CloseableIterator<FilteredColumnarBatch> dataIter,
             Map<String, Literal> partitionValues) {
-        throw new UnsupportedOperationException("Not implemented yet");
+
+        // Note: `partitionValues` are not used as of now in this API, but taking the partition
+        // values as input forces the connector to not pass data from multiple partitions this
+        // API in a single call.
+        StructType tableSchema = getLogicalSchema(engine, transactionState);
+        List<String> partitionColNames = getPartitionColumnsList(transactionState);
+        validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
+
+        // TODO: add support for:
+        // - enforcing the constraints
+        // - generating the default value columns
+        // - generating the generated columns
+
+        // Remove the partition columns from the data as they are already part of file metadata
+        // and are not needed in the data files. TODO: once we start supporting uniform complaint
+        // tables, we may conditionally skip this step.
+
+        // TODO: set the correct schema once writing into column mapping enabled table is supported.
+        String tablePath = getTablePath(transactionState);
+        return dataIter.map(
+                filteredBatch -> {
+                    ColumnarBatch data = filteredBatch.getData();
+                    if (!data.getSchema().equals(tableSchema)) {
+                        throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
+                    }
+                    for (String partitionColName : partitionColNames) {
+                        int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
+                        if (partitionColIndex < 0) {
+                            throw partitionColumnMissingInData(tablePath, partitionColName);
+                        }
+                        data = data.withDeletedColumnAt(partitionColIndex);
+                    }
+                    return new FilteredColumnarBatch(data, filteredBatch.getSelectionVector());
+                }
+        );
     }
 
     /**
@@ -124,7 +171,21 @@ public interface Transaction {
             Engine engine,
             Row transactionState,
             Map<String, Literal> partitionValues) {
-        throw new UnsupportedOperationException("Not implemented yet");
+        StructType tableSchema = getLogicalSchema(engine, transactionState);
+        List<String> partitionColNames = getPartitionColumnsList(transactionState);
+
+        partitionValues =
+                validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
+
+        String targetDirectory = getTargetDirectory(
+                getTablePath(transactionState),
+                partitionColNames,
+                partitionValues);
+
+        return new DataWriteContextImpl(
+                targetDirectory,
+                partitionValues,
+                getStatisticsColumns(engine, transactionState));
     }
 
     /**
@@ -146,6 +207,19 @@ public interface Transaction {
             Row transactionState,
             CloseableIterator<DataFileStatus> fileStatusIter,
             DataWriteContext dataWriteContext) {
-        throw new UnsupportedOperationException("Not implemented yet");
+        checkArgument(dataWriteContext instanceof DataWriteContextImpl,
+                "DataWriteContext is not created by the `Transaction.getWriteContext()`");
+
+        URI tableRoot = new Path(getTablePath(transactionState)).toUri();
+        return fileStatusIter.map(
+                dataFileStatus -> {
+                    Row addFileRow = AddFile.convertDataFileStatus(
+                            tableRoot,
+                            dataFileStatus,
+                            ((DataWriteContextImpl) dataWriteContext).getPartitionValues(),
+                            true /* dataChange */);
+                    return SingleAction.createAddFileSingleAction(addFileRow);
+                }
+        );
     }
 }

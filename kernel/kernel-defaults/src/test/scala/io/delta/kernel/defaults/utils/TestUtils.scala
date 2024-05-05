@@ -19,26 +19,23 @@ import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
-
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.{ColumnMapping, Utils}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
@@ -235,6 +232,38 @@ trait TestUtils extends Assertions with SQLHelper {
           }
         } finally {
           dataBatches.close()
+        }
+      }
+    }
+    result
+  }
+
+  def readTableUsingKernel(
+    engine: Engine,
+    tablePath: String,
+    readSchema: StructType): Seq[FilteredColumnarBatch] = {
+    val scan = Table.forPath(engine, tablePath)
+      .getLatestSnapshot(engine)
+      .getScanBuilder(engine)
+      .withReadSchema(engine, readSchema)
+      .build()
+    val scanState = scan.getScanState(engine)
+
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    var result: Seq[FilteredColumnarBatch] = Nil
+    scan.getScanFiles(engine).forEach { fileColumnarBatch =>
+      fileColumnarBatch.getRows.forEach { scanFile =>
+        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFile)
+        val physicalDataIter = engine.getParquetHandler.readParquetFiles(
+          singletonCloseableIterator(fileStatus),
+          physicalDataReadSchema,
+          Optional.empty())
+        var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
+        try {
+          dataBatches = Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter)
+          dataBatches.forEach { dataBatch => result = result :+ dataBatch }
+        } finally {
+          Utils.closeCloseables(dataBatches)
         }
       }
     }
@@ -452,6 +481,16 @@ trait TestUtils extends Assertions with SQLHelper {
       tableNames.foreach { name =>
         spark.sql(s"DROP TABLE IF EXISTS $name")
       }
+    }
+  }
+
+  def withSparkTimeZone(timeZone: String)(fn: () => Unit): Unit = {
+    val prevTimeZone = spark.conf.get("spark.sql.session.timeZone")
+    try {
+      spark.conf.set("spark.sql.session.timeZone", timeZone)
+      fn()
+    } finally {
+      spark.conf.set("spark.sql.session.timeZone", prevTimeZone)
     }
   }
 
