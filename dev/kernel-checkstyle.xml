@@ -72,7 +72,7 @@
     <module name="NewlineAtEndOfFile"/>
 
     <module name="RegexpHeader">
-        <property name="headerFile" value="kernel/dev/copyrightHeader"/>
+        <property name="headerFile" value="dev/copyrightHeader"/>
     </module>
 
     <module name="TreeWalker">

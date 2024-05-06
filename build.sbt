@@ -368,7 +368,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
            |""".stripMargin)
       Seq(file)
     },
-    javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
+    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
   ).configureUnidoc(docTitle = "Delta Kernel")
@@ -406,7 +406,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
     ),
-    javaCheckstyleSettings("kernel/dev/checkstyle.xml"),
+    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
@@ -1066,7 +1066,7 @@ lazy val standalone = (project in file("connectors/standalone"))
 
     // Unidoc setting
     unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
-    javaCheckstyleSettings("connectors/dev/checkstyle.xml")
+    javaCheckstyleSettings("dev/connectors-checkstyle.xml")
   ).configureUnidoc()
 
 
@@ -1251,7 +1251,7 @@ lazy val flink = (project in file("connectors/flink"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/flink/"),
     // TODO: this is the config that was used before archiving connectors but it has
     //  standalone-specific import orders
-    javaCheckstyleSettings("connectors/dev/checkstyle.xml")
+    javaCheckstyleSettings("dev/connectors-checkstyle.xml")
   ).configureUnidoc()
 
 /**
