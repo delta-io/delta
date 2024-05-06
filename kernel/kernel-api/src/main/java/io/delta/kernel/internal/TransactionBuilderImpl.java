@@ -16,7 +16,6 @@
 package io.delta.kernel.internal;
 
 import java.util.*;
-
 import static java.util.Objects.requireNonNull;
 
 import org.slf4j.Logger;
