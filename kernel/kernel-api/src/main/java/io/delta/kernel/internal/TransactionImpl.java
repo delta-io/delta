@@ -54,7 +54,7 @@ public class TransactionImpl
     private final Protocol protocol;
     private final Metadata metadata;
     private final SnapshotImpl readSnapshot;
-    private final Optional<SetTransaction> setTxn;
+    private final Optional<SetTransaction> setTxnOpt;
 
     private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -67,7 +67,7 @@ public class TransactionImpl
             Operation operation,
             Protocol protocol,
             Metadata metadata,
-            Optional<SetTransaction> setTxn) {
+            Optional<SetTransaction> setTxnOpt) {
         this.isNewTable = isNewTable;
         this.dataPath = dataPath;
         this.logPath = logPath;
@@ -76,7 +76,7 @@ public class TransactionImpl
         this.operation = operation;
         this.protocol = protocol;
         this.metadata = metadata;
-        this.setTxn = setTxn;
+        this.setTxnOpt = setTxnOpt;
     }
 
     @Override
@@ -109,7 +109,7 @@ public class TransactionImpl
             metadataActions.add(createMetadataSingleAction(metadata.toRow()));
             metadataActions.add(createProtocolSingleAction(protocol.toRow()));
         }
-        setTxn.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
+        setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
         try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
             // Create a new CloseableIterator that will return the metadata actions followed by the

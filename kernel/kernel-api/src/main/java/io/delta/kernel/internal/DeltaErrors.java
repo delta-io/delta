@@ -188,6 +188,13 @@ public final class DeltaErrors {
         return new KernelException(format(msgT, partitionColumn, tablePath));
     }
 
+    public static KernelException concurrentTransaction(
+            String appId,
+            long txnVersion,
+            long lastUpdated) {
+        return new ConcurrentTransactionException(appId, txnVersion, lastUpdated);
+    }
+
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();

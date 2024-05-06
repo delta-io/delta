@@ -15,15 +15,26 @@
  */
 package io.delta.kernel.exceptions;
 
+import io.delta.kernel.TransactionBuilder;
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.engine.Engine;
 
 /**
- * Thrown when concurrent transaction both attempt to update the same idempotent transaction.
+ * Thrown when concurrent transaction both attempt to update the table with same transaction
+ * identifier set through {@link TransactionBuilder#withTransactionId(Engine, String, long)}
+ * (String)}.
+ * <p>
+ * Incremental processing systems (e.g., streaming systems) that track progress using their own
+ * application-specific versions need to record what progress has been made, in order to avoid
+ * duplicating data in the face of failures and retries during writes. For more information refer to
+ * the Delta protocol section <a
+ * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#transaction-identifiers">
+ * Transaction Identifiers</a>
  *
  * @since 3.2.0
  */
 @Evolving
-public class ConcurrentTransactionException extends KernelException {
+public class ConcurrentTransactionException extends ConcurrentWriteException {
     private static final String message = "This error occurs when multiple updates are " +
             "using the same transaction identifier to write into this table.\n" +
             "Application ID: %s, Attempted version: %s, Latest version in table: %s";

@@ -23,7 +23,6 @@ import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.types.StructType;
 
@@ -51,7 +50,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     private final Operation operation;
     private Optional<StructType> schema = Optional.empty();
     private Optional<List<String>> partitionColumns = Optional.empty();
-    private Optional<SetTransaction> transactionId = Optional.empty();
+    private Optional<SetTransaction> setTxnOpt = Optional.empty();
 
     public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
         this.table = table;
@@ -82,7 +81,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 requireNonNull(applicationId, "applicationId is null"),
                 transactionVersion,
                 Optional.of(currentTimeMillis));
-        this.transactionId = Optional.of(txnId);
+        this.setTxnOpt = Optional.of(txnId);
         return this;
     }
 
@@ -114,7 +113,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 operation,
                 snapshot.getProtocol(),
                 snapshot.getMetadata(),
-                transactionId);
+                setTxnOpt);
     }
 
     /**
@@ -149,10 +148,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                     schema.get(), partitionColumns.orElse(Collections.emptyList()));
         }
 
-        transactionId.ifPresent(txnId -> {
+        setTxnOpt.ifPresent(txnId -> {
             Optional<Long> lastTxnVersion = snapshot.getLatestTransactionVersion(txnId.getAppId());
             if (lastTxnVersion.isPresent() && lastTxnVersion.get() >= txnId.getVersion()) {
-                throw new ConcurrentTransactionException(
+                throw DeltaErrors.concurrentTransaction(
                         txnId.getAppId(),
                         txnId.getVersion(),
                         lastTxnVersion.get());
