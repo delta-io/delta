@@ -24,7 +24,7 @@ import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException, TableNotFoundException}
+import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
@@ -430,7 +430,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val expV0Data = v0Part0Data.flatMap(_.toTestRows) ++ v0Part1Data.flatMap(_.toTestRows)
       val expV1Data = v1Part0Data.flatMap(_.toTestRows) ++ v1Part1Data.flatMap(_.toTestRows)
 
-      for(i <- 0 until 2) {
+      for (i <- 0 until 2) {
         val commitResult = appendData(
           engine,
           tblPath,
@@ -670,6 +670,76 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       }
       assert(ex.getMessage.contains(
         "Partition column part2 is of type integer but the value provided is of type string"))
+    }
+  }
+
+  test("insert into table - idempotent writes") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1)
+      var expData = Seq.empty[TestRow] // as the data in inserted, update this.
+
+      def addDataWithTxnId(newTbl: Boolean, appId: String, txnVer: Long, expTblVer: Long): Unit = {
+        var txnBuilder = createWriteTxnBuilder(Table.forPath(engine, tblPath))
+
+        if (appId != null) txnBuilder = txnBuilder.withTransactionId(engine, appId, txnVer)
+
+        if (newTbl) {
+          txnBuilder = txnBuilder.withSchema(engine, testPartitionSchema)
+            .withPartitionColumns(engine, testPartitionColumns.asJava)
+        }
+        val txn = txnBuilder.build(engine)
+
+        val combinedActions = inMemoryIterable(
+          data.map { case (partValues, partData) =>
+            stageData(txn.getTransactionState(engine), partValues, partData)
+          }.reduceLeft(_ combine _))
+
+        val commitResult = txn.commit(engine, combinedActions)
+
+        expData = expData ++ data.flatMap(_._2).flatMap(_.toTestRows)
+
+        verifyCommitResult(commitResult, expVersion = expTblVer, expIsReadyForCheckpoint = false)
+        val expPartCols = if (newTbl) testPartitionColumns else null
+        verifyCommitInfo(tblPath, version = expTblVer, expPartCols, operation = WRITE)
+        verifyWrittenContent(tblPath, testPartitionSchema, expData)
+      }
+
+      def expFailure(appId: String, txnVer: Long, latestTxnVer: Long)(fn: => Any): Unit = {
+        val ex = intercept[ConcurrentTransactionException] {
+          fn
+        }
+        assert(ex.getMessage.contains(s"This error occurs when multiple updates are using the " +
+          s"same transaction identifier to write into this table.\nApplication ID: $appId, " +
+          s"Attempted version: $txnVer, Latest version in table: $latestTxnVer"))
+      }
+
+      // Create a transaction with id (txnAppId1, 0) and commit it
+      addDataWithTxnId(newTbl = true, appId = "txnAppId1", txnVer = 0, expTblVer = 0)
+
+      // Try to create a transaction with id (txnAppId1, 0) and commit it - should be valid
+      addDataWithTxnId(newTbl = false, appId = "txnAppId1", txnVer = 1, expTblVer = 1)
+
+      // Try to create a transaction with id (txnAppId1, 1) and try to commit it
+      // Should fail the it is already committed above.
+      expFailure("txnAppId1", txnVer = 1, latestTxnVer = 1) {
+        addDataWithTxnId(newTbl = false, "txnAppId1", txnVer = 1, expTblVer = 2)
+      }
+
+      // append with no txn id
+      addDataWithTxnId(newTbl = false, appId = null, txnVer = 0, expTblVer = 2)
+
+      // Try to create a transaction with id (txnAppId2, 1) and commit it
+      // Should be successful as the transaction app id is different
+      addDataWithTxnId(newTbl = false, "txnAppId2", txnVer = 1, expTblVer = 3)
+
+      // Try to create a transaction with id (txnAppId2, 0) and commit it
+      // Should fail as the transaction app id is same but the version is less than the committed
+      expFailure("txnAppId2", txnVer = 0, latestTxnVer = 1) {
+        addDataWithTxnId(newTbl = false, "txnAppId2", txnVer = 0, expTblVer = 4)
+      }
+
+      // TODO: Add a test case where there are concurrent transactions with same app id
+      // and only one of them succeeds. Will be added once conflict resolution is handled
     }
   }
 

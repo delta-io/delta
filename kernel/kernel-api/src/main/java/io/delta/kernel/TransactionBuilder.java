@@ -19,6 +19,7 @@ import java.util.List;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -48,10 +49,33 @@ public interface TransactionBuilder {
     TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns);
 
     /**
-     * Build the transaction. Also validates the given info to ensure that a valida transaction
-     * can be created.
+     * Set the transaction identifier for idempotent writes. Incremental processing systems (e.g.,
+     * streaming systems) that track progress using their own application-specific versions need to
+     * record what progress has been made, in order to avoid duplicating data in the face of
+     * failures and retries during writes. By setting the transaction identifier, the Delta table
+     * can ensure that the data with same identifier is not written multiple times. For more
+     * information refer to the Delta protocol section <a
+     * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#transaction-identifiers">
+     * Transaction Identifiers</a>.
+     *
+     * @param engine             {@link Engine} instance to use.
+     * @param applicationId      The application ID that is writing to the table.
+     * @param transactionVersion The version of the transaction. This should be monotonically
+     *                           increasing with each write for the same application ID.
+     * @return updated {@link TransactionBuilder} instance.
+     */
+    TransactionBuilder withTransactionId(
+            Engine engine,
+            String applicationId,
+            long transactionVersion);
+
+    /**
+     * Build the transaction. Also validates the given info to ensure that a valid transaction can
+     * be created.
      *
      * @param engine {@link Engine} instance to use.
+     * @throws ConcurrentTransactionException if the table already has a committed transaction with
+     *                                        the same given transaction identifier.
      */
     Transaction build(Engine engine);
 }
