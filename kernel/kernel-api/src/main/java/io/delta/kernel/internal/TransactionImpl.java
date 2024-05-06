@@ -119,11 +119,12 @@ public class TransactionImpl
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
             int numRetries = 0;
             do {
+                logger.info("Committing transaction as version = {}.", commitAsVersion);
                 try {
                     return doCommit(engine, commitAsVersion, dataActions);
                 } catch (FileAlreadyExistsException fnfe) {
-                    logger.info("Concurrent write detected. " +
-                            "Trying to resolve conflicts and retry commit.");
+                    logger.info("Concurrent write detected when committing as version = {}. " +
+                            "Trying to resolve conflicts and retry commit.", commitAsVersion);
                     TransactionRebaseState rebaseState = ConflictChecker
                             .resolveConflicts(engine, readSnapshot, commitAsVersion, this);
                     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
@@ -139,6 +140,7 @@ public class TransactionImpl
         }
 
         // we have exhausted the number of retries, give up.
+        logger.info("Exhausted maximum retries ({}) for committing transaction.", NUM_TXN_RETRIES);
         throw new ConcurrentWriteException();
     }
 
