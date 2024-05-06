@@ -92,7 +92,7 @@ while(fileIter.hasNext()) {
 
   // Get the physical read schema of columns to read from the Parquet data files
   StructType physicalReadSchema =
-    ScanStateRow.getPhysicalDataReadSchema(tableClient, scanStateRow);
+    ScanStateRow.getPhysicalDataReadSchema(engine, scanStateRow);
 
   try (CloseableIterator<Row> scanFileRows = scanFileColumnarBatch.getRows()) {
     while (scanFileRows.hasNext()) {
@@ -106,7 +106,7 @@ while(fileIter.hasNext()) {
       // Parquet reader or default Parquet reader provided by the Kernel (which
       // is used in this example).
       CloseableIterator<ColumnarBatch> physicalDataIter =
-        tableClient.getParquetHandler().readParquetFiles(
+        engine.getParquetHandler().readParquetFiles(
           singletonCloseableIterator(fileStatus),
           physicalReadSchema,
           Optional.empty() /* optional predicate the connector can apply to filter data from the reader */
@@ -118,7 +118,7 @@ while(fileIter.hasNext()) {
       try (
          CloseableIterator<FilteredColumnarBatch> transformedData =
            Scan.transformPhysicalData(
-             tableClient,
+             engine,
              scanStateRow,
              scanFileRow,
              physicalDataIter)) {
@@ -181,7 +181,7 @@ Predicate filter = new Predicate(
   "=",
   Arrays.asList(new Column("columnX"), Literal.forInteger(1)));
 
-Scan myFilteredScan = mySnapshot.buildScan(tableClient)
+Scan myFilteredScan = mySnapshot.buildScan(engine)
   .withFilter(myEngine, filter)
   .build()
 
@@ -454,7 +454,7 @@ import io.delta.kernel.types.*;
 StructType readSchema = ... ;  // convert engine schema
 Predicate filterExpr = ... ;   // convert engine filter expression
 
-Scan myScan = mySnapshot.buildScan(tableClient)
+Scan myScan = mySnapshot.buildScan(engine)
   .withFilter(myEngine, filterExpr)
   .withReadSchema(myEngine, readSchema)
   .build()
@@ -536,7 +536,7 @@ Predicate optPredicate = ...;
 
 // Get the physical read schema of columns to read from the Parquet data files
 StructType physicalReadSchema =
-  ScanStateRow.getPhysicalDataReadSchema(tableClient, scanStateRow);
+  ScanStateRow.getPhysicalDataReadSchema(engine, scanStateRow);
 
 // From the scan file row, extract the file path, size and modification metadata
 // needed to read the file.
@@ -561,7 +561,7 @@ CloseableIterator<ColumnarBatch> physicalDataIter =
 // subset of rows deleted
 CloseableIterator<FilteredColumnarBatch> transformedData =
   Scan.transformPhysicalData(
-    tableClient,
+    engine,
     scanState,
     scanFileRow,
     physicalDataIter)) 
