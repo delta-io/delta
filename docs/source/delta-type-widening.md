@@ -6,7 +6,7 @@ description: Learn about type widening in Delta.
 
 .. note:: This feature is available in preview in <Delta> 3.2.
 
-The type widening feature allows changing the type of columns in a Delta table to a wider type. This enables manual type changes using the `ALTER TABLE CHANGE COLUMN` command and automatic type migration with schema evolution in `INSERT` and `MERGE INTO` commands.
+The type widening feature allows changing the type of columns in a Delta table to a wider type. This enables manual type changes using the `ALTER TABLE ALTER COLUMN` command and automatic type migration with schema evolution in `INSERT` and `MERGE INTO` commands.
 
 ## Supported type changes
 
@@ -46,10 +46,10 @@ To remove the type widening table feature from the table and allow other clients
 
 ## Manually applying a type change
 
-When type widening is enabled on a Delta table, you can change the type of a column using the `CHANGE COLUMN` command:
+When type widening is enabled on a Delta table, you can change the type of a column using the `ALTER COLUMN` command:
 
 ```sql
-ALTER TABLE <table_name> CHANGE COLUMN <col_name> TYPE <new_type>
+ALTER TABLE <table_name> ALTER COLUMN <col_name> TYPE <new_type>
 ```
 
 The table schema is updated without rewriting the underlying Parquet files.
