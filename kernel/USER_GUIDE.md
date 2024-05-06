@@ -11,7 +11,7 @@ In this user guide, we are going to walk through the following:
 * [How to build a Delta connector for distributed engines with custom Kernel `Engine`](#build-a-delta-connector-for-a-distributed-processing-engine).
 
 ## Read a Delta table in a single process
-In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default [`DefaultEngine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/DefaultEngine.html) implementation provided by Delta Kernel.
+In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
 
 You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
 
@@ -173,7 +173,7 @@ We have explored how to do a full table scan. However, the real advantage of usi
 ```java
 import io.delta.kernel.expressions.*;
 
-import io.delta.kernel.defaults.engine.*
+import io.delta.kernel.defaults.engine.*;
 
 Engine myEngine = DefaultEngine.create(new Configuration());
 
