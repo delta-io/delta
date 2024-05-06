@@ -38,7 +38,7 @@ import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
 
 import java.util.Optional
 import scala.collection.JavaConverters._
@@ -678,7 +678,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1)
       var expData = Seq.empty[TestRow] // as the data in inserted, update this.
 
-      def addDataWithTxnId(newTbl: Boolean, appId: String, txnVer: Long, expTblVer: Long): Unit = {
+      def prepTxnAndActions(newTbl: Boolean, appId: String, txnVer: Long)
+      : (Transaction, CloseableIterable[Row]) = {
         var txnBuilder = createWriteTxnBuilder(Table.forPath(engine, tblPath))
 
         if (appId != null) txnBuilder = txnBuilder.withTransactionId(engine, appId, txnVer)
@@ -694,7 +695,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             stageData(txn.getTransactionState(engine), partValues, partData)
           }.reduceLeft(_ combine _))
 
-        val commitResult = txn.commit(engine, combinedActions)
+        (txn, combinedActions)
+      }
+
+      def commitAndVerify(newTbl: Boolean, txn: Transaction,
+          actions: CloseableIterable[Row], expTblVer: Long): Unit = {
+        val commitResult = txn.commit(engine, actions)
 
         expData = expData ++ data.flatMap(_._2).flatMap(_.toTestRows)
 
@@ -702,6 +708,11 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val expPartCols = if (newTbl) testPartitionColumns else null
         verifyCommitInfo(tblPath, version = expTblVer, expPartCols, operation = WRITE)
         verifyWrittenContent(tblPath, testPartitionSchema, expData)
+      }
+
+      def addDataWithTxnId(newTbl: Boolean, appId: String, txnVer: Long, expTblVer: Long): Unit = {
+        val (txn, combinedActions) = prepTxnAndActions(newTbl, appId, txnVer)
+        commitAndVerify(newTbl, txn, combinedActions, expTblVer)
       }
 
       def expFailure(appId: String, txnVer: Long, latestTxnVer: Long)(fn: => Any): Unit = {
@@ -738,8 +749,103 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         addDataWithTxnId(newTbl = false, "txnAppId2", txnVer = 0, expTblVer = 4)
       }
 
-      // TODO: Add a test case where there are concurrent transactions with same app id
-      // and only one of them succeeds. Will be added once conflict resolution is handled
+      // Start a transaction (txnAppId2, 2), but don't commit it yet
+      val (txn, combinedActions) = prepTxnAndActions(newTbl = false, "txnAppId2", txnVer = 2)
+      // Now start a new transaction with the same id (txnAppId2, 2) and commit it
+      addDataWithTxnId(newTbl = false, "txnAppId2", txnVer = 2, expTblVer = 4)
+      // Now try to commit the previous transaction (txnAppId2, 2) - should fail
+      expFailure("txnAppId2", txnVer = 2, latestTxnVer = 2) {
+        commitAndVerify(newTbl = false, txn, combinedActions, expTblVer = 5)
+      }
+
+      // Start a transaction (txnAppId2, 3), but don't commit it yet
+      val (txn2, combinedActions2) = prepTxnAndActions(newTbl = false, "txnAppId2", txnVer = 3)
+      // Now start a new transaction with the different id (txnAppId1, 10) and commit it
+      addDataWithTxnId(newTbl = false, "txnAppId1", txnVer = 10, expTblVer = 5)
+      // Now try to commit the previous transaction (txnAppId2, 3) - should pass
+      commitAndVerify(newTbl = false, txn2, combinedActions2, expTblVer = 6)
+    }
+  }
+
+  test("conflicts - creating new table - table created by other txn after current txn start") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val losingTx = createTestTxn(engine, tablePath, Some(testSchema))
+
+      // don't commit losingTxn, instead create a new txn and commit it
+      val winningTx = createTestTxn(engine, tablePath, Some(testSchema))
+      val winningTxResult = winningTx.commit(engine, emptyIterable())
+
+      // now attempt to commit the losingTxn
+      val ex = intercept[ProtocolChangedException] {
+        losingTx.commit(engine, emptyIterable())
+      }
+      assert(ex.getMessage.contains(
+        "Transaction has encountered a conflict and can not be committed."))
+      // helpful message for table creation conflict
+      assert(ex.getMessage.contains("This happens when multiple writers are " +
+        "writing to an empty directory. Creating the table ahead of time will avoid " +
+        "this conflict."))
+
+      verifyCommitResult(winningTxResult, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tablePath = tablePath, version = 0)
+      verifyWrittenContent(tablePath, testSchema, Seq.empty)
+    }
+  }
+
+  test("conflicts - table metadata has changed after the losing txn has started") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
+
+      // create a new table and commit it
+      appendData(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty, testData)
+
+      // start the losing transaction
+      val losingTx = createTestTxn(engine, tablePath)
+
+      // don't commit losingTxn, instead create a new txn (that changes metadata) and commit it
+      spark.sql("ALTER TABLE delta.`" + tablePath + "` ADD COLUMN newCol INT")
+
+      // now attempt to commit the losingTxn
+      val ex = intercept[MetadataChangedException] {
+        losingTx.commit(engine, emptyIterable())
+      }
+      assert(ex.getMessage.contains("The metadata of the Delta table has been changed " +
+        "by a concurrent update. Please try the operation again."))
+    }
+  }
+
+  // Different scenarios that have multiple winning txns and with a checkpoint in between.
+  Seq(1, 5, 12).foreach { numWinningTxs =>
+    test(s"conflicts - concurrent data append ($numWinningTxs) after the losing txn has started") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
+        var expData = Seq.empty[TestRow]
+
+        // create a new table and commit it
+        appendData(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty, testData)
+        expData ++= testData.flatMap(_._2).flatMap(_.toTestRows)
+
+        // start the losing transaction
+        val txn1 = createTestTxn(engine, tablePath)
+
+        // don't commit txn1 yet, instead commit nex txns (that appends data) and commit it
+        Seq.range(0, numWinningTxs).foreach { i =>
+          appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches2))
+          expData ++= dataBatches2.flatMap(_.toTestRows)
+        }
+
+        // add data using the txn1
+        val txn1State = txn1.getTransactionState(engine)
+        val actions = inMemoryIterable(stageData(txn1State, Map.empty, dataBatches2))
+        expData ++= dataBatches2.flatMap(_.toTestRows)
+
+        val txn1Result = txn1.commit(engine, actions)
+
+        verifyCommitResult(
+          txn1Result, expVersion = numWinningTxs + 1, expIsReadyForCheckpoint = false)
+        verifyCommitInfo(tablePath = tablePath, version = 0, operation = WRITE)
+        verifyWrittenContent(tablePath, testSchema, expData)
+      }
     }
   }
 
@@ -828,6 +934,14 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   def createWriteTxnBuilder(table: Table): TransactionBuilder = {
     table.createTransactionBuilder(defaultEngine, testEngineInfo, Operation.WRITE)
+  }
+
+  def createTestTxn(
+    engine: Engine, tablePath: String, schema: Option[StructType] = None): Transaction = {
+    val table = Table.forPath(engine, tablePath)
+    var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+    schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
+    txnBuilder.build(engine)
   }
 
   def generateData(

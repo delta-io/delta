@@ -195,6 +195,14 @@ public final class DeltaErrors {
         return new ConcurrentTransactionException(appId, txnVersion, lastUpdated);
     }
 
+    public static KernelException metadataChangedException() {
+        return new MetadataChangedException();
+    }
+
+    public static KernelException protocolChangedException(long attemptVersion) {
+        return new ProtocolChangedException(attemptVersion);
+    }
+
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();

@@ -37,6 +37,20 @@ public class SingleAction {
     // Once we start supporting updating CDC or domain metadata enabled tables, we should add the
     // schema for those fields here.
 
+    /**
+     * Schema to use when reading the winning commit files for conflict resolution. This schema
+     * is just for resolving conflicts when doing a blind append. It doesn't cover case when the
+     * txn is reading data from the table and updating the table.
+     */
+    public static StructType CONFLICT_RESOLUTION_SCHEMA = new StructType()
+            .add("txn", SetTransaction.FULL_SCHEMA)
+            // .add("add", AddFile.FULL_SCHEMA) // not needed for blind appends
+            // .add("remove", RemoveFile.FULL_SCHEMA) // not needed for blind appends
+            .add("metaData", Metadata.FULL_SCHEMA)
+            .add("protocol", Protocol.FULL_SCHEMA);
+    // Once we start supporting domain metadata/row tracking enabled tables, we should add the
+    // schema for domain metadata fields here.
+
     // Schema to use when writing out the single action to the Delta Log.
     public static StructType FULL_SCHEMA = new StructType()
             .add("txn", SetTransaction.FULL_SCHEMA)
