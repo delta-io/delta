@@ -28,4 +28,8 @@ public class ConcurrentWriteException extends KernelException {
         super("Transaction has encountered a conflict and can not be committed. " +
                 "Query needs to be re-executed using the latest version of the table.");
     }
+
+    public ConcurrentWriteException(String message) {
+        super(message);
+    }
 }
