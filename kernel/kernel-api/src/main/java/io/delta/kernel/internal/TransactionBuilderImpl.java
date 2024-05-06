@@ -17,11 +17,14 @@ package io.delta.kernel.internal;
 
 import java.util.*;
 
+import static java.util.Objects.requireNonNull;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.types.StructType;
 
@@ -49,6 +52,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     private final Operation operation;
     private Optional<StructType> schema = Optional.empty();
     private Optional<List<String>> partitionColumns = Optional.empty();
+    private Optional<SetTransaction> transactionId = Optional.empty();
 
     public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
         this.table = table;
@@ -67,6 +71,19 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         if (!partitionColumns.isEmpty()) {
             this.partitionColumns = Optional.of(partitionColumns);
         }
+        return this;
+    }
+
+    @Override
+    public TransactionBuilder withTransactionId(
+            Engine engine,
+            String applicationId,
+            long transactionVersion) {
+        SetTransaction txnId = new SetTransaction(
+                requireNonNull(applicationId, "applicationId is null"),
+                transactionVersion,
+                Optional.of(currentTimeMillis));
+        this.transactionId = Optional.of(txnId);
         return this;
     }
 
@@ -97,7 +114,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 engineInfo,
                 operation,
                 snapshot.getProtocol(),
-                snapshot.getMetadata());
+                snapshot.getMetadata(),
+                transactionId);
     }
 
     /**
@@ -131,6 +149,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             SchemaUtils.validatePartitionColumns(
                     schema.get(), partitionColumns.orElse(Collections.emptyList()));
         }
+
+        transactionId.ifPresent(txnId -> {
+            Optional<Long> lastTxnVersion = snapshot.getLatestTransactionVersion(txnId.getAppId());
+            if (lastTxnVersion.isPresent() && lastTxnVersion.get() >= txnId.getVersion()) {
+                throw new ConcurrentTransactionException(
+                        txnId.getAppId(),
+                        txnId.getVersion(),
+                        lastTxnVersion.get());
+            }
+        });
     }
 
     private class InitialSnapshot extends SnapshotImpl {
