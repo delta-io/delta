@@ -2569,6 +2569,12 @@
     ],
     "sqlState" : "42621"
   },
+  "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN" : {
+    "message" : [
+      "<dataType> cannot be the result of a generated column"
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
     "message" : [
       "Unsupported Delta read feature: table \"<tableNameOrPath>\" requires reader table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."

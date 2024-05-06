@@ -1765,6 +1765,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def generatedColumnsUnsupportedType(dt: DataType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN",
+      messageParameters = Array(s"${dt.simpleString}")
+    )
+  }
+
   def generatedColumnsExprTypeMismatch(
       column: String,
       columnType: DataType,

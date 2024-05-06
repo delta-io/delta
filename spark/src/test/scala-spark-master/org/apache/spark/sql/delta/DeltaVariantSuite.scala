@@ -167,7 +167,7 @@ class DeltaVariantSuite
     }
   }
 
-  test("variant works with schema evolution") {
+  test("variant works with schema evolution for INSERT") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath
       spark.range(0, 100, 1, 1)
@@ -197,6 +197,45 @@ class DeltaVariantSuite
 
       val read = spark.read.format("delta").load(path)
       checkAnswer(read, expected.collect())
+    }
+  }
+
+  test("variant works with schema evolution for MERGE") {
+    withTempDir { dir =>
+      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+        val path = dir.getAbsolutePath
+        spark.range(0, 100, 1, 1)
+          .selectExpr("id", "parse_json(cast(id as string)) v")
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .save(path)
+
+        val sourceDf = spark.range(50, 200, 1, 1)
+          .selectExpr(
+            "id",
+            "parse_json(cast(id as string)) v",
+            "parse_json(cast(id as string)) v_two"
+          )
+
+        DeltaTable.forPath(spark, path)
+          .as("source")
+          .merge(sourceDf.as("target"), "source.id = target.id")
+          .whenMatched()
+          .updateAll()
+          .whenNotMatched()
+          .insertAll()
+          .execute()
+
+        val expected = spark.range(0, 200, 1, 1).selectExpr(
+          "id",
+          "parse_json(cast(id as string)) v",
+          "case when id >= 50 then parse_json(cast(id as string)) else null end v_two"
+        )
+
+        val read = spark.read.format("delta").load(path)
+        checkAnswer(read, expected.collect())
+      }
     }
   }
 
@@ -236,7 +275,7 @@ class DeltaVariantSuite
         .selectExpr("tableFeatures")
         .collect()(0)
         .getAs[MutableSeq[String]](0)
-      assert(tableFeatures.find(f => f == "variantType-dev").nonEmpty)
+      assert(tableFeatures.find(f => f == VariantTypeTableFeature.name).nonEmpty)
     }
   }
 
@@ -271,8 +310,6 @@ class DeltaVariantSuite
         .mode("overwrite")
         .saveAsTable("tbl")
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-      val startCount = deltaLog.unsafeVolatileSnapshot.numOfFiles
-      val startSizes = deltaLog.unsafeVolatileSnapshot.allFiles.select('size).as[Long].collect()
       val res = sql("OPTIMIZE tbl")
       val metrics = res.select($"metrics.*").as[OptimizeMetrics].head()
       assert(metrics.numFilesAdded > 0)
@@ -306,24 +343,21 @@ class DeltaVariantSuite
       sql("DELETE FROM tbl WHERE v::int = 0")
       sql("UPDATE tbl SET v = parse_json('-2') WHERE v::int = 50")
 
-      val deleteCount =
-        spark.sql("select * from table_changes('tbl', 0) where _change_type = 'delete'").count
-      // Both zeros should be deleted.
-      assert(deleteCount == 2)
-
-      val updatePre = spark.sql("""select variant_get(v, '$', 'INT') as intVal
-                                from table_changes('tbl', 0)
-                                where _change_type = 'update_preimage'""")
-        .collect()(0)
-        .getInt(0)
-      assert(updatePre == 50)
-
-      val updatePost = spark.sql("""select variant_get(v, '$', 'INT') as intVal
-                                from table_changes('tbl', 0)
-                                where _change_type = 'update_postimage'""")
-        .collect()(0)
-        .getInt(0)
-      assert(updatePost == -2)
+      checkAnswer(
+        sql("""select _change_type, v::int from table_changes('tbl', 0)
+               where _change_type = 'delete'"""),
+        Seq(Row("delete", 0), Row("delete", 0))
+      )
+      checkAnswer(
+        sql("""select _change_type, v::int from table_changes('tbl', 0)
+               where _change_type = 'update_preimage'"""),
+        Seq(Row("update_preimage", 50))
+    )
+      checkAnswer(
+        sql("""select _change_type, v::int from table_changes('tbl', 0)
+               where _change_type = 'update_postimage'"""),
+        Seq(Row("update_postimage", -2))
+      )
     }
   }
 
@@ -335,24 +369,21 @@ class DeltaVariantSuite
       sql("DELETE FROM tbl WHERE v::string = '0'")
       sql("UPDATE tbl SET v = parse_json('-2') WHERE v::int = 50")
 
-       val deleteCount =
-        spark.sql("select * from table_changes('tbl', 1) where _change_type = 'delete'").count
-      // The zero should be deleted.
-      assert(deleteCount == 1)
-
-      val updatePre = spark.sql("""select variant_get(v, '$', 'INT') as intVal
-                                from table_changes('tbl', 1)
-                                where _change_type = 'update_preimage'""")
-        .collect()(0)
-        .getInt(0)
-      assert(updatePre == 50)
-
-      val updatePost = spark.sql("""select variant_get(v, '$', 'INT') as intVal
-                                from table_changes('tbl', 1)
-                                where _change_type = 'update_postimage'""")
-        .collect()(0)
-        .getInt(0)
-      assert(updatePost == -2)
+      checkAnswer(
+        sql("""select _change_type, v::int from table_changes('tbl', 1)
+               where _change_type = 'delete'"""),
+        Seq(Row("delete", 0))
+      )
+      checkAnswer(
+        sql("""select _change_type, v::int from table_changes('tbl', 1)
+               where _change_type = 'update_preimage'"""),
+        Seq(Row("update_preimage", 50))
+      )
+      checkAnswer(
+        sql("""select _change_type, v::int from table_changes('tbl', 1)
+               where _change_type = 'update_postimage'"""),
+        Seq(Row("update_postimage", -2))
+      )
     }
   }
 
@@ -395,21 +426,23 @@ class DeltaVariantSuite
     }
   }
 
-  test("column mapping works") {
-    withTable("tbl") {
-      sql("""CREATE TABLE tbl USING DELTA
-          TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
-          AS SELECT parse_json(cast(id as string)) v, parse_json(cast(id as string)) v_two
-          FROM range(5)""")
-      val expectedAnswer = spark.sql("select v from tbl").collect()
+  Seq("name", "id").foreach { mode =>
+    test(s"column mapping works - $mode") {
+      withTable("tbl") {
+        sql(s"""CREATE TABLE tbl USING DELTA
+            TBLPROPERTIES ('delta.columnMapping.mode' = '$mode')
+            AS SELECT parse_json(cast(id as string)) v, parse_json(cast(id as string)) v_two
+            FROM range(5)""")
+        val expectedAnswer = spark.sql("select v from tbl").collect()
 
-      sql("ALTER TABLE tbl RENAME COLUMN v TO new_v")
-      checkAnswer(spark.sql("select new_v from tbl"), expectedAnswer)
+        sql("ALTER TABLE tbl RENAME COLUMN v TO new_v")
+        checkAnswer(spark.sql("select new_v from tbl"), expectedAnswer)
 
-      sql("ALTER TABLE tbl DROP COLUMN new_v")
-      // 'SELECT *' from the test table should return the same as `expectedAnswer` because `v` and
-      // `v_two` are initially identical and `v` is dropped, resulting in a single column.
-      checkAnswer(spark.sql("select * from tbl"), expectedAnswer)
+        sql("ALTER TABLE tbl DROP COLUMN new_v")
+        // 'SELECT *' from the test table should return the same as `expectedAnswer` because `v` and
+        // `v_two` are initially identical and `v` is dropped, resulting in a single column.
+        checkAnswer(spark.sql("select * from tbl"), expectedAnswer)
+      }
     }
   }
 
@@ -426,9 +459,10 @@ class DeltaVariantSuite
 
       sql("ALTER TABLE tbl ALTER COLUMN v SET DEFAULT (parse_json('{\"k\": \"v\"}'))")
       sql("INSERT INTO tbl VALUES (DEFAULT)")
-      val valCount = spark.sql("SELECT * FROM tbl WHERE v:k::string = 'v'").count()
-      // DEFAULT value is set to '{k: v}'.
-      assert(valCount == 1)
+      checkAnswer(
+        sql("SELECT v FROM tbl WHERE variant_get(v, '$.k', 'STRING') = 'v'"),
+        sql("select parse_json('{\"k\": \"v\"}')").collect
+      )
     }
   }
 
@@ -475,8 +509,8 @@ class DeltaVariantSuite
       }
       checkError(
         e,
-        "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN",
-        parameters = Map("expression" -> "parse_json(CAST(id AS STRING))")
+        "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN",
+        parameters = Map("dataType" -> "variant")
       )
     }
   }
