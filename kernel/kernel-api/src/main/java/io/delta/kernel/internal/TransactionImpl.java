@@ -20,6 +20,9 @@ import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -44,6 +47,8 @@ import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 public class TransactionImpl
         implements Transaction {
+    private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
+
     public static final int DEFAULT_READ_VERSION = 1;
     public static final int DEFAULT_WRITE_VERSION = 2;
 
@@ -117,6 +122,8 @@ public class TransactionImpl
                 try {
                     return doCommit(engine, commitAsVersion, dataActions);
                 } catch (FileAlreadyExistsException fnfe) {
+                    logger.info("Concurrent write detected. " +
+                            "Trying to resolve conflicts and retry commit.");
                     TransactionRebaseState rebaseState = ConflictChecker
                             .resolveConflicts(engine, readSnapshot, commitAsVersion, this);
                     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;

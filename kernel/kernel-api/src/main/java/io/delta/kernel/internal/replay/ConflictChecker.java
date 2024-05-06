@@ -199,7 +199,7 @@ public class ConflictChecker {
 
         try (CloseableIterator<FileStatus> files = engine.getFileSystemClient()
                 .listFrom(firstWinningCommitFile)) {
-            // Filter out all winning transaction commit files.
+            // Select all winning transaction commit files.
             List<FileStatus> winningCommitFiles = new ArrayList<>();
             while (files.hasNext()) {
                 FileStatus file = files.next();

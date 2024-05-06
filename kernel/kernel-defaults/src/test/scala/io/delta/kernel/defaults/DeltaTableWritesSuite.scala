@@ -814,32 +814,38 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("conflicts - concurrent data append after the losing txn has started") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
-      var expData = Seq.empty[TestRow]
+  // Different scenarios that have multiple winning txns and with a checkpoint in between.
+  Seq(1, 5, 12).foreach { numWinningTxs =>
+    test(s"conflicts - concurrent data append ($numWinningTxs) after the losing txn has started") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
+        var expData = Seq.empty[TestRow]
 
-      // create a new table and commit it
-      appendData(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty, testData)
-      expData ++= testData.flatMap(_._2).flatMap(_.toTestRows)
+        // create a new table and commit it
+        appendData(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty, testData)
+        expData ++= testData.flatMap(_._2).flatMap(_.toTestRows)
 
-      // start the losing transaction
-      val txn1 = createTestTxn(engine, tablePath)
+        // start the losing transaction
+        val txn1 = createTestTxn(engine, tablePath)
 
-      // don't commit txn1 yet, instead create a new txn (that appends metadata) and commit it
-      appendData(engine, tablePath, data = testData)
-      expData ++= testData.flatMap(_._2).flatMap(_.toTestRows)
+        // don't commit txn1 yet, instead commit nex txns (that appends data) and commit it
+        Seq.range(0, numWinningTxs).foreach { i =>
+          appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches2))
+          expData ++= dataBatches2.flatMap(_.toTestRows)
+        }
 
-      // add data using the txn1
-      val txn1State = txn1.getTransactionState(engine)
-      val actions = inMemoryIterable(stageData(txn1State, Map.empty, dataBatches2))
-      expData ++= dataBatches2.flatMap(_.toTestRows)
+        // add data using the txn1
+        val txn1State = txn1.getTransactionState(engine)
+        val actions = inMemoryIterable(stageData(txn1State, Map.empty, dataBatches2))
+        expData ++= dataBatches2.flatMap(_.toTestRows)
 
-      val txn1Result = txn1.commit(engine, actions)
+        val txn1Result = txn1.commit(engine, actions)
 
-      verifyCommitResult(txn1Result, expVersion = 2, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tablePath = tablePath, version = 0, operation = WRITE)
-      verifyWrittenContent(tablePath, testSchema, expData)
+        verifyCommitResult(
+          txn1Result, expVersion = numWinningTxs + 1, expIsReadyForCheckpoint = false)
+        verifyCommitInfo(tablePath = tablePath, version = 0, operation = WRITE)
+        verifyWrittenContent(tablePath, testSchema, expData)
+      }
     }
   }
 
