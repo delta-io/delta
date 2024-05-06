@@ -425,7 +425,7 @@ The first step is to resolve the consistent snapshot and the schema associated w
 
 ```java
 import io.delta.kernel.*;
-import io.delta.kernel.defaults.engine.*';
+import io.delta.kernel.defaults.engine.*;
 
 Engine myEngine = new MyEngine();
 Table myTable = Table.forPath(myTablePath);
@@ -549,11 +549,11 @@ FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow);
 // a specific part of the file, but reads the entire file from the beginning.
 CloseableIterator<ColumnarBatch> physicalDataIter =
   connectParquetReader.readParquetFile(
-  fileStatus
-  physicalReadSchema,
-  split, // what part of the Parquet file to read data from
-  optPredicate /* additional predicate the connector can apply to filter data from the reader */
-);
+    fileStatus
+    physicalReadSchema,
+    split, // what part of the Parquet file to read data from
+    optPredicate /* additional predicate the connector can apply to filter data from the reader */
+  );
 
 // Now the physical data read from the Parquet data file is converted to logical data
 // the table represents.
@@ -564,7 +564,7 @@ CloseableIterator<FilteredColumnarBatch> transformedData =
     engine,
     scanState,
     scanFileRow,
-    physicalDataIter)) 
+    physicalDataIter));
 ```
 
 * Resolve the data in the batches: Each [`FilteredColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/FilteredColumnarBatch.html) has two components:
