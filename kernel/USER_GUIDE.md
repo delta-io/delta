@@ -179,7 +179,7 @@ Engine myEngine = DefaultEngine.create(new Configuration());
 
 Predicate filter = new Predicate(
   "=",
-  Arrays.asList(new Column("columnX"), Literal.forInteger(1)));
+  Arrays.asList(new Column("columnX"), Literal.ofInt(1)));
 
 Scan myFilteredScan = mySnapshot.buildScan(engine)
   .withFilter(myEngine, filter)
