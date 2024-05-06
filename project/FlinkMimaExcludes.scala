@@ -20,5 +20,10 @@ import com.typesafe.tools.mima.core._
  * The list of Mima errors to exclude in the Flink project.
  */
 object FlinkMimaExcludes {
-  val ignoredABIProblems = Seq()
+  // scalastyle:off line.size.limit
+
+  val ignoredABIProblems = Seq(
+    // We can ignore internal changes
+    ProblemFilters.exclude[IncompatibleMethTypeProblem]("io.delta.standalone.internal.KernelDeltaLogDelegator.this")
+  )
 }

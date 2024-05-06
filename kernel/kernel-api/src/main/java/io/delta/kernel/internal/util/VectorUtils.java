@@ -81,6 +81,9 @@ public final class VectorUtils {
      * @return an {@link ArrayValue} with the given values of type {@link StringType}
      */
     public static ArrayValue stringArrayValue(List<String> values) {
+        if (values == null) {
+            return null;
+        }
         return new ArrayValue() {
             @Override
             public int getSize() {

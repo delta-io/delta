@@ -1077,6 +1077,7 @@ case class CommitInfo(
     // infer the commit version from the file name and fill in this field then.
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     version: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     inCommitTimestamp: Option[Long],
     timestamp: Timestamp,
     userId: Option[String],

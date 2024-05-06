@@ -19,20 +19,18 @@ import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
-
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
-import io.delta.kernel.client.TableClient
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
-import io.delta.kernel.defaults.client.DefaultTableClient
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.{ColumnMapping, Utils}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
@@ -46,7 +44,7 @@ import org.scalatest.Assertions
 trait TestUtils extends Assertions with SQLHelper {
 
   lazy val configuration = new Configuration()
-  lazy val defaultTableClient = DefaultTableClient.create(configuration)
+  lazy val defaultEngine = DefaultEngine.create(configuration)
 
   lazy val spark = SparkSession
     .builder()
@@ -101,11 +99,17 @@ trait TestUtils extends Assertions with SQLHelper {
       if (predicate.isEmpty) {
         new FilteredColumnarBatch(batch, Optional.empty())
       } else {
-        val predicateEvaluator = defaultTableClient.getExpressionHandler
+        val predicateEvaluator = defaultEngine.getExpressionHandler
           .getPredicateEvaluator(batch.getSchema, predicate.get)
         val selVector = predicateEvaluator.eval(batch, Optional.empty())
         new FilteredColumnarBatch(batch, Optional.of(selVector))
       }
+    }
+  }
+
+  implicit class FilteredColumnarBatchOps(batch: FilteredColumnarBatch) {
+    def toTestRows: Seq[TestRow] = {
+      batch.getRows.toSeq.map(TestRow(_))
     }
   }
 
@@ -122,20 +126,20 @@ trait TestUtils extends Assertions with SQLHelper {
     testFunc(tablePath)
   }
 
-  def latestSnapshot(path: String, tableClient: TableClient = defaultTableClient): Snapshot = {
-    Table.forPath(tableClient, path)
-      .getLatestSnapshot(tableClient)
+  def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
+    Table.forPath(engine, path)
+      .getLatestSnapshot(engine)
   }
 
   def tableSchema(path: String): StructType = {
-    Table.forPath(defaultTableClient, path)
-      .getLatestSnapshot(defaultTableClient)
-      .getSchema(defaultTableClient)
+    Table.forPath(defaultEngine, path)
+      .getLatestSnapshot(defaultEngine)
+      .getSchema(defaultEngine)
   }
 
   def hasColumnMappingId(str: String): Boolean = {
-    val table = Table.forPath(defaultTableClient, str)
-    val schema = table.getLatestSnapshot(defaultTableClient).getSchema(defaultTableClient)
+    val table = Table.forPath(defaultEngine, str)
+    val schema = table.getLatestSnapshot(defaultEngine).getSchema(defaultEngine)
     schema.fields().asScala.exists { field =>
       field.getMetadata.contains(ColumnMapping.COLUMN_MAPPING_ID_KEY)
     }
@@ -156,8 +160,8 @@ trait TestUtils extends Assertions with SQLHelper {
     }
   }
 
-  def collectScanFileRows(scan: Scan, tableClient: TableClient = defaultTableClient): Seq[Row] = {
-    scan.getScanFiles(tableClient).toSeq
+  def collectScanFileRows(scan: Scan, engine: Engine = defaultEngine): Seq[Row] = {
+    scan.getScanFiles(engine).toSeq
       .flatMap(_.getRows.toSeq)
   }
 
@@ -166,18 +170,18 @@ trait TestUtils extends Assertions with SQLHelper {
     readSchema: StructType = null,
     filter: Predicate = null,
     expectedRemainingFilter: Predicate = null,
-    tableClient: TableClient = defaultTableClient): Seq[Row] = {
+    engine: Engine = defaultEngine): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
 
-    var scanBuilder = snapshot.getScanBuilder(tableClient)
+    var scanBuilder = snapshot.getScanBuilder(engine)
 
     if (readSchema != null) {
-      scanBuilder = scanBuilder.withReadSchema(tableClient, readSchema)
+      scanBuilder = scanBuilder.withReadSchema(engine, readSchema)
     }
 
     if (filter != null) {
-      scanBuilder = scanBuilder.withFilter(tableClient, filter)
+      scanBuilder = scanBuilder.withFilter(engine, filter)
     }
 
     val scan = scanBuilder.build()
@@ -188,21 +192,21 @@ trait TestUtils extends Assertions with SQLHelper {
         actRemainingPredicate.toString === Optional.ofNullable(expectedRemainingFilter).toString)
     }
 
-    val scanState = scan.getScanState(tableClient);
-    val fileIter = scan.getScanFiles(tableClient)
+    val scanState = scan.getScanState(engine);
+    val fileIter = scan.getScanFiles(engine)
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState)
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
     fileIter.forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows().forEach { scanFileRow =>
         val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
-        val physicalDataIter = tableClient.getParquetHandler().readParquetFiles(
+        val physicalDataIter = engine.getParquetHandler().readParquetFiles(
           singletonCloseableIterator(fileStatus),
           physicalDataReadSchema,
           Optional.empty())
         var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
         try {
           dataBatches = Scan.transformPhysicalData(
-            tableClient,
+            engine,
             scanState,
             scanFileRow,
             physicalDataIter)
@@ -228,6 +232,38 @@ trait TestUtils extends Assertions with SQLHelper {
           }
         } finally {
           dataBatches.close()
+        }
+      }
+    }
+    result
+  }
+
+  def readTableUsingKernel(
+    engine: Engine,
+    tablePath: String,
+    readSchema: StructType): Seq[FilteredColumnarBatch] = {
+    val scan = Table.forPath(engine, tablePath)
+      .getLatestSnapshot(engine)
+      .getScanBuilder(engine)
+      .withReadSchema(engine, readSchema)
+      .build()
+    val scanState = scan.getScanState(engine)
+
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    var result: Seq[FilteredColumnarBatch] = Nil
+    scan.getScanFiles(engine).forEach { fileColumnarBatch =>
+      fileColumnarBatch.getRows.forEach { scanFile =>
+        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFile)
+        val physicalDataIter = engine.getParquetHandler.readParquetFiles(
+          singletonCloseableIterator(fileStatus),
+          physicalDataReadSchema,
+          Optional.empty())
+        var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
+        try {
+          dataBatches = Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter)
+          dataBatches.forEach { dataBatch => result = result :+ dataBatch }
+        } finally {
+          Utils.closeCloseables(dataBatches)
         }
       }
     }
@@ -282,7 +318,7 @@ trait TestUtils extends Assertions with SQLHelper {
    * @param path fully qualified path of the table to check
    * @param expectedAnswer expected rows
    * @param readCols subset of columns to read; if null then all columns will be read
-   * @param tableClient table client to use to read the table
+   * @param engine engine to use to read the table
    * @param expectedSchema expected schema to check for; if null then no check is performed
    * @param filter Filter to select a subset of rows form the table
    * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
@@ -293,7 +329,7 @@ trait TestUtils extends Assertions with SQLHelper {
     path: String,
     expectedAnswer: Seq[TestRow],
     readCols: Seq[String] = null,
-    tableClient: TableClient = defaultTableClient,
+    engine: Engine = defaultEngine,
     expectedSchema: StructType = null,
     filter: Predicate = null,
     version: Option[Long] = None,
@@ -304,40 +340,40 @@ trait TestUtils extends Assertions with SQLHelper {
     assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
     val snapshot = if (version.isDefined) {
-      Table.forPath(tableClient, path)
-        .getSnapshotAsOfVersion(tableClient, version.get)
+      Table.forPath(engine, path)
+        .getSnapshotAsOfVersion(engine, version.get)
     } else if (timestamp.isDefined) {
-      Table.forPath(tableClient, path)
-        .getSnapshotAsOfTimestamp(tableClient, timestamp.get)
+      Table.forPath(engine, path)
+        .getSnapshotAsOfTimestamp(engine, timestamp.get)
     } else {
-      latestSnapshot(path, tableClient)
+      latestSnapshot(path, engine)
     }
 
     val readSchema = if (readCols == null) {
       null
     } else {
-      val schema = snapshot.getSchema(tableClient)
+      val schema = snapshot.getSchema(engine)
       new StructType(readCols.map(schema.get(_)).asJava)
     }
 
     if (expectedSchema != null) {
       assert(
-        expectedSchema == snapshot.getSchema(tableClient),
+        expectedSchema == snapshot.getSchema(engine),
         s"""
            |Expected schema does not match actual schema:
            |Expected schema: $expectedSchema
-           |Actual schema: ${snapshot.getSchema(tableClient)}
+           |Actual schema: ${snapshot.getSchema(engine)}
            |""".stripMargin
       )
     }
 
     expectedVersion.foreach { version =>
-      assert(version == snapshot.getVersion(defaultTableClient),
+      assert(version == snapshot.getVersion(defaultEngine),
         s"Expected version $version does not match actual version" +
-          s" ${snapshot.getVersion(defaultTableClient)}")
+          s" ${snapshot.getVersion(defaultEngine)}")
     }
 
-    val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, tableClient)
+    val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, engine)
     checkAnswer(result, expectedAnswer)
   }
 
@@ -445,6 +481,16 @@ trait TestUtils extends Assertions with SQLHelper {
       tableNames.foreach { name =>
         spark.sql(s"DROP TABLE IF EXISTS $name")
       }
+    }
+  }
+
+  def withSparkTimeZone(timeZone: String)(fn: () => Unit): Unit = {
+    val prevTimeZone = spark.conf.get("spark.sql.session.timeZone")
+    try {
+      spark.conf.set("spark.sql.session.timeZone", timeZone)
+      fn()
+    } finally {
+      spark.conf.set("spark.sql.session.timeZone", prevTimeZone)
     }
   }
 

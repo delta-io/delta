@@ -216,7 +216,7 @@ trait ParquetSuiteBase extends TestUtils {
       .filter(path => path.endsWith(".parquet"))
       .map(path => FileStatus.of(path, 0L, 0L))
 
-    val data = defaultTableClient.getParquetHandler.readParquetFiles(
+    val data = defaultEngine.getParquetHandler.readParquetFiles(
       toCloseableIterator(parquetFiles.asJava),
       readSchema,
       predicate)

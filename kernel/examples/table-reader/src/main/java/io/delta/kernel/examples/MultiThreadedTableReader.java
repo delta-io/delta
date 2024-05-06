@@ -26,11 +26,12 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 
 import io.delta.kernel.*;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.examples.utils.RowSerDe;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -78,15 +79,15 @@ public class MultiThreadedTableReader
 
     public int show(int limit, Optional<List<String>> columnsOpt, Optional<Predicate> predicate)
         throws TableNotFoundException {
-        Table table = Table.forPath(tableClient, tablePath);
-        Snapshot snapshot = table.getLatestSnapshot(tableClient);
-        StructType readSchema = pruneSchema(snapshot.getSchema(tableClient), columnsOpt);
+        Table table = Table.forPath(engine, tablePath);
+        Snapshot snapshot = table.getLatestSnapshot(engine);
+        StructType readSchema = pruneSchema(snapshot.getSchema(engine), columnsOpt);
 
-        ScanBuilder scanBuilder = snapshot.getScanBuilder(tableClient)
-            .withReadSchema(tableClient, readSchema);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder(engine)
+            .withReadSchema(engine, readSchema);
 
         if (predicate.isPresent()) {
-            scanBuilder = scanBuilder.withFilter(tableClient, predicate.get());
+            scanBuilder = scanBuilder.withFilter(engine, predicate.get());
         }
 
         return new Reader(limit)
@@ -140,15 +141,15 @@ public class MultiThreadedTableReader
         /**
          * Get the deserialized scan state as {@link Row} object
          */
-        Row getScanRow(TableClient tableClient) {
-            return RowSerDe.deserializeRowFromJson(tableClient, stateJson);
+        Row getScanRow(Engine engine) {
+            return RowSerDe.deserializeRowFromJson(engine, stateJson);
         }
 
         /**
          * Get the deserialized scan file as {@link Row} object
          */
-        Row getScanFileRow(TableClient tableClient) {
-            return RowSerDe.deserializeRowFromJson(tableClient, fileJson);
+        Row getScanFileRow(Engine engine) {
+            return RowSerDe.deserializeRowFromJson(engine, fileJson);
         }
     }
 
@@ -199,9 +200,9 @@ public class MultiThreadedTableReader
 
         private Runnable workGenerator(Scan scan) {
             return (() -> {
-                Row scanStateRow = scan.getScanState(tableClient);
+                Row scanStateRow = scan.getScanState(engine);
                 try(CloseableIterator<FilteredColumnarBatch> scanFileIter =
-                    scan.getScanFiles(tableClient)) {
+                    scan.getScanFiles(engine)) {
 
                     while (scanFileIter.hasNext() && !stopSignal.get()) {
                         try (CloseableIterator<Row> scanFileRows = scanFileIter.next().getRows()) {
@@ -231,15 +232,15 @@ public class MultiThreadedTableReader
                     if (work == ScanFile.POISON_PILL) {
                         return; // exit as there are no more work units
                     }
-                    Row scanState = work.getScanRow(tableClient);
-                    Row scanFile = work.getScanFileRow(tableClient);
+                    Row scanState = work.getScanRow(engine);
+                    Row scanFile = work.getScanFileRow(engine);
                     FileStatus fileStatus =
                         InternalScanFileUtils.getAddFileStatus(scanFile);
                     StructType physicalReadSchema =
-                        ScanStateRow.getPhysicalDataReadSchema(tableClient, scanState);
+                        ScanStateRow.getPhysicalDataReadSchema(engine, scanState);
 
                     CloseableIterator<ColumnarBatch> physicalDataIter =
-                        tableClient.getParquetHandler().readParquetFiles(
+                        engine.getParquetHandler().readParquetFiles(
                             singletonCloseableIterator(fileStatus),
                             physicalReadSchema,
                             Optional.empty());
@@ -247,7 +248,7 @@ public class MultiThreadedTableReader
                     try (
                         CloseableIterator<FilteredColumnarBatch> dataIter =
                             Scan.transformPhysicalData(
-                                tableClient,
+                                engine,
                                 scanState,
                                 scanFile,
                                 physicalDataIter)) {

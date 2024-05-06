@@ -202,7 +202,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       }.getOrElse((Seq.empty, Seq.empty))
 
       val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromTableClient(listFromProvider(deltas ++ checkpointFiles)("/"),
+        createMockFSListFromEngine(listFromProvider(deltas ++ checkpointFiles)("/"),
           new MockSidecarParquetHandler(expectedSidecars),
           new MockSidecarJsonHandler(expectedSidecars)),
         Optional.empty(),
@@ -300,7 +300,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedErrorMessageContains: String = "")(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
       snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromTableClient(files),
+        createMockFSListFromEngine(files),
         startCheckpoint,
         versionToLoad
       )
@@ -424,7 +424,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("getLogSegmentForVersion: empty delta log") {
     // listDeltaAndCheckpointFiles = Optional.empty()
     val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-      createMockFSListFromTableClient(Seq.empty),
+      createMockFSListFromEngine(Seq.empty),
       Optional.empty(),
       Optional.empty()
     )
@@ -453,13 +453,13 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       files = deltaFileStatuses(Seq(0L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
-        "Trying to load a non-existent version 15. The latest version available is 0"
+        "Cannot load table version 15 as it does not exist. The latest available version is 0"
     )
     testExpectedError[RuntimeException](
       files = deltaFileStatuses((10L until 13L)) ++ singularCheckpointFileStatuses(Seq(10L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
-        "Trying to load a non-existent version 15. The latest version available is 12"
+        "Cannot load table version 15 as it does not exist. The latest available version is 12"
     )
   }
 
@@ -475,7 +475,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
     for (checkpointV <- Seq(10, 20)) {
       val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromTableClient(listFrom(checkpointV)(_)),
+        createMockFSListFromEngine(listFrom(checkpointV)(_)),
         Optional.of(checkpointV),
         Optional.empty()
       )
@@ -512,13 +512,13 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     testExpectedError[RuntimeException](
       files,
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Unable to reconstruct state at version 15"
+      expectedErrorMessageContains = "Cannot load table version 15"
     )
     testExpectedError[RuntimeException](
       files,
       startCheckpoint = Optional.of(20),
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Unable to reconstruct state at version 15"
+      expectedErrorMessageContains = "Cannot load table version 15"
     )
   }
 
@@ -687,7 +687,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedErrorMessageContains = "Could not find any delta files for version 10"
     )
     val logSegment = snapshotManager.getLogSegmentForVersion(
-      createMockFSListFromTableClient(fileList),
+      createMockFSListFromEngine(fileList),
       Optional.empty(),
       Optional.empty()
     )
@@ -833,7 +833,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val checkpoints = singularCheckpointFileStatuses(validVersions)
       val deltas = deltaFileStatuses(deltaVersions)
       val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromTableClient(deltas ++ corruptedCheckpoint ++ checkpoints),
+        createMockFSListFromEngine(deltas ++ corruptedCheckpoint ++ checkpoints),
         Optional.empty(),
         Optional.empty()
       )
@@ -854,7 +854,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("getLogSegmentForVersion: corrupt _last_checkpoint with empty delta log") {
     // listDeltaAndCheckpointFiles = Optional.empty()
     val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-      createMockFSListFromTableClient(Seq.empty),
+      createMockFSListFromEngine(Seq.empty),
       Optional.of(1),
       Optional.empty()
     )

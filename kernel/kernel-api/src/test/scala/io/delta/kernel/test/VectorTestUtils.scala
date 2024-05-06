@@ -89,4 +89,16 @@ trait VectorTestUtils {
 
     override def getLong(rowId: Int): Long = values(rowId)
   }
+
+  def selectSingleElement(size: Int, selectRowId: Int): ColumnVector = new ColumnVector {
+    override def getDataType: DataType = BooleanType.BOOLEAN
+
+    override def getSize: Int = size
+
+    override def close(): Unit = {}
+
+    override def isNullAt(rowId: Int): Boolean = false
+
+    override def getBoolean(rowId: Int): Boolean = rowId == selectRowId
+  }
 }
