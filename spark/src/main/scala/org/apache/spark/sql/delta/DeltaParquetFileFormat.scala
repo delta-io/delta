@@ -35,6 +35,7 @@ import org.apache.parquet.hadoop.util.ContextUtil
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField
+import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseColumnPath
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -115,9 +116,7 @@ case class DeltaParquetFileFormat(
     if (!optimizationsEnabled) {
       Seq.empty
     } else if (columnMappingMode != NoMapping) {
-      import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
       val physicalNameMap = DeltaColumnMapping.getLogicalNameToPhysicalNameMap(referenceSchema)
-        .map { case (logicalName, physicalName) => (logicalName.quoted, physicalName.quoted) }
       filters.flatMap(translateFilterForColumnMapping(_, physicalNameMap))
     } else {
       filters
@@ -453,70 +452,6 @@ case class DeltaParquetFileFormat(
       }
     }
   }
-
-  /**
-   * Translates the filter to use physical column names instead of logical column names.
-   * This is needed when the column mapping mode is set to `NameMapping` or `IdMapping`
-   * to match the requested schema that's passed to the [[ParquetFileFormat]].
-   */
-  private def translateFilterForColumnMapping(
-      filter: Filter,
-      physicalNameMap: Map[String, String]): Option[Filter] = {
-    object PhysicalAttribute {
-      def unapply(attribute: String): Option[String] = {
-        physicalNameMap.get(attribute)
-      }
-    }
-
-    filter match {
-      case EqualTo(PhysicalAttribute(physicalAttribute), value) =>
-        Some(EqualTo(physicalAttribute, value))
-      case EqualNullSafe(PhysicalAttribute(physicalAttribute), value) =>
-        Some(EqualNullSafe(physicalAttribute, value))
-      case GreaterThan(PhysicalAttribute(physicalAttribute), value) =>
-        Some(GreaterThan(physicalAttribute, value))
-      case GreaterThanOrEqual(PhysicalAttribute(physicalAttribute), value) =>
-        Some(GreaterThanOrEqual(physicalAttribute, value))
-      case LessThan(PhysicalAttribute(physicalAttribute), value) =>
-        Some(LessThan(physicalAttribute, value))
-      case LessThanOrEqual(PhysicalAttribute(physicalAttribute), value) =>
-        Some(LessThanOrEqual(physicalAttribute, value))
-      case In(PhysicalAttribute(physicalAttribute), values) =>
-        Some(In(physicalAttribute, values))
-      case IsNull(PhysicalAttribute(physicalAttribute)) =>
-        Some(IsNull(physicalAttribute))
-      case IsNotNull(PhysicalAttribute(physicalAttribute)) =>
-        Some(IsNotNull(physicalAttribute))
-      case And(left, right) =>
-        val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
-        val newRight = translateFilterForColumnMapping(right, physicalNameMap)
-        (newLeft, newRight) match {
-          case (Some(l), Some(r)) => Some(And(l, r))
-          case (Some(l), None) => Some(l)
-          case (_, _) => newRight
-        }
-      case Or(left, right) =>
-        val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
-        val newRight = translateFilterForColumnMapping(right, physicalNameMap)
-        (newLeft, newRight) match {
-          case (Some(l), Some(r)) => Some(Or(l, r))
-          case (_, _) => None
-        }
-      case Not(child) =>
-        translateFilterForColumnMapping(child, physicalNameMap).map(Not)
-      case StringStartsWith(PhysicalAttribute(physicalAttribute), value) =>
-        Some(StringStartsWith(physicalAttribute, value))
-      case StringEndsWith(PhysicalAttribute(physicalAttribute), value) =>
-        Some(StringEndsWith(physicalAttribute, value))
-      case StringContains(PhysicalAttribute(physicalAttribute), value) =>
-        Some(StringContains(physicalAttribute, value))
-      case AlwaysTrue() => Some(AlwaysTrue())
-      case AlwaysFalse() => Some(AlwaysFalse())
-      case _ =>
-        logError(s"Failed to translate filter $filter")
-        None
-    }
-  }
 }
 
 object DeltaParquetFileFormat {
@@ -605,4 +540,67 @@ object DeltaParquetFileFormat {
 
   /** Helper class to encapsulate column info */
   case class ColumnMetadata(index: Int, structField: StructField)
+
+  /**
+   * Translates the filter to use physical column names instead of logical column names.
+   * This is needed when the column mapping mode is set to `NameMapping` or `IdMapping`
+   * to match the requested schema that's passed to the [[ParquetFileFormat]].
+   */
+  private def translateFilterForColumnMapping(
+       filter: Filter,
+       physicalNameMap: Map[Seq[String], Seq[String]]): Option[Filter] = {
+    object PhysicalAttribute {
+      def unapply(attribute: String): Option[String] = {
+        import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
+        physicalNameMap.get(parseColumnPath(attribute)).map(_.quoted)
+      }
+    }
+
+    filter match {
+      case EqualTo(PhysicalAttribute(physicalAttribute), value) =>
+        Some(EqualTo(physicalAttribute, value))
+      case EqualNullSafe(PhysicalAttribute(physicalAttribute), value) =>
+        Some(EqualNullSafe(physicalAttribute, value))
+      case GreaterThan(PhysicalAttribute(physicalAttribute), value) =>
+        Some(GreaterThan(physicalAttribute, value))
+      case GreaterThanOrEqual(PhysicalAttribute(physicalAttribute), value) =>
+        Some(GreaterThanOrEqual(physicalAttribute, value))
+      case LessThan(PhysicalAttribute(physicalAttribute), value) =>
+        Some(LessThan(physicalAttribute, value))
+      case LessThanOrEqual(PhysicalAttribute(physicalAttribute), value) =>
+        Some(LessThanOrEqual(physicalAttribute, value))
+      case In(PhysicalAttribute(physicalAttribute), values) =>
+        Some(In(physicalAttribute, values))
+      case IsNull(PhysicalAttribute(physicalAttribute)) =>
+        Some(IsNull(physicalAttribute))
+      case IsNotNull(PhysicalAttribute(physicalAttribute)) =>
+        Some(IsNotNull(physicalAttribute))
+      case And(left, right) =>
+        val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
+        val newRight = translateFilterForColumnMapping(right, physicalNameMap)
+        (newLeft, newRight) match {
+          case (Some(l), Some(r)) => Some(And(l, r))
+          case (Some(l), None) => Some(l)
+          case (_, _) => newRight
+        }
+      case Or(left, right) =>
+        val newLeft = translateFilterForColumnMapping(left, physicalNameMap)
+        val newRight = translateFilterForColumnMapping(right, physicalNameMap)
+        (newLeft, newRight) match {
+          case (Some(l), Some(r)) => Some(Or(l, r))
+          case (_, _) => None
+        }
+      case Not(child) =>
+        translateFilterForColumnMapping(child, physicalNameMap).map(Not)
+      case StringStartsWith(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringStartsWith(physicalAttribute, value))
+      case StringEndsWith(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringEndsWith(physicalAttribute, value))
+      case StringContains(PhysicalAttribute(physicalAttribute), value) =>
+        Some(StringContains(physicalAttribute, value))
+      case AlwaysTrue() => Some(AlwaysTrue())
+      case AlwaysFalse() => Some(AlwaysFalse())
+      case _ => None
+    }
+  }
 }
