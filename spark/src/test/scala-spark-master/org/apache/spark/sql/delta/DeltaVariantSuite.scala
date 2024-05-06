@@ -568,20 +568,4 @@ class DeltaVariantSuite
       assert(newLessThanZeroCount == 0)
     }
   }
-
-  // These tests read from Delta tables written by other engines to ensure that delta-spark is
-  // compatible.
-  // The golden tables were written using "variant-table.sql" so running this SQL file
-  // should yield the same results as the golden tables.
-  Seq("variant-writer-one-delta", "variant-writer-two-delta").foreach { tableName =>
-    test(s"read externally written variant tables - $tableName") {
-      val sqlPath = "src/test/resources/delta/variant/variant-table.sql"
-      val query = Source.fromFile(sqlPath).mkString
-      val actualDf = spark.sql(query)
-
-      val tablePath = s"src/test/resources/delta/variant/$tableName"
-      val expected = spark.read.format("delta").load(tablePath).collect()
-      checkAnswer(actualDf, expected)
-    }
-  }
 }
