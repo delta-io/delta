@@ -20,6 +20,9 @@ import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -32,17 +35,29 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.ConflictChecker;
+import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL;
 import static io.delta.kernel.internal.actions.SingleAction.*;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 public class TransactionImpl
         implements Transaction {
+    private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
+
     public static final int DEFAULT_READ_VERSION = 1;
     public static final int DEFAULT_WRITE_VERSION = 2;
+
+    /**
+     * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
+     * Delta-Spark, for historical reasons the number of retries is really high (10m). We are
+     * starting with a lower number for now. If this is not sufficient we can update it.
+     */
+    private static final int NUM_TXN_RETRIES = 200;
 
     private final UUID txnId = UUID.randomUUID();
 
@@ -95,13 +110,45 @@ public class TransactionImpl
     }
 
     @Override
-    public TransactionCommitResult commit(
-            Engine engine,
-            CloseableIterable<Row> dataActions)
+    public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
             throws ConcurrentWriteException {
-        checkState(
-                !closed,
-                "Transaction is already attempted to commit. Create a new transaction.");
+        try {
+            checkState(!closed,
+                    "Transaction is already attempted to commit. Create a new transaction.");
+
+            long commitAsVersion = readSnapshot.getVersion(engine) + 1;
+            int numRetries = 0;
+            do {
+                logger.info("Committing transaction as version = {}.", commitAsVersion);
+                try {
+                    return doCommit(engine, commitAsVersion, dataActions);
+                } catch (FileAlreadyExistsException fnfe) {
+                    logger.info("Concurrent write detected when committing as version = {}. " +
+                            "Trying to resolve conflicts and retry commit.", commitAsVersion);
+                    TransactionRebaseState rebaseState = ConflictChecker
+                            .resolveConflicts(engine, readSnapshot, commitAsVersion, this);
+                    long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
+                    checkArgument(commitAsVersion < newCommitAsVersion,
+                            "New commit version %d should be greater than the previous commit " +
+                                    "attempt version %d.", newCommitAsVersion, commitAsVersion);
+                    commitAsVersion = newCommitAsVersion;
+                }
+                numRetries++;
+            } while (numRetries < NUM_TXN_RETRIES);
+        } finally {
+            closed = true;
+        }
+
+        // we have exhausted the number of retries, give up.
+        logger.info("Exhausted maximum retries ({}) for committing transaction.", NUM_TXN_RETRIES);
+        throw new ConcurrentWriteException();
+    }
+
+    private TransactionCommitResult doCommit(
+            Engine engine,
+            long commitAsVersion,
+            CloseableIterable<Row> dataActions)
+            throws FileAlreadyExistsException {
         List<Row> metadataActions = new ArrayList<>();
         metadataActions.add(createCommitInfoSingleAction(generateCommitAction()));
         if (isNewTable) {
@@ -117,33 +164,38 @@ public class TransactionImpl
             CloseableIterator<Row> dataAndMetadataActions =
                     toCloseableIterator(metadataActions.iterator()).combine(stageDataIter);
 
-            try {
-                long readVersion = readSnapshot.getVersion(engine);
-                if (readVersion == -1) {
-                    // New table, create a delta log directory
-                    if (!engine.getFileSystemClient().mkdirs(logPath.toString())) {
-                        throw new RuntimeException(
-                                "Failed to create delta log directory: " + logPath);
-                    }
+            if (commitAsVersion == 0) {
+                // New table, create a delta log directory
+                if (!engine.getFileSystemClient().mkdirs(logPath.toString())) {
+                    throw new RuntimeException(
+                            "Failed to create delta log directory: " + logPath);
                 }
-
-                long newVersion = readVersion + 1;
-                // Write the staged data to a delta file
-                engine.getJsonHandler().writeJsonFileAtomically(
-                        FileNames.deltaFile(logPath, newVersion),
-                        dataAndMetadataActions,
-                        false /* overwrite */);
-
-                return new TransactionCommitResult(newVersion, isReadyForCheckpoint(newVersion));
-            } catch (FileAlreadyExistsException e) {
-                // TODO: Resolve conflicts and retry commit
-                throw new ConcurrentWriteException();
             }
+
+            // Write the staged data to a delta file
+            engine.getJsonHandler().writeJsonFileAtomically(
+                    FileNames.deltaFile(logPath, commitAsVersion),
+                    dataAndMetadataActions,
+                    false /* overwrite */);
+
+            return new TransactionCommitResult(
+                    commitAsVersion,
+                    isReadyForCheckpoint(commitAsVersion));
+        } catch (FileAlreadyExistsException e) {
+            throw e;
         } catch (IOException ioe) {
             throw new RuntimeException(ioe);
-        } finally {
-            closed = true;
         }
+    }
+
+    public boolean isBlindAppend() {
+        // For now, Kernel just supports blind append.
+        // Change this when read-after-write is supported.
+        return true;
+    }
+
+    public Optional<SetTransaction> getSetTxnOpt() {
+        return setTxnOpt;
     }
 
     private Row generateCommitAction() {
@@ -162,12 +214,6 @@ public class TransactionImpl
         return newVersion > 0 && newVersion % checkpointInterval == 0;
     }
 
-    private boolean isBlindAppend() {
-        // For now, Kernel just supports blind append.
-        // Change this when read-after-write is supported.
-        return true;
-    }
-
     private Map<String, String> getOperationParameters() {
         if (isNewTable) {
             List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
@@ -182,7 +228,7 @@ public class TransactionImpl
     /**
      * Get the part of the schema of the table that needs the statistics to be collected per file.
      *
-     * @param engine      {@link Engine} instance to use.
+     * @param engine           {@link Engine} instance to use.
      * @param transactionState State of the transaction
      * @return
      */
