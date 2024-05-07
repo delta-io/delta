@@ -589,7 +589,7 @@ This section provides guidance on how to migrate your connector to the latest ve
 ### Migration from Delta Lake version 3.1.0 to 3.2.0
 Following are API changes in Delta Kernel 3.2.0 that may require changes in your connector.
 
-#### Rename `TableClient` to `Engine`
+#### Rename `TableClient` to [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html)
 The `TableClient` interface has been renamed to `Engine`. This is the most significant API change in this release. The `TableClient` interface name is not exactly representing the functionality it provides. At a high level it provides capabilities such as reading Parquet files, JSON files, evaluating expressions on data and file system functionality. These are basically the heavy lift operations that Kernel depends on as a separate interface to allow the connectors to substitute their own custom implementation of the same functionality (e.g. custom Parquet reader). Essentially, these functionalities are the core of the `engine` functionalities. By renaming to `Engine`, we are representing the interface functionality with a proper name that is easy to understand.
 
 The `DefaultTableClient` has been renamed to [`DefaultEngine`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/engine/DefaultEngine.html).
