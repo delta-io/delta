@@ -69,7 +69,7 @@ class ManagedCommitSuite
     val commitOwnerName = "nobackfilling-commit-owner"
     object NoBackfillingCommitOwnerBuilder$ extends CommitOwnerBuilder {
 
-      override def name: String = commitOwnerName
+      override def getName: String = commitOwnerName
 
       override def build(conf: Map[String, String]): CommitOwnerClient =
         new InMemoryCommitOwner(batchSize = 5) {
@@ -218,13 +218,15 @@ class ManagedCommitSuite
     val cs2 = new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize))
 
     case class TrackingInMemoryCommitOwnerBuilder(
-        override val name: String,
-        commitOwberClient: CommitOwnerClient) extends CommitOwnerBuilder {
+        name: String,
+        commitOwnerClient: CommitOwnerClient) extends CommitOwnerBuilder {
       var numBuildCalled = 0
       override def build(conf: Map[String, String]): CommitOwnerClient = {
         numBuildCalled += 1
-        commitOwberClient
+        commitOwnerClient
       }
+
+      override def getName: String = name
     }
     val builder1 = TrackingInMemoryCommitOwnerBuilder(name = "tracking-in-memory-1", cs1)
     val builder2 = TrackingInMemoryCommitOwnerBuilder(name = "tracking-in-memory-2", cs2)
@@ -357,9 +359,10 @@ class ManagedCommitSuite
       }
     }
     case class TrackingInMemoryCommitOwnerClientBuilder(
-        override val name: String,
+        name: String,
         commitOwnerClient: CommitOwnerClient) extends CommitOwnerBuilder {
       override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+      override def getName: String = name
     }
     val builder1 = TrackingInMemoryCommitOwnerClientBuilder(name = "in-memory-1", cs1)
     val builder2 = TrackingInMemoryCommitOwnerClientBuilder(name = "in-memory-2", cs2)
@@ -688,7 +691,7 @@ class ManagedCommitSuite
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       val log = DeltaLog.forTable(spark, tablePath)
-      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.name)
+      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.getName)
       val newMetadata = Metadata().copy(configuration = commitOwnerConf)
       log.startTransaction().commitManually(newMetadata)
       assert(log.unsafeVolatileSnapshot.version === 0)
@@ -712,7 +715,7 @@ class ManagedCommitSuite
       CommitOwnerProvider.clearNonDefaultBuilders()
       val builder1 = TrackingInMemoryCommitOwnerBuilder(batchSize = backfillInterval)
       val builder2 = new TrackingInMemoryCommitOwnerBuilder(batchSize = backfillInterval) {
-        override def name: String = "tracking-in-memory-2"
+        override def getName: String = "tracking-in-memory-2"
       }
 
       Seq(builder1, builder2).foreach(CommitOwnerProvider.registerBuilder(_))
@@ -738,11 +741,12 @@ class ManagedCommitSuite
         // Upgrade the table
         // [upgradeExistingTable = false] Commit-0
         // [upgradeExistingTable = true] Commit-2
-        val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder1.name)
+        val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder1.getName)
         val newMetadata = Metadata().copy(configuration = commitOwnerConf)
         log.startTransaction().commitManually(newMetadata)
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName === Some(builder1.name))
+        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName ===
+          Some(builder1.getName))
         assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
         assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
         // upgrade commit always filesystem based
@@ -808,14 +812,15 @@ class ManagedCommitSuite
         // Now transfer the table to another commit-owner
         // [upgradeExistingTable = false] Commit-5
         // [upgradeExistingTable = true] Commit-7
-        val commitOwnerConf2 = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder2.name)
+        val commitOwnerConf2 = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder2.getName)
         val oldMetadata3 = log.unsafeVolatileSnapshot.metadata
         val newMetadata3 = oldMetadata3.copy(
           configuration = oldMetadata3.configuration ++ commitOwnerConf2)
         log.startTransaction().commitManually(newMetadata3, createTestAddFile("upgrade-2-file"))
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 5)
         assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName === Some(builder2.name))
+        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName ===
+          Some(builder2.getName))
         assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerConf === Map.empty)
         assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
         expectedFileNames = Set("1", "2", "post-upgrade-file", "upgrade-2-file")
@@ -840,7 +845,7 @@ class ManagedCommitSuite
     CommitOwnerProvider.clearNonDefaultBuilders()
     val builder1 = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
     val builder2 = new TrackingInMemoryCommitOwnerBuilder(batchSize = 10) {
-      override def name: String = "tracking-in-memory-2"
+      override def getName: String = "tracking-in-memory-2"
     }
     Seq(builder1, builder2).foreach(CommitOwnerProvider.registerBuilder(_))
 
@@ -854,7 +859,7 @@ class ManagedCommitSuite
       assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
 
       // Change commit-owner
-      val newCommitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder2.name)
+      val newCommitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder2.getName)
       val oldMetadata = log.unsafeVolatileSnapshot.metadata
       val newMetadata = oldMetadata.copy(
         configuration = oldMetadata.configuration ++ newCommitOwnerConf)
@@ -872,7 +877,7 @@ class ManagedCommitSuite
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       val log = DeltaLog.forTable(spark, tablePath)
-      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.name)
+      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.getName)
       val newMetadata = Metadata().copy(configuration = commitOwnerConf)
       val txn = log.startTransaction() // upgrade txn started
       log.startTransaction().commitManually(createTestAddFile("f1"))
@@ -894,7 +899,7 @@ class ManagedCommitSuite
       assert(log.unsafeVolatileSnapshot.version === 1L)
       assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
 
-      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.name)
+      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.getName)
       val oldMetadata = log.unsafeVolatileSnapshot.metadata
       val newMetadata = oldMetadata.copy(
         configuration = oldMetadata.configuration ++ commitOwnerConf)
@@ -930,7 +935,7 @@ class ManagedCommitSuite
       }
 
       assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
-      assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName === Some(builder.name))
+      assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName === Some(builder.getName))
       assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerConf === Map.empty)
       assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
 

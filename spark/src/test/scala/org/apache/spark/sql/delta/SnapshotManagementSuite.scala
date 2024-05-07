@@ -544,7 +544,7 @@ object ConcurrentBackfillCommitOwnerBuilder extends CommitOwnerBuilder {
   val batchSize = 5
   private lazy val concurrentBackfillCommitOwnerClient =
     ConcurrentBackfillCommitOwnerClient(synchronousBackfillThreshold = 2, batchSize)
-  override def name: String = "awaiting-commit-owner"
+  override def getName: String = "awaiting-commit-owner"
   override def build(conf: Map[String, String]): CommitOwnerClient = {
     concurrentBackfillCommitOwnerClient
   }
@@ -629,7 +629,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
         val endVersion = if (tryIncludeGapAtTheEnd) { batchSize } else { batchSize + 3 }
         withSQLConf(
             MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey ->
-              ConcurrentBackfillCommitOwnerBuilder.name,
+              ConcurrentBackfillCommitOwnerBuilder.getName,
             DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
           withTempDir { tempDir =>
             val path = tempDir.getCanonicalPath

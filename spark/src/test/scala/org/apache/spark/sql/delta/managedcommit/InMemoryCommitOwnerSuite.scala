@@ -71,7 +71,7 @@ class InMemoryCommitOwnerSuite extends QueryTest
     tableCommitOwnerClient.commit(
       version,
       Iterator(s"$version", s"$timestamp"),
-      updatedActions).commit
+      updatedActions).getCommit
   }
 
   private def assertBackfilled(
@@ -94,8 +94,8 @@ class InMemoryCommitOwnerSuite extends QueryTest
     val e = intercept[CommitFailedException] {
       commitFunc
     }
-    assert(e.retryable == retryable)
-    assert(e.conflict == retryable)
+    assert(e.getRetryable == retryable)
+    assert(e.getConflict == retryable)
     val expectedMessage = if (currentVersion == 0) {
       "Commit version 0 must go via filesystem."
     } else {
@@ -172,7 +172,7 @@ class InMemoryCommitOwnerSuite extends QueryTest
 
       val c1 = commit(1, 1, tcs)
       val c2 = commit(2, 2, tcs)
-      assert(tcs.getCommits().commits.takeRight(2) == Seq(c1, c2))
+      assert(tcs.getCommits().getCommits.takeRight(2) == Seq(c1, c2))
 
       // All 3 commits are backfilled since batchSize == 3
       val c3 = commit(3, 3, tcs)
@@ -306,18 +306,19 @@ class InMemoryCommitOwnerSuite extends QueryTest
             override def run(): Unit = {
               var currentWriterCommits = 0
               while (currentWriterCommits < numberOfCommitsPerWriter) {
-                val nextVersion = tcs.getCommits().latestTableVersion + 1
+                val nextVersion = tcs.getCommits().getLatestTableVersion + 1
                 try {
                   val currentTimestamp = runningTimestamp.getAndIncrement()
                   val commitResponse = commit(nextVersion, currentTimestamp, tcs)
                   currentWriterCommits += 1
-                  assert(commitResponse.commitTimestamp == currentTimestamp)
-                  assert(commitResponse.version == nextVersion)
-                  commitTimestamp(commitResponse.version.toInt) = commitResponse.commitTimestamp
+                  assert(commitResponse.getCommitTimestamp == currentTimestamp)
+                  assert(commitResponse.getVersion == nextVersion)
+                  commitTimestamp(commitResponse.getVersion.toInt) =
+                    commitResponse.getCommitTimestamp
                 } catch {
                   case e: CommitFailedException =>
-                    assert(e.conflict)
-                    assert(e.retryable)
+                    assert(e.getConflict)
+                    assert(e.getRetryable)
                     commitFailedExceptions.getAndIncrement()
                 } finally {
                   assertInvariants(

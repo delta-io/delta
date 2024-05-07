@@ -86,7 +86,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       logStore, hadoopConf, logPath, commitVersion, actions, generateUUID())
 
     // Do the actual commit
-    val commitTimestamp = updatedActions.commitInfo.asInstanceOf[CommitInfo].getTimestamp
+    val commitTimestamp = updatedActions.getCommitInfo.asInstanceOf[CommitInfo].getTimestamp
     var commitResponse =
       commitImpl(
         logStore,
@@ -104,7 +104,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       backfill(logStore, hadoopConf, logPath, commitVersion, fileStatus)
       val targetFile = FileNames.unsafeDeltaFile(logPath, commitVersion)
       val targetFileStatus = fs.getFileStatus(targetFile)
-      val newCommit = commitResponse.commit.copy(fileStatus = targetFileStatus)
+      val newCommit = commitResponse.getCommit.copy(fileStatus = targetFileStatus)
       commitResponse = commitResponse.copy(commit = newCommit)
     } else if (commitVersion % batchSize == 0 || mcToFsConversion) {
       logInfo(s"Making sure commits are backfilled till $commitVersion version for" +
@@ -123,9 +123,9 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
   private def isManagedCommitToFSConversion(
       commitVersion: Long,
       updatedActions: UpdatedActions): Boolean = {
-    val oldMetadataHasManagedCommits = updatedActions.oldMetadata.asInstanceOf[Metadata]
+    val oldMetadataHasManagedCommits = updatedActions.getOldMetadata.asInstanceOf[Metadata]
       .managedCommitOwnerName.nonEmpty
-    val newMetadataHasManagedCommits = updatedActions.newMetadata.asInstanceOf[Metadata]
+    val newMetadataHasManagedCommits = updatedActions.getNewMetadata.asInstanceOf[Metadata]
       .managedCommitOwnerName.nonEmpty
     oldMetadataHasManagedCommits && !newMetadataHasManagedCommits && commitVersion > 0
   }
@@ -146,9 +146,9 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
     }
     val startVersionOpt = validLastKnownBackfilledVersionOpt.map(_ + 1)
     getCommits(logPath, managedCommitTableConf, startVersionOpt, Some(version))
-      .commits
+      .getCommits
       .foreach { commit =>
-        backfill(logStore, hadoopConf, logPath, commit.version, commit.fileStatus)
+        backfill(logStore, hadoopConf, logPath, commit.getVersion, commit.getFileStatus)
     }
   }
 

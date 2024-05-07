@@ -203,7 +203,7 @@ case class InMemoryCommitOwnerBuilder(batchSize: Long) extends CommitOwnerBuilde
   private lazy val inMemoryStore = new InMemoryCommitOwner(batchSize)
 
   /** Name of the commit-owner */
-  def name: String = "in-memory"
+  def getName: String = "in-memory"
 
   /** Returns a commit-owner based on the given conf */
   def build(conf: Map[String, String]): CommitOwnerClient = {

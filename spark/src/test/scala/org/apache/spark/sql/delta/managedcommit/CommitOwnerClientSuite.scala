@@ -73,15 +73,15 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
   test("registering multiple commit-owner builders with same name") {
     object Builder1 extends CommitOwnerBuilder {
       override def build(conf: Map[String, String]): CommitOwnerClient = null
-      override def name: String = "builder-1"
+      override def getName: String = "builder-1"
     }
     object BuilderWithSameName extends CommitOwnerBuilder {
       override def build(conf: Map[String, String]): CommitOwnerClient = null
-      override def name: String = "builder-1"
+      override def getName: String = "builder-1"
     }
     object Builder3 extends CommitOwnerBuilder {
       override def build(conf: Map[String, String]): CommitOwnerClient = null
-      override def name: String = "builder-3"
+      override def getName: String = "builder-3"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
     intercept[Exception] {
@@ -101,7 +101,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
           case _ => throw new IllegalArgumentException("Invalid url")
         }
       }
-      override def name: String = "cs-x"
+      override def getName: String = "cs-x"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
     val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url1"))
@@ -124,7 +124,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
           case _ => throw new IllegalArgumentException("Invalid url")
         }
       }
-      override def name: String = "cs-name"
+      override def getName: String = "cs-name"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
     val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("url" -> "url1"))
@@ -205,7 +205,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
       override def build(conf: Map[String, String]): CommitOwnerClient = {
         new TestCommitOwnerClient(conf("key"))
       }
-      override def name: String = "cs-name"
+      override def getName: String = "cs-name"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
 

@@ -204,16 +204,16 @@ trait SnapshotManagement { self: DeltaLog =>
         // perform an additional listing from the file system because those missing files would be
         // backfilled by now and show up in the file-system.
         // Note: We only care about missing delta files with version <= versionToLoad
-        val areDeltaFilesMissing = unbackfilledCommitsResponse.commits.headOption match {
+        val areDeltaFilesMissing = unbackfilledCommitsResponse.getCommits.headOption match {
           case Some(commit) =>
             // Missing Delta files: [maxDeltaVersionSeen + 1, commit.head.version - 1]
-            maxDeltaVersionSeen + 1 < commit.version
+            maxDeltaVersionSeen + 1 < commit.getVersion
           case None =>
             // Missing Delta files: [maxDeltaVersionSeen + 1, latestTableVersion]
             // When there are no commits, we should consider the latestTableVersion from the commit
             // store to detect if ALL trailing commits were concurrently backfilled.
-            unbackfilledCommitsResponse.latestTableVersion >= 0 &&
-              maxDeltaVersionSeen < unbackfilledCommitsResponse.latestTableVersion
+            unbackfilledCommitsResponse.getLatestTableVersion >= 0 &&
+              maxDeltaVersionSeen < unbackfilledCommitsResponse.getLatestTableVersion
         }
         versionToLoad.forall(maxDeltaVersionSeen < _) && areDeltaFilesMissing
       }
@@ -241,8 +241,9 @@ trait SnapshotManagement { self: DeltaLog =>
             additionalLogTuplesFromFsListingOpt.map(_.map(_._1.getPath.toString)),
           "maxDeltaVersionSeen" -> maxDeltaVersionSeen,
           "unbackfilledCommits" ->
-            unbackfilledCommitsResponse.commits.map(commit => commit.fileStatus.getPath.toString),
-          "latestCommitVersion" -> unbackfilledCommitsResponse.latestTableVersion)
+            unbackfilledCommitsResponse.getCommits.map(
+              commit => commit.getFileStatus.getPath.toString),
+          "latestCommitVersion" -> unbackfilledCommitsResponse.getLatestTableVersion)
         recordDeltaEvent(
           deltaLog = this,
           opType = "delta.listDeltaAndCheckpointFiles.unexpectedRequiresAdditionalFsListing",
@@ -257,10 +258,10 @@ trait SnapshotManagement { self: DeltaLog =>
           case _ => None
         }
 
-      val unbackfilledCommitsFiltered = unbackfilledCommitsResponse.commits
-        .dropWhile(_.version <= maxDeltaVersionSeen)
-        .takeWhile(commit => versionToLoad.forall(commit.version <= _))
-        .map(_.fileStatus)
+      val unbackfilledCommitsFiltered = unbackfilledCommitsResponse.getCommits
+        .dropWhile(_.getVersion <= maxDeltaVersionSeen)
+        .takeWhile(commit => versionToLoad.forall(commit.getVersion <= _))
+        .map(_.getFileStatus)
 
       // If result from fs listing is None and result from commit-owner is empty, return none.
       // This is used by caller to distinguish whether table doesn't exist.
@@ -744,7 +745,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val useFastSnapshotConstruction = !snapshotLock.hasQueuedThreads
     if (useFastSnapshotConstruction) {
       SnapshotManagement.appendCommitToLogSegment(
-        preCommitLogSegment, commit.fileStatus, committedVersion)
+        preCommitLogSegment, commit.getFileStatus, committedVersion)
     } else {
       val latestCheckpointProvider =
         Seq(preCommitLogSegment.checkpointProvider, oldCheckpointProvider).maxBy(_.version)
