@@ -582,7 +582,7 @@ For best performance, you can implement your own Parquet reader and other `Engin
 Now you should be able to read the Delta table correctly.
 
 ## Migration guide
-Kernel APIs are still evolving and new features are being added. Delta authors try to make the API changes backward compatible as much as they can with each new release, but sometimes it is hard to maintain the backward compatibility for a project that is evolving rapidly.
+Kernel APIs are still evolving and new features are being added. Kernel authors try to make the API changes backward compatible as much as they can with each new release, but sometimes it is hard to maintain the backward compatibility for a project that is evolving rapidly.
 
 This section provides guidance on how to migrate your connector to the latest version of Delta Kernel. With each new release the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) are kept up-to-date with the latest API changes. You can refer to the examples to understand how to use the new APIs.
 
