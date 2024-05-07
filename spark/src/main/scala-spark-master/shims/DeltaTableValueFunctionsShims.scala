@@ -29,7 +29,7 @@ object DeltaTableValueFunctionsShims {
    * In Spark 4.0, SPARK-46331 [https://github.com/apache/spark/pull/44261] removed CodegenFallback
    * from a subset of DateTime expressions, making the `now()` expression unevaluable.
    */
-  def evaluateOptionExpr(value: Expression): String = {
+  def evaluateTimeOption(value: Expression): String = {
     val fakePlan = AnalysisHelper.FakeLogicalPlan(Seq(value), Nil)
     val timestampExpression = ComputeCurrentTime(fakePlan).expressions.head
     timestampExpression.eval().toString
