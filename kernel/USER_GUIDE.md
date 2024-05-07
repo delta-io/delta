@@ -580,3 +580,22 @@ If the selection vector is present, then you will have to apply it to the batch 
 For best performance, you can implement your own Parquet reader and other `Engine` implementations to make sure that every `ColumnVector` generated is already in the engine-native format thus eliminating any need to convert.
 
 Now you should be able to read the Delta table correctly.
+
+## Migration guide
+Kernel APIs are still evolving and new features are being added. Delta authors try to make the API changes backward compatible as much as they can with each new release, but sometimes it is hard to maintain the backward compatibility for a project that is evolving rapidly.
+
+This section provides guidance on how to migrate your connector to the latest version of Delta Kernel. With each new release the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) are kept up-to-date with the latest API changes. You can refer to the examples to understand how to use the new APIs.
+
+### Migration from Delta Lake version 3.1.0 to 3.2.0
+Following are API changes in Delta Kernel 3.2.0 that may require changes in your connector.
+
+#### Rename `TableClient` to `Engine`
+The `TableClient` interface has been renamed to `Engine`. This is the most significant API change in this release. The `TableClient` interface name is not exactly representing the functionality it provides. At a high level it provides capabilities such as reading Parquet files, JSON files, evaluating expressions on data and file system functionality. These are basically the heavy lift operations that Kernel depends on as a separate interface to allow the connectors to substitute their own custom implementation of the same functionality (e.g. custom Parquet reader). Essentially, these functionalities are the core of the `engine` functionalities. By renaming to `Engine`, we are representing the interface functionality with a proper name that is easy to understand.
+
+The `DefaultTableClient` has been renamed to [`DefaultEngine`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/engine/DefaultEngine.html).
+
+#### [`Table.forPath(Engine engine, String tablePath)`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Table.html#forPath-io.delta.kernel.engine.Engine-java.lang.String-) behavior change
+Earlier when a non-existent table path is passed, the API used to throw `TableNotFoundException`. Now it doesn't throw the exception. Instead, it returns a `Table` object. When trying to get a `Snapshot` from the table object it throws the `TableNotFoundException`.
+
+#### [`FileSystemClient.resolvePath`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/engine/DefaultFileSystemClient.html#resolvePath-java.lang.String-) behavior change
+Earlier when a non-existent path is passed, the API used to throw `FileNotFoundException`. Now it doesn't throw the exception. It still resolves the given path into a fully qualified path.
