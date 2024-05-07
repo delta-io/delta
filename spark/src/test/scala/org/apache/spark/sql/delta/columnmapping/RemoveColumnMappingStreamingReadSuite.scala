@@ -39,7 +39,8 @@ import org.apache.spark.sql.streaming.StreamTest
  * Additionally, we test each scenario with schema tracking enabled which in general results in
  * a failure as schema tracking prohibits reading across an Upgrade.
  */
-class RemoveColumnMappingStreamingReadSuite extends RemoveColumnMappingSuiteUtils
+class RemoveColumnMappingStreamingReadSuite
+  extends RemoveColumnMappingSuiteUtils
   with StreamTest
   with ColumnMappingStreamingTestUtils {
 
