@@ -16,7 +16,9 @@
 package io.delta.kernel.internal;
 
 import java.sql.Timestamp;
+import java.util.concurrent.Callable;
 
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.exceptions.KernelException;
 
 /**
@@ -134,5 +136,14 @@ public final class DeltaErrors {
 
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
+    }
+
+    // TODO add string formatting with args to avoid string formatting unless needed
+    public static <T> T wrapWithEngineException(Callable<T> s, String operation) {
+        try {
+            return s.call();
+        } catch (Exception e) {
+            throw new KernelEngineException(operation, e);
+        }
     }
 }
