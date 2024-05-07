@@ -577,7 +577,7 @@ trait DataSkippingReaderBase
 
     private def areAllLeavesLiteral(e: Expression): Boolean = e match {
       case _: Literal => true
-      case _ => if (e.children.nonEmpty) e.children.forall(areAllLeavesLiteral) else false
+      case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
       case _ => false
     }
 
