@@ -28,8 +28,7 @@ import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata,
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
-import org.apache.spark.sql.delta.util.DeltaFileOperations
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -417,7 +416,7 @@ trait Checkpoints extends DeltaLogging {
    * Note that the returned checkpoint will always be < `version`.
    * @param version The checkpoint version to compare against
    */
-  protected def findLastCompleteCheckpointBefore(version: Long): Option[CheckpointInstance] = {
+  private[delta] def findLastCompleteCheckpointBefore(version: Long): Option[CheckpointInstance] = {
     val upperBound = CheckpointInstance(version, CheckpointInstance.Format.SINGLE, numParts = None)
     findLastCompleteCheckpointBefore(Some(upperBound))
   }
@@ -428,36 +427,74 @@ trait Checkpoints extends DeltaLogging {
    * deltalog directory.
    * @param checkpointInstance The checkpoint instance to compare against
    */
-  protected def findLastCompleteCheckpointBefore(
+  private[delta] def findLastCompleteCheckpointBefore(
       checkpointInstance: Option[CheckpointInstance] = None): Option[CheckpointInstance] = {
-    val (upperBoundCv, startVersion) = checkpointInstance
-      .collect { case cv if cv.version >= 0 => (cv, cv.version) }
-      .getOrElse((CheckpointInstance.sentinelValue(versionOpt = None), 0L))
-    var cur = startVersion
-    val hadoopConf = newDeltaHadoopConf()
+    val upperBoundCv = checkpointInstance.filterNot(_.version < 0).getOrElse {
+        logInfo(s"Try to find Delta last complete checkpoint")
+        return findLastCompleteCheckpoint()
+      }
+    logInfo(s"Try to find Delta last complete checkpoint before version ${upperBoundCv.version}")
+    var listingEndVersion = upperBoundCv.version
 
-    logInfo(s"Try to find Delta last complete checkpoint before version $startVersion")
-    while (cur >= 0) {
-      val checkpoints = store.listFrom(
-            listingPrefix(logPath, math.max(0, cur - 1000)),
-            hadoopConf)
-          // Checkpoint files of 0 size are invalid but Spark will ignore them silently when reading
-          // such files, hence we drop them so that we never pick up such checkpoints.
-          .filter { file => isCheckpointFile(file) && file.getLen != 0 }
-          .map{ file => CheckpointInstance(file.getPath) }
-          .takeWhile(tv => (cur == 0 || tv.version <= cur) && tv < upperBoundCv)
-          .toArray
+    // Do a backward listing from the upperBoundCv version. We list in chunks of 1000 versions.
+    // ...........................................................................................
+    //                                                                        |
+    //                                                               upper bound cv's version
+    //                                          [ iter-1 looks in this window ]
+    //                          [ iter-2 window ]
+    //         [ iter-3 window  ]
+    //              |
+    //        latest checkpoint
+    while (listingEndVersion >= 0) {
+      val listingStartVersion = math.max(0, listingEndVersion - 1000)
+      val checkpoints = store
+        .listFrom(listingPrefix(logPath, listingStartVersion), newDeltaHadoopConf())
+        .collect {
+          // Also collect delta files from the listing result so that the next takeWhile helps us
+          // terminate iterator early if no checkpoint exists upto the `listingEndVersion`
+          // version.
+          case DeltaFile(file, version) => (file, FileType.DELTA, version)
+          case CheckpointFile(file, version) => (file, FileType.CHECKPOINT, version)
+        }
+        .takeWhile { case (_, _, currentFileVersion) => currentFileVersion <= listingEndVersion }
+        // Checkpoint files of 0 size are invalid but Spark will ignore them silently when
+        // reading such files, hence we drop them so that we never pick up such checkpoints.
+        .collect { case (file, FileType.CHECKPOINT, _) if file.getLen > 0 =>
+          CheckpointInstance(file.getPath)
+        }
+        // We still need to filter on `upperBoundCv` to eliminate checkpoint files which are
+        // same version as `upperBoundCv` but have higher [[CheckpointInstance.Format]]. e.g.
+        // upperBoundCv is a V2_Checkpoint and we have a Single part checkpoint and a v2
+        // checkpoint at the same version. In such a scenario, we should not consider the
+        // v2 checkpoint as it is nor lower than the upperBoundCv.
+        .filter(_ < upperBoundCv)
+        .toArray
       val lastCheckpoint =
         getLatestCompleteCheckpointFromList(checkpoints, Some(upperBoundCv.version))
       if (lastCheckpoint.isDefined) {
         logInfo(s"Delta checkpoint is found at version ${lastCheckpoint.get.version}")
         return lastCheckpoint
-      } else {
-        cur -= 1000
       }
+      listingEndVersion = listingEndVersion - 1000
     }
-    logInfo(s"No checkpoint found for Delta table before version $startVersion")
+    logInfo(s"No checkpoint found for Delta table before version ${upperBoundCv.version}")
     None
+  }
+
+  /** Returns the last complete checkpoint in the delta log directory (if any) */
+  private def findLastCompleteCheckpoint(): Option[CheckpointInstance] = {
+    val hadoopConf = newDeltaHadoopConf()
+    val listingResult = store
+      .listFrom(listingPrefix(logPath, 0L), hadoopConf)
+      // Checkpoint files of 0 size are invalid but Spark will ignore them silently when
+      // reading such files, hence we drop them so that we never pick up such checkpoints.
+      .collect { case CheckpointFile(file, _) if file.getLen != 0 => file }
+    new DeltaLogGroupingIterator(listingResult)
+      .flatMap { case (_, files) =>
+        getLatestCompleteCheckpointFromList(files.map(f => CheckpointInstance(f.getPath)).toArray)
+      }.foldLeft(Option.empty[CheckpointInstance])((_, right) => Some(right))
+    // ^The foldLeft here emulates the non-existing Iterator.tailOption method.
+
   }
 
   /**
