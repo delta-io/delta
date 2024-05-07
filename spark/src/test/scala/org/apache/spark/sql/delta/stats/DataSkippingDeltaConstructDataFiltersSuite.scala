@@ -21,9 +21,11 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.types.StringType
 
-class DataSkippingDeltaConstructDataFiltersSuite extends QueryTest with SharedSparkSession {
+class DataSkippingDeltaConstructDataFiltersSuite
+    extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
   test("Verify constructDataFilters doesn't hang for expressions with Literal operands.") {
     val snapshot = DeltaLog.forTable(spark, "dummy_path").update()
     val dataFilterBuilder = new snapshot.DataFiltersBuilder(
