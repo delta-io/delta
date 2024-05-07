@@ -1330,8 +1330,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         "exception" -> Utils.exceptionString(ex),
         "operation" -> op.name,
         "fromManagedCommit" -> managedCommitExceptionOpt.isDefined,
-        "fromManagedCommitConflict" -> managedCommitExceptionOpt.map(_.conflict).getOrElse(""),
-        "fromManagedCommitRetryable" -> managedCommitExceptionOpt.map(_.retryable).getOrElse(""))
+        "fromManagedCommitConflict" -> managedCommitExceptionOpt.map(_.getConflict).getOrElse(""),
+        "fromManagedCommitRetryable" -> managedCommitExceptionOpt.map(_.getRetryable).getOrElse(""))
       recordDeltaEvent(deltaLog, "delta.commitLarge.failure", data = data)
     }
 
@@ -1441,7 +1441,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
       // Instead, manually run any necessary actions in updateAndCheckpoint.
       val postCommitSnapshot = updateAndCheckpoint(
-        spark, deltaLog, commitSize, attemptVersion, commitResponse.commit, txnId)
+        spark, deltaLog, commitSize, attemptVersion, commitResponse.getCommit, txnId)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = readVersion,
@@ -1925,13 +1925,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             // and thus retries are not performed if this exception is thrown by CommitOwnerClient.
             shouldCheckForConflicts = true
             // Do nothing, retry with next available attemptVersion
-          case ex: CommitFailedException if ex.retryable && ex.conflict =>
+          case ex: CommitFailedException if ex.getRetryable && ex.getConflict =>
             shouldCheckForConflicts = true
             // Reset nonConflictAttemptNumber if a conflict is detected.
             nonConflictAttemptNumber = 0
             // For managed-commits, only retry with next available attemptVersion when
             // retryable is set and it was a case of conflict.
-          case ex: CommitFailedException if ex.retryable && !ex.conflict =>
+          case ex: CommitFailedException if ex.getRetryable && !ex.getConflict =>
             if (nonConflictAttemptNumber < maxNonConflictRetryAttempts) {
               nonConflictAttemptNumber += 1
             } else {
@@ -2170,11 +2170,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val commitResponse = tableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
     // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
     //  merged.
-    val commitTimestamp = commitResponse.commit.fileStatus.getModificationTime
-    val commitFile = commitResponse.commit.copy(commitTimestamp = commitTimestamp)
+    val commitTimestamp = commitResponse.getCommit.getFileStatus.getModificationTime
+    val commitFile = commitResponse.getCommit.copy(commitTimestamp = commitTimestamp)
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
-      val actualCommitPath = commitResponse.commit.fileStatus.getPath.toUri
+      val actualCommitPath = commitResponse.getCommit.getFileStatus.getPath.toUri
       if (actualCommitPath != expectedPathForCommitZero) {
         throw new IllegalStateException("Expected 0th commit to be written to " +
           s"$expectedPathForCommitZero but was written to $actualCommitPath")

@@ -463,7 +463,7 @@ class OptimisticTransactionSuite
 
     object RetryableNonConflictCommitOwnerBuilder$ extends CommitOwnerBuilder {
 
-      override def name: String = commitOwnerName
+      override def getName: String = commitOwnerName
 
       val commitOwnerClient: InMemoryCommitOwner = {
         new InMemoryCommitOwner(batchSize = 1000L) {
@@ -516,7 +516,7 @@ class OptimisticTransactionSuite
 
     object FileAlreadyExistsCommitOwnerBuilder extends CommitOwnerBuilder {
 
-      override def name: String = commitOwnerName
+      override def getName: String = commitOwnerName
 
       lazy val commitOwnerClient: CommitOwnerClient = {
         new InMemoryCommitOwner(batchSize = 1000L) {
@@ -835,7 +835,7 @@ class OptimisticTransactionSuite
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
-            if (updatedActions.commitInfo.asInstanceOf[CommitInfo].operation
+            if (updatedActions.getCommitInfo.asInstanceOf[CommitInfo].operation
                 == DeltaOperations.OP_RESTORE) {
               deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
               throw CommitFailedException(retryable = true, conflict, message = "")
@@ -846,7 +846,7 @@ class OptimisticTransactionSuite
         }
         object RetryableConflictCommitOwnerBuilder$ extends CommitOwnerBuilder {
           lazy val commitOwnerClient = new RetryableConflictCommitOwnerClient()
-          override def name: String = commitOwnerName
+          override def getName: String = commitOwnerName
           override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
         }
         CommitOwnerProvider.registerBuilder(RetryableConflictCommitOwnerBuilder$)

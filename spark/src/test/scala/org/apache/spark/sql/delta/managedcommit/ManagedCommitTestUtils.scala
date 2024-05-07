@@ -100,7 +100,7 @@ trait ManagedCommitTestUtils
 
   def getUpdatedActionsForNonZerothCommit(commitInfo: CommitInfo): UpdatedActions = {
     val updatedActions = getUpdatedActionsForZerothCommit(commitInfo)
-    updatedActions.copy(oldMetadata = updatedActions.newMetadata)
+    updatedActions.copy(oldMetadata = updatedActions.getNewMetadata)
   }
 }
 
@@ -112,7 +112,7 @@ case class TrackingInMemoryCommitOwnerBuilder(
       new TrackingCommitOwnerClient(new PredictableUuidInMemoryCommitOwnerClient(batchSize))
     }
 
-  override def name: String = "tracking-in-memory"
+  override def getName: String = "tracking-in-memory"
   override def build(conf: Map[String, String]): CommitOwnerClient = {
     trackingInMemoryCommitOwnerClient
   }
