@@ -52,6 +52,9 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       case startingVersion: StartingVersion =>
         s"""${startingVersion.value}"""
 
+      case startingTimestampExpr: StartingTimestampExpr =>
+        s"""${startingTimestampExpr.value}"""
+
       case startingTimestamp: StartingTimestamp =>
         s"""'${startingTimestamp.value}'"""
 
