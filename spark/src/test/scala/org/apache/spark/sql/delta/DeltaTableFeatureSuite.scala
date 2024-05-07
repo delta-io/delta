@@ -48,7 +48,7 @@ class DeltaTableFeatureSuite
       path: File,
       schema: StructType = testTableSchema): DeltaLog = {
     val log = DeltaLog.forTable(spark, path)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
       unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = schema.json).json, protocol.json),
