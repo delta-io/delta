@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!--Copyright (2021) The Delta Lake Project Authors.
+<!--Copyright (2024) The Delta Lake Project Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,14 +20,14 @@ limitations under the License.-->
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.example</groupId>
-    <artifactId>table-reader</artifactId>
+    <artifactId>kernel-examples</artifactId>
     <version>0.1-SNAPSHOT</version>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <staging.repo.url>""</staging.repo.url>
-        <delta-kernel.version>3.1.0-SNAPSHOT</delta-kernel.version>
+        <delta-kernel.version>3.2.0-SNAPSHOT</delta-kernel.version>
         <hadoop.version>3.3.1</hadoop.version>
     </properties>
 
