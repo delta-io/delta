@@ -30,11 +30,24 @@ import io.delta.kernel.types.StructType;
 public interface ScanBuilder {
 
     /**
-     * Apply the given filter expression to prune any files that do not contain data satisfying
-     * the given filter.
-     * Since the data returned by the Delta Kernel is not guaranteed to satisfy all filters,
-     * you should use {@link Scan#getRemainingFilter()} to retrieve remaining predicates that need to be
-     * evaluated on the returned data.
+     * Apply the given filter expression to prune any files that do not possibly contain the data
+     * that satisfies the given filter.
+     * <p>
+     * Kernel makes use of the scan file partition values (for partitioned tables) and file-level
+     * column statistics (min, max, null count etc.) in the Delta metadata for filtering. Sometimes
+     * these metadata is not enough to deterministically say a scan file doesn't contain data that
+     * satisfies the filter.
+     * <p>
+     * E.g. given filter is {@code a = 2}. In file A, column {@code a} has min value as -40
+     * and max value as 200. In file B, column {@code a} has min value as 78 and max value as 323.
+     * File B can be ruled out as it cannot possibly have rows where `a = 2`, but file A cannot
+     * be ruled out as it may contain rows where {@code a = 2}.
+     * <p>
+     * As filtering is a best effort, the {@link Scan} object may return scan files (through
+     * {@link Scan#getScanFiles(Engine)}) that does not satisfy the filter. It is the responsibility
+     * of the caller to apply the remaining filter returned by {@link Scan#getRemainingFilter()} to
+     * the data read from the scan files (returned by {@link Scan#getScanFiles(Engine)}) to
+     * completely filter out the data that doesn't satisfy the filter.```
      *
      * @param tableClient {@link TableClient} instance to use in Delta Kernel.
      * @param predicate   a {@link Predicate} to prune the metadata or data.
