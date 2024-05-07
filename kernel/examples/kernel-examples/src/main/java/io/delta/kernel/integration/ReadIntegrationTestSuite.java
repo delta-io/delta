@@ -32,15 +32,15 @@ import io.delta.kernel.expressions.Predicate;
  * It only verifies the number of rows in the results and not the specific values of rows.
  * For full scale results verification we rely on unit tests which are run as part of the CI jobs.
  */
-public class IntegrationTestSuite {
+public class ReadIntegrationTestSuite {
     private final String goldenTableDir;
 
     public static void main(String[] args) throws Exception {
-        new IntegrationTestSuite(args[0])
+        new ReadIntegrationTestSuite(args[0])
             .runTests();
     }
 
-    public IntegrationTestSuite(String goldenTableDir) {
+    public ReadIntegrationTestSuite(String goldenTableDir) {
         this.goldenTableDir = goldenTableDir;
     }
 
