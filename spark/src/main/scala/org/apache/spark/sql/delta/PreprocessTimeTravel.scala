@@ -20,14 +20,10 @@ import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, ResolvedTable, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.catalyst.util.quoteIfNeeded
-import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 
@@ -44,7 +40,7 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case _ @ RestoreTableStatement(tt @ TimeTravel(ur @ UnresolvedRelation(_, _, _), _, _, _)) =>
-      val sourceRelation = resolveTimeTravelTable(sparkSession, ur)
+      val sourceRelation = resolveTimeTravelTable(sparkSession, ur, "RESTORE")
       return RestoreTableStatement(
         TimeTravel(
           sourceRelation,
@@ -55,7 +51,7 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
     case ct @ CloneTableStatement(
         tt @ TimeTravel(ur: UnresolvedRelation, _, _, _), _,
           _, _, _, _, _) =>
-      val sourceRelation = resolveTimeTravelTable(sparkSession, ur)
+      val sourceRelation = resolveTimeTravelTable(sparkSession, ur, "CLONE TABLE")
       ct.copy(source = TimeTravel(
         sourceRelation,
         tt.timestamp,
@@ -68,33 +64,22 @@ case class PreprocessTimeTravel(sparkSession: SparkSession) extends Rule[Logical
    */
   private def resolveTimeTravelTable(
       sparkSession: SparkSession,
-      ur: UnresolvedRelation): DataSourceV2Relation = {
-      val tableId = ur.multipartIdentifier match {
-        case Seq(tbl) => TableIdentifier(tbl)
-        case Seq(db, tbl) => TableIdentifier(tbl, Some(db))
-        case _ => throw new AnalysisException(s"Illegal table name ${ur.multipartIdentifier}")
-      }
-
-      val catalog = sparkSession.sessionState.catalog
-      val deltaTableV2 = if (DeltaTableUtils.isDeltaTable(sparkSession, tableId)) {
-        val tbl = catalog.getTableMetadata(tableId)
-        DeltaTableV2(sparkSession, new Path(tbl.location), Some(tbl))
-      } else if (DeltaTableUtils.isValidPath(tableId)) {
-        DeltaTableV2(sparkSession, new Path(tableId.table))
-      } else {
-        if (
-          (catalog.tableExists(tableId) &&
-            catalog.getTableMetadata(tableId).tableType == CatalogTableType.VIEW) ||
-          catalog.isTempView(ur.multipartIdentifier)) {
-          // If table exists and not found to be a view, throw not supported error
-          throw DeltaErrors.notADeltaTableException("RESTORE")
-        } else {
+      ur: UnresolvedRelation,
+      commandName: String): LogicalPlan = {
+    // Since TimeTravel is a leaf node, the table relation within TimeTravel won't be resolved
+    // automatically by the Apache Spark analyzer rule `ResolveRelations`.
+    // Thus, we need to explicitly use the rule `ResolveRelations` to table resolution here.
+    EliminateSubqueryAliases(sparkSession.sessionState.analyzer.ResolveRelations(ur)) match {
+      case _: View =>
+        // If the identifier is a view, throw not supported error
+        throw DeltaErrors.notADeltaTableException(commandName)
+      case tableRelation if tableRelation.resolved =>
+        tableRelation
+      case _ =>
+        // If the identifier doesn't exist as a table, try resolving it as a path table.
+        ResolveDeltaPathTable.resolveAsPathTableRelation(sparkSession, ur).getOrElse {
           ur.tableNotFound(ur.multipartIdentifier)
         }
-      }
-
-      val identifier = deltaTableV2.getTableIdentifierIfExists.map(
-        id => Identifier.of(id.database.toArray, id.table))
-      DataSourceV2Relation.create(deltaTableV2, None, identifier)
+    }
   }
 }

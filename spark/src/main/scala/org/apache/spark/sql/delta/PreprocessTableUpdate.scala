@@ -49,9 +49,8 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
 
   def toCommand(update: DeltaUpdateTable): UpdateCommand = {
     val deltaLogicalNode = EliminateSubqueryAliases(update.child)
-    val index = deltaLogicalNode match {
-      case DeltaFullTable(tahoeFileIndex) =>
-        tahoeFileIndex
+    val (relation, index) = deltaLogicalNode match {
+      case DeltaFullTable(rel, tahoeFileIndex) => rel -> tahoeFileIndex
       case o =>
         throw DeltaErrors.notADeltaSourceException("UPDATE", Some(o))
     }
@@ -68,11 +67,13 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
 
     val targetColNameParts = update.updateColumns.map(DeltaUpdateTable.getTargetColNameParts(_))
     val alignedUpdateExprs = generateUpdateExpressions(
-      update.child.output,
-      targetColNameParts,
-      update.updateExpressions,
-      conf.resolver,
-      generatedColumns)
+      targetSchema = update.child.schema,
+      defaultExprs = update.child.output,
+      nameParts = targetColNameParts,
+      updateExprs = update.updateExpressions,
+      resolver = conf.resolver,
+      generatedColumns = generatedColumns
+    )
     val alignedUpdateExprsAfterAddingGenerationExprs =
       if (alignedUpdateExprs.forall(_.nonEmpty)) {
         alignedUpdateExprs.map(_.get)
@@ -83,6 +84,7 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
       }
     UpdateCommand(
       index,
+      relation.catalogTable,
       update.child,
       alignedUpdateExprsAfterAddingGenerationExprs,
       update.condition)

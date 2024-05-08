@@ -17,8 +17,6 @@
 package io.delta.kernel.data;
 
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.DataType;
@@ -162,38 +160,29 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
-     * Return the map type value located at {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
-     *
-     * @param rowId
-     * @param <K>   Return map key type
-     * @param <V>   Return map value type
-     * @return
+     * Return the map value located at {@code rowId}. Returns null if the slot for {@code rowId}
+     * is null
      */
-    default <K, V> Map<K, V> getMap(int rowId) {
+    default MapValue getMap(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
 
     /**
-     * Return the row value located at {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
-     *
-     * @param rowId
-     * @return
+     * Return the array value located at {@code rowId}. Returns null if the slot for {@code rowId}
+     * is null
      */
-    default Row getStruct(int rowId) {
+    default ArrayValue getArray(int rowId) {
         throw new UnsupportedOperationException("Invalid value request for data type");
     }
 
     /**
-     * Return the array value located at {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
+     * Get the child vector associated with the given ordinal. This method is applicable only to the
+     * {@code struct} type columns.
      *
-     * @param rowId
-     * @param <T>   Array element type
-     * @return
+     * @param ordinal Ordinal of the child vector to return.
      */
-    default <T> List<T> getArray(int rowId) {
-        throw new UnsupportedOperationException("Invalid value request for data type");
+    default ColumnVector getChild(int ordinal) {
+        throw new UnsupportedOperationException(
+            "Child vectors are not available for vector of type " + getDataType());
     }
 }

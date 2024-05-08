@@ -55,6 +55,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Literal}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types._
 
@@ -407,7 +408,7 @@ private[delta] object PartitionUtils {
   }
 
   def getPathFragment(spec: TablePartitionSpec, partitionColumns: Seq[Attribute]): String = {
-    getPathFragment(spec, StructType.fromAttributes(partitionColumns))
+    getPathFragment(spec, DataTypeUtils.fromAttributes(partitionColumns))
   }
 
   /**
@@ -604,7 +605,8 @@ private[delta] object PartitionUtils {
 
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
-        case _: AtomicType => // OK
+        // Variant types are not orderable and thus cannot be partition columns.
+        case a: AtomicType if !VariantShims.isVariantType(a) => // OK
         case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }

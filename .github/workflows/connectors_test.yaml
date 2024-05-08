@@ -7,7 +7,7 @@ jobs:
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
-        scala: [2.13.5, 2.12.15]
+        scala: [2.13.13, 2.12.18]
     steps:
       - uses: actions/checkout@v2
       - name: install java

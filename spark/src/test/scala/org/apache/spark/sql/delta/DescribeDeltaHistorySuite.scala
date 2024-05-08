@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
+import org.apache.spark.sql.delta.DescribeDeltaHistorySuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -224,7 +225,8 @@ trait DescribeDeltaHistorySuiteBase
       val e = intercept[AnalysisException] {
         sql(s"DESCRIBE HISTORY $viewName").collect()
       }
-      assert(e.getMessage.contains("history of a view"))
+
+      assert(e.getMessage.contains(FAILS_ON_VIEWS_ERROR_MSG))
     }
   }
 
@@ -237,8 +239,8 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"DESCRIBE HISTORY $viewName").collect()
         }
-        assert(e.getMessage.contains("not found") ||
-          e.getMessage.contains("TABLE_OR_VIEW_NOT_FOUND"))
+
+        assert(e.getMessage.contains(FAILS_ON_TEMP_VIEWS_ERROR_MSG))
       }
   }
 
@@ -260,11 +262,13 @@ trait DescribeDeltaHistorySuiteBase
           "CREATE TABLE",
           "true",
           """["b"]""",
+          """[]""",
           """{"delta.appendOnly":"true"}""",
           "this is my table"),
         Seq(
           $"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
@@ -275,9 +279,10 @@ trait DescribeDeltaHistorySuiteBase
         .option("path", tempDir).saveAsTable("delta_test")
       checkLastOperation(
         tempDir,
-        Seq("CREATE TABLE AS SELECT", "false", """[]""", "{}", null),
+        Seq("CREATE TABLE AS SELECT", "false", """[]""", """[]""", "{}", null),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
@@ -297,9 +302,11 @@ trait DescribeDeltaHistorySuiteBase
         Seq("CREATE TABLE AS SELECT",
           "false",
           """["b"]""",
+          """[]""",
           """{"delta.appendOnly":"true"}""", null),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
     val tempDir2 = Utils.createTempDir().toString
     withTable("delta_test") {
@@ -314,9 +321,10 @@ trait DescribeDeltaHistorySuiteBase
       checkLastOperation(
         tempDir2,
         Seq("CREATE TABLE AS SELECT",
-          "false", """[]""", """{}""", "this is my table"),
+          "false", """[]""", """[]""", """{}""", "this is my table"),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
@@ -378,9 +386,9 @@ trait DescribeDeltaHistorySuiteBase
     val writerVersion = Action.supportedProtocolVersion().minWriterVersion
     withTempDir { path =>
       val log = DeltaLog.forTable(spark, path)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(
           Metadata(schemaString = spark.range(1).schema.asNullable.json).json,
           Protocol(1, 1).json),
@@ -579,7 +587,7 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"describe history $table").show()
         }
-        Seq("DESCRIBE HISTORY", "only supported for Delta tables").foreach { msg =>
+        Seq("is not a Delta table").foreach { msg =>
           assert(e.getMessage.contains(msg))
         }
       }

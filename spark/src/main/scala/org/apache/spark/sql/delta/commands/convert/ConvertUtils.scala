@@ -274,20 +274,24 @@ trait ConvertUtilsBase extends DeltaLogging {
       partitionSchema: StructType,
       convertTargetFiles: Dataset[ConvertTargetFile]): StructType = {
     import org.apache.spark.sql.delta.implicits._
-    val partiallyMergedSchemas = convertTargetFiles.mapPartitions { iterator =>
-      var dataSchema: StructType = StructType(Seq())
-      iterator.foreach { file =>
-        try {
-          dataSchema = SchemaMergingUtils.mergeSchemas(dataSchema,
-            StructType.fromDDL(file.parquetSchemaDDL.get).asNullable)
-        } catch {
-          case cause: AnalysisException =>
-            throw DeltaErrors.failedMergeSchemaFile(
-              file.fileStatus.path, StructType.fromDDL(file.parquetSchemaDDL.get).treeString, cause)
-        }
+    val partiallyMergedSchemas =
+      recordFrameProfile("Delta", "ConvertUtils.mergeSchemasInParallel") {
+        convertTargetFiles.mapPartitions { iterator =>
+          var dataSchema: StructType = StructType(Seq())
+          iterator.foreach { file =>
+            try {
+              dataSchema = SchemaMergingUtils.mergeSchemas(dataSchema,
+                StructType.fromDDL(file.parquetSchemaDDL.get).asNullable)
+            } catch {
+              case cause: AnalysisException =>
+                throw DeltaErrors.failedMergeSchemaFile(
+                  file.fileStatus.path, StructType.fromDDL(file.parquetSchemaDDL.get).treeString,
+                  cause)
+            }
+          }
+          Iterator.single(dataSchema.toDDL)
+        }.collect().filter(_.nonEmpty)
       }
-      Iterator.single(dataSchema.toDDL)
-    }.collect().filter(_.nonEmpty)
 
     if (partiallyMergedSchemas.isEmpty) {
       throw DeltaErrors.failedInferSchema

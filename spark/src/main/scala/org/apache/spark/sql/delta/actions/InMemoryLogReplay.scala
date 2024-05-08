@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.actions
 
 import java.net.URI
 
+
 /**
  * Replays a history of actions, resolving them to produce the current state
  * of the table. The protocol for resolution is as follows:
@@ -59,6 +60,7 @@ class InMemoryLogReplay(
         domainMetadatas.remove(a.domain)
       case a: DomainMetadata if !a.removed =>
         domainMetadatas(a.domain) = a
+      case _: CheckpointOnlyAction => // Ignore this while doing LogReplay
       case a: Metadata =>
         currentMetaData = a
       case a: Protocol =>
@@ -96,11 +98,13 @@ class InMemoryLogReplay(
 
   /** Returns the current state of the Table as an iterator of actions. */
   override def checkpoint: Iterator[Action] = {
+    val fileActions = (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path)
+
     Option(currentProtocolVersion).toIterator ++
     Option(currentMetaData).toIterator ++
     getDomainMetadatas ++
     getTransactions ++
-    (activeFiles.values ++ getTombstones).toSeq.sortBy(_.path).iterator
+    fileActions.toIterator
   }
 
   /** Returns all [[AddFile]] actions after the Log Replay */

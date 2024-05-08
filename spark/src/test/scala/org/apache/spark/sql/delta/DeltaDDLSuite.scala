@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkEnv
@@ -30,7 +31,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchPartitionException
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
 class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
@@ -96,7 +97,7 @@ class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
 }
 
 
-abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
+abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
   import testImplicits._
 
   protected def verifyDescribeTable(tblName: String): Unit = {
@@ -405,6 +406,35 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     fieldToAdd = "element.b" -> "string",
     updatedColumnType = "array<struct<a: int, b: string>>")
 
+  testAlterTableNestedFields("struct in nested map keys")(
+    initialColumnType = "map<map<struct<a: int>, int>, int>",
+    fieldToAdd = "key.key.b" -> "string",
+    updatedColumnType = "map<map<struct<a: int, b: string>, int>, int>")
+
+  testAlterTableNestedFields("struct in nested map values")(
+    initialColumnType = "map<int, map<int, struct<a: int>>>",
+    fieldToAdd = "value.value.b" -> "string",
+    updatedColumnType = "map<int, map<int, struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested arrays")(
+    initialColumnType = "array<array<struct<a: int>>>",
+    fieldToAdd = "element.element.b" -> "string",
+    updatedColumnType = "array<array<struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested array and map")(
+    initialColumnType = "array<map<int, struct<a: int>>>",
+    fieldToAdd = "element.value.b" -> "string",
+    updatedColumnType = "array<map<int, struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested map key and array")(
+    initialColumnType = "map<array<struct<a: int>>, int>",
+    fieldToAdd = "key.element.b" -> "string",
+    updatedColumnType = "map<array<struct<a: int, b: string>>, int>")
+
+  testAlterTableNestedFields("struct in nested map value and array")(
+    initialColumnType = "map<int, array<struct<a: int>>>",
+    fieldToAdd = "value.element.b" -> "string",
+    updatedColumnType = "map<int, array<struct<a: int, b: string>>>")
 
   test("ALTER TABLE CHANGE COLUMN with nullability change in struct type - not supported") {
     withTempDir { dir =>
@@ -503,14 +533,11 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
             |USING delta
             |AS SELECT 1 as a, 'a' as b
            """.stripMargin)
-
-
       sql(s"ALTER TABLE tbl RENAME TO newTbl")
-      checkDatasetUnorderly(
-        sql("SELECT * FROM newTbl").as[(Long, String)],
-        1L -> "a")
+      checkDatasetUnorderly(sql("SELECT * FROM newTbl").as[(Long, String)], 1L -> "a")
     }
   }
+
 
   /**
    * Although Spark 3.2 adds the support for SHOW CREATE TABLE for v2 tables, it doesn't work

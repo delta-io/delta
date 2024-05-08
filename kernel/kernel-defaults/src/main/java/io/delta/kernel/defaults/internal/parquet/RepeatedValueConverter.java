@@ -21,17 +21,17 @@ import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
 
 import io.delta.kernel.data.ColumnVector;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.defaults.internal.parquet.ParquetConverters.BaseConverter;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
-import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.initNullabilityVector;
-import static io.delta.kernel.defaults.internal.parquet.ParquetConverters.setNullabilityToTrue;
+import io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.BaseColumnReader;
+import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.initNullabilityVector;
+import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.setNullabilityToTrue;
 
 /**
  * Abstract implementation of Parquet converters for capturing the repeated types such as
  * list or map.
  */
-abstract class RepeatedValueConverter extends GroupConverter implements BaseConverter {
+abstract class RepeatedValueConverter extends GroupConverter implements BaseColumnReader {
     private final Collector collector;
 
     // working state
@@ -148,7 +148,7 @@ abstract class RepeatedValueConverter extends GroupConverter implements BaseConv
         public void end() {
             for (Converter converter : elementConverters) {
                 long prevRowIndex = -1; // Row indexes are not needed for nested columns
-                ((ParquetConverters.BaseConverter) converter).finalizeCurrentRow(prevRowIndex);
+                ((BaseColumnReader) converter).finalizeCurrentRow(prevRowIndex);
             }
             currentEntryIndex++;
         }
@@ -156,7 +156,7 @@ abstract class RepeatedValueConverter extends GroupConverter implements BaseConv
         ColumnVector[] getDataVectors() {
             ColumnVector[] dataVectors = new ColumnVector[elementConverters.length];
             for (int i = 0; i < elementConverters.length; i++) {
-                dataVectors[i] = ((ParquetConverters.BaseConverter) elementConverters[i])
+                dataVectors[i] = ((BaseColumnReader) elementConverters[i])
                     .getDataColumnVector(currentEntryIndex);
             }
             currentEntryIndex = 0;

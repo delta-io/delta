@@ -17,10 +17,12 @@
 package org.apache.spark.sql.delta.skipping
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.expressions.{InterleaveBits, RangePartitionId}
+import org.apache.spark.sql.delta.expressions.{HilbertByteArrayIndex, HilbertLongIndex, InterleaveBits, RangePartitionId}
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.Column
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{Cast, Expression}
+import org.apache.spark.sql.types.StringType
 
 /** Functions for multi-dimensional clustering of the data */
 object MultiDimClusteringFunctions {
@@ -53,5 +55,27 @@ object MultiDimClusteringFunctions {
    */
   def interleave_bits(cols: Column*): Column = withExpr {
     InterleaveBits(cols.map(_.expr))
+  }
+
+  // scalastyle:off line.size.limit
+  /**
+   * Transforms the provided integer columns into their corresponding position in the hilbert
+   * curve for the given dimension.
+   * @see https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=bfd6d94c98627756989b0147a68b7ab1f881a0d6
+   * @see https://en.wikipedia.org/wiki/Hilbert_curve
+   * @param numBits The number of bits to consider in each column.
+   * @param cols The integer columns to map to the curve.
+   */
+  // scalastyle:on line.size.limit
+  def hilbert_index(numBits: Int, cols: Column*): Column = withExpr {
+    if (cols.size > 9) {
+      throw new SparkException("Hilbert indexing can only be used on 9 or fewer columns.")
+    }
+    val hilbertBits = cols.length * numBits
+    if (hilbertBits < 64) {
+      HilbertLongIndex(numBits, cols.map(_.expr))
+    } else {
+      Cast(HilbertByteArrayIndex(numBits, cols.map(_.expr)), StringType)
+    }
   }
 }

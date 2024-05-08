@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSourceErro
 import org.apache.spark.sql.delta.commands.merge.MergeIntoMaterializeSource.mergeMaterializedSourceRddBlockLostErrorRegex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.scalactic.source.Position
 import org.scalatest.Tag
@@ -38,7 +39,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.{FilterExec, LogicalRDD, RDDScanExec, SQLExecution}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.util.Utils
@@ -47,7 +48,7 @@ trait MergeIntoMaterializeSourceTests
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with DeltaTestUtilsBase
   {
 
@@ -78,21 +79,31 @@ trait MergeIntoMaterializeSourceTests
 
 
 
-  for (eager <- BOOLEAN_DOMAIN)
-  test(s"merge logs out of disk errors - eager=$eager") {
-    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString) {
+  for {
+    eager <- BOOLEAN_DOMAIN
+    materialized <- BOOLEAN_DOMAIN
+  }  test(s"merge logs out of disk errors - eager=$eager, materialized=$materialized") {
+    import DeltaSQLConf.MergeMaterializeSource
+    withSQLConf(
+        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_EAGER.key -> eager.toString,
+        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key ->
+          (if (materialized) MergeMaterializeSource.AUTO else MergeMaterializeSource.NONE)) {
       val injectEx = new java.io.IOException("No space left on device")
       testWithCustomErrorInjected[SparkException](injectEx) { (thrownEx, errorOpt) =>
         // Compare messages instead of instances, since the equals method for these exceptions
         // takes more into account.
         assert(thrownEx.getCause.getMessage === injectEx.getMessage)
-        assert(errorOpt.isDefined)
-        val error = errorOpt.get
-        assert(error.errorType == MergeIntoMaterializeSourceErrorType.OUT_OF_DISK.toString)
-        assert(error.attempt == 1)
-        val storageLevel = StorageLevel.fromString(
-            spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL))
-        assert(error.materializedSourceRDDStorageLevel == storageLevel.toString)
+        if (materialized) {
+          assert(errorOpt.isDefined)
+          val error = errorOpt.get
+          assert(error.errorType == MergeIntoMaterializeSourceErrorType.OUT_OF_DISK.toString)
+          assert(error.attempt == 1)
+          val storageLevel = StorageLevel.fromString(
+              spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL))
+          assert(error.materializedSourceRDDStorageLevel == storageLevel.toString)
+        } else {
+          assert(errorOpt.isEmpty)
+        }
       }
     }
   }
@@ -107,7 +118,7 @@ trait MergeIntoMaterializeSourceTests
     }
   }
 
-  private def testWithCustomErrorInjected[Intercept <: Exception with AnyRef : ClassTag](
+  private def testWithCustomErrorInjected[Intercept >: Null <: Exception with AnyRef : ClassTag](
       inject: Exception)(
       handle: (Intercept, Option[MergeIntoMaterializeSourceError]) => Unit): Unit = {
     {
@@ -124,9 +135,7 @@ trait MergeIntoMaterializeSourceTests
           .toDF("id")
           .withColumn("value", rand())
           .createOrReplaceTempView("s")
-        // I don't know why it this cast is necessary. `Intercept` is marked as `AnyRef` so
-        // it should just let me assign `null`, but the compiler keeps rejecting it.
-        var thrownException: Intercept = null.asInstanceOf[Intercept]
+        var thrownException: Intercept = null
         val events = Log4jUsageLogger
           .track {
             thrownException = intercept[Intercept] {
@@ -503,6 +512,95 @@ trait MergeIntoMaterializeSourceTests
         "delta", reason = MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO.toString)
     }
 
+    // Test with non-Delta sources in subqueries.
+    def checkSourceMaterializationSubquery(
+        delta: String,
+        filterSub: String,
+        projectSub: String,
+        nestedFilterSub: String,
+        nestedProjectSub: String,
+        testType: String,
+        reason: String): Unit = {
+      val df = spark.sql(
+        s"""
+           |SELECT
+           |  CASE WHEN id IN
+           |    (SELECT id kk FROM $projectSub WHERE id IN (SELECT * FROM $nestedFilterSub))
+           |  THEN id ELSE -1 END AS id,
+           |  0.5 AS value
+           |FROM $delta
+           |WHERE id IN
+           |  (SELECT CASE WHEN id IN (SELECT * FROM $nestedProjectSub) THEN id ELSE -1 END kk
+           |   FROM $filterSub)
+           |""".stripMargin)
+      assert(executeMerge(df) == reason, s"Wrong materialization reason with $testType subquery")
+    }
+
+    def checkSourceMaterializationSubqueries(deltaSource: String, nonDeltaSource: String): Unit = {
+      checkSourceMaterializationSubquery(
+        delta = deltaSource,
+        filterSub = deltaSource,
+        projectSub = deltaSource,
+        nestedFilterSub = deltaSource,
+        nestedProjectSub = deltaSource,
+        testType = "all Delta",
+        reason = MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO.toString)
+
+      checkSourceMaterializationSubquery(
+        delta = deltaSource,
+        filterSub = nonDeltaSource,
+        projectSub = deltaSource,
+        nestedFilterSub = deltaSource,
+        nestedProjectSub = deltaSource,
+        testType = "non-Delta filter",
+        reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
+
+      checkSourceMaterializationSubquery(
+        delta = deltaSource,
+        filterSub = deltaSource,
+        projectSub = nonDeltaSource,
+        nestedFilterSub = deltaSource,
+        nestedProjectSub = deltaSource,
+        testType = "non-Delta project",
+        reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
+
+      checkSourceMaterializationSubquery(
+        delta = deltaSource,
+        filterSub = deltaSource,
+        projectSub = deltaSource,
+        nestedFilterSub = nonDeltaSource,
+        nestedProjectSub = deltaSource,
+        testType = "non-Delta nested filter",
+        reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
+
+      checkSourceMaterializationSubquery(
+        delta = deltaSource,
+        filterSub = deltaSource,
+        projectSub = deltaSource,
+        nestedFilterSub = deltaSource,
+        nestedProjectSub = nonDeltaSource,
+        testType = "non-Delta nested project",
+        reason = MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA.toString)
+    }
+
+    withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+      // Test once by name and once using path, as they produce different plans.
+      withTable("deltaSource", "nonDeltaSource") {
+        sourceData.write.format("delta").saveAsTable("deltaSource")
+        sourceData.write.format("parquet").saveAsTable("nonDeltaSource")
+        checkSourceMaterializationSubqueries("deltaSource", "nonDeltaSource")
+      }
+
+      withTempPath { deltaSourcePath =>
+        sourceData.write.format("delta").save(deltaSourcePath.toString)
+        withTempPath { nonDeltaSourcePath =>
+          sourceData.write.format("parquet").save(nonDeltaSourcePath.toString)
+          checkSourceMaterializationSubqueries(
+            s"delta.`$deltaSourcePath`", s"parquet.`$nonDeltaSourcePath`")
+        }
+      }
+    }
+
     // Mixed safe/unsafe queries should materialize source.
     def checkSourceMaterializationForMixedSources(
         format1: String,
@@ -567,6 +665,45 @@ trait MergeIntoMaterializeSourceTests
       checkSourceMaterialization(
         "delta",
         reason = MergeIntoMaterializeSourceReason.MATERIALIZE_ALL.toString)
+    }
+  }
+
+  test("materialize source for non-deterministic source queries - udf") {
+    {
+      val targetSchema = StructType(Array(
+        StructField("id", IntegerType, nullable = false),
+        StructField("value", IntegerType, nullable = true)))
+      val targetData = Seq(
+        Row(1, 0),
+        Row(2, 0),
+        Row(3, 0))
+      val sourceData = Seq(1, 3).toDF("id")
+      withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+        withTable("target", "source") {
+          val targetRdd = spark.sparkContext.parallelize(targetData)
+          val targetDf = spark.createDataFrame(targetRdd, targetSchema)
+          targetDf.write.format("delta").mode("overwrite").saveAsTable("target")
+          val targetTable = io.delta.tables.DeltaTable.forName("target")
+
+          sourceData.write.format("delta").mode("overwrite").saveAsTable("source")
+          val f = udf { () => 1L }
+          val sourceDf = spark.table("source").withColumn("value", f())
+
+          val events: Seq[UsageRecord] = Log4jUsageLogger.track {
+            targetTable
+              .merge(sourceDf, col("target.id") === sourceDf("id"))
+              .whenMatched(col("target.value") > sourceDf("value")).delete()
+              .whenMatched().updateAll()
+              .whenNotMatched().insertAll()
+              .execute()
+          }
+
+          val materializeReason = mergeSourceMaterializeReason(events)
+          assert(materializeReason == MergeIntoMaterializeSourceReason.
+            NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF.toString,
+            "Source has a udf and merge should have materialized the source.")
+        }
+      }
     }
   }
 
@@ -682,7 +819,7 @@ trait MergeIntoMaterializeSourceTests
     withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
 
       // Return MergeIntoMaterializeSourceReason
-      def executeMerge(sourceDf: DataFrame): Unit = {
+      def executeMerge(sourceDf: DataFrame, clue: String): Unit = {
         withTable("target") {
           targetDataFrame.write
             .format("delta")
@@ -700,35 +837,61 @@ trait MergeIntoMaterializeSourceTests
           val materializeReason = mergeSourceMaterializeReason(events)
           assert(materializeReason ==
             MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS.toString,
-            "Source query has non deterministic subqueries and should materialize.")
+            s"Source query has non deterministic subqueries and should materialize ($clue).")
         }
+      }
+
+      def checkSubquery(from: String, subquery: String): Unit = {
+        // check subquery in filter
+        val sourceDfFilterSubquery = spark.sql(
+          s"""
+             |SELECT id, 0.5 AS value
+             |FROM $from WHERE id IN ($subquery)
+             |""".stripMargin)
+        executeMerge(sourceDfFilterSubquery,
+          s"reading from `$from`, subquery `$subquery` in filter")
+
+        // check subquery in project
+        val sourceDfProjectSubquery = spark.sql(
+          s"""
+             |SELECT CASE WHEN id IN ($subquery) THEN id ELSE -1 END AS id, 0.5 AS value
+             |FROM $from
+             |""".stripMargin)
+        executeMerge(sourceDfProjectSubquery,
+          s"reading from `$from`, subquery `$subquery` in project")
+      }
+
+      def checkSubqueries(from: String): Unit = {
+        // check non-deterministic plan
+        checkSubquery(from, s"SELECT id FROM $from WHERE id < rand() * 10")
+
+        // check too complex plan in subquery, even though plan.deterministic is true
+        val subqueryComplex = s"SELECT A.id kk FROM $from A JOIN $from B ON A.id = B.id"
+        assert(spark.sql(subqueryComplex).queryExecution.analyzed.deterministic,
+          "We want the subquery plan to be deterministic for this test.")
+        checkSubquery(from, subqueryComplex)
+
+        // check nested subquery
+        val subqueryNestedFilter = s"SELECT id AS kk FROM $from WHERE id IN ($subqueryComplex)"
+        checkSubquery(from, subqueryNestedFilter)
+        val subqueryNestedProject =
+          s"SELECT CASE WHEN id IN ($subqueryComplex) THEN id ELSE -1 END AS kk FROM $from"
+        checkSubquery(from, subqueryNestedProject)
+
+        // check correlated subquery
+        val subqueryCorrelated = s"SELECT kk FROM (SELECT id AS kk from $from) WHERE kk = id"
+        checkSubquery(from, subqueryCorrelated)
       }
 
       // Test once by name and once using path, as they produce different plans.
       withTable("source") {
         sourceDataFrame.write.format("delta").saveAsTable("source")
-        val sourceDf = spark.sql(
-          s"""
-             |SELECT id, 0.5 AS value
-             |FROM source
-             |WHERE id IN (
-             |  SELECT id FROM source
-             |  WHERE id < rand() * ${sourceDataFrame.count()} )
-             |""".stripMargin)
-        executeMerge(sourceDf)
+        checkSubqueries("source")
       }
 
       withTempPath { sourcePath =>
         sourceDataFrame.write.format("delta").save(sourcePath.toString)
-        val sourceDf = spark.sql(
-          s"""
-             |SELECT id, 0.5 AS value
-             |FROM delta.`$sourcePath`
-             |WHERE id IN (
-             |  SELECT id FROM delta.`$sourcePath`
-             |  WHERE id < rand() * ${sourceDataFrame.count()} )
-             |""".stripMargin)
-        executeMerge(sourceDf)
+        checkSubqueries(s"delta.`${sourcePath.toString}`")
       }
     }
   }
@@ -774,4 +937,8 @@ trait MergeIntoMaterializeSourceTests
 
 // MERGE + materialize
 class MergeIntoMaterializeSourceSuite extends MergeIntoMaterializeSourceTests
+{
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+}
 

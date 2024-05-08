@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.types.{LongType, StructType}
@@ -59,12 +60,15 @@ import org.apache.spark.sql.types.{LongType, StructType}
 case class MergeIntoCommand(
     @transient source: LogicalPlan,
     @transient target: LogicalPlan,
+    @transient catalogTable: Option[CatalogTable],
     @transient targetFileIndex: TahoeFileIndex,
     condition: Expression,
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migratedSchema: Option[StructType]) extends MergeIntoCommandBase
+    migratedSchema: Option[StructType],
+    schemaEvolutionEnabled: Boolean = false)
+  extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
   with ClassicMergeExecutor {
 
@@ -77,7 +81,7 @@ case class MergeIntoCommand(
   protected def runMerge(spark: SparkSession): Seq[Row] = {
     recordDeltaOperation(targetDeltaLog, "delta.dml.merge") {
       val startTime = System.nanoTime()
-      targetDeltaLog.withNewTransaction { deltaTxn =>
+      targetDeltaLog.withNewTransaction(catalogTable) { deltaTxn =>
         if (hasBeenExecuted(deltaTxn, spark)) {
           sendDriverMetrics(spark, metrics)
           return Seq.empty
@@ -87,6 +91,15 @@ case class MergeIntoCommand(
             atAnalysis = target.schema, latestSchema = deltaTxn.metadata.schema)
         }
 
+        // Check that type widening wasn't enabled/disabled between analysis and the start of the
+        // transaction.
+        TypeWidening.ensureFeatureConsistentlyEnabled(
+          protocol = targetFileIndex.protocol,
+          metadata = targetFileIndex.metadata,
+          otherProtocol = deltaTxn.protocol,
+          otherMetadata = deltaTxn.metadata
+        )
+
         if (canMergeSchema) {
           updateMetadata(
             spark, deltaTxn, migratedSchema.getOrElse(target.schema),
@@ -94,9 +107,8 @@ case class MergeIntoCommand(
             isOverwriteMode = false, rearrangeOnly = false)
         }
 
-        // If materialized, prepare the DF reading the materialize source
-        // Otherwise, prepare a regular DF from source plan.
-        val materializeSourceReason = prepareSourceDFAndReturnMaterializeReason(
+        // Materialize the source if needed.
+        prepareMergeSource(
           spark,
           source,
           condition,
@@ -107,16 +119,41 @@ case class MergeIntoCommand(
         val mergeActions = {
           if (isInsertOnly && spark.conf.get(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED)) {
             // This is a single-job execution so there is no WriteChanges.
-            metrics("numSourceRowsInSecondScan").set(-1)
+            performedSecondSourceScan = false
             writeOnlyInserts(
               spark, deltaTxn, filterMatchedRows = true, numSourceRowsMetric = "numSourceRows")
           } else {
             val (filesToRewrite, deduplicateCDFDeletes) = findTouchedFiles(spark, deltaTxn)
             if (filesToRewrite.nonEmpty) {
-              val newWrittenFiles = withStatusCode("DELTA", "Writing merged data") {
-                writeAllChanges(spark, deltaTxn, filesToRewrite, deduplicateCDFDeletes)
+              val shouldWriteDeletionVectors = shouldWritePersistentDeletionVectors(spark, deltaTxn)
+              if (shouldWriteDeletionVectors) {
+                val newWrittenFiles = withStatusCode("DELTA", "Writing modified data") {
+                  writeAllChanges(
+                    spark,
+                    deltaTxn,
+                    filesToRewrite,
+                    deduplicateCDFDeletes,
+                    writeUnmodifiedRows = false)
+                }
+
+                val dvActions = withStatusCode(
+                   "DELTA",
+                   "Writing Deletion Vectors for modified data") {
+                  writeDVs(spark, deltaTxn, filesToRewrite)
+                }
+
+                newWrittenFiles ++ dvActions
+              } else {
+                val newWrittenFiles = withStatusCode("DELTA", "Writing modified data") {
+                  writeAllChanges(
+                    spark,
+                    deltaTxn,
+                    filesToRewrite,
+                    deduplicateCDFDeletes,
+                    writeUnmodifiedRows = true)
+                }
+                newWrittenFiles ++ filesToRewrite.map(_.remove)
               }
-              filesToRewrite.map(_.remove) ++ newWrittenFiles
             } else {
               // Run an insert-only job instead of WriteChanges
               writeOnlyInserts(
@@ -132,14 +169,20 @@ case class MergeIntoCommand(
           deltaTxn,
           mergeActions,
           startTime,
-          materializeSourceReason)
+          getMergeSource.materializeReason)
       }
       spark.sharedState.cacheManager.recacheByPlan(spark, target)
     }
     sendDriverMetrics(spark, metrics)
-    Seq(Row(metrics("numTargetRowsUpdated").value + metrics("numTargetRowsDeleted").value +
-            metrics("numTargetRowsInserted").value, metrics("numTargetRowsUpdated").value,
-            metrics("numTargetRowsDeleted").value, metrics("numTargetRowsInserted").value))
+    val num_affected_rows =
+      metrics("numTargetRowsUpdated").value +
+        metrics("numTargetRowsDeleted").value +
+        metrics("numTargetRowsInserted").value
+    Seq(Row(
+      num_affected_rows,
+      metrics("numTargetRowsUpdated").value,
+      metrics("numTargetRowsDeleted").value,
+      metrics("numTargetRowsInserted").value))
   }
 
   /**
@@ -165,12 +208,13 @@ case class MergeIntoCommand(
     val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ mergeActions
     deltaTxn.commitIfNeeded(
       actions = finalActions,
-      DeltaOperations.Merge(
+      op = DeltaOperations.Merge(
         predicate = Option(condition),
         matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedBySourcePredicates =
-          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))))
+          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))),
+      tags = RowTracking.addPreservedRowTrackingTagIfNotSet(deltaTxn.snapshot))
     val stats = collectMergeStats(deltaTxn, materializeSourceReason)
     recordDeltaEvent(targetDeltaLog, "delta.dml.merge.stats", data = stats)
   }

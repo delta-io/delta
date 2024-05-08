@@ -55,8 +55,8 @@ case class CloneTableCommand(
     sourceTable: CloneSource,
     targetIdent: TableIdentifier,
     tablePropertyOverrides: Map[String, String],
-    targetPath: Path)
-  extends CloneTableBase(sourceTable, tablePropertyOverrides, targetPath) {
+    targetPath: Path
+) extends CloneTableBase(sourceTable, tablePropertyOverrides, targetPath) {
 
   import CloneTableCommand._
 
@@ -149,7 +149,7 @@ class CloneDeltaSource(
   sourceTable: DeltaTableV2) extends CloneSource {
 
   private val deltaLog = sourceTable.deltaLog
-  private val sourceSnapshot = sourceTable.snapshot
+  private val sourceSnapshot = sourceTable.initialSnapshot
 
   def format: String = CloneSourceFormat.DELTA
 

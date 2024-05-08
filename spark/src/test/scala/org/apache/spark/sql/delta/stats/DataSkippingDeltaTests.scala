@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -1518,47 +1519,49 @@ trait DataSkippingDeltaTestsBase extends QueryTest
 
   // Note that we cannot use testSkipping here, because the JSON parsing bug we're working around
   // prevents specifying a microsecond timestamp as input data.
-  test("data skipping on timestamps") {
-    val data = "2019-09-09 01:02:03.456789"
-    val df = Seq(data).toDF("strTs")
-      .selectExpr(
-        "CAST(strTs AS TIMESTAMP) AS ts",
-        "STRUCT(CAST(strTs AS TIMESTAMP) AS ts) AS nested")
+  for (timestampType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ")) {
+    test(s"data skipping on $timestampType") {
+      val data = "2019-09-09 01:02:03.456789"
+      val df = Seq(data).toDF("strTs")
+        .selectExpr(
+          s"CAST(strTs AS $timestampType) AS ts",
+          s"STRUCT(CAST(strTs AS $timestampType) AS ts) AS nested")
 
-    val tempDir = Utils.createTempDir()
-    val r = DeltaLog.forTable(spark, tempDir)
-    df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+      val tempDir = Utils.createTempDir()
+      val r = DeltaLog.forTable(spark, tempDir)
+      df.coalesce(1).write.format("delta").save(r.dataPath.toString)
 
-    // Check to ensure that the value actually in the file is always in range queries.
-    val hits = Seq(
-      """ts >= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """ts <= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """nested.ts >= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """nested.ts <= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """TS >= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""",
-      """nEstED.tS >= cast("2019-09-09 01:02:03.456789" AS TIMESTAMP)""")
+      // Check to ensure that the value actually in the file is always in range queries.
+      val hits = Seq(
+        s"""ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""nested.ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""nested.ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""TS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+        s"""nEstED.tS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""")
 
-    // Check the range of values that are far enough away to be data skipped. Note that the values
-    // are aligned with millisecond boundaries because of the JSON serialization truncation.
-    val misses = Seq(
-      """ts >= cast("2019-09-09 01:02:03.457001" AS TIMESTAMP)""",
-      """ts <= cast("2019-09-04 01:02:03.455999" AS TIMESTAMP)""",
-      """nested.ts >= cast("2019-09-09 01:02:03.457001" AS TIMESTAMP)""",
-      """nested.ts <= cast("2019-09-09 01:02:03.455999" AS TIMESTAMP)""",
-      """TS >= cast("2019-09-09 01:02:03.457001" AS TIMESTAMP)""",
-      """nEstED.tS >= cast("2019-09-09 01:02:03.457001" AS TIMESTAMP)""")
+      // Check the range of values that are far enough away to be data skipped. Note that the values
+      // are aligned with millisecond boundaries because of the JSON serialization truncation.
+      val misses = Seq(
+        s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+        s"""ts <= cast("2019-09-04 01:02:03.455999" AS $timestampType)""",
+        s"""nested.ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+        s"""nested.ts <= cast("2019-09-09 01:02:03.455999" AS $timestampType)""",
+        s"""TS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+        s"""nEstED.tS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""")
 
-    hits.foreach { predicate =>
-      Given(predicate)
-      if (filesRead(r, predicate) != 1) {
-        failPretty(s"Expected hit but got miss for $predicate", predicate, data)
+      hits.foreach { predicate =>
+        Given(predicate)
+        if (filesRead(r, predicate) != 1) {
+          failPretty(s"Expected hit but got miss for $predicate", predicate, data)
+        }
       }
-    }
 
-    misses.foreach { predicate =>
-      Given(predicate)
-      if (filesRead(r, predicate) != 0) {
-        failPretty(s"Expected miss but got hit for $predicate", predicate, data)
+      misses.foreach { predicate =>
+        Given(predicate)
+        if (filesRead(r, predicate) != 0) {
+          failPretty(s"Expected miss but got hit for $predicate", predicate, data)
+        }
       }
     }
   }
@@ -1609,26 +1612,28 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     test(s"Basic: Data skipping with delta statistic column $label") {
       withTable("table") {
         val tableProperty = if (label == "create") {
-          "TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9')"
+          "TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c7,c10')"
         } else {
           ""
         }
         sql(
           s"""CREATE TABLE table(
-             |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
-             |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+             |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 TIMESTAMP_NTZ, c7 DATE,
+             |c8 BINARY, c9 BOOLEAN, c10 DECIMAL(3, 2)
              |) USING delta $tableProperty""".stripMargin)
         if (label == "alter") {
           sql(
             s"""ALTER TABLE table
                |SET TBLPROPERTIES (
-               |  'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9'
+               |  'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c7,c10'
                |)""".stripMargin)
         }
         sql(
           """insert into table values
-            |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', '1111', true, 1.0),
-            |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', '2222', false, 2.0)
+            |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', TIMESTAMP_NTZ'2001-01-01 01:00',
+            |DATE'2001-01-01', '1111', true, 1.0),
+            |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', TIMESTAMP_NTZ'2002-02-02 02:00',
+            |DATE'2002-02-02', '2222', false, 2.0)
             |""".stripMargin).count()
         val hits = Seq(
           "c1 = 1",
@@ -1636,12 +1641,13 @@ trait DataSkippingDeltaTestsBase extends QueryTest
           "c3 < 1.5",
           "c4 > 1.0",
           "c5 >= \"2001-01-01 01:00:00\"",
-          "c6 = \"2002-02-02\"",
-          "c7 = HEX(\"1111\")", // Binary Column doesn't support delta statistics.
-          "c7 = HEX(\"3333\")", // Binary Column doesn't support delta statistics.
-          "c8 = true",
-          "c8 = false",
-          "c9 > 1.5"
+          "c6 >= \"2001-01-01 01:00:00\"",
+          "c7 = \"2002-02-02\"",
+          "c8 = HEX(\"1111\")", // Binary Column doesn't support delta statistics.
+          "c8 = HEX(\"3333\")", // Binary Column doesn't support delta statistics.
+          "c9 = true",
+          "c9 = false",
+          "c10 > 1.5"
         )
         val misses = Seq(
           "c1 = 10",
@@ -1649,12 +1655,15 @@ trait DataSkippingDeltaTestsBase extends QueryTest
           "c3 < 0.5",
           "c4 > 5.0",
           "c5 >= \"2003-01-01 01:00:00\"",
-          "c6 = \"2003-02-02\"",
-          "c9 > 2.5"
+          "c6 >= \"2003-01-01 01:00:00\"",
+          "c7 = \"2003-02-02\"",
+          "c10 > 2.5"
         )
         val dataSeq = Seq(
-          (1L, "1", 1.0f, 1.0d, "2002-01-01 01:00", "2001-01-01", "1111", true, 1.0f),
-          (2L, "2", 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02", "2222", false, 2.0f)
+          (1L, "1", 1.0f, 1.0d, "2002-01-01 01:00", "2002-01-01 01:00", "2001-01-01", "1111",
+            true, 1.0f),
+          (2L, "2", 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02 02:00", "2002-02-02", "2222",
+            false, 2.0f)
         )
         val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
         checkSkipping(r, hits, misses, dataSeq.toString(), false)
@@ -1666,17 +1675,17 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     withTable("table") {
       sql(
         s"""CREATE TABLE table(
-           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
-           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 TIMESTAMP_NTZ,
+           |c7 DATE, c8 BINARY, c9 BOOLEAN, c10 DECIMAL(3, 2)
            |) USING delta
            |TBLPROPERTIES(
-           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c7,c10',
            |'delta.columnMapping.mode' = 'name',
            |'delta.minReaderVersion' = '2',
            |'delta.minWriterVersion' = '5'
            |)
            |""".stripMargin)
-      (1 to 9).foreach { i =>
+      (1 to 10).foreach { i =>
         sql(s"alter table table RENAME COLUMN c$i to cc$i")
       }
       val newConfiguration = sql("SHOW TBLPROPERTIES table ")
@@ -1688,12 +1697,14 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         .toSeq
       assert(
         newConfiguration == Seq(
-          ("delta.dataSkippingStatsColumns", "cc1,cc2,cc3,cc4,cc5,cc6,cc9"))
+          ("delta.dataSkippingStatsColumns", "cc1,cc2,cc3,cc4,cc5,cc6,cc7,cc10"))
       )
       sql(
         """insert into table values
-          |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', '1111', true, 1.0),
-          |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', '2222', false, 2.0)
+          |(1, '1', 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', TIMESTAMP_NTZ'2001-01-01 01:00',
+          |DATE'2001-01-01', '1111', true, 1.0),
+          |(2, '2', 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', TIMESTAMP_NTZ'2002-02-02 02:00',
+          |DATE'2002-02-02', '2222', false, 2.0)
           |""".stripMargin).count()
       val hits = Seq(
         "cc1 = 1",
@@ -1701,12 +1712,13 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         "cc3 < 1.5",
         "cc4 > 1.0",
         "cc5 >= \"2001-01-01 01:00:00\"",
-        "cc6 = \"2002-02-02\"",
-        "cc7 = HEX(\"1111\")", // Binary Column doesn't support delta statistics.
-        "cc7 = HEX(\"3333\")", // Binary Column doesn't support delta statistics.
-        "cc8 = true",
-        "cc8 = false",
-        "cc9 > 1.5"
+        "cc6 >= \"2001-01-01 01:00:00\"",
+        "cc7 = \"2002-02-02\"",
+        "cc8 = HEX(\"1111\")", // Binary Column doesn't support delta statistics.
+        "cc8 = HEX(\"3333\")", // Binary Column doesn't support delta statistics.
+        "cc9 = true",
+        "cc9 = false",
+        "cc10 > 1.5"
       )
       val misses = Seq(
         "cc1 = 10",
@@ -1714,12 +1726,15 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         "cc3 < 0.5",
         "cc4 > 5.0",
         "cc5 >= \"2003-01-01 01:00:00\"",
-        "cc6 = \"2003-02-02\"",
-        "cc9 > 2.5"
+        "cc6 >= \"2003-01-01 01:00:00\"",
+        "cc7 = \"2003-02-02\"",
+        "cc10 > 2.5"
       )
       val dataSeq = Seq(
-        (1L, "1", 1.0f, 1.0d, "2002-01-01 01:00", "2001-01-01", "1111", true, 1.0f),
-        (2L, "2", 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02", "2222", false, 2.0f)
+        (1L, "1", 1.0f, 1.0d, "2002-01-01 01:00", "2002-01-01 01:00", "2001-01-01", "1111", true,
+          1.0f),
+        (2L, "2", 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02 02:00", "2002-02-02", "2222", false,
+          2.0f)
       )
       val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
       checkSkipping(r, hits, misses, dataSeq.toString(), false)
@@ -1730,19 +1745,19 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     withTable("table") {
       sql(
         s"""CREATE TABLE table(
-           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
-           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
-           |) USING delta
+           |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 TIMESTAMP_NTZ,
+           |c7 DATE, c8 BINARY, c9 BOOLEAN, c10 DECIMAL(3, 2))
+           |USING delta
            |TBLPROPERTIES(
-           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c7,c10',
            |'delta.columnMapping.mode' = 'name',
            |'delta.minReaderVersion' = '2',
            |'delta.minWriterVersion' = '5'
            |)
            |""".stripMargin)
       sql(s"alter table table drop COLUMN c2")
-      sql(s"alter table table drop COLUMN c7")
       sql(s"alter table table drop COLUMN c8")
+      sql(s"alter table table drop COLUMN c9")
       val newConfiguration = sql("SHOW TBLPROPERTIES table ")
         .collect()
         .map { row =>
@@ -1750,31 +1765,35 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         }
         .filter(_._1 == "delta.dataSkippingStatsColumns")
         .toSeq
-      assert(newConfiguration == Seq(("delta.dataSkippingStatsColumns", "c1,c3,c4,c5,c6,c9")))
+      assert(newConfiguration == Seq(("delta.dataSkippingStatsColumns", "c1,c3,c4,c5,c6,c7,c10")))
       sql(
         """insert into table values
-          |(1, 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', 1.0),
-          |(2, 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', 2.0)
+          |(1, 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', TIMESTAMP_NTZ'2001-01-01 01:00',
+          |DATE'2001-01-01', 1.0),
+          |(2, 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', TIMESTAMP_NTZ'2002-02-02 02:00',
+          |DATE'2002-02-02', 2.0)
           |""".stripMargin).count()
       val hits = Seq(
         "c1 = 1",
         "c3 < 1.5",
         "c4 > 1.0",
         "c5 >= \"2001-01-01 01:00:00\"",
-        "c6 = \"2002-02-02\"",
-        "c9 > 1.5"
+        "c6 >= \"2001-01-01 01:00:00\"",
+        "c7 = \"2002-02-02\"",
+        "c10 > 1.5"
       )
       val misses = Seq(
         "c1 = 10",
         "c3 < 0.5",
         "c4 > 5.0",
         "c5 >= \"2003-01-01 01:00:00\"",
-        "c6 = \"2003-02-02\"",
-        "c9 > 2.5"
+        "c6 >= \"2003-01-01 01:00:00\"",
+        "c7 = \"2003-02-02\"",
+        "c10 > 2.5"
       )
       val dataSeq = Seq(
-        (1L, 1.0f, 1.0d, "2002-01-01 01:00", "2001-01-01", 1.0f),
-        (2L, 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02", 2.0f)
+        (1L, 1.0f, 1.0d, "2002-01-01 01:00", "2002-01-01 01:00", "2001-01-01", 1.0f),
+        (2L, 2.0f, 2.0d, "2002-02-02 02:00", "2002-02-02 02:00", "2002-02-02", 2.0f)
       )
       val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
       checkSkipping(r, hits, misses, dataSeq.toString(), false)
@@ -2123,4 +2142,26 @@ class DataSkippingDeltaV1NameColumnMappingSuite
     with DeltaColumnMappingEnableNameMode
     with DataSkippingDeltaTestV1ColumnMappingMode {
   override protected def runAllTests: Boolean = true
+}
+
+class DataSkippingDeltaV1JsonCheckpointV2Suite extends DataSkippingDeltaV1Suite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.setAll(
+      Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.JSON.name
+      )
+    )
+  }
+}
+
+class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Suite {
+  override def sparkConf: SparkConf = {
+    super.sparkConf.setAll(
+      Seq(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+        DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> V2Checkpoint.Format.PARQUET.name
+      )
+    )
+  }
 }

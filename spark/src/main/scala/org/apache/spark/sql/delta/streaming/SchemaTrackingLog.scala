@@ -77,7 +77,7 @@ class JsonSchemaSerializer[T <: PartitionAndDataSchema: ClassTag: Manifest]
     }
 
     MetadataVersionUtil.validateVersion(lines.next(), serdeVersion)
-    val schemaJson = if (lines.hasNext) lines.next else EMPTY_JSON
+    val schemaJson = if (lines.hasNext) lines.next() else EMPTY_JSON
     JsonUtils.fromJson(schemaJson)
   }
 

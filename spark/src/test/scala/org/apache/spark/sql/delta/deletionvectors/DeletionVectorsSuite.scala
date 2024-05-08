@@ -16,21 +16,26 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
-import java.io.File
+import java.io.{File, FileNotFoundException}
+import java.net.URISyntaxException
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
-import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, BOOLEAN_DOMAIN}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.{inlineInLog, EMPTY}
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.internal.SQLConf
 import com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.tables.DeltaTable
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, Subquery}
 import org.apache.spark.sql.functions.col
@@ -40,8 +45,14 @@ class DeletionVectorsSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeletionVectorsTestUtils
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with DeltaExceptionTestUtils {
   import testImplicits._
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
+  }
 
   test(s"read Delta table with deletion vectors") {
     def verifyVersion(version: Int, expectedData: Seq[Int]): Unit = {
@@ -261,17 +272,18 @@ class DeletionVectorsSuite extends QueryTest
 
   Seq("name", "id").foreach(mode =>
     test(s"DELETE with DVs with column mapping mode=$mode") {
-      withTempDir { dirName =>
-        val path = dirName.getAbsolutePath
-        val data = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
-        spark.conf.set("spark.databricks.delta.properties.defaults.columnMapping.mode", mode)
-        data.toDF("part", "col1", "col2").write.format("delta").partitionBy(
-          "part").save(path)
-        val tableLog = DeltaLog.forTable(spark, path)
-        enableDeletionVectorsInTable(tableLog, true)
-        spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
-        checkAnswer(spark.sql(s"select * from delta.`$path` WHERE col1 = 2"), Seq())
-        verifyDVsExist(tableLog, 1)
+      withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> mode) {
+        withTempDir { dirName =>
+          val path = dirName.getAbsolutePath
+          val data = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
+          data.toDF("part", "col1", "col2").write.format("delta").partitionBy(
+            "part").save(path)
+          val tableLog = DeltaLog.forTable(spark, path)
+          enableDeletionVectorsInTable(tableLog, true)
+          spark.sql(s"DELETE FROM delta.`$path` WHERE col1 = 2")
+          checkAnswer(spark.sql(s"select * from delta.`$path` WHERE col1 = 2"), Seq())
+          verifyDVsExist(tableLog, 1)
+        }
       }
     }
   )
@@ -498,11 +510,9 @@ class DeletionVectorsSuite extends QueryTest
       for (ts <- tombstones) {
         assert(ts.deletionVector != null)
       }
-      // target log should not contain DVs
-      for (f <- allFiles) {
-        assert(f.deletionVector == null)
-        assert(f.tightBounds.get)
-      }
+      // target log should contain two files, one with and one without DV
+      assert(allFiles.count(_.deletionVector != null) === 1)
+      assert(allFiles.count(_.deletionVector == null) === 1)
     }
   }
 
@@ -570,13 +580,12 @@ class DeletionVectorsSuite extends QueryTest
       {
         sql(s"UPDATE delta.`$path` SET id = -1 WHERE id = 0")
         val (added, removed) = getFileActionsInLastVersion(deltaLog)
-        assert(added.length === 1)
+        assert(added.length === 2)
         assert(removed.length === 1)
-        // Removed files must contain DV, added files must not
-        for (a <- added) {
-          assert(a.deletionVector === null)
-          assert(a.tightBounds.get)
-        }
+        // Added files must be two, one containing DV and one not
+        assert(added.count(_.deletionVector != null) === 1)
+        assert(added.count(_.deletionVector == null) === 1)
+        // Removed files must contain DV
         for (r <- removed) {
           assert(r.deletionVector !== null)
         }
@@ -593,13 +602,13 @@ class DeletionVectorsSuite extends QueryTest
           .updateExpr(Map("id" -> "source.value"))
           .whenNotMatchedBySource().delete().execute()
         val (added, removed) = getFileActionsInLastVersion(deltaLog)
-        assert(removed.length === 2)
+        assert(removed.length === 3)
         for (a <- added) {
           assert(a.deletionVector === null)
           assert(a.tightBounds.get)
         }
-        // One of two removed files has DV
-        assert(removed.count(_.deletionVector != null) === 1)
+        // Two of three removed files have DV
+        assert(removed.count(_.deletionVector != null) === 2)
 
         // -1 and 9 are deleted by "when not matched by source"
         checkTableContents(Seq(2, 3, 4, 5, 6, 7).toDF())
@@ -621,9 +630,21 @@ class DeletionVectorsSuite extends QueryTest
       }
     }
   }
+
   test("huge table: read from tables of 2B rows with existing DV of many zeros") {
     val canonicalTable5Path = new File(table5Path).getCanonicalPath
-    checkCountAndSum("value", table5Count, table5Sum, canonicalTable5Path)
+
+    val predicatePushDownEnabled =
+      spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
+
+    try {
+      checkCountAndSum("value", table5Count, table5Sum, canonicalTable5Path)
+    } catch {
+      // TODO(SPARK-47731): Known issue. To be fixed in Spark 3.5 and/or Spark 4.0.
+      case e: SparkException if predicatePushDownEnabled &&
+        (e.getMessage.contains("More than Int.MaxValue elements") ||
+          e.getCause.getMessage.contains("More than Int.MaxValue elements")) => () // Ignore.
+    }
   }
 
   test("sanity check for non-incremental DV update") {
@@ -656,9 +677,53 @@ class DeletionVectorsSuite extends QueryTest
 
     // Updating with a DV with lower cardinality should throw.
     for (dv <- Seq(dv0, dv3)) {
-      assertThrows[IllegalArgumentException] {
+      assertThrows[DeltaChecksumException] {
         removeRows(addFileWithDV1, dv)
       }
+    }
+  }
+
+  test("Check no resource leak when DV files are missing (table corrupted)") {
+    withTempDir { tempDir =>
+      val source = new File(table2Path)
+      val target = new File(tempDir, "resourceLeakTest")
+      val targetPath = target.getAbsolutePath
+
+      // Copy the source DV table to a temporary directory
+      FileUtils.copyDirectory(source, target)
+
+      val filesWithDvs = getFilesWithDeletionVectors(DeltaLog.forTable(spark, target))
+      assert(filesWithDvs.size > 0)
+      deleteDVFile(targetPath, filesWithDvs(0))
+
+      val se = intercept[SparkException] {
+        spark.sql(s"SELECT * FROM delta.`$targetPath`").collect()
+      }
+      assert(findIfResponsible[FileNotFoundException](se).nonEmpty,
+        s"Expected a file not found exception as the cause, but got: [${se}]")
+    }
+  }
+
+  test("absolute DV path with encoded special characters") {
+    // This test uses hand-crafted path with special characters.
+    // Do not test with a prefix that needs URL standard escaping.
+    withTempDir(prefix = "spark") { dir =>
+      writeTableHavingSpecialCharInDVPath(dir, pathIsEncoded = true)
+      checkAnswer(
+        spark.read.format("delta").load(dir.getCanonicalPath),
+        Seq(1, 3, 5, 7, 9).toDF())
+    }
+  }
+
+  test("absolute DV path with not-encoded special characters") {
+    // This test uses hand-crafted path with special characters.
+    // Do not test with a prefix that needs URL standard escaping.
+    withTempDir(prefix = "spark") { dir =>
+      writeTableHavingSpecialCharInDVPath(dir, pathIsEncoded = false)
+      val e = interceptWithUnwrapping[URISyntaxException] {
+        spark.read.format("delta").load(dir.getCanonicalPath).collect()
+      }
+      assert(e.getMessage.contains("Malformed escape pair"))
     }
   }
 
@@ -687,16 +752,26 @@ class DeletionVectorsSuite extends QueryTest
   for (deleteSpec <- Seq(deleteUsingDvSmallScale)) {
     test(
       s"huge table: delete a ${deleteSpec.scale} number of rows from tables of 2B rows with DVs") {
+      val predicatePushDownEnabled =
+        spark.conf.get(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
       withTempDir { dir =>
-        FileUtils.copyDirectory(new File(table5Path), dir)
-        val log = DeltaLog.forTable(spark, dir)
+        try {
+          FileUtils.copyDirectory(new File(table5Path), dir)
+          val log = DeltaLog.forTable(spark, dir)
 
-        withDeletionVectorsEnabled() {
-          sql(s"DELETE FROM delta.`${dir.getCanonicalPath}` WHERE ${deleteSpec.sqlRule}")
+          withDeletionVectorsEnabled() {
+            sql(s"DELETE FROM delta.`${dir.getCanonicalPath}` WHERE ${deleteSpec.sqlRule}")
+          }
+          val (added, _) = getFileActionsInLastVersion(log)
+          assert(added.forall(_.deletionVector != null))
+
+          checkCountAndSum("value", deleteSpec.count, deleteSpec.sum, dir.getCanonicalPath)
+        } catch {
+          // TODO(SPARK-47731): Known issue. To be fixed in Spark 3.5 and/or Spark 4.0.
+          case e: SparkException if predicatePushDownEnabled &&
+            (e.getMessage.contains("More than Int.MaxValue elements") ||
+              e.getCause.getMessage.contains("More than Int.MaxValue elements")) => () // Ignore.
         }
-        val (added, _) = getFileActionsInLastVersion(log)
-        assert(added.forall(_.deletionVector != null))
-        checkCountAndSum("value", deleteSpec.count, deleteSpec.sum, dir.getCanonicalPath)
       }
     }
   }
@@ -770,4 +845,211 @@ object DeletionVectorsSuite {
   val table5Sum = 21975159654L
   val table5CountByValues = (0 to 20).map(_ -> 99900000L).toMap + (21 -> 47436174L)
   val table5SumByValues = (0 to 20).map(v => v -> v * 99900000L).toMap + (21 -> 21 * 47436174L)
+
+  // Generate a table with special characters in DV path.
+  // Content of this table is range(0, 10) with all even numbers deleted.
+  def writeTableHavingSpecialCharInDVPath(path: File, pathIsEncoded: Boolean): Unit = {
+    val tableHavingSpecialCharInDVTemplate = "src/test/resources/delta/table-with-dv-special-char"
+    FileUtils.copyDirectory(new File(tableHavingSpecialCharInDVTemplate), path)
+    val fullPath = new File(
+      path,
+      if (pathIsEncoded) "folder&with%25special%20char" else "folder&with%special char")
+      .getCanonicalPath
+    val logJson = new File(path, "_delta_log/00000000000000000000.json")
+    val logJsonContent = FileUtils.readFileToString(logJson, "UTF-8")
+    val newLogJsonContent = logJsonContent.replace(
+      "{{FOLDER_WITH_SPECIAL_CHAR}}", fullPath)
+    FileUtils.delete(logJson)
+    FileUtils.write(logJson, newLogJsonContent, "UTF-8")
+  }
+}
+
+class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
+  // ~200MBs. Should contain 2 row groups.
+  val multiRowgroupTable = "multiRowgroupTable"
+  val multiRowgroupTableRowsNum = 50000000
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.range(0, multiRowgroupTableRowsNum, 1, 1).toDF("id")
+      .write
+      .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, true.toString)
+      .format("delta")
+      .saveAsTable(multiRowgroupTable)
+
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
+  }
+
+  override def afterAll(): Unit = {
+    super.afterAll()
+    sql(s"DROP TABLE IF EXISTS $multiRowgroupTable")
+  }
+
+  private def testPredicatePushDown(
+      deletePredicates: Seq[String],
+      selectPredicate: Option[String],
+      expectedNumRows: Long,
+      validationPredicate: String,
+      vectorizedReaderEnabled: Boolean,
+      readColumnarBatchAsRows: Boolean): Unit = {
+    withTempDir { dir =>
+      // This forces the code generator to not use codegen. As a result, Spark sets options to get
+      // rows instead of columnar batches from the Parquet reader. This allows to test the relevant
+      // code path in DeltaParquetFileFormat.
+      val codeGenMaxFields = if (readColumnarBatchAsRows) "0" else "100"
+      withSQLConf(
+        SQLConf.WHOLESTAGE_MAX_NUM_FIELDS.key -> codeGenMaxFields,
+        SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> vectorizedReaderEnabled.toString) {
+        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` SHALLOW CLONE $multiRowgroupTable")
+
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.getCanonicalPath)
+
+        // Execute multiple delete statements. These require to reconsile the metadata column
+        // between DV writing and scanning operations.
+        deletePredicates.foreach(targetTable.delete)
+
+        val targetTableDF = selectPredicate.map(targetTable.toDF.filter).getOrElse(targetTable.toDF)
+        assertPredicatesArePushedDown(targetTableDF)
+        // Make sure there are splits.
+        assert(targetTableDF.rdd.partitions.size > 1)
+
+        withTempDir { resultDir =>
+          // Write results to a table without DVs for validation. We are doing this to avoid
+          // loading the dataset into memory.
+          targetTableDF
+            .write
+            .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, false.toString)
+            .format("delta")
+            .save(resultDir.getCanonicalPath)
+
+          val resultsTable = io.delta.tables.DeltaTable.forPath(resultDir.getCanonicalPath)
+
+          assert(resultsTable.toDF.count() === expectedNumRows)
+          // The delete/filtered rows should not exist.
+          assert(resultsTable.toDF.filter(validationPredicate).count() === 0)
+        }
+      }
+    }
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Single deletion at the first row group. " +
+    s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+    s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq("id == 100"),
+      selectPredicate = None,
+      expectedNumRows = multiRowgroupTableRowsNum - 1,
+      validationPredicate = "id == 100",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Single deletion at the second row group. " +
+    s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+    s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq("id == 40000000"),
+      selectPredicate = None,
+      expectedNumRows = multiRowgroupTableRowsNum - 1,
+      // (rowId, Expected value).
+      validationPredicate = "id == 40000000",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Single delete statement with multiple ids. " +
+    s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+    s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq("id in (200, 2000, 20000, 20000000, 40000000)"),
+      selectPredicate = None,
+      expectedNumRows = multiRowgroupTableRowsNum - 5,
+      validationPredicate = "id in (200, 2000, 20000, 20000000, 40000000)",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Multiple delete statements. " +
+    s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+    s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates =
+        Seq("id = 200", "id = 2000", "id = 20000", "id = 20000000", "id = 40000000"),
+      selectPredicate = None,
+      expectedNumRows = multiRowgroupTableRowsNum - 5,
+      validationPredicate = "id in (200, 2000, 20000, 20000000, 40000000)",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Scan with predicates. " +
+    s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+    s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq("id = 200", "id = 2000", "id = 40000000"),
+      selectPredicate = Some("id not in (20000, 20000000)"),
+      expectedNumRows = multiRowgroupTableRowsNum - 5,
+      validationPredicate = "id in (200, 2000, 20000, 20000000, 40000000)",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  for {
+    vectorizedReaderEnabled <- BOOLEAN_DOMAIN
+    readColumnarBatchAsRows <- if (vectorizedReaderEnabled) BOOLEAN_DOMAIN else Seq(false)
+  } test("PredicatePushdown: Scan with predicates - no deletes. " +
+    s"vectorizedReaderEnabled: $vectorizedReaderEnabled " +
+    s"readColumnarBatchAsRows: $readColumnarBatchAsRows") {
+    testPredicatePushDown(
+      deletePredicates = Seq.empty,
+      selectPredicate = Some("id not in (200, 2000, 20000, 20000000, 40000000)"),
+      expectedNumRows = multiRowgroupTableRowsNum - 5,
+      validationPredicate = "id in (200, 2000, 20000, 20000000, 40000000)",
+      vectorizedReaderEnabled = vectorizedReaderEnabled,
+      readColumnarBatchAsRows = readColumnarBatchAsRows)
+  }
+
+  test("Predicate pushdown works on queries that select metadata fields") {
+    withTempDir { dir =>
+      withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> true.toString) {
+        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` SHALLOW CLONE $multiRowgroupTable")
+
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.getCanonicalPath)
+        targetTable.delete("id == 40000000")
+
+        val r1 = targetTable.toDF.select("id", "_metadata.row_index").count()
+        assert(r1 === multiRowgroupTableRowsNum - 1)
+
+        val r2 = targetTable.toDF.select("id", "_metadata.row_index", "_metadata.file_path").count()
+        assert(r2 === multiRowgroupTableRowsNum - 1)
+
+        val r3 = targetTable
+          .toDF
+          .select("id", "_metadata.file_block_start", "_metadata.file_path").count()
+        assert(r3 === multiRowgroupTableRowsNum - 1)
+      }
+    }
+  }
+
+  private def assertPredicatesArePushedDown(df: DataFrame): Unit = {
+    val scan = df.queryExecution.executedPlan.collectFirst {
+      case scan: FileSourceScanExec => scan
+    }
+    assert(scan.map(_.dataFilters.nonEmpty).getOrElse(true))
+  }
 }

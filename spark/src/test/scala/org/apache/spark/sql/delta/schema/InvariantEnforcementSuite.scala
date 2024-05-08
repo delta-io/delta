@@ -24,24 +24,26 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{CheckConstraintsTableFeature, DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{Metadata, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, Invariants}
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.streaming.StreamingQueryException
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 class InvariantEnforcementSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with SQLTestUtils {
+    with DeltaSQLTestUtils {
 
 
   import testImplicits._
@@ -400,8 +402,8 @@ class InvariantEnforcementSuite extends QueryTest
       withTable("constraint") {
         spark.range(10).selectExpr("id AS valueA", "id AS valueB", "id AS valueC")
           .write.format("delta").saveAsTable("constraint")
-        val log = DeltaLog.forTable(spark, TableIdentifier("constraint", None))
-        val txn = log.startTransaction()
+        val table = DeltaTableV2(spark, TableIdentifier("constraint", None))
+        val txn = table.startTransactionWithInitialSnapshot()
         val newMetadata = txn.metadata.copy(
           configuration = txn.metadata.configuration +
             ("delta.constraints.mychk" -> "valueA < valueB"))
@@ -412,7 +414,7 @@ class InvariantEnforcementSuite extends QueryTest
         } else {
           CheckConstraintsTableFeature.minWriterVersion
         }
-        assert(log.snapshot.protocol.minWriterVersion === upVersion)
+        assert(table.deltaLog.unsafeVolatileSnapshot.protocol.minWriterVersion === upVersion)
         spark.sql("INSERT INTO constraint VALUES (50, 100, null)")
         val e = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
@@ -438,8 +440,8 @@ class InvariantEnforcementSuite extends QueryTest
       withTable("constraint") {
         spark.range(10).selectExpr("id AS valueA", "id AS valueB")
           .write.format("delta").saveAsTable("constraint")
-        val log = DeltaLog.forTable(spark, TableIdentifier("constraint", None))
-        val txn = log.startTransaction()
+        val table = DeltaTableV2(spark, TableIdentifier("constraint", None))
+        val txn = table.startTransactionWithInitialSnapshot()
         val newMetadata = txn.metadata.copy(
           configuration = txn.metadata.configuration +
             ("delta.constraints.mychk" -> "valueA < valueB"))

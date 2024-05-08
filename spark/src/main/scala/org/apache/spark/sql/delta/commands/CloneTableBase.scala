@@ -22,6 +22,7 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -188,47 +189,51 @@ abstract class CloneTableBase(
     }
 
     if (txn.readVersion < 0) {
-      destinationTable.createLogDirectory()
-    }
-
-    val (
-      datasetOfNewFilesToAdd
-      ) = {
-      // Make sure target table is empty before running clone
-      if (txn.snapshot.allFiles.count() > 0) {
-        throw DeltaErrors.cloneReplaceNonEmptyTable
-      }
-      sourceTable.allFiles
+      destinationTable.createLogDirectoriesIfNotExists()
     }
 
     val metadataToUpdate = determineTargetMetadata(txn.snapshot, deltaOperation.name)
     // Don't merge in the default properties when cloning, or we'll end up with different sets of
     // properties between source and target.
     txn.updateMetadata(metadataToUpdate, ignoreDefaultProperties = true)
-
-    val datasetOfAddedFileList = handleNewDataFiles(
-      deltaOperation.name,
-      datasetOfNewFilesToAdd,
-      qualifiedSource,
-      destinationTable)
-
-    val addedFileList = datasetOfAddedFileList.collectAsList()
+    val (
+      addedFileList
+      ) = {
+      // Make sure target table is empty before running clone
+      if (txn.snapshot.allFiles.count() > 0) {
+        throw DeltaErrors.cloneReplaceNonEmptyTable
+      }
+      val toAdd = sourceTable.allFiles
+      // absolutize file paths
+      handleNewDataFiles(
+        deltaOperation.name,
+        toAdd,
+        qualifiedSource,
+        destinationTable).collectAsList()
+    }
 
     val (addedFileCount, addedFilesSize) =
-      (addedFileList.size.toLong, totalDataSize(addedFileList.iterator))
-
-    val operationTimestamp = sourceTable.clock.getTimeMillis()
+        (addedFileList.size.toLong, totalDataSize(addedFileList.iterator))
 
 
     val newProtocol = determineTargetProtocol(spark, txn, deltaOperation.name)
+    val addFileIter =
+        addedFileList.iterator.asScala
 
     try {
-      var actions = Iterator.single(newProtocol) ++
-        addedFileList.iterator.asScala.map { fileToCopy =>
+      var actions: Iterator[Action] =
+        addFileIter.map { fileToCopy =>
           val copiedFile = fileToCopy.copy(dataChange = dataChangeInFileAction)
           // CLONE does not preserve Row IDs and Commit Versions
           copiedFile.copy(baseRowId = None, defaultRowCommitVersion = None)
         }
+      sourceTable.snapshot.foreach { sourceSnapshot =>
+        // Handle DomainMetadata for cloning a table.
+        if (deltaOperation.name == DeltaOperations.OP_CLONE) {
+          actions ++=
+            DomainMetadataUtils.handleDomainMetadataForCloneTable(sourceSnapshot.domainMetadata)
+        }
+      }
       val sourceName = sourceTable.name
       // Override source table metadata with user-defined table properties
       val context = Map[String, String]()
@@ -246,6 +251,7 @@ abstract class CloneTableBase(
           txn.commitLarge(
             spark,
             actions,
+            Some(newProtocol),
             deltaOperation,
             context,
             commitOpMetrics.mapValues(_.toString()).toMap)
@@ -279,16 +285,10 @@ abstract class CloneTableBase(
         id = UUID.randomUUID().toString,
         name = targetSnapshot.metadata.name,
         description = targetSnapshot.metadata.description)
-    // If it's a new table, we remove the row tracking table property to create a 1:1 CLONE of
-    // the source, just without row tracking. If it's an existing table, we take whatever
-    // setting is currently on the target, as the setting should be independent between
-    // target and source.
-    if (!tableExists(targetSnapshot)) {
-      clonedMetadata = RowTracking.removeRowTrackingProperty(clonedMetadata)
-    } else {
-      clonedMetadata = RowTracking.takeRowTrackingPropertyFromTarget(
-        targetMetadata = targetSnapshot.metadata,
-        sourceMetadata = clonedMetadata)
+    // Existing target table
+    if (tableExists(targetSnapshot)) {
+      // Set the ID equal to the target ID
+      clonedMetadata = clonedMetadata.copy(id = targetSnapshot.metadata.id)
     }
     clonedMetadata
   }
@@ -355,14 +355,12 @@ abstract class CloneTableBase(
     conf.getConf(DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED) ||
       // It's not a real downgrade if the table doesn't exist before the CLONE.
       !tableExists(txn.snapshot)
-    val sourceProtocolWithoutRowTracking = RowTracking.removeRowTrackingTableFeature(sourceProtocol)
 
     if (protocolDowngradeAllowed) {
       minReaderVersion = minReaderVersion.max(sourceProtocol.minReaderVersion)
       minWriterVersion = minWriterVersion.max(sourceProtocol.minWriterVersion)
       val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
-      // Row tracking settings should be independent between target and source.
-      sourceProtocolWithoutRowTracking.merge(minProtocol)
+      sourceProtocol.merge(minProtocol)
     } else {
       // Take the maximum of all protocol versions being merged to ensure that table features
       // from table property overrides are correctly added to the table feature list or are only
@@ -372,8 +370,7 @@ abstract class CloneTableBase(
       minWriterVersion = Seq(
         targetProtocol.minWriterVersion, sourceProtocol.minWriterVersion, minWriterVersion).max
       val minProtocol = Protocol(minReaderVersion, minWriterVersion).withFeatures(enabledFeatures)
-      // Row tracking settings should be independent between target and source.
-      targetProtocol.merge(sourceProtocolWithoutRowTracking, minProtocol)
+      targetProtocol.merge(sourceProtocol, minProtocol)
     }
   }
 }

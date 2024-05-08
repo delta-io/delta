@@ -16,8 +16,11 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaCommitTag.PreservedRowTrackingTag
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.types.StructField
 
 /**
  * Utility functions for Row Tracking that are shared between Row IDs and Row Commit Versions.
@@ -62,30 +65,46 @@ object RowTracking {
   }
 
   /**
-   * Returns the sourceMetadata with the row tracking property coming from the targetMetadata.
+   * Returns the Row Tracking metadata fields for the file's _metadata when Row Tracking
+   * is enabled.
    */
-  private[delta] def takeRowTrackingPropertyFromTarget(
-      targetMetadata: Metadata,
-      sourceMetadata: Metadata): Metadata = {
-    var newConfig = sourceMetadata.configuration - DeltaConfigs.ROW_TRACKING_ENABLED.key
-    targetMetadata.configuration.get(DeltaConfigs.ROW_TRACKING_ENABLED.key).foreach { v =>
-      newConfig += DeltaConfigs.ROW_TRACKING_ENABLED.key -> v
+  def createMetadataStructFields(protocol: Protocol, metadata: Metadata, nullable: Boolean)
+      : Iterable[StructField] = {
+    RowId.createRowIdField(protocol, metadata, nullable) ++
+      RowId.createBaseRowIdField(protocol, metadata) ++
+      DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata) ++
+      RowCommitVersion.createMetadataStructField(protocol, metadata, nullable)
+  }
+
+  /**
+   * Return a copy of tagsMap with the [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag added
+   * or replaced with the new value.
+   */
+  private def addPreservedRowTrackingTag(
+      tagsMap: Map[String, String],
+      preserved: Boolean): Map[String, String] = {
+    tagsMap + (DeltaCommitTag.PreservedRowTrackingTag.key -> preserved.toString)
+  }
+
+  /**
+   * Sets the [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag to true if not set. We add the tag
+   * to every operation because we assume all operations preserve row tracking by default. The
+   * absence of the tag means that row tracking is not preserved.
+   * Operations can set the tag to mark row tracking as preserved/not preserved.
+   */
+  private[delta] def addPreservedRowTrackingTagIfNotSet(
+      snapshot: SnapshotDescriptor,
+      tagsMap: Map[String, String] = Map.empty): Map[String, String] = {
+    if (!isEnabled(snapshot.protocol, snapshot.metadata) ||
+      tagsMap.contains(PreservedRowTrackingTag.key)) {
+      return tagsMap
     }
-    sourceMetadata.copy(configuration = newConfig)
+    addPreservedRowTrackingTag(tagsMap, preserved = true)
   }
 
-  /**
-   * Removes the row tracking property from the metadata.
-   */
-  private[delta] def removeRowTrackingProperty(metadata: Metadata): Metadata = {
-    metadata.copy(configuration = metadata.configuration - DeltaConfigs.ROW_TRACKING_ENABLED.key)
-  }
-
-  /**
-   * Removes the row tracking table feature from the protocol.
-   */
-  private[delta] def removeRowTrackingTableFeature(protocol: Protocol): Protocol = {
-    val writerFeaturesWithoutRowTracking = protocol.writerFeatures.map(_ - RowTrackingFeature.name)
-    protocol.copy(writerFeatures = writerFeaturesWithoutRowTracking)
+  def preserveRowTrackingColumns(
+      dfWithoutRowTrackingColumns: DataFrame, snapshot: SnapshotDescriptor): DataFrame = {
+    val dfWithRowIds = RowId.preserveRowIds(dfWithoutRowTrackingColumns, snapshot)
+    RowCommitVersion.preserveRowCommitVersions(dfWithRowIds, snapshot)
   }
 }

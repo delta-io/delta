@@ -22,12 +22,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
 
 public class DataBuilderUtils {
     public static TestColumnBatchBuilder builder(StructType schema) {
@@ -52,8 +54,6 @@ public class DataBuilderUtils {
 
         public TestColumnBatchBuilder addRow(Object... values) {
             checkArgument(values.length == schema.length(), "Invalid columns length");
-            // TODO: we could improve this further to check the type of the object based on the
-            // column data type in the schema, but given this for test it should be fine.
             rows.add(row(schema, values));
 
             return this;
@@ -155,13 +155,15 @@ public class DataBuilderUtils {
         }
 
         @Override
-        public <T> List<T> getArray(int ordinal) {
-            return (List<T>) values.get(ordinal);
+        public ArrayValue getArray(int ordinal) {
+            throw new UnsupportedOperationException(
+                    "array type unsupported for TestColumnBatchBuilder; use scala test utilities");
         }
 
         @Override
-        public <K, V> Map<K, V> getMap(int ordinal) {
-            return (Map<K, V>) values.get(ordinal);
+        public MapValue getMap(int ordinal) {
+            throw new UnsupportedOperationException(
+                    "map type unsupported for TestColumnBatchBuilder; use scala test utilities");
         }
     }
 }

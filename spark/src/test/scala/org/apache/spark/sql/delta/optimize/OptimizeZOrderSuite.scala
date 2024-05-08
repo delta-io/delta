@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.optimize
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
@@ -42,6 +42,7 @@ trait OptimizePartitionTableHelper extends QueryTest {
 trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
   with TestsStatistics
   with SharedSparkSession
+  with DeltaSQLTestUtils
   with DeltaColumnMappingTestUtils {
   import testImplicits._
 
@@ -54,7 +55,7 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
   test("optimize command: checks existence of interleaving columns") {
     withTempDir { tempDir =>
       Seq(1, 2, 3).toDF("value")
-        .select('value, 'value % 2 as 'id, 'value % 3 as 'id2)
+        .select('value, 'value % 2 as "id", 'value % 3 as "id2")
         .write
         .format("delta")
         .save(tempDir.toString)
@@ -68,7 +69,7 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
   test("optimize command: interleaving columns can't be partitioning columns") {
     withTempDir { tempDir =>
       Seq(1, 2, 3).toDF("value")
-        .select('value, 'value % 2 as 'id, 'value % 3 as 'id2)
+        .select('value, 'value % 2 as "id", 'value % 3 as "id2")
         .write
         .format("delta")
         .partitionBy("id")
@@ -143,7 +144,7 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
     withTempDir { tempDir =>
         (0.to(79).seq ++ 40.to(79).seq ++ 60.to(79).seq ++ 70.to(79).seq ++ 75.to(79).seq)
           .toDF("id")
-          .withColumn("nested", struct(struct('id + 2 as 'b, 'id + 3 as 'c) as 'sub))
+          .withColumn("nested", struct(struct('id + 2 as "b", 'id + 3 as "c") as "sub"))
           .write
           .format("delta")
           .save(tempDir.toString)
@@ -164,7 +165,7 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
         "1", DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK.key -> "true") {
         val data = Seq(1, 2, 3).toDF("id")
         data.withColumn("nested",
-          struct(struct('id + 1 as 'p1, 'id + 2 as 'p2) as 'a, 'id + 3 as 'b))
+          struct(struct('id + 1 as "p1", 'id + 2 as "p2") as "a", 'id + 3 as "b"))
           .write
           .format("delta")
           .save(tempDir.getAbsolutePath)

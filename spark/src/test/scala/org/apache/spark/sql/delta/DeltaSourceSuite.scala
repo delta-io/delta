@@ -34,6 +34,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.time.{Seconds, Span}
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
@@ -41,15 +42,91 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.{NullType, StringType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
+
+  def testNullTypeColumn(shouldDropNullTypeColumns: Boolean): Unit = {
+    withTempPaths(3) { case Seq(sourcePath, sinkPath, checkpointPath) =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key ->
+          shouldDropNullTypeColumns.toString) {
+
+        spark.sql("select CAST(null as VOID) as nullTypeCol, id from range(10)")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(sourcePath.getCanonicalPath)
+
+        def runStream() = {
+          spark.readStream
+            .format("delta")
+            .load(sourcePath.getCanonicalPath)
+            // Need to drop null type columns because it's not supported by the writer.
+            .drop("nullTypeCol")
+            .writeStream
+            .option("checkpointLocation", checkpointPath.getCanonicalPath)
+            .format("delta")
+            .start(sinkPath.getCanonicalPath)
+            .processAllAvailable()
+        }
+        if (shouldDropNullTypeColumns) {
+          val e = intercept[StreamingQueryException] {
+            runStream()
+          }
+          assert(e.getErrorClass == "STREAM_FAILED")
+          // This assertion checks the schema of the source did not change while processing a batch.
+          assert(e.getMessage.contains("assertion failed: Invalid batch: nullTypeCol"))
+        } else {
+          runStream()
+        }
+      }
+    }
+  }
+
+  test("streaming delta source should not drop null columns") {
+    testNullTypeColumn(shouldDropNullTypeColumns = false)
+  }
+
+  test("streaming delta source should drop null columns without feature flag") {
+    testNullTypeColumn(shouldDropNullTypeColumns = true)
+  }
+
+  def testCreateDataFrame(shouldDropNullTypeColumns: Boolean): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key ->
+        shouldDropNullTypeColumns.toString) {
+      withTempPath { tempPath =>
+        spark.sql("select CAST(null as VOID) as nullTypeCol, id from range(10)")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(tempPath.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, tempPath)
+        val df = deltaLog.createDataFrame(deltaLog.update(), Seq.empty, isStreaming = false)
+        val nullTypeFields = df.schema.filter(_.dataType == NullType)
+        if(shouldDropNullTypeColumns) {
+          assert(nullTypeFields.isEmpty)
+        } else {
+          assert(nullTypeFields.size == 1)
+        }
+      }
+    }
+  }
+
+  test("DeltaLog.createDataFrame should drop null columns with feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = true)
+  }
+
+  test("DeltaLog.createDataFrame should not drop null columns without feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = false)
+  }
 
   test("no schema should throw an exception") {
     withTempDir { inputDir =>
@@ -102,6 +179,33 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         AddToReservoir(inputDir, Seq("keep7", "drop8", "keep9").toDF),
         AssertOnQuery { q => q.processAllAvailable(); true },
         CheckAnswer("keep1", "keep2", "keep5", "keep6", "keep7", "keep9")
+      )
+    }
+  }
+
+  test("initial snapshot ends at base index of next version") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+      // Add data before creating the stream, so that it becomes part of the initial snapshot.
+      Seq("keep1", "keep2", "drop3").toDF.write
+        .format("delta").mode("append").save(inputDir.getAbsolutePath)
+
+      val df = spark.readStream
+        .format("delta")
+        .load(inputDir.getCanonicalPath)
+        .filter($"value" contains "keep")
+
+      testStream(df)(
+        AssertOnQuery { q => q.processAllAvailable(); true },
+        AssertOnQuery { q =>
+          val offset = q.committedOffsets.iterator.next()._2.asInstanceOf[DeltaSourceOffset]
+          assert(offset.reservoirVersion === 2)
+          assert(offset.index === DeltaSourceOffset.BASE_INDEX)
+          true
+        },
+        CheckAnswer("keep1", "keep2"),
+        StopStream
       )
     }
   }
@@ -344,9 +448,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("maxFilesPerTrigger: Trigger.AvailableNow respects read limits") {
-    withTempDir { inputDir =>
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val deltaLog = DeltaLog.forTable(spark, inputDir)
-      (0 until 5).foreach { i =>
+      // Write versions 0, 1, 2, 3, 4.
+      (0 to 4).foreach { i =>
         val v = Seq(i.toString).toDF
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
@@ -356,24 +461,74 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
         .load(inputDir.getCanonicalPath)
         .writeStream
-        .format("memory")
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .trigger(Trigger.AvailableNow)
         .queryName("maxFilesPerTriggerTest")
 
-      var q = stream.start()
+      var q = stream.start(outputDir.getCanonicalPath)
       try {
-        assert(q.awaitTermination(10000))
-        val progress = q.recentProgress.filter(_.numInputRows != 0)
-        assert(progress.length === 5)
-        progress.foreach { p =>
+        assert(q.awaitTermination(streamingTimeout.toMillis))
+        assert(q.recentProgress.length === 5)
+        // The first 5 versions each contain one file. They are processed as part of the initial
+        // snapshot (reservoir version 4) with one index per file.
+        (0 to 3).foreach { i =>
+          val p = q.recentProgress(i)
           assert(p.numInputRows === 1)
+          val endOffset = JsonUtils.fromJson[DeltaSourceOffset](p.sources.head.endOffset)
+          assert(endOffset == DeltaSourceOffset(
+            endOffset.reservoirId, reservoirVersion = 4, index = i, isInitialSnapshot = true))
         }
-        checkAnswer(sql("SELECT * from maxFilesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
+        // The last batch ends at the base index of the next reservoir version (5).
+        val p4 = q.recentProgress(4)
+        assert(p4.numInputRows === 1)
+        val endOffset = JsonUtils.fromJson[DeltaSourceOffset](p4.sources.head.endOffset)
+        assert(endOffset == DeltaSourceOffset(
+          endOffset.reservoirId,
+          reservoirVersion = 5,
+          index = DeltaSourceOffset.BASE_INDEX,
+          isInitialSnapshot = false))
+
+        checkAnswer(
+          sql(s"SELECT * from delta.`${outputDir.getCanonicalPath}`"),
+          (0 to 4).map(_.toString).toDF)
 
         // Restarting the stream should immediately terminate with no progress because no more data
-        q = stream.start()
-        assert(q.awaitTermination(10000))
-        assert(q.recentProgress.length === 5)
+        q = stream.start(outputDir.getCanonicalPath)
+        assert(q.awaitTermination(streamingTimeout.toMillis))
+        // The streaming engine always reports one batch, even if it's empty.
+        assert(q.recentProgress.length === 1)
+        assert(q.recentProgress(0).sources.head.startOffset ==
+          q.recentProgress(0).sources.head.endOffset)
+
+        // Write versions 5, 6, 7.
+        (5 to 7).foreach { i =>
+          val v = Seq(i.toString).toDF
+          v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        q = stream.start(outputDir.getCanonicalPath)
+        assert(q.awaitTermination(streamingTimeout.toMillis))
+        // These versions are processed one by one outside the initial snapshot.
+        assert(q.recentProgress.length === 3)
+
+        (5 to 7).foreach { i =>
+          val p = q.recentProgress(i - 5)
+          assert(p.numInputRows === 1)
+          val endOffset = JsonUtils.fromJson[DeltaSourceOffset](p.sources.head.endOffset)
+          assert(endOffset == DeltaSourceOffset(
+            endOffset.reservoirId,
+            reservoirVersion = i + 1,
+            index = DeltaSourceOffset.BASE_INDEX,
+            isInitialSnapshot = false))
+        }
+
+        // Restarting the stream should immediately terminate with no progress because no more data
+        q = stream.start(outputDir.getCanonicalPath)
+        assert(q.awaitTermination(streamingTimeout.toMillis))
+        assert(q.recentProgress.length === 1)
+        assert(q.recentProgress(0).sources.head.startOffset ==
+          q.recentProgress(0).sources.head.endOffset)
       } finally {
         q.stop()
       }
@@ -381,8 +536,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("Trigger.AvailableNow with an empty table") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, inputDir)
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
       sql(s"CREATE TABLE delta.`${inputDir.toURI}` (value STRING) USING delta")
 
       val stream = spark.readStream
@@ -391,6 +545,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         .load(inputDir.getCanonicalPath)
         .writeStream
         .format("memory")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .trigger(Trigger.AvailableNow)
         .queryName("emptyTableTriggerAvailableNow")
 
@@ -406,7 +561,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("maxBytesPerTrigger: process at least one file") {
-    withTempDir { inputDir =>
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 5).foreach { i =>
         val v = Seq(i.toString).toDF
@@ -419,6 +574,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         .load(inputDir.getCanonicalPath)
         .writeStream
         .format("memory")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .queryName("maxBytesPerTriggerTest")
         .start()
       try {
@@ -436,7 +592,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("maxBytesPerTrigger: metadata checkpoint") {
-    withTempDir { inputDir =>
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       (0 until 20).foreach { i =>
         val v = Seq(i.toString).toDF
@@ -449,6 +605,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         .load(inputDir.getCanonicalPath)
         .writeStream
         .format("memory")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .queryName("maxBytesPerTriggerTest")
         .start()
       try {
@@ -526,7 +683,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   testQuietly("maxBytesPerTrigger: invalid parameter") {
-    withTempDir { inputDir =>
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
@@ -538,6 +695,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             .load(inputDir.getCanonicalPath)
             .writeStream
             .format("console")
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .start()
             .processAllAvailable()
         }
@@ -550,7 +708,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("maxBytesPerTrigger: Trigger.AvailableNow respects read limits") {
-    withTempDir { inputDir =>
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val deltaLog = DeltaLog.forTable(spark, inputDir)
       (0 until 5).foreach { i =>
         val v = Seq(i.toString).toDF
@@ -562,24 +720,29 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
         .load(inputDir.getCanonicalPath)
         .writeStream
-        .format("memory")
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .trigger(Trigger.AvailableNow)
         .queryName("maxBytesPerTriggerTest")
 
-      var q = stream.start()
+      var q = stream.start(outputDir.getCanonicalPath)
       try {
-        assert(q.awaitTermination(10000))
+        assert(q.awaitTermination(streamingTimeout.toMillis))
         val progress = q.recentProgress.filter(_.numInputRows != 0)
         assert(progress.length === 5)
         progress.foreach { p =>
           assert(p.numInputRows === 1)
         }
-        checkAnswer(sql("SELECT * from maxBytesPerTriggerTest"), (0 until 5).map(_.toString).toDF)
+        checkAnswer(
+          sql(s"SELECT * from delta.`${outputDir.getCanonicalPath}`"),
+          (0 until 5).map(_.toString).toDF)
 
         // Restarting the stream should immediately terminate with no progress because no more data
-        q = stream.start()
-        assert(q.awaitTermination(10000))
-        assert(q.recentProgress.length === 5)
+        q = stream.start(outputDir.getCanonicalPath)
+        assert(q.awaitTermination(streamingTimeout.toMillis))
+        assert(q.recentProgress.length === 1)
+        assert(q.recentProgress(0).sources.head.startOffset ==
+          q.recentProgress(0).sources.head.endOffset)
       } finally {
         q.stop()
       }
@@ -642,6 +805,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     // Set unknown sourceVersion as the max allowed version plus 1.
     val unknownVersion = 4
 
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       s"""
          |{
@@ -651,16 +815,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
          |  "isStartingVersion": true
          |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
-    assert(e.getMessage.contains("Please upgrade to newer version of Delta"))
+    assert(e.getErrorClass == "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION")
+    assert(e.toString.contains("Please upgrade to newer version of Delta"))
   }
 
   test("invalid sourceVersion value") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       """
         |{
@@ -670,18 +836,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
-    for (msg <- Seq("foo", "invalid")) {
-      assert(e.getMessage.contains(msg))
-    }
+    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
+    assert(e.toString.contains("source offset format is invalid"))
   }
 
   test("missing sourceVersion") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       """
         |{
@@ -690,18 +856,20 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
-    for (msg <- Seq("Cannot find", "sourceVersion")) {
-      assert(e.getMessage.contains(msg))
+    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_VERSION")
+    for (msg <- "is invalid") {
+      assert(e.toString.contains(msg))
     }
   }
 
   test("unmatched reservoir id") {
+    // Note: "isStartingVersion" corresponds to DeltaSourceOffset.isInitialSnapshot.
     val json =
       s"""
         |{
@@ -712,15 +880,156 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         |  "isStartingVersion": true
         |}
       """.stripMargin
-    val e = intercept[IllegalStateException] {
+    val e = intercept[SparkThrowable] {
       DeltaSourceOffset(
         UUID.randomUUID().toString,
         SerializedOffset(json)
       )
     }
+    assert(e.getErrorClass == "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE")
     for (msg <- Seq("delete", "checkpoint", "restart")) {
-      assert(e.getMessage.contains(msg))
+      assert(e.toString.contains(msg))
     }
+  }
+
+  test("isInitialSnapshot serializes as isStartingVersion") {
+    for (isStartingVersion <- Seq(false, true)) {
+      // From serialized to object
+      val reservoirId = UUID.randomUUID().toString
+      val json =
+        s"""
+           |{
+           |  "reservoirId": "$reservoirId",
+           |  "sourceVersion": 1,
+           |  "reservoirVersion": 1,
+           |  "index": 1,
+           |  "isStartingVersion": $isStartingVersion
+           |}
+      """.stripMargin
+      val offsetDeserialized = DeltaSourceOffset(reservoirId, SerializedOffset(json))
+      assert(offsetDeserialized.isInitialSnapshot === isStartingVersion)
+
+      // From object to serialized
+      val offset = DeltaSourceOffset(
+        reservoirId = reservoirId,
+        reservoirVersion = 7,
+        index = 13,
+        isInitialSnapshot = isStartingVersion)
+      assert(offset.json.contains(s""""isStartingVersion":$isStartingVersion"""))
+    }
+  }
+
+  test("DeltaSourceOffset deserialization") {
+    // Source version 1 with BASE_INDEX_V1
+    val reservoirId = UUID.randomUUID().toString
+    val jsonV1 =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 1,
+         |  "reservoirVersion": 3,
+         |  "index": -1,
+         |  "isStartingVersion": false
+         |}
+    """.stripMargin
+    val offsetDeserializedV1 = JsonUtils.fromJson[DeltaSourceOffset](jsonV1)
+    assert(offsetDeserializedV1 ==
+      DeltaSourceOffset(reservoirId, 3, DeltaSourceOffset.BASE_INDEX, false))
+
+    // Source version 3 with BASE_INDEX_V3
+    val jsonV3 =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 3,
+         |  "reservoirVersion": 7,
+         |  "index": -100,
+         |  "isStartingVersion": false
+         |}
+    """.stripMargin
+    val offsetDeserializedV3 = JsonUtils.fromJson[DeltaSourceOffset](jsonV3)
+    assert(offsetDeserializedV3 ==
+      DeltaSourceOffset(reservoirId, 7, DeltaSourceOffset.BASE_INDEX, false))
+
+    // Source version 3 with METADATA_CHANGE_INDEX
+    val jsonV3metadataChange =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 3,
+         |  "reservoirVersion": 7,
+         |  "index": -20,
+         |  "isStartingVersion": false
+         |}
+    """.stripMargin
+    val offsetDeserializedV3metadataChange =
+      JsonUtils.fromJson[DeltaSourceOffset](jsonV3metadataChange)
+    assert(offsetDeserializedV3metadataChange ==
+      DeltaSourceOffset(reservoirId, 7, DeltaSourceOffset.METADATA_CHANGE_INDEX, false))
+
+    // Source version 3 with regular index and isStartingVersion = true
+    val jsonV3start =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 3,
+         |  "reservoirVersion": 9,
+         |  "index": 23,
+         |  "isStartingVersion": true
+         |}
+    """.stripMargin
+    val offsetDeserializedV3start = JsonUtils.fromJson[DeltaSourceOffset](jsonV3start)
+    assert(offsetDeserializedV3start == DeltaSourceOffset(reservoirId, 9, 23, true))
+  }
+
+  test("DeltaSourceOffset deserialization error") {
+    val reservoirId = UUID.randomUUID().toString
+    // This is missing a double quote so it's unbalanced.
+    val jsonV1 =
+      s"""
+         |{
+         |  "reservoirId": "$reservoirId",
+         |  "sourceVersion": 23x,
+         |  "reservoirVersion": 3,
+         |  "index": -1,
+         |  "isStartingVersion": false
+         |}
+    """.stripMargin
+    val e = intercept[SparkThrowable] {
+      JsonUtils.fromJson[DeltaSourceOffset](jsonV1)
+    }
+    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
+  }
+
+  test("DeltaSourceOffset serialization") {
+    val reservoirId = UUID.randomUUID().toString
+    // BASE_INDEX is always serialized as V1.
+    val offsetV1 = DeltaSourceOffset(reservoirId, 3, DeltaSourceOffset.BASE_INDEX, false)
+    assert(JsonUtils.toJson(offsetV1) ===
+      s"""{"sourceVersion":1,"reservoirId":"$reservoirId","reservoirVersion":3,"index":-1,""" +
+      s""""isStartingVersion":false}"""
+    )
+    // The same serializer should be used by both methods.
+    assert(JsonUtils.toJson(offsetV1) === offsetV1.json)
+
+    // METADATA_CHANGE_INDEX is always serialized as V3
+    val offsetV3metadataChange =
+      DeltaSourceOffset(reservoirId, 7, DeltaSourceOffset.METADATA_CHANGE_INDEX, false)
+    assert(JsonUtils.toJson(offsetV3metadataChange) ===
+      s"""{"sourceVersion":3,"reservoirId":"$reservoirId","reservoirVersion":7,"index":-20,""" +
+      s""""isStartingVersion":false}"""
+    )
+    // The same serializer should be used by both methods.
+    assert(JsonUtils.toJson(offsetV3metadataChange) === offsetV3metadataChange.json)
+
+    // Regular index and isStartingVersion = true, serialized as V1
+    val offsetV1start = DeltaSourceOffset(reservoirId, 9, 23, true)
+    assert(JsonUtils.toJson(offsetV1start) ===
+      s"""{"sourceVersion":1,"reservoirId":"$reservoirId","reservoirVersion":9,"index":23,""" +
+      s""""isStartingVersion":true}"""
+    )
+    // The same serializer should be used by both methods.
+    assert(JsonUtils.toJson(offsetV1start) === offsetV1start.json)
   }
 
   testQuietly("recreate the reservoir should fail the query") {
@@ -931,6 +1240,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       // Create a checkpoint so that logs before checkpoint can be expired and deleted
       writersLog.checkpoint()
+      val tahoeId = deltaLog.tableId // This isn't stable, but it shouldn't change during the test.
 
       testStream(df)(
         StartStream(Trigger.ProcessingTime("10 seconds"), new StreamManualClock),
@@ -1003,6 +1313,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("Delta source advances with non-data inserts and generates empty dataframe for " +
     "non-data operations") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Version 0
       Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
 
       val df = spark.readStream.format("delta").load(inputDir.toString)
@@ -1026,40 +1337,31 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             }
         )
         .start()
+
+      val deltaLog = DeltaLog.forTable(spark, inputDir.toString)
+      def expectLatestOffset(offset: DeltaSourceOffset) {
+          val lastOffset = DeltaSourceOffset(
+            deltaLog.tableId,
+            SerializedOffset(stream.lastProgress.sources.head.endOffset)
+          )
+
+          assert(lastOffset == offset)
+      }
+
       try {
         stream.processAllAvailable()
+        expectLatestOffset(DeltaSourceOffset(
+          deltaLog.tableId, 1, DeltaSourceOffset.BASE_INDEX, isInitialSnapshot = false))
 
-        val deltaLog = DeltaLog.forTable(spark, inputDir.toString)
-        for(i <- 1 to 3) {
-          deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
-          stream.processAllAvailable()
-        }
-
-        val fs = deltaLog.dataPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-        for (version <- 0 to 3) {
-          val possibleFiles = Seq(
-            f"/$version%020d.checkpoint.parquet",
-            f"/$version%020d.json",
-            f"/$version%020d.crc"
-          ).map { name => new Path(inputDir.toString + "/_delta_log" + name) }
-          for (logFilePath <- possibleFiles) {
-            if (fs.exists(logFilePath)) {
-              // The cleanup logic has a corner case when files for higher versions don't have
-              // higher timestamps, so we set the timestamp to scale with version rather than just
-              // being 0.
-              fs.setTimes(logFilePath, version * 1000, 0)
-            }
-          }
-        }
-        deltaLog.cleanUpExpiredLogs(deltaLog.snapshot)
+        deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
         stream.processAllAvailable()
+        expectLatestOffset(DeltaSourceOffset(
+          deltaLog.tableId, 2, DeltaSourceOffset.BASE_INDEX, isInitialSnapshot = false))
 
-        val lastOffset = DeltaSourceOffset(
-          deltaLog.tableId,
-          SerializedOffset(stream.lastProgress.sources.head.endOffset)
-        )
-
-        assert(lastOffset == DeltaSourceOffset(deltaLog.tableId, 3, -1, false))
+        deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
+        stream.processAllAvailable()
+        expectLatestOffset(DeltaSourceOffset(
+          deltaLog.tableId, 3, DeltaSourceOffset.BASE_INDEX, isInitialSnapshot = false))
       } finally {
         stream.stop()
       }
@@ -1068,6 +1370,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("Rate limited Delta source advances with non-data inserts") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Version 0
       Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
 
       val df = spark.readStream.format("delta").load(inputDir.toString)
@@ -1076,37 +1379,45 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         .option("checkpointLocation", checkpointDir.toString)
         .option("maxFilesPerTrigger", 2)
         .start(outputDir.toString)
+
       try {
         val deltaLog = DeltaLog.forTable(spark, inputDir.toString)
-        for(i <- 1 to 3) {
+        def waitForOffset(offset: DeltaSourceOffset) {
+          eventually(timeout(streamingTimeout)) {
+            val lastOffset = DeltaSourceOffset(
+              deltaLog.tableId,
+              SerializedOffset(stream.lastProgress.sources.head.endOffset)
+            )
+
+            assert(lastOffset == offset)
+          }
+        }
+
+        // Process the initial snapshot (version 0) and end up at the start of version 1 which
+        // does not exist yet.
+        stream.processAllAvailable()
+        waitForOffset(DeltaSourceOffset(deltaLog.tableId, 1, DeltaSourceOffset.BASE_INDEX, false))
+
+        // Add Versions 1, 2, 3, and 4
+        for(i <- 1 to 4) {
           deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
         }
 
-        val fs = deltaLog.dataPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-        for (version <- 0 to 3) {
-          val possibleFiles = Seq(
-            f"/$version%020d.checkpoint.parquet",
-            f"/$version%020d.json",
-            f"/$version%020d.crc"
-          ).map { name => new Path(inputDir.toString + "/_delta_log" + name) }
-          for (logFilePath <- possibleFiles) {
-            if (fs.exists(logFilePath)) {
-              // The cleanup logic has a corner case when files for higher versions don't have
-              // higher timestamps, so we set the timestamp to scale with version rather than just
-              // being 0.
-              fs.setTimes(logFilePath, version * 1000, 0)
-            }
-          }
-        }
-        deltaLog.cleanUpExpiredLogs(deltaLog.snapshot)
+        // The manual commits don't have any files in them, but they do have indexes: BASE_INDEX
+        // and END_INDEX. Neither of those indexes are counted for rate limiting. We end up at
+        // v4[END_INDEX] which is then rounded up to v5[BASE_INDEX] even though v5 does not exist
+        // yet.
         stream.processAllAvailable()
+        waitForOffset(DeltaSourceOffset(deltaLog.tableId, 5, DeltaSourceOffset.BASE_INDEX, false))
 
-        val lastOffset = DeltaSourceOffset(
-          deltaLog.tableId,
-          SerializedOffset(stream.lastProgress.sources.head.endOffset)
-        )
+        // Add Version 5
+        deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
 
-        assert(lastOffset == DeltaSourceOffset(deltaLog.tableId, 3, -1, false))
+        // The stream progresses to v5[END_INDEX] which is rounded up to v6[BASE_INDEX]. (In prior
+        // versions of the code we did not have END_INDEX. In that case the stream would not have
+        // moved forward from v5, because there were no indexes after v5[BASE_INDEX].
+        stream.processAllAvailable()
+        waitForOffset(DeltaSourceOffset(deltaLog.tableId, 6, DeltaSourceOffset.BASE_INDEX, false))
       } finally {
         stream.stop()
       }
@@ -1126,7 +1437,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
         val deltaLog = DeltaLog.forTable(spark, tempDir)
         deltaLog.store.write(
-          FileNames.deltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
+          FileNames.unsafeDeltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
           // Write a large reader version to fail the streaming query
           Iterator(Protocol(minReaderVersion = Int.MaxValue).json),
           overwrite = false,
@@ -1151,7 +1462,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
       file.setLastModified(ts)
       startVersion += 1
     }
@@ -1213,7 +1524,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       assert(deltaLog.update().version == 2)
       deltaLog.checkpoint()
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
 
       // Cannot start from version 0
       assert(intercept[StreamingQueryException] {
@@ -1288,7 +1599,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Add one commit and delete version 0 and version 1
         generateCommits(inputDir.getCanonicalPath, start + 60.minutes)
         (0 to 1).foreach { v =>
-          new File(FileNames.deltaFile(deltaLog.logPath, v).toUri).delete()
+          new File(FileNames.unsafeDeltaFile(deltaLog.logPath, v).toUri).delete()
         }
 
         // Although version 1 has been deleted, restarting the query should still work as we have
@@ -1384,7 +1695,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       assert(deltaLog.update().version == 2)
       deltaLog.checkpoint()
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
 
       // Can start from version 1 even if it's not recreatable
       // TODO: currently we would error out if we couldn't construct the snapshot to check column
@@ -1422,7 +1733,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("startingVersion: user defined start works with mergeSchema") {
+  testSparkLatestOnly("startingVersion: user defined start works with mergeSchema") {
     withTempDir { inputDir =>
       withTempView("startingVersionTest") {
         spark.range(10)
@@ -1632,9 +1943,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
               SerializedOffset(offsetJson)
             ))
           assert(endOffsets.toList ==
-            DeltaSourceOffset(id, 1, 0, isStartingVersion = false)
+            DeltaSourceOffset(id, 1, 0, isInitialSnapshot = false)
               // When we reach the end of version 1, we will jump to version 2 with index -1
-              :: DeltaSourceOffset(id, 2, -1, isStartingVersion = false)
+              :: DeltaSourceOffset(id, 2, DeltaSourceOffset.BASE_INDEX, isInitialSnapshot = false)
               :: Nil)
         } finally {
           q.stop()
@@ -1676,8 +1987,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       assert(e.getCause.isInstanceOf[UnsupportedOperationException])
       assert(e.getCause.getMessage.contains(
-        "This is currently not supported. If you'd like to ignore updates, set the option " +
-          "'skipChangeCommits' to 'true'."))
+        "This is currently not supported. If this is going to happen regularly and you are okay" +
+          " to skip changes, set the option 'skipChangeCommits' to 'true'."
+      ))
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
       assert(e.getCause.getMessage.matches(s".*$inputDir.*"))
@@ -1722,7 +2034,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("fail on data loss - starting from missing files") {
-    withTempDirs { case (srcData, targetData, chkLocation) =>
+    withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -1744,7 +2056,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the first file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
 
       val e = intercept[StreamingQueryException] {
         val q = df.writeStream.format("delta")
@@ -1757,7 +2069,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("fail on data loss - gaps of files") {
-    withTempDirs { case (srcData, targetData, chkLocation) =>
+    withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -1779,7 +2091,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the second file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
 
       val e = intercept[StreamingQueryException] {
         val q = df.writeStream.format("delta")
@@ -1792,7 +2104,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("fail on data loss - starting from missing files with option off") {
-    withTempDirs { case (srcData, targetData, chkLocation) =>
+    withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -1815,7 +2127,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the first file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
 
       val q2 = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)
@@ -1828,7 +2140,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("fail on data loss - gaps of files with option off") {
-    withTempDirs { case (srcData, targetData, chkLocation) =>
+    withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -1851,7 +2163,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the second file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
 
       val q2 = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)
@@ -1909,27 +2221,27 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       try {
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
-        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isStartingVersion=true)
+        // source1: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
+        // source2: DeltaSourceOffset(reservoirVersion=1,index=0,isInitialSnapshot=true)
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir1.getCanonicalPath)
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         spark.range(1, 2).write.format("delta").mode("append").save(inputDir2.getCanonicalPath)
         q.processAllAvailable()
         // current offsets:
-        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
-        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isStartingVersion=false)
+        // source1: DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
+        // source2: DeltaSourceOffset(reservoirVersion=3,index=-1,isInitialSnapshot=false)
         // Note: version 2 doesn't exist in source1
 
         q.stop()
         // Restart the query. It will call `getBatch` on the previous two offsets of `source1` which
-        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isStartingVersion=false)
+        // are both DeltaSourceOffset(reservoirVersion=2,index=-1,isInitialSnapshot=false)
         // As version 2 doesn't exist, we should not try to load version 2 in this case.
         q = startQuery()
         q.processAllAvailable()
@@ -1945,24 +2257,24 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false),
+        isInitialSnapshot = false),
       currentOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false)
+        isInitialSnapshot = false)
     )
     DeltaSourceOffset.validateOffsets(
       previousOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 4,
         index = 10,
-        isStartingVersion = false),
+        isInitialSnapshot = false),
       currentOffset = DeltaSourceOffset(
         reservoirId = "foo",
         reservoirVersion = 5,
         index = 1,
-        isStartingVersion = false)
+        isInitialSnapshot = false)
     )
 
     assert(intercept[IllegalStateException] {
@@ -1971,26 +2283,26 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = true)
+          isInitialSnapshot = true)
       )
-    }.getMessage.contains("Found invalid offsets: 'isStartingVersion' fliped incorrectly."))
+    }.getMessage.contains("Found invalid offsets: 'isInitialSnapshot' flipped incorrectly."))
     assert(intercept[IllegalStateException] {
       DeltaSourceOffset.validateOffsets(
         previousOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 1,
           index = 10,
-          isStartingVersion = false)
+          isInitialSnapshot = false)
       )
     }.getMessage.contains("Found invalid offsets: 'reservoirVersion' moved back."))
     assert(intercept[IllegalStateException] {
@@ -1999,12 +2311,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 10,
-          isStartingVersion = false),
+          isInitialSnapshot = false),
         currentOffset = DeltaSourceOffset(
           reservoirId = "foo",
           reservoirVersion = 4,
           index = 9,
-          isStartingVersion = false)
+          isInitialSnapshot = false)
       )
     }.getMessage.contains("Found invalid offsets. 'index' moved back."))
   }
@@ -2117,7 +2429,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("handling nullability schema changes") {
     withTable("srcTable") {
-      withTempDirs { case (srcTblDir, checkpointDir, checkpointDir2) =>
+      withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
         def readStream(startingVersion: Option[Long] = None): DataFrame = {
           var dsr = spark.readStream
           startingVersion.foreach { v =>

@@ -34,9 +34,11 @@ jobs:
           java-version: "8"
       - name: Generate docs
         run: |
-          cd kernel && build/sbt kernelApi/doc
-          mkdir -p docs/snapshot/kernel-api/java
-          cp -r kernel-api/target/api/ docs/snapshot/kernel-api/java/
+          build/sbt kernelGroup/unidoc
+          mkdir -p kernel/docs/snapshot/kernel-api/java
+          mkdir -p kernel/docs/snapshot/kernel-defaults/java
+          cp -r kernel/kernel-api/target/javaunidoc/. kernel/docs/snapshot/kernel-api/java/
+          cp -r kernel/kernel-defaults/target/javaunidoc/. kernel/docs/snapshot/kernel-defaults/java/
       - name: Setup Pages
         uses: actions/configure-pages@v3
       - name: Upload artifact

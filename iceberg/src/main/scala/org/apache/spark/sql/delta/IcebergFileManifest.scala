@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{RowLevelOperationMode, Table, TableProperties}
+import org.apache.iceberg.{PartitionData, RowLevelOperationMode, StructLike, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 
 import org.apache.spark.internal.Logging
@@ -48,6 +48,31 @@ class IcebergFileManifest(
 
   val basePath = table.location()
 
+  val icebergSchema = table.schema()
+
+  // we must use field id to look up the partition value; consider scenario with iceberg
+  // behavior chance since 1.4.0:
+  // 1) create table with partition schema (a[col_name]: 1[field_id]), add file1;
+  //    The partition data for file1 is (a:1:some_part_value)
+  // 2) add new partition col b and the partition schema becomes (a: 1, b: 2), add file2;
+  //    the partition data for file2 is (a:1:some_part_value, b:2:some_part_value)
+  // 3) remove partition col a, then add file3;
+  //    for iceberg < 1.4.0: the partFields is (a:1(void), b:2); the partition data for
+  //                         file3 is (a:1(void):null, b:2:some_part_value);
+  //    for iceberg 1.4.0:   the partFields is (b:2); When it reads file1 (a:1:some_part_value),
+  //                         it must use the field_id instead of index to look up the partition
+  //                         value, as the partField and partitionData from file1 have different
+  //                         ordering and thus same index indicates different column.
+  val physicalNameToField = table.spec().fields().asScala.collect {
+      case field if field.transform().toString != VOID_TRANSFORM =>
+        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> field
+    }.toMap
+
+  val dateFormatter = DateFormatter()
+
+  val timestampFormatter =
+    TimestampFormatter(ConvertUtils.timestampPartitionPattern, java.util.TimeZone.getDefault)
+
   override def numFiles: Long = {
     if (_numFiles.isEmpty) getFileSparkResults()
     _numFiles.get
@@ -69,7 +94,7 @@ class IcebergFileManifest(
       .getOrDefault(
         TableProperties.DEFAULT_FILE_FORMAT, TableProperties.DEFAULT_FILE_FORMAT_DEFAULT)
 
-    if (format != "parquet") {
+    if (format.toLowerCase() != "parquet") {
       throw new UnsupportedOperationException(
         s"Cannot convert Iceberg tables with file format $format. Only parquet is supported.")
     }
@@ -77,31 +102,10 @@ class IcebergFileManifest(
     val schemaBatchSize =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_SCHEMA_INFERENCE)
 
-    val partFields = table.spec().fields().asScala
-    val icebergSchema = table.schema()
-    // Prune removed partition fields.
-    val physicalNameToFieldIndex = partFields.zipWithIndex.collect {
-      case (field, index) if field.transform().toString != VOID_TRANSFORM =>
-        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> index
-    }.toMap
-
-    val dateFormatter = DateFormatter()
-    val timestampFormatter = TimestampFormatter(ConvertUtils.timestampPartitionPattern,
-      java.util.TimeZone.getDefault)
-
     // This flag is strongly not recommended to turn on, but we still provide a flag for regression
     // purpose.
     val unsafeConvertMorTable =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
-    val properties = CaseInsensitiveMap(table.properties().asScala.toMap)
-    val isMergeOnReadTable = Seq(
-      TableProperties.DELETE_MODE,
-      TableProperties.UPDATE_MODE,
-      TableProperties.MERGE_MODE
-    ).exists { propKey =>
-      properties.get(propKey)
-        .exists(RowLevelOperationMode.fromName(_) == RowLevelOperationMode.MERGE_ON_READ)
-    }
 
     var numFiles = 0L
     val res = table.newScan().planFiles().iterator().asScala.grouped(schemaBatchSize).map { batch =>
@@ -110,25 +114,18 @@ class IcebergFileManifest(
       numFiles += batch.length
       val filePathWithPartValues = batch.map { fileScanTask =>
         val filePath = fileScanTask.file().path().toString
-        // If an Iceberg table has merge on read enabled AND it has deletion file associated with
-        // the data file, we could not convert directly.
-        val hasMergeOnReadDeletionFiles = isMergeOnReadTable && fileScanTask.deletes().size() > 0
+        // If an Iceberg table has deletion file associated with the data file (Supported in
+        // Iceberg V2, either position deletes or equality deletes), we could not convert directly.
+        val hasMergeOnReadDeletionFiles = fileScanTask.deletes().size() > 0
         if (hasMergeOnReadDeletionFiles && !unsafeConvertMorTable) {
           throw new UnsupportedOperationException(
-            s"Cannot convert Iceberg merge-on-read table with delete files. " +
+            s"Cannot support convert Iceberg table with row-level deletes." +
               s"Please trigger an Iceberg compaction and retry the command.")
         }
         val partitionValues = if (spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
-          val icebergPartitionValues = fileScanTask.file().partition()
-          val physicalNameToPartValueMap = physicalNameToFieldIndex
-            .map { case (physicalName, fieldIndex) =>
-              val partValue = icebergPartitionValues.get(fieldIndex, classOf[java.lang.Object])
-              val partValueAsString = IcebergPartitionUtil.partitionValueToString(
-                partFields(fieldIndex), partValue, icebergSchema, dateFormatter, timestampFormatter)
-              (physicalName, partValueAsString)
-            }
-          Some(physicalNameToPartValueMap)
+            DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
+          Some(convertIcebergPartitionToPartitionValues(
+            fileScanTask.file().partition()))
         } else None
         (filePath, partitionValues)
       }
@@ -152,4 +149,34 @@ class IcebergFileManifest(
   }
 
   override def close(): Unit = fileSparkResults.map(_.unpersist())
+
+  def convertIcebergPartitionToPartitionValues(partition: StructLike):
+      Map[String, String] = {
+    val icebergPartitionData = partition.asInstanceOf[PartitionData]
+    val fieldIdToIdx = icebergPartitionData.getPartitionType
+      .fields()
+      .asScala
+      .zipWithIndex
+      .map(kv => kv._1.fieldId() -> kv._2)
+      .toMap
+    val physicalNameToPartValueMap = physicalNameToField
+      .map {
+        case (physicalName, field) =>
+          val fieldIndex = fieldIdToIdx.get(field.fieldId())
+          val partValueAsString = fieldIndex
+            .map { idx =>
+              val partValue = icebergPartitionData.get(idx)
+              IcebergPartitionUtil.partitionValueToString(
+                field,
+                partValue,
+                icebergSchema,
+                dateFormatter,
+                timestampFormatter
+              )
+            }
+            .getOrElse(null)
+          physicalName -> partValueAsString
+      }
+    physicalNameToPartValueMap
+  }
 }

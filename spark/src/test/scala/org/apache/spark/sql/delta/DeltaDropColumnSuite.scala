@@ -148,7 +148,7 @@ class DeltaDropColumnSuite extends QueryTest
       val e = intercept[AnalysisException] {
         drop("t1", "b.d" :: Nil)
       }
-      assert(e.getMessage.contains("Cannot drop column from a struct type with a single field"))
+      assert(e.getMessage.contains("Cannot drop column from a schema with a single column"))
 
       // can drop the parent column
       drop("t1", "b" :: Nil)
@@ -157,7 +157,7 @@ class DeltaDropColumnSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         drop("t1", "map" :: Nil)
       }
-      assert(e2.getMessage.contains("Cannot drop column from a struct type with a single field"))
+      assert(e2.getMessage.contains("Cannot drop column from a schema with a single column"))
 
       spark.sql("alter table t1 add column (e struct<e1 string, e2 string>)")
 
@@ -196,17 +196,17 @@ class DeltaDropColumnSuite extends QueryTest
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
-      assertException("Cannot drop column a because this column is referenced by") {
+      assertException("Cannot alter column a because this column is referenced by") {
         drop("t1", "a" :: Nil)
       }
 
-      assertException("Cannot drop column arr because this column is referenced by") {
+      assertException("Cannot alter column arr because this column is referenced by") {
         drop("t1", "arr" :: Nil)
       }
 
 
       // cannot drop b because its child is referenced
-      assertException("Cannot drop column b because this column is referenced by") {
+      assertException("Cannot alter column b because this column is referenced by") {
         drop("t1", "b" :: Nil)
       }
 
@@ -241,7 +241,7 @@ class DeltaDropColumnSuite extends QueryTest
       spark.sql("alter table t1 add constraint" +
         " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
 
-      assertException("Cannot drop column map because this column is referenced by") {
+      assertException("Cannot alter column map because this column is referenced by") {
         drop("t1", "map" :: Nil)
       }
     }
@@ -279,19 +279,19 @@ class DeltaDropColumnSuite extends QueryTest
 
         simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
 
-        assertException("Cannot drop column a because this column is referenced by") {
+        assertException("Cannot alter column a because this column is referenced by") {
           drop("t1", "a" :: Nil)
         }
 
-        assertException("Cannot drop column b because this column is referenced by") {
+        assertException("Cannot alter column b because this column is referenced by") {
           drop("t1", "b" :: Nil)
         }
 
-        assertException("Cannot drop column b.d because this column is referenced by") {
+        assertException("Cannot alter column b.d because this column is referenced by") {
           drop("t1", "b.d" :: Nil)
         }
 
-        assertException("Cannot drop column arr because this column is referenced by") {
+        assertException("Cannot alter column arr because this column is referenced by") {
           drop("t1", "arr" :: Nil)
         }
 
@@ -408,4 +408,56 @@ class DeltaDropColumnSuite extends QueryTest
     fieldToDrop = "element.b",
     updatedColumnType = "array<struct<a: int>>")
 
+  testDropNestedField("struct in nested map keys")(
+    initialColumnType = "map<map<struct<a: int, b: string>, int>, int>",
+    fieldToDrop = "key.key.b",
+    updatedColumnType = "map<map<struct<a: int>, int>, int>")
+
+  testDropNestedField("struct in nested map values")(
+    initialColumnType = "map<int, map<int, struct<a: int, b: string>>>",
+    fieldToDrop = "value.value.b",
+    updatedColumnType = "map<int, map<int, struct<a: int>>>")
+
+  testDropNestedField("struct in nested arrays")(
+    initialColumnType = "array<array<struct<a: int, b: string>>>",
+    fieldToDrop = "element.element.b",
+    updatedColumnType = "array<array<struct<a: int>>>")
+
+  testDropNestedField("struct in nested array and map")(
+    initialColumnType = "array<map<int, struct<a: int, b: string>>>",
+    fieldToDrop = "element.value.b",
+    updatedColumnType = "array<map<int, struct<a: int>>>")
+
+  testDropNestedField("struct in nested map key and array")(
+    initialColumnType = "map<array<struct<a: int, b: string>>, int>",
+    fieldToDrop = "key.element.b",
+    updatedColumnType = "map<array<struct<a: int>>, int>")
+
+  testDropNestedField("struct in nested map value and array")(
+    initialColumnType = "map<int, array<struct<a: int, b: string>>>",
+    fieldToDrop = "value.element.b",
+    updatedColumnType = "map<int, array<struct<a: int>>>")
+
+  test("can't drop map key/value or array element") {
+    withTable("delta_test") {
+      sql(
+        s"""
+           |CREATE TABLE delta_test (m map<int, int>, a array<int>)
+           |USING delta
+           |TBLPROPERTIES (${DeltaConfigs.COLUMN_MAPPING_MODE.key} = 'name')
+          """.stripMargin)
+      for {
+        field <- Seq("m.key", "m.value", "a.element")
+      }
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE delta_test DROP COLUMN $field")
+        },
+        errorClass = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
+        parameters = Map(
+          "struct" -> "IntegerType"
+        )
+      )
+    }
+  }
 }

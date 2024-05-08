@@ -32,6 +32,7 @@ object DeltaSourceUtils {
   // as a hack, we pass in the partitioning columns among the options.
   val PARTITIONING_COLUMNS_KEY = "__partition_columns"
 
+
   // The metadata key recording the generation expression in a generated column's `StructField`.
   val GENERATION_EXPRESSION_METADATA_KEY = "delta.generationExpression"
 
@@ -62,6 +63,8 @@ object DeltaSourceUtils {
     case v: Boolean => expressions.Literal.create(v)
     case v: java.sql.Date => expressions.Literal.create(v)
     case v: java.sql.Timestamp => expressions.Literal.create(v)
+    case v: java.time.Instant => expressions.Literal.create(v)
+    case v: java.time.LocalDate => expressions.Literal.create(v)
     case v: BigDecimal => expressions.Literal.create(v)
   }
 

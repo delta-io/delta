@@ -19,24 +19,24 @@ package io.delta.kernel.internal.deletionvectors;
 import java.io.IOException;
 import java.util.Optional;
 
-import io.delta.kernel.client.TableClient;
-import io.delta.kernel.utils.Tuple2;
+import io.delta.kernel.engine.Engine;
 
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
+import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Utility methods regarding deletion vectors.
  */
 public class DeletionVectorUtils {
     public static Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> loadNewDvAndBitmap(
-        TableClient tableClient,
+        Engine engine,
         String tablePath,
         DeletionVectorDescriptor dv) {
         DeletionVectorStoredBitmap storedBitmap =
             new DeletionVectorStoredBitmap(dv, Optional.of(tablePath));
         try {
             RoaringBitmapArray bitmap = storedBitmap
-                .load(tableClient.getFileSystemClient());
+                .load(engine.getFileSystemClient());
             return new Tuple2<>(dv, bitmap);
         } catch (IOException e) {
             throw new RuntimeException("Couldn't load dv", e);

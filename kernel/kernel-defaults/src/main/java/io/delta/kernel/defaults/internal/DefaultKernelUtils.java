@@ -16,130 +16,19 @@
 package io.delta.kernel.defaults.internal;
 
 import java.time.LocalDate;
-import java.util.List;
-import java.util.Objects;
-import java.util.stream.Collectors;
+import java.util.concurrent.TimeUnit;
 
-import org.apache.parquet.schema.GroupType;
-import org.apache.parquet.schema.MessageType;
-import org.apache.parquet.schema.Type;
-
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
+
+import io.delta.kernel.internal.util.DateTimeConstants;
+import io.delta.kernel.internal.util.Tuple2;
 
 public class DefaultKernelUtils {
     private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
 
-    private DefaultKernelUtils() {}
-
-    /**
-     * Given the file schema in Parquet file and selected columns by Delta, return
-     * a subschema of the file schema.
-     *
-     * @param fileSchema
-     * @param deltaType
-     * @return
-     */
-    public static final MessageType pruneSchema(
-        GroupType fileSchema /* parquet */,
-        StructType deltaType /* delta-kernel */) {
-        return new MessageType("fileSchema", pruneFields(fileSchema, deltaType));
-    }
-
-    /**
-     * Search for the Parquet type in {@code groupType} of subfield which is equivalent to
-     * given {@code field}.
-     *
-     * @param groupType Parquet group type coming from the file schema.
-     * @param field     Sub field given as Delta Kernel's {@link StructField}
-     * @return {@link Type} of the Parquet field. Returns {@code null}, if not found.
-     */
-    public static Type findSubFieldType(GroupType groupType, StructField field) {
-        // TODO: Need a way to search by id once we start supporting column mapping `id` mode.
-        final String columnName = field.getName();
-        if (groupType.containsField(columnName)) {
-            return groupType.getType(columnName);
-        }
-        // Parquet is case-sensitive, but the engine that generated the parquet file may not be.
-        // Check for direct match above but if no match found, try case-insensitive match.
-        for (org.apache.parquet.schema.Type type : groupType.getFields()) {
-            if (type.getName().equalsIgnoreCase(columnName)) {
-                return type;
-            }
-        }
-
-        return null;
-    }
-
-    // TODO: Move these precondition checks into a separate utility class.
-
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException();
-        }
-    }
-
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid, String message)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException(message);
-        }
-    }
-
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @param args    Objects used to fill in {@code %s} placeholders in the message
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid, String message, Object... args)
-        throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException(
-                String.format(String.valueOf(message), args));
-        }
-    }
-
-    private static List<Type> pruneFields(GroupType type, StructType deltaDataType) {
-        // prune fields including nested pruning like in pruneSchema
-        return deltaDataType.fields().stream()
-            .map(column -> {
-                Type subType = findSubFieldType(type, column);
-                if (subType != null) {
-                    return prunedType(subType, column.getDataType());
-                } else {
-                    return null;
-                }
-            })
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
-    }
-
-    private static Type prunedType(Type type, DataType deltaType) {
-        if (type instanceof GroupType && deltaType instanceof StructType) {
-            GroupType groupType = (GroupType) type;
-            StructType structType = (StructType) deltaType;
-            return groupType.withNewFields(pruneFields(groupType, structType));
-        } else {
-            return type;
-        }
+    private DefaultKernelUtils() {
     }
 
     //////////////////////////////////////////////////////////////////////////////////
@@ -156,40 +45,48 @@ public class DefaultKernelUtils {
     public static long fromJulianDay(int days, long nanos) {
         // use Long to avoid rounding errors
         return ((long) (days - JULIAN_DAY_OF_EPOCH)) * DateTimeConstants.MICROS_PER_DAY +
-            nanos / DateTimeConstants.NANOS_PER_MICROS;
+                nanos / DateTimeConstants.NANOS_PER_MICROS;
+    }
+
+    /**
+     * Returns Julian day and remaining nanoseconds from the number of microseconds
+     * <p>
+     * Note: support timestamp since 4717 BC (without negative nanoseconds, compatible with Hive).
+     */
+    public static Tuple2<Integer, Long> toJulianDay(long micros) {
+        long julianUs = micros + JULIAN_DAY_OF_EPOCH * DateTimeConstants.MICROS_PER_DAY;
+        long days = julianUs / DateTimeConstants.MICROS_PER_DAY;
+        long us = julianUs % DateTimeConstants.MICROS_PER_DAY;
+        return new Tuple2<>((int) days, TimeUnit.MICROSECONDS.toNanos(us));
     }
 
     public static long millisToMicros(long millis) {
         return Math.multiplyExact(millis, DateTimeConstants.MICROS_PER_MILLIS);
     }
 
-    public static class DateTimeConstants {
-
-        public static final int MONTHS_PER_YEAR = 12;
-
-        public static final byte DAYS_PER_WEEK = 7;
-
-        public static final long HOURS_PER_DAY = 24L;
-
-        public static final long MINUTES_PER_HOUR = 60L;
-
-        public static final long SECONDS_PER_MINUTE = 60L;
-        public static final long SECONDS_PER_HOUR = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
-        public static final long SECONDS_PER_DAY = HOURS_PER_DAY * SECONDS_PER_HOUR;
-
-        public static final long MILLIS_PER_SECOND = 1000L;
-        public static final long MILLIS_PER_MINUTE = SECONDS_PER_MINUTE * MILLIS_PER_SECOND;
-        public static final long MILLIS_PER_HOUR = MINUTES_PER_HOUR * MILLIS_PER_MINUTE;
-        public static final long MILLIS_PER_DAY = HOURS_PER_DAY * MILLIS_PER_HOUR;
-
-        public static final long MICROS_PER_MILLIS = 1000L;
-        public static final long MICROS_PER_SECOND = MILLIS_PER_SECOND * MICROS_PER_MILLIS;
-        public static final long MICROS_PER_MINUTE = SECONDS_PER_MINUTE * MICROS_PER_SECOND;
-        public static final long MICROS_PER_HOUR = MINUTES_PER_HOUR * MICROS_PER_MINUTE;
-        public static final long MICROS_PER_DAY = HOURS_PER_DAY * MICROS_PER_HOUR;
-
-        public static final long NANOS_PER_MICROS = 1000L;
-        public static final long NANOS_PER_MILLIS = MICROS_PER_MILLIS * NANOS_PER_MICROS;
-        public static final long NANOS_PER_SECOND = MILLIS_PER_SECOND * NANOS_PER_MILLIS;
+    /**
+     * Search for the data type of the given column in the schema.
+     *
+     * @param schema the schema to search
+     * @param column the column whose data type is to be found
+     * @return the data type of the column
+     * @throws IllegalArgumentException if the column is not found in the schema
+     */
+    public static DataType getDataType(StructType schema, Column column) {
+        DataType dataType = schema;
+        for (String part : column.getNames()) {
+            if (!(dataType instanceof StructType)) {
+                throw new IllegalArgumentException(
+                        String.format("Cannot resolve column (%s) in schema: %s", column, schema));
+            }
+            StructType structType = (StructType) dataType;
+            if (structType.fieldNames().contains(part)) {
+                dataType = structType.get(part).getDataType();
+            } else {
+                throw new IllegalArgumentException(
+                        String.format("Cannot resolve column (%s) in schema: %s", column, schema));
+            }
+        }
+        return dataType;
     }
 }

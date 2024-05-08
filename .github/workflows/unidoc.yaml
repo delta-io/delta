@@ -1,0 +1,19 @@
+  name: "Unidoc generation"
+  on: [push, pull_request]
+  jobs:
+    build:
+      name: "Generate unidoc"
+      runs-on: ubuntu-20.04
+      strategy:
+        matrix:
+        # These Scala versions must match those in the build.sbt
+          scala: [2.13.13, 2.12.18]
+      steps:
+        - name: install java
+          uses: actions/setup-java@v3
+          with:
+            distribution: "zulu"
+            java-version: "8"
+        - uses: actions/checkout@v3
+        - name: generate unidoc
+          run: build/sbt "++ ${{ matrix.scala }}" unidoc

@@ -20,7 +20,7 @@ import java.io.{File, FileNotFoundException}
 
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -29,7 +29,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
@@ -38,7 +38,8 @@ import org.apache.spark.util.Utils
  * so that we can re-use them in tests using Hive support. Tests that leverage Hive support cannot
  * extend the `SharedSparkSession`, therefore we keep this utility class as bare-bones as possible.
  */
-trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
+trait ConvertToDeltaTestUtils extends QueryTest
+    with DeltaExceptionTestUtils { self: DeltaSQLTestUtils =>
 
   protected def collectStatisticsStringOption(collectStats: Boolean): String = Option(collectStats)
     .filterNot(identity).map(_ => "NO STATISTICS").getOrElse("")
@@ -81,7 +82,7 @@ trait ConvertToDeltaTestUtils extends QueryTest { self: SQLTestUtils =>
 
 trait ConvertToDeltaSuiteBaseCommons extends ConvertToDeltaTestUtils
   with SharedSparkSession
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
 
@@ -215,11 +216,12 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
 
           convertToDelta(tableName)
 
-          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+          val tableId = TableIdentifier(tableName, Some("default"))
+          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableId)
           val expectedSchema = StructType(
             StructField("id", IntegerType, true) :: StructField("part", StringType, true) :: Nil)
           // Schema is inferred from the data
-          assert(deltaLog.update().schema.equals(expectedSchema))
+          assert(snapshot.schema.equals(expectedSchema))
         }
       }
     }
@@ -348,18 +350,11 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
         writeFiles(tempDir + s"/part=$i/", Seq("1").toDF("id"))
       }
 
-      val exception = intercept[Exception] {
+      val ex = interceptWithUnwrapping[SparkException] {
         convertToDelta(s"parquet.`$tempDir`", Some("part string"))
       }
-
-      val realCause = exception match {
-        case se: SparkException => se.getCause
-        case ae: AnalysisException => ae
-      }
-      assert(realCause.getMessage.contains("Failed to merge"))
-      assert(exception.isInstanceOf[AnalysisException] ||
-        realCause.getMessage.contains("/part="),
-        "Error message should contain the file name")
+      assert(ex.getMessage.contains("Failed to merge"))
+      assert(ex.getMessage.contains("/part="), "Error message should contain the file name")
     }
   }
 
@@ -418,7 +413,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       q.stop()
 
       // Add non-streaming data: this should not be ignored in conversion.
-      spark.range(11, 21).select('id.cast("int") as 'col1)
+      spark.range(11, 21).select('id.cast("int") as "col1")
         .write.mode("append").parquet(dataLocation)
 
       withSQLConf(("spark.databricks.delta.convert.useMetadataLog", "false")) {
@@ -812,7 +807,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
  * in the HiveMetaStore. This test trait *should not* extend SharedSparkSession so that it can be
  * mixed in with the Hive test utilities.
  */
-trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestUtils {
+trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with DeltaSQLTestUtils {
 
   // Test conversion with and without the new CatalogFileManifest.
   protected def testCatalogFileManifest(testName: String)(block: (Boolean) => Unit): Unit = {
@@ -1092,7 +1087,8 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
 
             convertToDelta(tableName)
 
-            val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
+          val tableId = TableIdentifier(tableName, Some("default"))
+          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableId)
             val catalog_columns = Seq[StructField](
               StructField("key1", LongType, true),
               StructField("key2", StringType, true)
@@ -1100,11 +1096,10 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
 
             if (useCatalogSchema) {
               // Catalog schema is used, column id is excluded.
-              assert(deltaLog.snapshot.metadata.schema
-                .equals(StructType(catalog_columns)))
+              assert(snapshot.metadata.schema.equals(StructType(catalog_columns)))
             } else {
               // Schema is inferred from the data, all 3 columns are included.
-              assert(deltaLog.snapshot.metadata.schema
+              assert(snapshot.metadata.schema
                 .equals(StructType(StructField("id", LongType, true) +: catalog_columns)))
             }
           }
@@ -1258,12 +1253,12 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with SQLTestU
         TableIdentifier(tableName, Some("default"))).provider.contains("delta"))
 
       // Check the partition schema in the transaction log
-      assert(DeltaLog.forTable(spark, TableIdentifier(tableName, Some("default")))
-        .snapshot.metadata.partitionSchema.equals(
-            (new StructType())
-              .add(StructField("key1", LongType, true))
-              .add(StructField("key2", StringType, true))
-          ))
+      val tableId = TableIdentifier(tableName, Some("default"))
+      assert(DeltaLog.forTableWithSnapshot(spark, tableId)._2.metadata.partitionSchema.equals(
+        (new StructType())
+          .add(StructField("key1", LongType, true))
+          .add(StructField("key2", StringType, true))
+      ))
 
       // Check data in the converted delta table.
       checkAnswer(

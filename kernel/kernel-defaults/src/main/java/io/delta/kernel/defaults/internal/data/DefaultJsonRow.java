@@ -16,8 +16,11 @@
 package io.delta.kernel.defaults.internal.data;
 
 import java.math.BigDecimal;
+import java.sql.Date;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -26,8 +29,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import io.delta.kernel.internal.util.InternalUtils;
+
+import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 
 public class DefaultJsonRow implements Row {
     private final Object[] parsedValues;
@@ -61,12 +70,12 @@ public class DefaultJsonRow implements Row {
 
     @Override
     public byte getByte(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (byte) parsedValues[ordinal];
     }
 
     @Override
     public short getShort(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (short) parsedValues[ordinal];
     }
 
     @Override
@@ -81,12 +90,12 @@ public class DefaultJsonRow implements Row {
 
     @Override
     public float getFloat(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (float) parsedValues[ordinal];
     }
 
     @Override
     public double getDouble(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (double) parsedValues[ordinal];
     }
 
     @Override
@@ -96,7 +105,7 @@ public class DefaultJsonRow implements Row {
 
     @Override
     public BigDecimal getDecimal(int ordinal) {
-        throw new UnsupportedOperationException("not yet implemented");
+        return (BigDecimal) parsedValues[ordinal];
     }
 
     @Override
@@ -110,13 +119,13 @@ public class DefaultJsonRow implements Row {
     }
 
     @Override
-    public <T> List<T> getArray(int ordinal) {
-        return (List<T>) parsedValues[ordinal];
+    public ArrayValue getArray(int ordinal) {
+        return (ArrayValue) parsedValues[ordinal];
     }
 
     @Override
-    public <K, V> Map<K, V> getMap(int ordinal) {
-        return (Map<K, V>) parsedValues[ordinal];
+    public MapValue getMap(int ordinal) {
+        return (MapValue) parsedValues[ordinal];
     }
 
     private static void throwIfTypeMismatch(String expType, boolean hasExpType, JsonNode jsonNode) {
@@ -131,38 +140,129 @@ public class DefaultJsonRow implements Row {
             return null;
         }
 
-        if (dataType.equals(MixedDataType.INSTANCE)) {
-            if (jsonValue.isTextual()) {
-                return jsonValue.textValue();
-            } else if (jsonValue instanceof ObjectNode) {
-                return jsonValue.toString();
-            }
-            throwIfTypeMismatch("object or string", false, jsonValue);
-        }
-
         if (dataType instanceof BooleanType) {
             throwIfTypeMismatch("boolean", jsonValue.isBoolean(), jsonValue);
             return jsonValue.booleanValue();
         }
 
+        if (dataType instanceof ByteType) {
+            throwIfTypeMismatch(
+                "byte",
+                jsonValue.canConvertToExactIntegral() &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Byte.MAX_VALUE &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() >= Byte.MIN_VALUE,
+                jsonValue
+            );
+            return jsonValue.numberValue().byteValue();
+        }
+
+        if (dataType instanceof ShortType) {
+            throwIfTypeMismatch(
+                "short",
+                jsonValue.canConvertToExactIntegral() &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() <= Short.MAX_VALUE &&
+                    jsonValue.canConvertToInt() && jsonValue.intValue() >= Short.MIN_VALUE,
+                jsonValue
+            );
+            return jsonValue.numberValue().shortValue();
+        }
+
         if (dataType instanceof IntegerType) {
             throwIfTypeMismatch(
-                "integer", jsonValue.isIntegralNumber() && !jsonValue.isLong(), jsonValue);
+                "integer",
+                jsonValue.isIntegralNumber() && jsonValue.canConvertToInt(),
+                jsonValue);
             return jsonValue.intValue();
         }
 
         if (dataType instanceof LongType) {
-            throwIfTypeMismatch("long", jsonValue.isIntegralNumber(), jsonValue);
+            throwIfTypeMismatch("long",
+                jsonValue.isIntegralNumber() && jsonValue.canConvertToLong(), jsonValue);
             return jsonValue.numberValue().longValue();
         }
 
+        if (dataType instanceof FloatType) {
+            switch (jsonValue.getNodeType()) {
+                case NUMBER:
+                    throwIfTypeMismatch(
+                        "float",
+                        // floatValue() will be converted to +/-INF if it cannot be represented
+                        // by a float
+                        // Note it is still possible to lose precision in this conversion but
+                        // checking for that requires converting to a float and back to BigDecimal
+                        !Float.isInfinite(jsonValue.floatValue()),
+                        jsonValue
+                    );
+                    return jsonValue.floatValue();
+                case STRING:
+                    switch (jsonValue.asText()) {
+                        case "NaN":
+                            return Float.NaN;
+                        case "+INF": case "+Infinity": case "Infinity":
+                            return Float.POSITIVE_INFINITY;
+                        case "-INF": case "-Infinity":
+                            return Float.NEGATIVE_INFINITY;
+                    }
+                default:
+                    throwIfTypeMismatch("float", false, jsonValue);
+            }
+        }
+
+        if (dataType instanceof DoubleType) {
+            switch (jsonValue.getNodeType()) {
+                case NUMBER:
+                    throwIfTypeMismatch(
+                        "double",
+                        // doubleValue() will be converted to +/-INF if it cannot be represented by
+                        // a double
+                        // Note it is still possible to lose precision in this conversion but
+                        // checking for that requires converting to a double and back to BigDecimal
+                        !Double.isInfinite(jsonValue.doubleValue()),
+                        jsonValue
+                    );
+                    return jsonValue.doubleValue();
+                case STRING:
+                    switch (jsonValue.asText()) {
+                        case "NaN":
+                            return Double.NaN;
+                        case "+INF": case "+Infinity": case "Infinity":
+                            return Double.POSITIVE_INFINITY;
+                        case "-INF": case "-Infinity":
+                            return Double.NEGATIVE_INFINITY;
+                    }
+                default:
+                    throwIfTypeMismatch("double", false, jsonValue);
+            }
+        }
+
         if (dataType instanceof StringType) {
-            // TODO: sometimes the Delta Log contains config as String -> String or String -> Int
             throwIfTypeMismatch(
                 "string",
-                jsonValue.isTextual() | jsonValue.isIntegralNumber(),
+                jsonValue.isTextual(),
                 jsonValue);
             return jsonValue.asText();
+        }
+
+        if (dataType instanceof DecimalType) {
+            throwIfTypeMismatch("decimal", jsonValue.isNumber(), jsonValue);
+            return jsonValue.decimalValue();
+        }
+
+        if (dataType instanceof DateType) {
+            throwIfTypeMismatch(
+                "date",
+                jsonValue.isTextual(),
+                jsonValue);
+            return InternalUtils.daysSinceEpoch(Date.valueOf(jsonValue.textValue()));
+        }
+
+        if (dataType instanceof TimestampType) {
+            throwIfTypeMismatch(
+                "timestamp",
+                jsonValue.isTextual(),
+                jsonValue);
+            Instant time = OffsetDateTime.parse(jsonValue.textValue()).toInstant();
+            return ChronoUnit.MICROS.between(Instant.EPOCH, time);
         }
 
         if (dataType instanceof StructType) {
@@ -174,18 +274,27 @@ public class DefaultJsonRow implements Row {
             throwIfTypeMismatch("array", jsonValue.isArray(), jsonValue);
             final ArrayType arrayType = ((ArrayType) dataType);
             final ArrayNode jsonArray = (ArrayNode) jsonValue;
-            final List<Object> output = new ArrayList<>();
-
-            for (Iterator<JsonNode> it = jsonArray.elements(); it.hasNext(); ) {
-                final JsonNode element = it.next();
+            final Object[] elements = new Object[jsonArray.size()];
+            for (int i = 0; i < jsonArray.size(); i++) {
+                final JsonNode element = jsonArray.get(i);
                 final Object parsedElement = decodeElement(element, arrayType.getElementType());
                 if (parsedElement == null && !arrayType.containsNull()) {
                     throw new RuntimeException("Array type expects no nulls as elements, but " +
-                        "received `null` as array element");
+                            "received `null` as array element");
                 }
-                output.add(parsedElement);
+                elements[i] = parsedElement;
             }
-            return output;
+            return new ArrayValue() {
+                @Override
+                public int getSize() {
+                    return elements.length;
+                }
+
+                @Override
+                public ColumnVector getElements() {
+                    return DefaultGenericVector.fromArray(arrayType.getElementType(), elements);
+                }
+            };
         }
 
         if (dataType instanceof MapType) {
@@ -193,10 +302,11 @@ public class DefaultJsonRow implements Row {
             final MapType mapType = (MapType) dataType;
             if (!(mapType.getKeyType() instanceof StringType)) {
                 throw new RuntimeException("MapType with a key type of `String` is supported, " +
-                    "received a key type: " + mapType.getKeyType());
+                        "received a key type: " + mapType.getKeyType());
             }
+            List<Object> keys = new ArrayList<>(jsonValue.size());
+            List<Object> values = new ArrayList<>(jsonValue.size());
             final Iterator<Map.Entry<String, JsonNode>> iter = jsonValue.fields();
-            final Map<Object, Object> output = new HashMap<>();
 
             while (iter.hasNext()) {
                 Map.Entry<String, JsonNode> entry = iter.next();
@@ -204,12 +314,27 @@ public class DefaultJsonRow implements Row {
                 Object valueParsed = decodeElement(entry.getValue(), mapType.getValueType());
                 if (valueParsed == null && !mapType.isValueContainsNull()) {
                     throw new RuntimeException("Map type expects no nulls in values, but " +
-                        "received `null` as value");
+                            "received `null` as value");
                 }
-                output.put(keyParsed, valueParsed);
+                keys.add(keyParsed);
+                values.add(valueParsed);
             }
+            return new MapValue() {
+                @Override
+                public int getSize() {
+                    return jsonValue.size();
+                }
 
-            return output;
+                @Override
+                public ColumnVector getKeys() {
+                    return DefaultGenericVector.fromList(mapType.getKeyType(), keys);
+                }
+
+                @Override
+                public ColumnVector getValues() {
+                    return DefaultGenericVector.fromList(mapType.getValueType(), values);
+                }
+            };
         }
 
         throw new UnsupportedOperationException(

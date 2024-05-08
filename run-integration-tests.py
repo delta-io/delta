@@ -61,6 +61,14 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                 raise
 
 
+def get_artifact_name(version):
+    """
+    version: string representation, e.g. 2.3.0 or 3.0.0.rc1
+    return: either "core" or "spark"
+    """
+    return "spark" if int(version[0]) >= 3 else "core"
+
+
 def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, use_local):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
     clear_artifact_cache()
@@ -77,7 +85,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = "io.delta:delta-core_2.12:" + version
+    package = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
 
     repo = extra_maven_repo if extra_maven_repo else ""
 
@@ -117,11 +125,12 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     test_file = path.join(root_dir, path.join("examples", "python", "missing_delta_storage_jar.py"))
+    artifact_name = get_artifact_name(version)
     jar = path.join(
         os.path.expanduser("~/.m2/repository/io/delta/"),
-        "delta-core_2.12",
+        "delta-%s_2.12" % artifact_name,
         version,
-        "delta-core_2.12-%s.jar" % str(version))
+        "delta-%s_2.12-%s.jar" % (artifact_name, str(version)))
 
     try:
         cmd = ["spark-submit",
@@ -151,7 +160,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-core_2.12:" + version
+    packages = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
     packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
     if extra_packages:
         packages += "," + extra_packages
@@ -196,13 +205,13 @@ def run_s3_log_store_util_integration_tests():
         raise
 
 
-def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version, use_local):
+def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version, extra_maven_repo, use_local):
     print("\n\n##### Running Iceberg tests on version %s #####" % str(version))
     clear_artifact_cache()
     if use_local:
         run_cmd(["build/sbt", "publishM2"])
 
-    test_dir = path.join(root_dir, path.join("delta-iceberg", "integration_tests"))
+    test_dir = path.join(root_dir, path.join("iceberg", "integration_tests"))
 
     # Add more Iceberg tests here if needed ...
     test_files_names = ["iceberg_converter.py"]
@@ -211,11 +220,11 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = ','.join([
-        "io.delta:delta-core_2.12:" + version,
+        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version),
         "io.delta:delta-iceberg_2.12:" + version,
         "org.apache.iceberg:iceberg-spark-runtime-{}_2.12:{}".format(spark_version, iceberg_version)])
 
-    repo = ""
+    repo = extra_maven_repo if extra_maven_repo else ""
 
     for test_file in test_files:
         try:
@@ -230,8 +239,43 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
             print("Failed Iceberg tests in %s" % (test_file))
             raise
 
+def run_uniform_hudi_integration_tests(root_dir, version, extra_maven_repo, use_local):
+    print("\n\n##### Running Uniform hudi tests on version %s #####" % str(version))
+    # clear_artifact_cache()
+    if use_local:
+        run_cmd(["build/sbt", "publishM2"])
+        run_cmd(["build/sbt", "hudi/assembly"])
 
-def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo):
+    test_dir = path.join(root_dir, path.join("hudi", "integration_tests"))
+
+    print("attn " + root_dir)
+    # Add more tests here if needed ...
+    test_files_names = ["write_uniform_hudi.py"]
+    test_files = [path.join(test_dir, f) for f in test_files_names]
+
+    python_root_dir = path.join(root_dir, "python")
+    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    package = ','.join([
+        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)])
+    jars = path.join(root_dir, "hudi/target/scala-2.12/delta-hudi-assembly_2.12-%s.jar" % (version))
+
+    repo = extra_maven_repo if extra_maven_repo else ""
+
+    for test_file in test_files:
+        try:
+            cmd = ["spark-submit",
+                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                   "--packages", package,
+                   "--jars", jars,
+                   "--repositories", repo, test_file]
+            print("\nRunning Uniform Hudi tests in %s\n=============" % test_file)
+            print("Command: %s" % " ".join(cmd))
+            run_cmd(cmd, stream_output=True)
+        except:
+            print("Failed Uniform Hudi tests in %s" % (test_file))
+            raise
+
+def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
     clear_artifact_cache()
     delta_pip_name = "delta-spark"
@@ -244,6 +288,11 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, extra_maven_repo
         install_cmd = ["pip", "install",
                        "--extra-index-url", "https://test.pypi.org/simple/",
                        delta_pip_name_with_version]
+    elif use_localpypi:
+        pip_wheel_file_name = "%s-%s-py3-none-any.whl" % \
+                              (delta_pip_name.replace("-", "_"), str(version))
+        pip_wheel_file_path = os.path.join(use_localpypi, pip_wheel_file_name)
+        install_cmd = ["pip", "install", pip_wheel_file_path]
     else:
         install_cmd = ["pip", "install", delta_pip_name_with_version]
     print("pip install command: %s" % str(install_cmd))
@@ -384,6 +433,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Use testpypi for testing pip installation")
     parser.add_argument(
+        "--use-localpypiartifact",
+        required=False,
+        default=None,
+        help="Directory path where the downloaded pypi artifacts are present. " +
+            "It should have two files: e.g. delta-spark-3.1.0.tar.gz, delta_spark-3.1.0-py3-none-any.whl")
+    parser.add_argument(
         "--use-local",
         required=False,
         default=False,
@@ -413,14 +468,20 @@ if __name__ == "__main__":
         action="store_true",
         help="Run the Iceberg integration tests (and only them)")
     parser.add_argument(
+        "--run-uniform-hudi-integration-tests",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run the Uniform Hudi integration tests (and only them)")
+    parser.add_argument(
         "--iceberg-spark-version",
         required=False,
-        default="3.3",
+        default="3.5",
         help="Spark version for the Iceberg library")
     parser.add_argument(
         "--iceberg-lib-version",
         required=False,
-        default="1.0.0",
+        default="1.4.0",
         help="Iceberg Spark Runtime library version")
 
     args = parser.parse_args()
@@ -442,7 +503,12 @@ if __name__ == "__main__":
     if args.run_iceberg_integration_tests:
         run_iceberg_integration_tests(
             root_dir, args.version,
-            args.iceberg_spark_version, args.iceberg_lib_version, args.use_local)
+            args.iceberg_spark_version, args.iceberg_lib_version, args.maven_repo, args.use_local)
+        quit()
+
+    if args.run_uniform_hudi_integration_tests:
+        run_uniform_hudi_integration_tests(
+            root_dir, args.version, args.maven_repo, args.use_local)
         quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:
@@ -465,4 +531,8 @@ if __name__ == "__main__":
         test_missing_delta_storage_jar(root_dir, args.version, args.use_local)
 
     if run_pip:
-        run_pip_installation_tests(root_dir, args.version, args.use_testpypi, args.maven_repo)
+        if args.use_testpypi and args.use_localpypiartifact is not None:
+            raise Exception("Cannot specify both --use-testpypi and --use-localpypiartifact.")
+
+        run_pip_installation_tests(root_dir, args.version, args.use_testpypi,
+                                   args.use_localpypiartifact, args.maven_repo)

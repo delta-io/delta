@@ -25,10 +25,13 @@ import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -1462,7 +1465,7 @@ trait DeltaTableCreationTests
     test(s"data source table:partition column name containing $specialChars") {
       // On Windows, it looks colon in the file name is illegal by default. See
       // https://support.microsoft.com/en-us/help/289627
-      // assume(!Utils.isWindows || specialChars != "a:b")
+      assume(!Utils.isWindows || specialChars != "a:b")
 
       withTable("t") {
         withTempDir { dir =>
@@ -1490,7 +1493,7 @@ trait DeltaTableCreationTests
     test(s"location uri contains $specialChars for datasource table") {
       // On Windows, it looks colon in the file name is illegal by default. See
       // https://support.microsoft.com/en-us/help/289627
-      // assume(!Utils.isWindows || specialChars != "a:b")
+      assume(!Utils.isWindows || specialChars != "a:b")
 
       withTable("t", "t1") {
         withTempDir { dir =>
@@ -2058,6 +2061,7 @@ class DeltaTableCreationSuite
         // create table, alter tbl property, tbl comment
         assert(sql(s"DESCRIBE HISTORY $emptyTableName").collect().length == 3)
 
+        checkAnswer(sql(s"SHOW COLUMNS IN $emptyTableName"), Nil)
       }
 
       // schema evolution ddl should work
@@ -2329,6 +2333,75 @@ class DeltaTableCreationSuite
 
           checkAnswer(spark.table("t"), spark.range(10).toDF())
         }
+      }
+    }
+  }
+
+  test("create table using varchar at the same location should succeed") {
+    withTempDir { location =>
+      withTable("t1", "t2") {
+        sql(s"""
+               |create table t1
+               |(colourID string, colourName varchar(128), colourGroupID string)
+               |USING delta LOCATION '$location'""".stripMargin)
+        sql(
+          s"""
+             |insert into t1 (colourID, colourName, colourGroupID)
+             |values ('1', 'RED', 'a'), ('2', 'BLUE', 'b')
+             |""".stripMargin)
+        sql(s"""
+               |create table t2
+               |(colourID string, colourName varchar(128), colourGroupID string)
+               |USING delta LOCATION '$location'""".stripMargin)
+        // Verify that select from the second table should be the same as inserted
+        val readout = sql(
+          s"""
+             |select * from t2 order by colourID
+             |""".stripMargin).collect()
+        assert(readout.length == 2)
+        assert(readout(0).get(0) == "1")
+        assert(readout(0).get(1) == "RED")
+        assert(readout(1).get(0) == "2")
+        assert(readout(1).get(1) == "BLUE")
+      }
+    }
+  }
+
+  test("CREATE OR REPLACE TABLE on a catalog table where the backing " +
+    "directory has been deleted") {
+    val tbl = "delta_tbl"
+    withTempDir { dir =>
+      withTable(tbl) {
+        val subdir = new File(dir, "subdir")
+        sql(s"CREATE OR REPLACE table $tbl (id String) USING delta " +
+          s"LOCATION '${subdir.getCanonicalPath}'")
+        val tableIdentifier =
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl)).identifier
+        val tableName = tableIdentifier.copy(catalog = None).toString
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
+        sql(s"INSERT INTO $tbl VALUES ('1')")
+        FileUtils.deleteDirectory(subdir)
+        val e = intercept[DeltaIllegalStateException] {
+          sql(
+            s"CREATE OR REPLACE table $tbl (id String) USING delta" +
+              s" LOCATION '${subdir.getCanonicalPath}'")
+        }
+        checkError(
+          exception = e,
+          errorClass = "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
+          parameters = Map(
+            "tableName" -> tableName,
+            "tablePath" -> deltaLog.logPath.toString,
+            "tableNameForDropCmd" -> tableName
+          ))
+
+        // Table creation should work after running DROP TABLE.
+        sql(s"DROP table ${e.getMessageParameters().get("tableNameForDropCmd")}")
+        sql(s"CREATE OR REPLACE table $tbl (id String) USING delta " +
+          s"LOCATION '${subdir.getCanonicalPath}'")
+        sql(s"INSERT INTO $tbl VALUES ('21')")
+        val data = sql(s"SELECT * FROM $tbl").collect()
+        assert(data.length == 1)
       }
     }
   }

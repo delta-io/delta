@@ -21,16 +21,18 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+import scala.language.existentials
 
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DeltaUDF, NoMapping}
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
+import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
+import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
@@ -38,6 +40,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
@@ -198,26 +201,29 @@ trait StatisticsCollection extends DeltaLogging {
     val logicalNumRecordsCol = physicalNumRecordsCol - dvCardinalityCol
     val nullCountCol = col(s"$statsColName.$NULL_COUNT")
     val tightBoundsCol = col(s"$statsColName.$TIGHT_BOUNDS")
+    val statsSchema = withStats.schema.apply(statsColName).dataType.asInstanceOf[StructType]
 
-    // Use the schema of the existing stats column. We only want to modify the existing
-    // nullCount stats. Note, when the column mapping mode is enabled, the schema uses
-    // the physical column names, not the logical names.
-    val nullCountSchema = withStats.schema
-      .apply(statsColName).dataType.asInstanceOf[StructType]
-      .apply(NULL_COUNT).dataType.asInstanceOf[StructType]
+    val allStatCols = ALL_STAT_FIELDS.flatMap {
+      case TIGHT_BOUNDS => Some(lit(false).as(TIGHT_BOUNDS))
+      case NULL_COUNT if statsSchema.names.contains(NULL_COUNT) =>
+        // Use the schema of the existing stats column. We only want to modify the existing
+        // nullCount stats. Note, when the column mapping mode is enabled, the schema uses
+        // the physical column names, not the logical names.
+        val nullCountSchema = statsSchema
+          .apply(NULL_COUNT).dataType.asInstanceOf[StructType]
 
-    // When bounds are tight and we are about to transition to wide, store the physical null count
-    // for ALL_NULLs columns.
-    val nullCountColSeq = applyFuncToStatisticsColumn(nullCountSchema, nullCountCol) {
-      case (c, _) =>
-        val allNullTightBounds = tightBoundsCol && (c === logicalNumRecordsCol)
-        Some(when(allNullTightBounds, physicalNumRecordsCol).otherwise(c))
-    }
-
-    val allStatCols = ALL_STAT_FIELDS.map {
-      case f if f == TIGHT_BOUNDS => lit(false).as(TIGHT_BOUNDS)
-      case f if f == NULL_COUNT => struct(nullCountColSeq: _*).as(NULL_COUNT)
-      case f => col(s"${statsColName}.${f}")
+        // When bounds are tight and we are about to transition to wide, store the physical null
+        // count for ALL_NULLs columns.
+        val nullCountColSeq = applyFuncToStatisticsColumn(nullCountSchema, nullCountCol) {
+          case (c, _) =>
+            val allNullTightBounds = tightBoundsCol && (c === logicalNumRecordsCol)
+            Some(when(allNullTightBounds, physicalNumRecordsCol).otherwise(c))
+        }
+        Some(struct(nullCountColSeq: _*).as(NULL_COUNT))
+      case f if statsSchema.names.contains(f) => Some(col(s"${statsColName}.${f}"))
+      case _ =>
+        // This stat is not present in the original stats schema, so we should not include it.
+        None
     }
 
     // This may be very expensive because it is rewriting JSON.
@@ -271,7 +277,7 @@ trait StatisticsCollection extends DeltaLogging {
         case (_, _, false) => count(new Column("*"))
       }) ++ tightBoundsColOpt
 
-    struct(statCols: _*).as('stats)
+    struct(statCols: _*).as("stats")
   }
 
 
@@ -487,12 +493,12 @@ object StatisticsCollection extends DeltaCommand {
         SchemaUtils.findColumnPosition(columnFullPath, schema)
         // Delta statistics columns must be data skipping type.
         val (prefixPath, columnName) = columnFullPath.splitAt(columnFullPath.size - 1)
-        transformColumnsStructs(schema, Some(columnName.head)) {
+        transformSchema(schema, Some(columnName.head)) {
           case (`prefixPath`, struct @ StructType(_), _) =>
             val columnField = struct(columnName.head)
             validateDataSkippingType(columnAttribute.name, columnField.dataType, visitedColumns)
             struct
-          case (_, s: StructType, _) => s
+          case (_, other, _) => other
         }
       }
     }
@@ -625,12 +631,23 @@ object StatisticsCollection extends DeltaCommand {
     // Find the unique column names at this nesting depth, each with its path remainders (if any)
     val cols = statsColPaths.groupBy(_.head).mapValues(_.map(_.tail))
     val newSchema = schema.flatMap { field =>
-      cols.get(field.name).flatMap { paths =>
+      val lowerCaseFieldName = field.name.toLowerCase(Locale.ROOT)
+      cols.get(lowerCaseFieldName).flatMap { paths =>
         field.dataType match {
           case _ if paths.forall(_.isEmpty) =>
-            val fullPath = (parentPath:+ field.name).mkString(".")
+            // Convert full path to lower cases to avoid schema name contains upper case
+            // characters.
+            val fullPath = (parentPath :+ field.name).mkString(".").toLowerCase(Locale.ROOT)
             Some(convertToPhysicalName(fullPath, field, schemaNames, mappingMode))
           case fieldSchema: StructType =>
+            // Convert full path to lower cases to avoid schema name contains upper case
+            // characters.
+            val fullPath = (parentPath :+ field.name).mkString(".").toLowerCase(Locale.ROOT)
+            val physicalName = if (mappingMode == NoMapping || schemaNames.contains(fullPath)) {
+              field.name
+            } else {
+              field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+            }
             // Recurse into the child fields of this struct.
             val newSchema = filterSchema(
               schemaNames,
@@ -639,7 +656,7 @@ object StatisticsCollection extends DeltaCommand {
               mappingMode,
               parentPath:+ field.name
             )
-            Some(field.copy(dataType = newSchema))
+            Some(field.copy(name = physicalName, dataType = newSchema))
           case _ =>
             // Filter expected a nested field and this isn't nested. No match
             None
@@ -661,7 +678,9 @@ object StatisticsCollection extends DeltaCommand {
       mappingMode: DeltaColumnMappingMode): StructType = {
     spec.deltaStatsColumnNamesOpt
       .map { indexedColNames =>
-        val indexedColPaths = indexedColNames.map(_.nameParts)
+        // convert all index columns to lower case characters to avoid user assigning any upper
+        // case characters.
+        val indexedColPaths = indexedColNames.map(_.nameParts.map(_.toLowerCase(Locale.ROOT)))
         filterSchema(schemaNames, schema, indexedColPaths, mappingMode)
       }
       .getOrElse {
@@ -702,6 +721,33 @@ object StatisticsCollection extends DeltaCommand {
   }
 
   /**
+   * Compute the AddFile entries with delta statistics entries by aggregating the data skipping
+   * columns of each parquet file.
+   */
+  private def computeNewAddFiles(
+      deltaLog: DeltaLog,
+      txn: OptimisticTransaction,
+      files: Seq[AddFile]): Array[AddFile] = {
+    val dataPath = deltaLog.dataPath
+    val pathToAddFileMap = generateCandidateFileMap(dataPath, files)
+    val persistentDVsReadable = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
+    // Throw error when the table contains DVs, because existing method of stats
+    // recomputation doesn't work on tables with DVs. It needs to take into consideration of
+    // DV files (TODO).
+    if (persistentDVsReadable) {
+      throw DeltaErrors.statsRecomputeNotSupportedOnDvTables()
+    }
+    val fileDataFrame = deltaLog
+      .createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
+      .withColumn("path", col("_metadata.file_path"))
+    val newStats = fileDataFrame.groupBy(col("path")).agg(to_json(txn.statsCollector))
+    newStats.collect().map { r =>
+      val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
+      add.copy(dataChange = false, stats = r.getString(1))
+    }
+  }
+
+  /**
    * Recomputes statistics for a Delta table. This can be used to compute stats if they were never
    * collected or to recompute corrupted statistics.
    * @param deltaLog Delta log for the table to update.
@@ -712,37 +758,14 @@ object StatisticsCollection extends DeltaCommand {
   def recompute(
       spark: SparkSession,
       deltaLog: DeltaLog,
+      catalogTable: Option[CatalogTable],
       predicates: Seq[Expression] = Seq(Literal(true)),
       fileFilter: AddFile => Boolean = af => true): Unit = {
-    val txn = deltaLog.startTransaction()
+    val txn = deltaLog.startTransaction(catalogTable)
     verifyPartitionPredicates(spark, txn.metadata.partitionColumns, predicates)
-
     // Save the current AddFiles that match the predicates so we can update their stats
     val files = txn.filterFiles(predicates).filter(fileFilter)
-    val pathToAddFileMap = generateCandidateFileMap(deltaLog.dataPath, files)
-    val persistentDVsReadable = DeletionVectorUtils.deletionVectorsReadable(txn.snapshot)
-
-    // Use the stats collector to recompute stats
-    val dataPath = deltaLog.dataPath
-    val newAddFiles = {
-      // Throw error when the table contains DVs, because existing method of stats
-      // recomputation doesn't work on tables with DVs. It needs to take into consideration of
-      // DV files (TODO).
-      if (persistentDVsReadable) {
-        throw DeltaErrors.statsRecomputeNotSupportedOnDvTables()
-      }
-      {
-        val newStats = deltaLog.createDataFrame(txn.snapshot, addFiles = files, isStreaming = false)
-          .groupBy(col("_metadata.file_path").as("path")).agg(to_json(txn.statsCollector))
-
-        // Use the new stats to update the AddFiles and commit back to the DeltaLog
-        newStats.collect().map { r =>
-          val add = getTouchedFile(dataPath, r.getString(0), pathToAddFileMap)
-          add.copy(dataChange = false, stats = r.getString(1))
-        }
-      }
-    }
-
+    val newAddFiles = computeNewAddFiles(deltaLog, txn, files)
     txn.commit(newAddFiles, ComputeStats(predicates))
   }
 
@@ -765,4 +788,3 @@ object StatisticsCollection extends DeltaCommand {
     }
   }
 }
-

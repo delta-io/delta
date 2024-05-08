@@ -21,14 +21,17 @@ import java.io.File
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
-class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with SharedSparkSession
-    with DeltaSQLCommandTest {
+class DeltaDataFrameHadoopOptionsSuite extends QueryTest
+  with DeltaSQLTestUtils
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   protected override def sparkConf =
     super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
@@ -98,7 +101,7 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with 
           .mode("append")
           .save(path)
         // Ensure we did write the checkpoint and read it back
-        val deltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
+        val deltaLog = DeltaLog.forTable(spark, new Path(path), fakeFileSystemOptions)
         assert(deltaLog.readLastCheckpointFile().get.version == 1)
       }
     }
@@ -106,25 +109,26 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest with SQLTestUtils with 
 
   test("SC-86916: invalidateCache should invalidate all DeltaLogs of the given path") {
     withTempPath { dir =>
-      val path = fakeFileSystemPath(dir)
+      val pathStr = fakeFileSystemPath(dir)
+      val path = new Path(pathStr)
       spark.range(1, 10).write.format("delta")
         .options(fakeFileSystemOptions)
         .mode("append")
-        .save(path)
+        .save(pathStr)
       val deltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
       spark.range(1, 10).write.format("delta")
         .options(fakeFileSystemOptions)
         .mode("append")
-        .save(path)
+        .save(pathStr)
       val cachedDeltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
       assert(deltaLog eq cachedDeltaLog)
       withSQLConf(fakeFileSystemOptions.toSeq: _*) {
-        DeltaLog.invalidateCache(spark, new Path(path))
+        DeltaLog.invalidateCache(spark, path)
       }
       spark.range(1, 10).write.format("delta")
         .options(fakeFileSystemOptions)
         .mode("append")
-        .save(path)
+        .save(pathStr)
       val newDeltaLog = DeltaLog.forTable(spark, path, fakeFileSystemOptions)
       assert(deltaLog ne newDeltaLog)
     }

@@ -22,7 +22,7 @@ import java.util.List;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.*;
 
-import static io.delta.kernel.internal.util.InternalUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * A literal value.
@@ -49,7 +49,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link BooleanType}
      */
     public static Literal ofBoolean(boolean value) {
-        return new Literal(value, BooleanType.INSTANCE);
+        return new Literal(value, BooleanType.BOOLEAN);
     }
 
     /**
@@ -59,7 +59,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link ByteType}
      */
     public static Literal ofByte(byte value) {
-        return new Literal(value, ByteType.INSTANCE);
+        return new Literal(value, ByteType.BYTE);
     }
 
     /**
@@ -69,7 +69,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link ShortType}
      */
     public static Literal ofShort(short value) {
-        return new Literal(value, ShortType.INSTANCE);
+        return new Literal(value, ShortType.SHORT);
     }
 
     /**
@@ -79,7 +79,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link IntegerType}
      */
     public static Literal ofInt(int value) {
-        return new Literal(value, IntegerType.INSTANCE);
+        return new Literal(value, IntegerType.INTEGER);
     }
 
     /**
@@ -89,7 +89,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link LongType}
      */
     public static Literal ofLong(long value) {
-        return new Literal(value, LongType.INSTANCE);
+        return new Literal(value, LongType.LONG);
     }
 
     /**
@@ -99,7 +99,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link FloatType}
      */
     public static Literal ofFloat(float value) {
-        return new Literal(value, FloatType.INSTANCE);
+        return new Literal(value, FloatType.FLOAT);
     }
 
     /**
@@ -109,7 +109,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link DoubleType}
      */
     public static Literal ofDouble(double value) {
-        return new Literal(value, DoubleType.INSTANCE);
+        return new Literal(value, DoubleType.DOUBLE);
     }
 
     /**
@@ -119,7 +119,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link StringType}
      */
     public static Literal ofString(String value) {
-        return new Literal(value, StringType.INSTANCE);
+        return new Literal(value, StringType.STRING);
     }
 
     /**
@@ -129,7 +129,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link BinaryType}
      */
     public static Literal ofBinary(byte[] value) {
-        return new Literal(value, BinaryType.INSTANCE);
+        return new Literal(value, BinaryType.BINARY);
     }
 
     /**
@@ -139,7 +139,7 @@ public final class Literal implements Expression {
      * @return a {@link Literal} of type {@link DateType}
      */
     public static Literal ofDate(int daysSinceEpochUTC) {
-        return new Literal(daysSinceEpochUTC, DateType.INSTANCE);
+        return new Literal(daysSinceEpochUTC, DateType.DATE);
     }
 
     /**
@@ -149,7 +149,17 @@ public final class Literal implements Expression {
      * @return a {@link Literal} with data type {@link TimestampType}
      */
     public static Literal ofTimestamp(long microsSinceEpochUTC) {
-        return new Literal(microsSinceEpochUTC, TimestampType.INSTANCE);
+        return new Literal(microsSinceEpochUTC, TimestampType.TIMESTAMP);
+    }
+
+    /**
+     * Create a {@code timestamp_ntz} type literal expression.
+     *
+     * @param microSecondsEpoch Microseconds since epoch with no timezone.
+     * @return a {@link Literal} with data type {@link TimestampNTZType}
+     */
+    public static Literal ofTimestampNtz(long microSecondsEpoch) {
+        return new Literal(microSecondsEpoch, TimestampNTZType.TIMESTAMP_NTZ);
     }
 
     /**
@@ -207,6 +217,7 @@ public final class Literal implements Expression {
      * <li>DOUBLE: {@link Double}</li>
      * <li>DATE: {@link Integer} represents the number of days since epoch in UTC</li>
      * <li>TIMESTAMP: {@link Long} represents the microseconds since epoch in UTC</li>
+     * <li>TIMESTAMP_NTZ: {@link Long} represents the microseconds since epoch with no timezone</li>
      * <li>DECIMAL: {@link BigDecimal}.Use {@link #getDataType()} to find the precision and
      * scale</li>
      * </ul>

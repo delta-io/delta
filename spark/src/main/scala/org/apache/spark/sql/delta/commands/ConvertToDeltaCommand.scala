@@ -94,8 +94,9 @@ abstract class ConvertToDeltaCommandBase(
     }
 
     val targetTable = getTargetTable(spark, convertProperties)
-    val deltaLog = DeltaLog.forTable(spark, deltaPath.getOrElse(convertProperties.targetDir))
-    val txn = deltaLog.startTransaction()
+    val deltaPathToUse = new Path(deltaPath.getOrElse(convertProperties.targetDir))
+    val deltaLog = DeltaLog.forTable(spark, deltaPathToUse)
+    val txn = deltaLog.startTransaction(convertProperties.catalogTable)
     if (txn.readVersion > -1) {
       handleExistingTransactionLog(spark, txn, convertProperties, targetTable.format)
       return Seq.empty[Row]
@@ -345,7 +346,7 @@ abstract class ConvertToDeltaCommandBase(
       convertProperties: ConvertTarget,
       targetTable: ConvertTargetTable): Seq[Row] =
     recordDeltaOperation(txn.deltaLog, "delta.convert") {
-    txn.deltaLog.ensureLogDirectoryExist()
+    txn.deltaLog.createLogDirectoriesIfNotExists()
     val targetPath = new Path(convertProperties.targetDir)
     // scalastyle:off deltahadoopconfiguration
     val sessionHadoopConf = spark.sessionState.newHadoopConf()
@@ -381,7 +382,8 @@ abstract class ConvertToDeltaCommandBase(
       )
       val (committedVersion, postCommitSnapshot) = txn.commitLarge(
         spark,
-        Iterator.single(txn.protocol) ++ addFilesIter,
+        addFilesIter,
+        Some(txn.protocol),
         getOperation(numFiles, convertProperties, targetTable.format),
         getContext,
         metrics)

@@ -252,17 +252,17 @@ class DeltaColumnRenameSuite extends QueryTest
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
-      assertException("Cannot rename column a") {
+      assertException("Cannot alter column a") {
         spark.sql("alter table t1 rename column a to a1")
       }
 
-      assertException("Cannot rename column arr") {
+      assertException("Cannot alter column arr") {
         spark.sql("alter table t1 rename column arr to arr1")
       }
 
 
       // cannot rename b because its child is referenced
-      assertException("Cannot rename column b") {
+      assertException("Cannot alter column b") {
         spark.sql("alter table t1 rename column b to b1")
       }
 
@@ -316,7 +316,7 @@ class DeltaColumnRenameSuite extends QueryTest
       spark.sql("alter table t1 add constraint" +
         " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
 
-      assertException("Cannot rename column map") {
+      assertException("Cannot alter column map") {
         spark.sql("alter table t1 rename column map to map1")
       }
 
@@ -363,19 +363,19 @@ class DeltaColumnRenameSuite extends QueryTest
 
       simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
 
-      assertException("Cannot rename column a") {
+      assertException("Cannot alter column a") {
         spark.sql("alter table t1 rename column a to a1")
       }
 
-      assertException("Cannot rename column b") {
+      assertException("Cannot alter column b") {
         spark.sql("alter table t1 rename column b to b1")
       }
 
-      assertException("Cannot rename column b.d") {
+      assertException("Cannot alter column b.d") {
         spark.sql("alter table t1 rename column b.d to d1")
       }
 
-      assertException("Cannot rename column arr") {
+      assertException("Cannot alter column arr") {
         spark.sql("alter table t1 rename column arr to arr1")
       }
 
@@ -467,4 +467,104 @@ class DeltaColumnRenameSuite extends QueryTest
     fieldToRename = "element.b" -> "c",
     updatedColumnType = "array<struct<a: int, c: string>>")
 
+  testRenameNestedField("struct in nested map keys")(
+    initialColumnType = "map<map<struct<a: int, b: string>, int>, int>",
+    fieldToRename = "key.key.b" -> "c",
+    updatedColumnType = "map<map<struct<a: int, c: string>, int>, int>")
+
+  testRenameNestedField("struct in nested map values")(
+    initialColumnType = "map<int, map<int, struct<a: int, b: string>>>",
+    fieldToRename = "value.value.b" -> "c",
+    updatedColumnType = "map<int, map<int, struct<a: int, c: string>>>")
+
+  testRenameNestedField("struct in nested arrays")(
+    initialColumnType = "array<array<struct<a: int, b: string>>>",
+    fieldToRename = "element.element.b" -> "c",
+    updatedColumnType = "array<array<struct<a: int, c: string>>>")
+
+  testRenameNestedField("struct in nested array and map")(
+    initialColumnType = "array<map<int, struct<a: int, b: string>>>",
+    fieldToRename = "element.value.b" -> "c",
+    updatedColumnType = "array<map<int, struct<a: int, c: string>>>")
+
+  testRenameNestedField("struct in nested map key and array")(
+    initialColumnType = "map<array<struct<a: int, b: string>>, int>",
+    fieldToRename = "key.element.b" -> "c",
+    updatedColumnType = "map<array<struct<a: int, c: string>>, int>")
+
+  testRenameNestedField("struct in nested map value and array")(
+    initialColumnType = "map<int, array<struct<a: int, b: string>>>",
+    fieldToRename = "value.element.b" -> "c",
+    updatedColumnType = "map<int, array<struct<a: int, c: string>>>")
+
+  testColumnMapping("ALTER TABLE RENAME COLUMN - rename fields nested in maps") { mode =>
+    withTable("t1") {
+      val rows = Seq(
+        Row(Map(Row(1) -> Map(Row(10) -> Row(11)))),
+        Row(Map(Row(2) -> Map(Row(20) -> Row(21)))))
+
+      val df = spark.createDataFrame(
+        rows = rows.asJava,
+        schema = new StructType()
+          .add("a", MapType(
+            new StructType().add("x", IntegerType),
+            MapType(
+              new StructType().add("y", IntegerType),
+              new StructType().add("z", IntegerType)))))
+
+      createTableWithSQLAPI("t1", df, Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode))
+
+      spark.sql(s"ALTER TABLE t1 RENAME COLUMN a.key.x to x1")
+      checkAnswer(spark.table("t1"), rows)
+
+      spark.sql(s"ALTER TABLE t1 RENAME COLUMN a.value.key.y to y1")
+      checkAnswer(spark.table("t1"), rows)
+
+      spark.sql(s"ALTER TABLE t1 RENAME COLUMN a.value.value.z to z1")
+      checkAnswer(spark.table("t1"), rows)
+
+      // Insert data after rename.
+      spark.sql("INSERT INTO t1 " +
+        "VALUES (map(named_struct('x', 3), map(named_struct('y', 30), named_struct('z', 31))))")
+      checkAnswer(spark.table("t1"), rows :+ Row(Map(Row(3) -> Map(Row(30) -> Row(31)))))
+    }
+  }
+
+  testColumnMapping("ALTER TABLE RENAME COLUMN - rename fields nested in arrays") { mode =>
+    withTable("t1") {
+      val rows = Seq(
+        Row(Array(Array(Row(10, 11), Row(12, 13)), Array(Row(14, 15), Row(16, 17)))),
+        Row(Array(Array(Row(20, 21), Row(22, 23)), Array(Row(24, 25), Row(26, 27)))))
+
+      val schema = new StructType()
+        .add("a", ArrayType(ArrayType(
+          new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType))))
+      val df = spark.createDataFrame(rows.asJava, schema)
+
+      createTableWithSQLAPI("t1", df, Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> mode))
+
+      spark.sql(s"ALTER TABLE t1 RENAME COLUMN a.element.element.x to x1")
+      checkAnswer(spark.table("t1"), df)
+
+      spark.sql(s"ALTER TABLE t1 RENAME COLUMN a.element.element.y to y1")
+      checkAnswer(spark.table("t1"), df)
+
+      // Insert data after rename.
+      spark.sql(
+        """
+          |INSERT INTO t1 VALUES (
+          |array(
+          |  array(named_struct('x', 30, 'y', 31), named_struct('x', 32, 'y', 33)),
+          |  array(named_struct('x', 34, 'y', 35), named_struct('x', 36, 'y', 37))))
+          """.stripMargin)
+
+      val expDf3 = spark.createDataFrame(
+        (rows :+ Row(Array(Array(Row(30, 31), Row(32, 33)), Array(Row(34, 35), Row(36, 37)))))
+          .asJava,
+        schema)
+      checkAnswer(spark.table("t1"), expDf3)
+    }
+  }
 }

@@ -29,14 +29,22 @@ import io.delta.kernel.annotation.Evolving;
  * output value. A subclass of these expressions are of type {@link Predicate} whose result type is
  * `boolean`. See {@link Predicate} for predicate type scalar expressions. Supported
  * non-predicate type scalar expressions are listed below.
- * TODO: Currently there aren't any. Will be added in future. An example one looks like this:
  * <ol>
- *   <li>Name: <code>+</code>
+ *   <li>Name: <code>element_at</code>
  *     <ul>
- *       <li>SQL semantic: <code>expr1 + expr2</code></li>
+ *       <li>Semantic: <code>element_at(map, key)</code>. Return the value of given <i>key</i>
+ *       from the <i>map</i> type input. Returns <i>null</i> if the given <i>key</i> is not in
+ *       the <i>map</i> Ex: `element_at(map(1, 'a', 2, 'b'), 2)` returns 'b'</li>
  *       <li>Since version: 3.0.0</li>
  *     </ul>
  *   </li>
+ *  <li>Name: <code>COALESCE</code>
+ *   <ul>
+ *    <li>Semantic: <code>COALESCE(expr1, ..., exprN)</code> Return the first non-null argument.
+ *    If all arguments are null returns null</li>
+ *    <li>Since version: 3.1.0</li>
+ *   </ul>
+ *  </li>
  * </ol>
  *
  * @since 3.0.0

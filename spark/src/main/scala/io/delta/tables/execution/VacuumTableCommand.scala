@@ -16,56 +16,68 @@
 
 package io.delta.tables.execution
 
-import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils, UnresolvedDeltaPathOrIdentifier}
+import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand
-import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.delta.commands.VacuumCommand.getDeltaTable
+import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StringType
 
 /**
  * The `vacuum` command implementation for Spark SQL. Example SQL:
  * {{{
- *    VACUUM ('/path/to/dir' | delta.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+ *    VACUUM ('/path/to/dir' | delta.`/path/to/dir`)
+ *    [USING INVENTORY (delta.`/path/to/dir`| ( sub_query ))]
+ *    [RETAIN number HOURS] [DRY RUN];
  * }}}
  */
 case class VacuumTableCommand(
-    path: Option[String],
-    table: Option[TableIdentifier],
+    override val child: LogicalPlan,
     horizonHours: Option[Double],
-    dryRun: Boolean) extends LeafRunnableCommand {
+    inventoryTable: Option[LogicalPlan],
+    inventoryQuery: Option[String],
+    dryRun: Boolean) extends RunnableCommand with UnaryNode with DeltaCommand {
 
   override val output: Seq[Attribute] =
     Seq(AttributeReference("path", StringType, nullable = true)())
 
+  override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
+    copy(child = newChild)
+
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val pathToVacuum =
-      if (path.nonEmpty) {
-        new Path(path.get)
-      } else if (table.nonEmpty) {
-        DeltaTableIdentifier(sparkSession, table.get) match {
-          case Some(id) if id.path.nonEmpty =>
-            new Path(id.path.get)
-          case _ =>
-            new Path(sparkSession.sessionState.catalog.getTableMetadata(table.get).location)
-        }
-      } else {
-        throw DeltaErrors.missingTableIdentifierException("VACUUM")
-      }
-    val baseDeltaPath = DeltaTableUtils.findDeltaTableRoot(sparkSession, pathToVacuum)
-    if (baseDeltaPath.isDefined) {
-      if (baseDeltaPath.get != pathToVacuum) {
-        throw DeltaErrors.vacuumBasePathMissingException(baseDeltaPath.get)
-      }
-    }
-    val deltaLog = DeltaLog.forTable(sparkSession, pathToVacuum)
-    if (!deltaLog.tableExists) {
+    val deltaTable = getDeltaTable(child, "VACUUM")
+    // The VACUUM command is only supported on existing delta tables. If the target table doesn't
+    // exist or it is based on a partition directory, an exception will be thrown.
+    if (!deltaTable.tableExists || deltaTable.hasPartitionFilters) {
       throw DeltaErrors.notADeltaTableException(
         "VACUUM",
-        DeltaTableIdentifier(path = Some(pathToVacuum.toString)))
+        DeltaTableIdentifier(path = Some(deltaTable.path.toString)))
     }
-    VacuumCommand.gc(sparkSession, deltaLog, dryRun, horizonHours).collect()
+    val inventory = inventoryTable.map(sparkSession.sessionState.analyzer.execute)
+        .map(p => Some(getDeltaTable(p, "VACUUM").toDf(sparkSession)))
+        .getOrElse(inventoryQuery.map(sparkSession.sql))
+    VacuumCommand.gc(sparkSession, deltaTable.deltaLog, dryRun, horizonHours,
+      inventory).collect()
+  }
+}
+
+object VacuumTableCommand {
+  def apply(
+      path: Option[String],
+      table: Option[TableIdentifier],
+      inventoryTable: Option[TableIdentifier],
+      inventoryQuery: Option[String],
+      horizonHours: Option[Double],
+      dryRun: Boolean): VacuumTableCommand = {
+    val child = UnresolvedDeltaPathOrIdentifier(path, table, "VACUUM")
+    val unresolvedInventoryTable = inventoryTable.map(rt => UnresolvedTable(rt.nameParts, "VACUUM"))
+    VacuumTableCommand(child, horizonHours, unresolvedInventoryTable, inventoryQuery, dryRun)
   }
 }

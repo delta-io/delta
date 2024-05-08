@@ -19,10 +19,11 @@ package org.apache.spark.sql.delta
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.ImplicitDMLCastingSuiteShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
 
-import org.apache.spark.{SparkConf, SparkThrowable}
+import org.apache.spark.{SparkConf, SparkException, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.internal.SQLConf
 
@@ -32,6 +33,7 @@ import org.apache.spark.sql.internal.SQLConf
  * INSERT operations are excluded as they are covered by InsertSuite and InsertSuiteEdge.
  */
 class ImplicitDMLCastingSuite extends QueryTest
+  with DeltaExceptionTestUtils
   with DeltaSQLCommandTest {
 
   private case class TestConfiguration(
@@ -110,6 +112,11 @@ class ImplicitDMLCastingSuite extends QueryTest
       sourceTypeInErrorMessage = "MAP<STRING, BIGINT>", targetType = "MAP<STRING, INT>",
       targetTypeInErrorMessage = "MAP<STRING, INT>", validValue = "map('abc', 1)",
       overflowValue = s"map('abc', ${Long.MaxValue.toString})",
+      exceptionAnsiCast = "SparkArithmeticException"),
+    TestConfiguration(sourceType = "DECIMAL(3,1)",
+      sourceTypeInErrorMessage = "DECIMAL(3,1)", targetType = "DECIMAL(3,2)",
+      targetTypeInErrorMessage = "DECIMAL(3,2)", validValue = "CAST(1 AS DECIMAL(3,1))",
+      overflowValue = s"CAST(12.3 AS DECIMAL(3,1))",
       exceptionAnsiCast = "SparkArithmeticException")
   )
 
@@ -137,7 +144,7 @@ class ImplicitDMLCastingSuite extends QueryTest
         assert(failureCause.toString.contains(testConfig.exceptionAnsiCast))
 
         val sparkThrowable = failureCause.asInstanceOf[SparkThrowable]
-        assert(Seq("CAST_OVERFLOW", "NUMERIC_VALUE_OUT_OF_RANGE", "CAST_INVALID_INPUT")
+        assert(Seq("CAST_OVERFLOW", NUMERIC_VALUE_OUT_OF_RANGE_ERROR_MSG, "CAST_INVALID_INPUT")
           .contains(sparkThrowable.getErrorClass))
       case Some(failureCause) if !sqlConfig.followAnsiEnabled =>
         assert(sqlConfig.storeAssignmentPolicy === SQLConf.StoreAssignmentPolicy.ANSI)
@@ -307,6 +314,34 @@ class ImplicitDMLCastingSuite extends QueryTest
             validateException(exception, sqlConfig, testConfig)
           }
         }
+      }
+    }
+  }
+
+  test("Details are part of the error message") {
+    val sourceTableName = "source_table_name"
+    val sourceValueType = "INT"
+    val targetTableName = "target_table_name"
+    val targetValueType = "LONG"
+    val valueColumnName = "value"
+
+    withTable(sourceTableName, targetTableName) {
+      sql(s"CREATE OR REPLACE TABLE $targetTableName(id LONG, $valueColumnName $sourceValueType) " +
+        "USING DELTA")
+      sql(s"CREATE OR REPLACE TABLE $sourceTableName(id LONG, $valueColumnName $targetValueType) " +
+        "USING DELTA")
+      sql(s"INSERT INTO $sourceTableName VALUES(0, 9223372036854775807)")
+
+      val userFacingError = interceptWithUnwrapping[DeltaArithmeticException] {
+        sql(s"""MERGE INTO $targetTableName t
+               |USING $sourceTableName s
+               |ON s.id = t.id
+               |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
+      }
+      val expectedDetails =
+        Seq("DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", sourceValueType, valueColumnName)
+      for (detail <- expectedDetails) {
+        assert(userFacingError.toString.contains(detail))
       }
     }
   }

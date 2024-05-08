@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        scala: [2.13.8, 2.12.8, 2.11.12]
+        scala: [2.13.13, 2.12.18, 2.11.12]
     steps:
       - uses: actions/checkout@v2
       - name: install java

@@ -25,6 +25,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, Encoder}
 import org.apache.spark.sql.functions.{concat, lit, when}
 import org.apache.spark.sql.types._
@@ -51,7 +52,7 @@ case class DeletionVectorDescriptor(
      *                            The deletion vector is stored inline in the log.
      * - `storageType="p"` format: `<absolute path>`
      *                             The DV is stored in a file with an absolute path given by this
-     *                             url.
+     *                             url. Special characters in this path must be escaped.
      */
     pathOrInlineDv: String,
     /**
@@ -132,7 +133,9 @@ case class DeletionVectorDescriptor(
     storageType match {
       case UUID_DV_MARKER =>
         val absolutePath = this.absolutePath(tableLocation)
-        this.copy(storageType = PATH_DV_MARKER, pathOrInlineDv = absolutePath.toString)
+        this.copy(
+          storageType = PATH_DV_MARKER,
+          pathOrInlineDv = SparkPath.fromPath(absolutePath).urlEncoded)
       case PATH_DV_MARKER | INLINE_DV_MARKER => this.copy()
     }
   }
@@ -176,7 +179,7 @@ object DeletionVectorDescriptor {
   final val INLINE_DV_MARKER: String = "i"
   final val UUID_DV_MARKER: String = "u"
 
-  final val STRUCT_TYPE: StructType =
+  final lazy val STRUCT_TYPE: StructType =
     Action.addFileSchema("deletionVector").dataType.asInstanceOf[StructType]
 
   private lazy val _encoder = new DeltaEncoder[DeletionVectorDescriptor]

@@ -16,11 +16,16 @@
 
 package org.apache.spark.sql.delta.stats
 
+import java.math.BigDecimal
+import java.sql.Date
+import java.time.LocalDateTime
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, TestsStatistics}
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.exceptions.TestFailedException
@@ -28,7 +33,7 @@ import org.scalatest.exceptions.TestFailedException
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
+import org.apache.spark.sql.catalyst.expressions.{GenericRow, GenericRowWithSchema}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
@@ -39,7 +44,9 @@ class StatsCollectionSuite
     with DeltaColumnMappingTestUtils
     with TestsStatistics
     with DeltaSQLCommandTest
-    with DeletionVectorsTestUtils {
+    with DeltaSQLTestUtils
+    with DeletionVectorsTestUtils
+    with DeltaExceptionTestUtils {
 
   import testImplicits._
 
@@ -112,7 +119,9 @@ class StatsCollectionSuite
         assert(e.getErrorClass == "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS")
         assert(e.getSqlState == "0AKDD")
         assert(e.getMessage ==
-          "Statistics re-computation on a Delta table with deletion vectors is not yet supported.")
+          "[DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS] " +
+            "Statistics re-computation on a Delta table with deletion " +
+            "vectors is not yet supported.")
       }
     }
   }
@@ -302,7 +311,8 @@ class StatsCollectionSuite
         val biggest = deltaLog.snapshot.allFiles.agg(max('size)).first().getLong(0)
 
         {
-          StatisticsCollection.recompute(spark, deltaLog, fileFilter = _.size == biggest)
+          StatisticsCollection.recompute(
+            spark, deltaLog, catalogTable = None, fileFilter = _.size == biggest)
         }
 
         checkAnswer(
@@ -417,7 +427,6 @@ class StatsCollectionSuite
   Seq(
     ("BINARY", "BinaryType"),
     ("BOOLEAN", "BooleanType"),
-    ("TIMESTAMP_NTZ", "TimestampNTZType"),
     ("ARRAY<TINYINT>", "ArrayType(ByteType,true)"),
     ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)"),
     ("STRUCT<c60:INT, c61:ARRAY<INT>>", "ArrayType(IntegerType,true)")
@@ -438,9 +447,9 @@ class StatsCollectionSuite
           exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         sql(s"create table $tableName2 (c1 long, c2 $invalidType) using delta")
-        val exceptTwo = intercept[Throwable] {
+        val exceptTwo = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2')")
-        }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        }
         assert(
           exceptTwo.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
@@ -472,18 +481,18 @@ class StatsCollectionSuite
           exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         sql(s"create table $tableName2 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) using delta")
-        val exceptThree = intercept[Throwable] {
+        val exceptThree = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(
             s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2.c21')"
           )
-        }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        }
         assert(
           exceptThree.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptThree.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
-        val exceptFour = intercept[Throwable] {
+        val exceptFour = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2')")
-        }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        }
         assert(
           exceptFour.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptFour.getMessageParametersArray.toSeq == Seq(columnName, typename)
@@ -492,9 +501,43 @@ class StatsCollectionSuite
     }
   }
 
+  test(s"Delta statistic column: mix case column name") {
+    val tableName = "delta_table_1"
+    withTable(tableName) {
+      sql(
+        s"create table $tableName (cOl1 LONG, COL2 struct<COL20 INT, CoL21 LONG>, CoL3 LONG) " +
+        s"using delta TBLPROPERTIES" +
+        s"('delta.dataSkippingStatsColumns' = 'coL1, COL2.col20, COL2.col21, cOl3');"
+      )
+      (1 to 10).foreach { _ =>
+        sql(
+          s"""insert into $tableName values
+             |(1, struct(1, 10), 1), (2, struct(2, 20), 2), (3, struct(3, 30), 3),
+             |(4, struct(4, 40), 4), (5, struct(5, 50), 5), (6, struct(6, 60), 6),
+             |(7, struct(7, 70), 7), (8, struct(8, 80), 8), (9, struct(9, 90), 9),
+             |(10, struct(10, 100), 10), (null, struct(null, null), null),
+             |(-1, struct(-1, -100), -1), (null, struct(null, null), null);""".stripMargin
+        )
+      }
+      sql(s"optimize $tableName")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val df = deltaLog.update().withStatsDeduplicated
+      val analyzedDfPlan = df.queryExecution.analyzed.toString
+      val stats = if (analyzedDfPlan.indexOf("stats_parsed") > 0) "stats_parsed" else "stats"
+      df.select(s"$stats.numRecords", s"$stats.nullCount", s"$stats.minValues", s"$stats.maxValues")
+        .collect()
+        .foreach { row =>
+          assert(row(0) == 130)
+          assert(row(1).asInstanceOf[GenericRow] == Row(20, Row(20, 20), 20))
+          assert(row(2) == Row(-1, Row(-1, -100), -1))
+          assert(row(3) == Row(10, Row(10, 100), 10))
+        }
+    }
+  }
+
   Seq(
     "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
-    "TIMESTAMP", "TINYINT"
+    "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT"
   ).foreach { validType =>
     val tableName1 = "delta_table_1"
     val tableName2 = "delta_table_2"
@@ -547,11 +590,11 @@ class StatsCollectionSuite
           )
         } else {
           sql("create table delta_table(c0 int, c1 int) using delta partitioned by(c1)")
-          val except = intercept[Throwable] {
+          val except = interceptWithUnwrapping[DeltaIllegalArgumentException] {
             sql(
               "ALTER TABLE delta_table SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = 'c1')"
             )
-          }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+          }
           assert(
             except.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" &&
             except.getMessageParametersArray.toSeq == Seq("c1")
@@ -695,11 +738,10 @@ class StatsCollectionSuite
   test("Change Columns with delta statistics column") {
     Seq(
       "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
-      "TIMESTAMP", "TINYINT"
+      "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT"
     ).foreach { validType =>
       Seq(
-        "BINARY", "BOOLEAN", "ARRAY<TINYINT>", "MAP<DATE, INT>", "STRUCT<c60:INT, c61:ARRAY<INT>>",
-        "TIMESTAMP_NTZ"
+        "BINARY", "BOOLEAN", "ARRAY<TINYINT>", "MAP<DATE, INT>", "STRUCT<c60:INT, c61:ARRAY<INT>>"
       ).foreach { invalidType =>
         withTable("delta_table") {
           sql(
@@ -749,12 +791,12 @@ class StatsCollectionSuite
       ("'c1.c11,c1.c11'", "c1.c11"),
       ("'c1,c1'", "c1.c11,c1.c12")
     ).foreach { case (statsColumns, duplicatedColumns) =>
-      val exception = intercept[SparkException] {
+      val exception = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         sql(
           s"ALTER TABLE delta_table_t1 " +
           s"SET TBLPROPERTIES('delta.dataSkippingStatsColumns'=$statsColumns)"
         )
-      }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+      }
       assert(
         exception.getErrorClass == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
         exception.getMessageParametersArray.toSeq == Seq(duplicatedColumns)

@@ -14,14 +14,16 @@
 # limitations under the License.
 #
 
+# mypy: disable-error-code="union-attr"
+# mypy: disable-error-code="attr-defined"
 # type: ignore[union-attr]
 
 import unittest
 import os
+from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
 from pyspark.sql import DataFrame, Row
-from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
 from pyspark.sql.utils import AnalysisException, ParseException
@@ -332,6 +334,20 @@ class DeltaTableTestsMixin:
             .execute()
         self.__checkAnswer(dt.toDF(), ([('a', -1), ('b', 2), ('c', 3), ('d', 4), ('e', -5)]))
 
+        # Schema evolution
+        reset_table()
+        dt.alias("t") \
+            .merge(source.toDF("key", "extra").alias("s"), expr("t.key = s.key")) \
+            .whenMatchedUpdate(set={"extra": "-1"}) \
+            .whenNotMatchedInsertAll() \
+            .withSchemaEvolution() \
+            .execute()
+        self.__checkAnswer(
+            DeltaTable.forPath(self.spark, self.tempFile).toDF(),  # reload the table
+            ([('a', 1, -1), ('b', 2, -1), ('c', 3, None), ('d', 4, None), ('e', None, -5),
+              ('f', None, -6)]),
+            ["key", "value", "extra"])
+
         # ============== Test bad args ==============
         # ---- bad args in merge()
         with self.assertRaisesRegex(TypeError, "must be DataFrame"):
@@ -468,6 +484,35 @@ class DeltaTableTestsMixin:
         # bad args in whenNotMatchedBySourceDelete()
         with self.assertRaisesRegex(TypeError, "must be a Spark SQL Column or a string"):
             dt.merge(source, "key = k").whenNotMatchedBySourceDelete(1)  # type: ignore[arg-type]
+
+    def test_merge_with_inconsistent_sessions(self) -> None:
+        source_path = os.path.join(self.tempFile, "source")
+        target_path = os.path.join(self.tempFile, "target")
+        spark = self.spark
+
+        def f(spark):
+            spark.range(20) \
+                .withColumn("x", col("id")) \
+                .withColumn("y", col("id")) \
+                .write.mode("overwrite").format("delta").save(source_path)
+            spark.range(1) \
+                .withColumn("x", col("id")) \
+                .write.mode("overwrite").format("delta").save(target_path)
+            target = DeltaTable.forPath(spark, target_path)
+            source = spark.read.format("delta").load(source_path).alias("s")
+            target.alias("t") \
+                .merge(source, "t.id = s.id") \
+                .whenMatchedUpdate(set={"t.x": "t.x + 1"}) \
+                .whenNotMatchedInsertAll() \
+                .execute()
+            assert(spark.read.format("delta").load(target_path).count() == 20)
+
+        pool = ThreadPool(3)
+        spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+        try:
+            pool.starmap(f, [(spark,)])
+        finally:
+            spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
 
     def test_history(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
@@ -651,6 +696,34 @@ class DeltaTableTestsMixin:
                                        [StringType(), LongType(), IntegerType()],
                                        nullables={"key", "value", "value2"},
                                        partitioningColumns=["value", "value2"])
+
+    def test_create_replace_table_with_cluster_by(self) -> None:
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+        with self.table("test"):
+            # verify creating table with list of structFields
+            deltaTable = DeltaTable.create(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
+
+            deltaTable = DeltaTable.replace(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
 
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
         with self.table("test"):
@@ -842,6 +915,12 @@ class DeltaTableTestsMixin:
                                        tblComment="comment")
 
     def test_verify_paritionedBy_compatibility(self) -> None:
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[attr-defined]
+
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
                 .addColumn("col1", "int", comment="foo", nullable=False) \
@@ -920,6 +999,16 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.partitionedBy([1])  # type: ignore[list-item]
 
+        # bad clusterBy col name
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1)  # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1, "1")   # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy([1])  # type: ignore[list-item]
+
         # bad property key
         with self.assertRaises(TypeError):
             builder.property(1, "1")  # type: ignore[arg-type]
@@ -940,12 +1029,12 @@ class DeltaTableTestsMixin:
             self.spark.conf.unset('spark.databricks.delta.minReaderVersion')
 
         # cannot downgrade once upgraded
-        failed = False
-        try:
-            dt.upgradeTableProtocol(1, 2)
-        except BaseException:
-            failed = True
-        self.assertTrue(failed, "The upgrade should have failed, because downgrades aren't allowed")
+        dt.upgradeTableProtocol(1, 2)
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 1,
+                        "The upgrade should be a no-op, because downgrades aren't allowed")
+        self.assertTrue(dt_details["minWriterVersion"] == 3,
+                        "The upgrade should be a no-op, because downgrades aren't allowed")
 
         # bad args
         with self.assertRaisesRegex(ValueError, "readerVersion"):

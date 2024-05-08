@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.catalyst.plans.logical
 
+import org.apache.spark.sql.delta.DeltaAnalysisException
+
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, Expression, ExtractValue, GetStructField}
 
@@ -64,11 +66,6 @@ object DeltaUpdateTable {
    */
   def getTargetColNameParts(resolvedTargetCol: Expression, errMsg: String = null): Seq[String] = {
 
-    def fail(extraMsg: String): Nothing = {
-      val msg = Option(errMsg).map(_ + " - ").getOrElse("") + extraMsg
-      throw new AnalysisException(msg)
-    }
-
     def extractRecursively(expr: Expression): Seq[String] = expr match {
       case attr: Attribute => Seq(attr.name)
 
@@ -77,10 +74,16 @@ object DeltaUpdateTable {
       case GetStructField(c, _, Some(name)) => extractRecursively(c) :+ name
 
       case _: ExtractValue =>
-        fail("Updating nested fields is only supported for StructType.")
+        throw new DeltaAnalysisException(
+          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0009",
+          messageParameters = Array(Option(errMsg).map(_ + " - ").getOrElse(""))
+        )
 
       case other =>
-        fail(s"Found unsupported expression '$other' while parsing target column name parts")
+        throw new DeltaAnalysisException(
+          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0010",
+          messageParameters = Array(Option(errMsg).map(_ + " - ").getOrElse(""), other.sql)
+        )
     }
 
     extractRecursively(resolvedTargetCol)

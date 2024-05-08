@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
 import java.net.URI
+import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.{Date, Locale}
@@ -25,13 +26,18 @@ import java.util.{Date, Locale}
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
+import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -42,14 +48,15 @@ import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{ManualClock, Utils}
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
     with SharedSparkSession
     with GivenWhenThen
     with DeltaSQLCommandTest
-    with StatsUtils {
+    with StatsUtils
+    with ManagedCommitBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -59,7 +66,7 @@ trait DeltaTimeTravelTests extends QueryTest
   protected val timeFormatter = new SimpleDateFormat("yyyyMMddHHmmssSSS")
 
   protected def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
     file.setLastModified(ts)
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
     if (crc.exists()) {
@@ -92,7 +99,8 @@ trait DeltaTimeTravelTests extends QueryTest
       deltaLog: DeltaLog, commits: Long*): Unit = {
     var startVersion = deltaLog.snapshot.version + 1
     commits.foreach { ts =>
-      val action = createTestAddFile(path = startVersion.toString, modificationTime = startVersion)
+      val action =
+        createTestAddFile(encodedPath = startVersion.toString, modificationTime = startVersion)
       deltaLog.startTransaction().commitManually(action)
       modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
@@ -123,16 +131,26 @@ trait DeltaTimeTravelTests extends QueryTest
           .saveAsTable(table)
       }
       val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(table))
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri)
-      file.setLastModified(commitList.head)
+      val filePath = FileNames.unsafeDeltaFile(deltaLog.logPath, 0)
+      if (isICTEnabledForNewTables) {
+        InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, commits.headOption)
+      } else {
+        val file = new File(filePath.toUri)
+        file.setLastModified(commits.head)
+      }
       commitList = commits.slice(1, commits.length) // we already wrote the first commit here
       var startVersion = deltaLog.snapshot.version + 1
       commitList.foreach { ts =>
         val rangeStart = startVersion * 10
         val rangeEnd = rangeStart + 10
         spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").saveAsTable(table)
-        val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
-        file.setLastModified(ts)
+        val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
+        if (isICTEnabledForNewTables) {
+          InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
+        } else {
+          val file = new File(filePath.toUri)
+          file.setLastModified(ts)
+        }
         startVersion += 1
       }
     }
@@ -346,7 +364,7 @@ trait DeltaTimeTravelTests extends QueryTest
         assert(e1.getMessage.contains("[0, 2]"))
 
         val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
-        new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+        new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
         // Delta Lake will create a DeltaTableV2 explicitly with time travel options in the catalog.
         // These options will be verified by DeltaHistoryManager, which will throw an
         // AnalysisException.
@@ -397,6 +415,11 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
+    if (isICTEnabledForNewTables) {
+      // ICT Timestamps are always monotonically increasing. Therefore,
+      // this test is not needed when ICT is enabled.
+      cancel("This test is not compatible with InCommitTimestamps.")
+    }
     val tblName = "delta_table"
     withTable(tblName) {
       val start = 1540415658000L
@@ -476,7 +499,10 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[AnalysisException] {
           f
         }
-          assert(e.getMessage.contains("path-based tables"), s"Returned instead:\n$e")
+        assert(
+          e.getMessage.contains("path-based tables") ||
+            e.message.contains("[UNSUPPORTED_FEATURE.TIME_TRAVEL] The feature is not supported"),
+          s"Returned instead:\n$e")
       }
 
       assertFormatFailure {
@@ -505,8 +531,8 @@ trait DeltaTimeTravelTests extends QueryTest
         val e = intercept[Exception] {
           sql(s"select * from ${versionAsOf(tblName, 0)}").collect()
         }
-        var catalogName = ""
-        val catalogPrefix = if (catalogName == "") "" else catalogName + "."
+        val catalogName = CatalogManager.SESSION_CATALOG_NAME
+        val catalogPrefix = catalogName + "."
         assert(e.getMessage.contains(
           s"Table ${catalogPrefix}default.parq_table does not support time travel") ||
           e.getMessage.contains(s"Time travel on the relation: `$catalogName`.`default`.`parq_table`"))
@@ -590,17 +616,45 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       }
       assert(e1.getMessage.contains("[0, 2]"))
 
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_TYPE] {
         spark.read.format("delta")
           .option("versionAsOf", 3)
           .option("timestampAsOf", "2020-10-22 23:20:11")
           .table(tblName).collect()
       }
-      assert(e2.getMessage.contains("either provide 'timestampAsOf' or 'versionAsOf'"))
+
+      assert(e2.getMessage.contains(MULTIPLE_TIME_TRAVEL_FORMATS_ERROR_MSG))
 
     }
   }
 
+  test("getHistory returns the correct set of commits") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start, start + 20.minutes, start + 40.minutes, start + 60.minutes)
+      val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
+
+      def testGetHistory(
+          start: Long,
+          endOpt: Option[Long],
+          versions: Seq[Long],
+          expectedLogUpdates: Int): Unit = {
+        val usageRecords = Log4jUsageLogger.track {
+          val history = deltaLog.history.getHistory(start, endOpt)
+          assert(history.map(_.getVersion) == versions)
+        }
+        assert(filterUsageRecords(usageRecords, "deltaLog.update").size === expectedLogUpdates)
+      }
+
+      testGetHistory(start = 0, endOpt = Some(2), versions = Seq(2, 1, 0), expectedLogUpdates = 0)
+      testGetHistory(start = 1, endOpt = Some(1), versions = Seq(1), expectedLogUpdates = 0)
+      testGetHistory(start = 2, endOpt = None, versions = Seq(3, 2), expectedLogUpdates = 1)
+      testGetHistory(start = 1, endOpt = Some(5), versions = Seq(3, 2, 1), expectedLogUpdates = 1)
+      testGetHistory(start = 4, endOpt = None, versions = Seq.empty, expectedLogUpdates = 1)
+      testGetHistory(start = 2, endOpt = Some(1), versions = Seq.empty, expectedLogUpdates = 0)
+    }
+  }
 }
 
 /** Uses V2 resolution code paths */
@@ -608,4 +662,8 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
   override protected def sparkConf: SparkConf = {
     super.sparkConf.set(SQLConf.USE_V1_SOURCE_LIST.key, "parquet,json")
   }
+}
+
+class ManagedCommitFill1DeltaHistoryManagerSuite extends DeltaHistoryManagerSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }

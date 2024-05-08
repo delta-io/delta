@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, SingleAction}
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -28,12 +29,12 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.lit
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
 abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
-    with SQLTestUtils {
+    with DeltaSQLTestUtils {
   import testImplicits._
 
   protected def testEvolvability(tablePath: String): Unit = {
@@ -73,8 +74,23 @@ abstract class EvolvabilitySuiteBase extends QueryTest with SharedSparkSession
       // copy the existing dir to the temp data dir.
       FileUtils.copyDirectory(
         new File("src/test/resources/delta/transaction_log_schema_evolvability"), tempDir)
+      makeWritable(tempDir)
       DeltaLog.clearCache()
       operation(tempDir.getAbsolutePath)
+    }
+  }
+
+  /**
+   * Recursively make all files in a directory writable.
+   */
+  private def makeWritable(directory: File): Unit = {
+    if (!directory.isDirectory) return
+    directory.listFiles().foreach { file =>
+      if (file.isDirectory) {
+        makeWritable(file)
+      } else {
+        file.setWritable(true)
+      }
     }
   }
 
@@ -188,7 +204,7 @@ object EvolvabilitySuiteBase {
 
     val deltaLog = DeltaLog.forTable(spark, new Path(path))
     val deltas = 0L to deltaLog.snapshot.version
-    val deltaFiles = deltas.map(deltaFile(deltaLog.logPath, _)).map(_.toString)
+    val deltaFiles = deltas.map(unsafeDeltaFile(deltaLog.logPath, _)).map(_.toString)
     val actionsTypesInLog =
       spark.read.schema(Action.logSchema).json(deltaFiles: _*)
         .as[SingleAction]
@@ -277,14 +293,14 @@ object EvolvabilitySuiteBase {
 
     // manually remove AddFile in the previous commit and append a new column.
     val records = deltaLog.store.read(
-      FileNames.deltaFile(deltaLog.logPath, version),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, version),
       deltaLog.newDeltaHadoopConf())
     val actions = records.map(Action.fromJson).filter(action => action.isInstanceOf[AddFile])
       .map { action => action.asInstanceOf[AddFile].remove}
       .toIterator
     val recordsWithNewAction = actions.map(_.json) ++ Iterator("""{"some_new_action":{"a":1}}""")
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, version + 1),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, version + 1),
       recordsWithNewAction,
       overwrite = false,
       deltaLog.newDeltaHadoopConf())
@@ -302,7 +318,7 @@ object EvolvabilitySuiteBase {
       JsonUtils.toJson(newRecordMap + ("some_new_action_alongside_add_action" -> ("a" -> "1")))
     }.toIterator
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, version + 2),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, version + 2),
       newRecords,
       overwrite = false,
       deltaLog.newDeltaHadoopConf())

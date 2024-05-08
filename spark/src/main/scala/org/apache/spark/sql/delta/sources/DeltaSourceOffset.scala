@@ -17,14 +17,20 @@
 package org.apache.spark.sql.delta.sources
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.IOException
+
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.json4s._
-import org.json4s.jackson.JsonMethods.parse
+import com.fasterxml.jackson.core.{JsonGenerator, JsonParseException, JsonParser, JsonProcessingException}
+import com.fasterxml.jackson.databind.{DeserializationContext, SerializerProvider}
+import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer
+import com.fasterxml.jackson.databind.exc.InvalidFormatException
+import com.fasterxml.jackson.databind.ser.std.StdSerializer
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.connector.read.streaming.{Offset => OffsetV2}
-import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset}
+import org.apache.spark.sql.execution.streaming.Offset
 
 /**
  * Tracks how far we processed in when reading changes from the [[DeltaLog]].
@@ -32,53 +38,33 @@ import org.apache.spark.sql.execution.streaming.{Offset, SerializedOffset}
  * Note this class retains the naming of `Reservoir` to maintain compatibility
  * with serialized offsets from the beta period.
  *
- * @param sourceVersion     The version of serialization that this offset is encoded with.
- *                          It should not be set manually!
  * @param reservoirId       The id of the table we are reading from. Used to detect
  *                          misconfiguration when restarting a query.
  * @param reservoirVersion  The version of the table that we are current processing.
  * @param index             The index in the sequence of AddFiles in this version. Used to
  *                          break large commits into multiple batches. This index is created by
  *                          sorting on modificationTimestamp and path.
- * @param isStartingVersion Whether this offset denotes a query that is starting rather than
- *                          processing changes. When starting a new query, we first process
- *                          all data present in the table at the start and then move on to
- *                          processing new data that has arrived.
+ * @param isInitialSnapshot Whether this offset points into an initial full table snapshot at the
+ *                          provided reservoir version rather than into the changes at that version.
+ *                          When starting a new query, we first process all data present in the
+ *                          table at the start and then move on to processing new data that has
+ *                          arrived.
  */
+@JsonDeserialize(using = classOf[DeltaSourceOffset.Deserializer])
+@JsonSerialize(using = classOf[DeltaSourceOffset.Serializer])
 case class DeltaSourceOffset private(
-    sourceVersion: Long,
     reservoirId: String,
     reservoirVersion: Long,
     index: Long,
-    isStartingVersion: Boolean
+    isInitialSnapshot: Boolean
   ) extends Offset with Comparable[DeltaSourceOffset] {
 
   import DeltaSourceOffset._
 
+  assert(index != -1, "Index should never be -1, it should be set to the BASE_INDEX instead.")
+
   override def json: String = {
-    // We handle a few backward compatibility scenarios during Serialization here:
-    // 1. [Backward compatibility] If the source index is a schema changing base index, then replace
-    //    it with index = -1 and use VERSION_1.This allows older Delta to at least be able to read
-    //    the non-schema-changes stream offsets.
-    //    This needs to happen during serialization time so we won't be looking at a downgraded
-    //    index right away when we need to utilize this offset in memory.
-    // 2. [Backward safety] If the source index is a new schema changing index, then use
-    //    VERSION_3. Older Delta would explode upon seeing this, but that's the safe thing to do.
-    val minVersion = {
-      if (DeltaSourceOffset.isMetadataChangeIndex(index)) {
-        VERSION_3
-      }
-      else {
-        VERSION_1
-      }
-    }
-    val downgradedIndex = if (index == BASE_INDEX) {
-      BASE_INDEX_V1
-    } else {
-      index
-    }
-    val objectToSerialize = this.copy(sourceVersion = minVersion, index = downgradedIndex)
-    JsonUtils.toJson(objectToSerialize)
+    JsonUtils.toJson(this)
   }
 
   /**
@@ -127,26 +113,30 @@ object DeltaSourceOffset extends Logging {
   // The index for an IndexedFile that is right after a metadata change. (from VERSION_3)
   val POST_METADATA_CHANGE_INDEX: Long = -19
 
+  // A value close to the end of the Long space. This is used to indicate that we are at the end of
+  // a reservoirVersion and need to move on to the next one. This should never be serialized into
+  // the offset log.
+  val END_INDEX: Long = Long.MaxValue - 100
+
   /**
    * The ONLY external facing constructor to create a DeltaSourceOffset in memory.
    * @param reservoirId Table id
    * @param reservoirVersion Table commit version
    * @param index File action index in the commit version
-   * @param isStartingVersion Whether this offset is still in initial snapshot
+   * @param isInitialSnapshot Whether this offset is still in initial snapshot
    */
   def apply(
       reservoirId: String,
       reservoirVersion: Long,
       index: Long,
-      isStartingVersion: Boolean
+      isInitialSnapshot: Boolean
   ): DeltaSourceOffset = {
     // TODO should we detect `reservoirId` changes when a query is running?
     new DeltaSourceOffset(
-      CURRENT_VERSION,
       reservoirId,
       reservoirVersion,
       index,
-      isStartingVersion
+      isInitialSnapshot
     )
   }
 
@@ -159,57 +149,12 @@ object DeltaSourceOffset extends Logging {
     offset match {
       case o: DeltaSourceOffset => o
       case s =>
-        validateSourceVersion(s.json)
         val o = JsonUtils.mapper.readValue[DeltaSourceOffset](s.json)
         if (o.reservoirId != reservoirId) {
           throw DeltaErrors.differentDeltaTableReadByStreamingSource(
             newTableId = reservoirId, oldTableId = o.reservoirId)
         }
-        // Always upgrade to use the current latest INDEX_VERSION_BASE
-        val offsetIndex = if (o.sourceVersion < VERSION_3 && o.index == BASE_INDEX_V1) {
-          logDebug(s"upgrading offset to use latest version base index")
-          BASE_INDEX
-        } else {
-          o.index
-        }
-        // Leverage the only external facing constructor to initialize with latest sourceVersion
-        DeltaSourceOffset(
-          o.reservoirId,
-          o.reservoirVersion,
-          offsetIndex,
-          o.isStartingVersion
-        )
-    }
-  }
-
-  private def validateSourceVersion(json: String): Unit = {
-    val parsedJson = parse(json)
-    val versionJValueOpt = jsonOption(parsedJson \ "sourceVersion")
-    val versionOpt = versionJValueOpt.map {
-      case i: JInt => i.num.longValue
-      case other => throw DeltaErrors.invalidSourceVersion(other)
-    }
-    if (versionOpt.isEmpty) {
-      throw DeltaErrors.cannotFindSourceVersionException(json)
-    }
-
-    if (versionOpt.get == VERSION_2) {
-      // Version 2 is reserved.
-      throw DeltaErrors.invalidSourceVersion(versionJValueOpt.get)
-    }
-
-    val maxVersion = VERSION_3
-
-    if (versionOpt.get > maxVersion) {
-      throw DeltaErrors.invalidFormatFromSourceVersion(versionOpt.get, maxVersion)
-    }
-  }
-
-  /** Return an option that translates JNothing to None */
-  private def jsonOption(json: JValue): Option[JValue] = {
-    json match {
-      case JNothing => None
-      case value: JValue => Some(value)
+        o
     }
   }
 
@@ -218,9 +163,9 @@ object DeltaSourceOffset extends Logging {
    * re-process data and cause data duplication.
    */
   def validateOffsets(previousOffset: DeltaSourceOffset, currentOffset: DeltaSourceOffset): Unit = {
-    if (!previousOffset.isStartingVersion && currentOffset.isStartingVersion) {
+    if (previousOffset.isInitialSnapshot == false && currentOffset.isInitialSnapshot == true) {
       throw new IllegalStateException(
-        s"Found invalid offsets: 'isStartingVersion' fliped incorrectly. " +
+        s"Found invalid offsets: 'isInitialSnapshot' flipped incorrectly. " +
           s"Previous: $previousOffset, Current: $currentOffset")
     }
     if (previousOffset.reservoirVersion > currentOffset.reservoirVersion) {
@@ -238,4 +183,106 @@ object DeltaSourceOffset extends Logging {
 
   def isMetadataChangeIndex(index: Long): Boolean =
     index == METADATA_CHANGE_INDEX || index == POST_METADATA_CHANGE_INDEX
+
+  /**
+   * This is a 1:1 copy of [[DeltaSourceOffset]] used for JSON serialization. Our serializers only
+   * want to adjust some field values and then serialize in the normal way. But we cannot access the
+   * "default" serializers once we've overridden them. So instead, we use a separate case class that
+   * gets serialized "as-is".
+   */
+  private case class DeltaSourceOffsetForSerialization private(
+      sourceVersion: Long,
+      reservoirId: String,
+      reservoirVersion: Long,
+      index: Long,
+      // This stores isInitialSnapshot.
+      // This was confusingly called "starting version" in earlier versions, even though enabling
+      // the option "startingVersion" actually causes this to be disabled. We still have to
+      // serialize it using the old name for backward compatibility.
+      isStartingVersion: Boolean
+    )
+
+  class Deserializer
+    extends StdDeserializer[DeltaSourceOffset](classOf[DeltaSourceOffset]) {
+    @throws[IOException]
+    @throws[JsonProcessingException]
+    override def deserialize(p: JsonParser, ctxt: DeserializationContext): DeltaSourceOffset = {
+      val o = try {
+        p.readValueAs(classOf[DeltaSourceOffsetForSerialization])
+      } catch {
+        case e: Throwable if e.isInstanceOf[JsonParseException] ||
+            e.isInstanceOf[InvalidFormatException] =>
+          // The version may be there with a different format, or something else might be off.
+          throw DeltaErrors.invalidSourceOffsetFormat()
+      }
+
+      if (o.sourceVersion < VERSION_1) {
+        throw DeltaErrors.invalidSourceVersion(o.sourceVersion.toString)
+      }
+      if (o.sourceVersion > CURRENT_VERSION) {
+        throw DeltaErrors.invalidFormatFromSourceVersion(o.sourceVersion, CURRENT_VERSION)
+      }
+      if (o.sourceVersion == VERSION_2) {
+        // Version 2 is reserved.
+        throw DeltaErrors.invalidSourceVersion(o.sourceVersion.toString)
+      }
+      // Always upgrade to use the current latest INDEX_VERSION_BASE
+      val offsetIndex = if (o.sourceVersion < VERSION_3 && o.index == BASE_INDEX_V1) {
+        logDebug(s"upgrading offset to use latest version base index")
+        BASE_INDEX
+      } else {
+        o.index
+      }
+      assert(offsetIndex != END_INDEX, "Should not deserialize END_INDEX")
+
+      // Leverage the only external facing constructor to initialize with latest sourceVersion
+      DeltaSourceOffset(
+        reservoirId = o.reservoirId,
+        reservoirVersion = o.reservoirVersion,
+        index = offsetIndex,
+        isInitialSnapshot = o.isStartingVersion
+      )
+    }
+  }
+
+  class Serializer
+    extends StdSerializer[DeltaSourceOffset](classOf[DeltaSourceOffset]) {
+
+    @throws[IOException]
+    override def serialize(
+        o: DeltaSourceOffset,
+        gen: JsonGenerator,
+        provider: SerializerProvider): Unit = {
+      assert(o.index != END_INDEX, "Should not serialize END_INDEX")
+
+      // We handle a few backward compatibility scenarios during Serialization here:
+      // 1. [Backward compatibility] If the source index is a schema changing base index, then
+      //    replace it with index = -1 and use VERSION_1. This allows older Delta to at least be
+      //    able to read the non-schema-changes stream offsets.
+      //    This needs to happen during serialization time so we won't be looking at a downgraded
+      //    index right away when we need to utilize this offset in memory.
+      // 2. [Backward safety] If the source index is a new schema changing index, then use
+      //    VERSION_3. Older Delta would explode upon seeing this, but that's the safe thing to do.
+      val minVersion = {
+        if (DeltaSourceOffset.isMetadataChangeIndex(o.index)) {
+          VERSION_3
+        }
+        else {
+          VERSION_1
+        }
+      }
+      val downgradedIndex = if (o.index == BASE_INDEX) {
+        BASE_INDEX_V1
+      } else {
+        o.index
+      }
+      gen.writeObject(DeltaSourceOffsetForSerialization(
+        sourceVersion = minVersion,
+        reservoirId = o.reservoirId,
+        reservoirVersion = o.reservoirVersion,
+        index = downgradedIndex,
+        isStartingVersion = o.isInitialSnapshot
+      ))
+    }
+  }
 }

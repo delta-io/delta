@@ -27,7 +27,8 @@ import io.delta.kernel.annotation.Evolving;
  * <ul>
  *     <li>Logical {@code expr1} AND {@code expr2} on two inputs.</li>
  *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
- *     <li>Result is null at least one of the inputs is null.</li>
+ *     <li>Result is null when both inputs are null, or when one input is null and the other
+ *     is {@code true}.</li>
  * </ul>
  *
  * @since 3.0.0
@@ -50,10 +51,5 @@ public final class And extends Predicate {
      */
     public Predicate getRight() {
         return (Predicate) getChildren().get(1);
-    }
-
-    @Override
-    public String toString() {
-        return "(" + getLeft() + " AND " + getRight() + ")";
     }
 }

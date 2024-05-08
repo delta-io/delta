@@ -17,11 +17,10 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
+import java.io.IOException
 import java.lang.ref.WeakReference
 import java.net.URI
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -32,11 +31,13 @@ import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import com.google.common.cache.{CacheBuilder, RemovalNotification}
+import org.apache.spark.sql.delta.util.FileNames
+import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
@@ -87,6 +88,14 @@ class DeltaLog private(
   import org.apache.spark.sql.delta.files.TahoeFileIndex
   import org.apache.spark.sql.delta.util.FileNames._
 
+  /**
+   * Path to sidecar directory.
+   * This is intentionally kept `lazy val` as otherwise any other constructor codepaths in DeltaLog
+   * (e.g. SnapshotManagement etc) will see it as null as they are executed before this line is
+   * called.
+   */
+  lazy val sidecarDirPath: Path = FileNames.sidecarDirPath(logPath)
+
 
   protected def spark = SparkSession.active
 
@@ -111,9 +120,6 @@ class DeltaLog private(
 
   /** Used to read and write physical log files and checkpoints. */
   lazy val store = createLogStore(spark)
-
-  /** Use ReentrantLock to allow us to call `lockInterruptibly` */
-  protected val deltaLogLock = new ReentrantLock()
 
   /** Delta History Manager containing version and commit history. */
   lazy val history = new DeltaHistoryManager(
@@ -148,19 +154,6 @@ class DeltaLog private(
   private[delta] def compositeId: (String, Path) = tableId -> dataPath
 
   /**
-   * Run `body` inside `deltaLogLock` lock using `lockInterruptibly` so that the thread can be
-   * interrupted when waiting for the lock.
-   */
-  def lockInterruptibly[T](body: => T): T = {
-    deltaLogLock.lockInterruptibly()
-    try {
-      body
-    } finally {
-      deltaLogLock.unlock()
-    }
-  }
-
-  /**
    * Creates a [[LogicalRelation]] for a given [[DeltaLogFileIndex]], with all necessary file source
    * options taken from the Delta Log. All reads of Delta metadata files should use this method.
    */
@@ -185,17 +178,31 @@ class DeltaLog private(
    * ------------------ */
 
   /**
-   * Returns a new [[OptimisticTransaction]] that can be used to read the current state of the
-   * log and then commit updates. The reads and updates will be checked for logical conflicts
-   * with any concurrent writes to the log.
+   * Returns a new [[OptimisticTransaction]] that can be used to read the current state of the log
+   * and then commit updates. The reads and updates will be checked for logical conflicts with any
+   * concurrent writes to the log, and post-commit hooks can be used to notify the table's catalog
+   * of schema changes, etc.
    *
    * Note that all reads in a transaction must go through the returned transaction object, and not
    * directly to the [[DeltaLog]] otherwise they will not be checked for conflicts.
+   *
+   * @param catalogTableOpt The [[CatalogTable]] for the table this transaction updates. Passing
+   * None asserts this is a path-based table with no catalog entry.
+   *
+   * @param snapshotOpt THe [[Snapshot]] this transaction should use, if not latest.
    */
-  def startTransaction(): OptimisticTransaction = startTransaction(None)
+  def startTransaction(
+      catalogTableOpt: Option[CatalogTable],
+      snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
+    TransactionExecutionObserver.threadObserver.get().startingTransaction {
+      new OptimisticTransaction(this, catalogTableOpt, snapshotOpt)
+    }
+  }
 
-  def startTransaction(snapshotOpt: Option[Snapshot]): OptimisticTransaction = {
-    new OptimisticTransaction(this, snapshotOpt.getOrElse(update()))
+  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
+  @deprecated("Please use the CatalogTable overload instead", "3.0")
+  def startTransaction(): OptimisticTransaction = {
+    startTransaction(catalogTableOpt = None, snapshotOpt = None)
   }
 
   /**
@@ -203,9 +210,28 @@ class DeltaLog private(
    * be recorded for this table, and all other tables will be read
    * at a snapshot that is pinned on the first access.
    *
+   * @param catalogTableOpt The [[CatalogTable]] for the table this transaction updates. Passing
+   * None asserts this is a path-based table with no catalog entry.
+   *
+   * @param snapshotOpt THe [[Snapshot]] this transaction should use, if not latest.
    * @note This uses thread-local variable to make the active transaction visible. So do not use
    *       multi-threaded code in the provided thunk.
    */
+  def withNewTransaction[T](
+      catalogTableOpt: Option[CatalogTable],
+      snapshotOpt: Option[Snapshot] = None)(
+      thunk: OptimisticTransaction => T): T = {
+    try {
+      val txn = startTransaction(catalogTableOpt, snapshotOpt)
+      OptimisticTransaction.setActive(txn)
+      thunk(txn)
+    } finally {
+      OptimisticTransaction.clearActive()
+    }
+  }
+
+  /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
+  @deprecated("Please use the CatalogTable overload instead", "3.0")
   def withNewTransaction[T](thunk: OptimisticTransaction => T): T = {
     try {
       val txn = startTransaction()
@@ -219,9 +245,11 @@ class DeltaLog private(
 
   /**
    * Upgrade the table's protocol version, by default to the maximum recognized reader and writer
-   * versions in this DBR release.
+   * versions in this Delta release. This method only upgrades protocol version, and will fail if
+   * the new protocol version is not a superset of the original one used by the snapshot.
    */
   def upgradeProtocol(
+      catalogTable: Option[CatalogTable],
       snapshot: Snapshot,
       newVersion: Protocol): Unit = {
     val currentVersion = snapshot.protocol
@@ -229,8 +257,11 @@ class DeltaLog private(
       logConsole(s"Table $dataPath is already at protocol version $newVersion.")
       return
     }
+    if (!currentVersion.canUpgradeTo(newVersion)) {
+      throw new ProtocolDowngradeException(currentVersion, newVersion)
+    }
 
-    val txn = startTransaction(Some(snapshot))
+    val txn = startTransaction(catalogTable, Some(snapshot))
     try {
       SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
     } catch {
@@ -241,43 +272,67 @@ class DeltaLog private(
     logConsole(s"Upgraded table at $dataPath to $newVersion.")
   }
 
-  // Test-only!!
-  private[delta] def upgradeProtocol(newVersion: Protocol): Unit = {
-    upgradeProtocol(unsafeVolatileSnapshot, newVersion)
-  }
-
   /**
    * Get all actions starting from "startVersion" (inclusive). If `startVersion` doesn't exist,
    * return an empty Iterator.
+   * Callers are encouraged to use the other override which takes the endVersion if available to
+   * avoid I/O and improve performance of this method.
    */
   def getChanges(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    val hadoopConf = newDeltaHadoopConf()
-    val deltasWithVersion = store.listFrom(listingPrefix(logPath, startVersion), hadoopConf)
-      .flatMap(DeltaFile.unapply(_))
-    // Subtract 1 to ensure that we have the same check for the inclusive startVersion
-    var lastSeenVersion = startVersion - 1
-    deltasWithVersion.map { case (status, version) =>
-      val p = status.getPath
-      if (failOnDataLoss && version > lastSeenVersion + 1) {
-        throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
-      }
-      lastSeenVersion = version
-      (version, store.read(status, hadoopConf).map(Action.fromJson))
+    getChangeLogFiles(startVersion, failOnDataLoss).map { case (version, status) =>
+      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
     }
+  }
+
+  private[sql] def getChanges(
+      startVersion: Long,
+      endVersion: Long,
+      failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
+    getChangeLogFiles(startVersion, endVersion, failOnDataLoss).map { case (version, status) =>
+      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+    }
+  }
+
+  private[sql] def getChangeLogFiles(
+      startVersion: Long,
+      endVersion: Long,
+      failOnDataLoss: Boolean): Iterator[(Long, FileStatus)] = {
+    implicit class IteratorWithStopAtHelper[T](underlying: Iterator[T]) {
+      // This method is used to stop the iterator when the condition is met.
+      def stopAt(stopAtFunc: (T) => Boolean): Iterator[T] = new Iterator[T] {
+        var shouldStop = false
+
+        override def hasNext: Boolean = !shouldStop && underlying.hasNext
+
+        override def next(): T = {
+          val v = underlying.next()
+          shouldStop = stopAtFunc(v)
+          v
+        }
+      }
+    }
+
+    getChangeLogFiles(startVersion, failOnDataLoss)
+      // takeWhile always looks at one extra item, which can trigger unnecessary work. Instead, we
+      // stop if we've seen the item we believe should be the last interesting item, without
+      // examining the one that follows.
+      .stopAt { case (version, _) => version >= endVersion }
+      // The last element in this iterator may not be <= endVersion, so we need to filter it out.
+      .takeWhile { case (version, _) => version <= endVersion }
   }
 
   /**
    * Get access to all actions starting from "startVersion" (inclusive) via [[FileStatus]].
    * If `startVersion` doesn't exist, return an empty Iterator.
+   * Callers are encouraged to use the other override which takes the endVersion if available to
+   * avoid I/O and improve performance of this method.
    */
   def getChangeLogFiles(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltasWithVersion = store
-      .listFrom(listingPrefix(logPath, startVersion), newDeltaHadoopConf())
-      .flatMap(DeltaFile.unapply(_))
+    val deltasWithVersion = ManagedCommitUtils.commitFilesIterator(this, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltasWithVersion.map { case (status, version) =>
@@ -350,9 +405,14 @@ class DeltaLog private(
         "clientFeatures" -> clientSupportedFeatureNames.mkString(","),
         "clientUnsupportedFeatures" -> clientUnsupportedFeatureNames.mkString(",")))
     if (!clientSupportedVersions.contains(tableRequiredVersion)) {
-      throw new InvalidProtocolVersionException(tableRequiredVersion, clientSupportedVersions.toSeq)
+      throw new InvalidProtocolVersionException(
+        dataPath.toString(),
+        tableProtocol.minReaderVersion,
+        tableProtocol.minWriterVersion,
+        Action.supportedReaderVersionNumbers.toSeq,
+        Action.supportedWriterVersionNumbers.toSeq)
     } else {
-      throw unsupportedFeaturesException(clientUnsupportedFeatureNames)
+      throw unsupportedFeaturesException(dataPath.toString(), clientUnsupportedFeatureNames)
     }
   }
 
@@ -407,22 +467,37 @@ class DeltaLog private(
 
   def isSameLogAs(otherLog: DeltaLog): Boolean = this.compositeId == otherLog.compositeId
 
-  /** Creates the log directory if it does not exist. */
-  def ensureLogDirectoryExist(): Unit = {
+  /** Creates the log directory and commit directory if it does not exist. */
+  def createLogDirectoriesIfNotExists(): Unit = {
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
-    if (!fs.exists(logPath)) {
-      if (!fs.mkdirs(logPath)) {
-        throw DeltaErrors.cannotCreateLogPathException(logPath.toString)
+    def createDirIfNotExists(path: Path): Unit = {
+      // Optimistically attempt to create the directory first without checking its existence.
+      // This is efficient because we're assuming it's more likely that the directory doesn't
+      // exist and it saves an filesystem existence check in that case.
+      val (success, mkdirsIOExceptionOpt) = try {
+        // Return value of false should mean the directory already existed (not an error) but
+        // we will verify below because we're paranoid about buggy FileSystem implementations.
+        (fs.mkdirs(path), None)
+      } catch {
+        // A FileAlreadyExistsException is expected if a non-directory object exists but an explicit
+        // check is needed because buggy Hadoop FileSystem.mkdir wrongly throws the exception even
+        // on existing directories.
+        case io: IOException =>
+          val dirExists =
+            try {
+              fs.getFileStatus(path).isDirectory
+            } catch {
+              case NonFatal(_) => false
+            }
+          (dirExists, Some(io))
+      }
+      if (!success) {
+        throw DeltaErrors.cannotCreateLogPathException(
+          logPath = logPath.toString,
+          cause = mkdirsIOExceptionOpt.orNull)
       }
     }
-  }
-
-  /**
-   * Create the log directory. Unlike `ensureLogDirectoryExist`, this method doesn't check whether
-   * the log directory exists and it will ignore the return value of `mkdirs`.
-   */
-  def createLogDirectory(): Unit = {
-    logPath.getFileSystem(newDeltaHadoopConf()).mkdirs(logPath)
+    createDirIfNotExists(FileNames.commitDirPath(logPath))
   }
 
   /* ------------  *
@@ -443,7 +518,20 @@ class DeltaLog private(
     // ensure any partitionSchema changes will be captured, and upon restart, the new snapshot will
     // be initialized with the correct partition schema again.
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
-    val relation = buildHadoopFsRelationWithFileIndex(snapshot, fileIndex, bucketSpec = None)
+    // Drop null type columns from the relation's schema if it's not a streaming query until
+    // null type columns are fully supported.
+    val dropNullTypeColumnsFromSchema = if (isStreaming) {
+      // Can force the legacy behavior(dropping nullType columns) with a flag.
+      SQLConf.get.getConf(DeltaSQLConf.DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    } else {
+      // Allow configurable behavior for non-streaming sources. This is used for testing.
+      SQLConf.get.getConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    }
+    val relation = buildHadoopFsRelationWithFileIndex(
+      snapshot,
+      fileIndex,
+      bucketSpec = None,
+      dropNullTypeColumnsFromSchema = dropNullTypeColumnsFromSchema)
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
@@ -456,6 +544,7 @@ class DeltaLog private(
   def createRelation(
       partitionFilters: Seq[Expression] = Nil,
       snapshotToUseOpt: Option[Snapshot] = None,
+      catalogTableOpt: Option[CatalogTable] = None,
       isTimeTravelQuery: Boolean = false): BaseRelation = {
 
     /** Used to link the files present in the table into the query planner. */
@@ -488,13 +577,22 @@ class DeltaLog private(
           new DeltaOptions(Map.empty[String, String], spark.sessionState.conf),
           partitionColumns = Seq.empty,
           configuration = Map.empty,
-          data = data).run(spark)
+          data = data,
+          catalogTableOpt = catalogTableOpt).run(spark)
       }
     }
   }
 
-  def buildHadoopFsRelationWithFileIndex(snapshot: SnapshotDescriptor, fileIndex: TahoeFileIndex,
-      bucketSpec: Option[BucketSpec]): HadoopFsRelation = {
+  def buildHadoopFsRelationWithFileIndex(
+      snapshot: SnapshotDescriptor,
+      fileIndex: TahoeFileIndex,
+      bucketSpec: Option[BucketSpec],
+      dropNullTypeColumnsFromSchema: Boolean = true): HadoopFsRelation = {
+    val dataSchema = if (dropNullTypeColumnsFromSchema) {
+      SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema)
+    } else {
+      snapshot.metadata.schema
+    }
     HadoopFsRelation(
       fileIndex,
       partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
@@ -503,8 +601,8 @@ class DeltaLog private(
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark,
-          SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema))),
+        DeltaTableUtils.removeInternalMetadata(spark, dataSchema)
+      ),
       bucketSpec = bucketSpec,
       fileFormat(snapshot.protocol, snapshot.metadata),
       // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
@@ -523,8 +621,7 @@ class DeltaLog private(
    */
   protected def checkRequiredConfigurations(): Unit = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK)) {
-      if (spark.conf.getOption(
-        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key).isEmpty) {
+      if (!spark.conf.contains(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key)) {
         throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(None)
       }
     }
@@ -573,32 +670,52 @@ object DeltaLog extends DeltaLogging {
   private type DeltaLogCacheKey = (Path, Map[String, String])
 
   /** The name of the subdirectory that holds Delta metadata files */
-  private val LOG_DIR_NAME = "_delta_log"
+  private[delta] val LOG_DIR_NAME = "_delta_log"
 
   private[delta] def logPathFor(dataPath: String): Path = logPathFor(new Path(dataPath))
   private[delta] def logPathFor(dataPath: Path): Path =
     DeltaTableUtils.safeConcatPaths(dataPath, LOG_DIR_NAME)
-  private[delta] def logPathFor(dataPath: File): Path = logPathFor(dataPath.getAbsolutePath)
 
   /**
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
    * in reconstructing the log.
    */
-  private val deltaLogCache = {
-    val builder = CacheBuilder.newBuilder()
-      .expireAfterAccess(60, TimeUnit.MINUTES)
-      .removalListener((removalNotification: RemovalNotification[DeltaLogCacheKey, DeltaLog]) => {
-          val log = removalNotification.getValue
-          // TODO: We should use ref-counting to uncache snapshots instead of a manual timed op
-          try log.unsafeVolatileSnapshot.uncache() catch {
-            case _: java.lang.NullPointerException =>
-            // Various layers will throw null pointer if the RDD is already gone.
-          }
-      })
-    sys.props.get("delta.log.cacheSize")
-      .flatMap(v => Try(v.toLong).toOption)
-      .foreach(builder.maximumSize)
-    builder.build[DeltaLogCacheKey, DeltaLog]()
+  type CacheKey = (Path, Map[String, String])
+  private[delta] def getOrCreateCache(conf: SQLConf):
+      Cache[CacheKey, DeltaLog] = synchronized {
+    deltaLogCache match {
+      case Some(c) => c
+      case None =>
+        val builder = createCacheBuilder(conf)
+          .removalListener(
+              (removalNotification: RemovalNotification[DeltaLogCacheKey, DeltaLog]) => {
+            val log = removalNotification.getValue
+            // TODO: We should use ref-counting to uncache snapshots instead of a manual timed op
+            try log.unsafeVolatileSnapshot.uncache() catch {
+              case _: java.lang.NullPointerException =>
+              // Various layers will throw null pointer if the RDD is already gone.
+            }
+          })
+        deltaLogCache = Some(builder.build[CacheKey, DeltaLog]())
+        deltaLogCache.get
+    }
+  }
+
+  private var deltaLogCache: Option[Cache[CacheKey, DeltaLog]] = None
+
+  /**
+   * Helper to create delta log caches
+   */
+  private def createCacheBuilder(conf: SQLConf): CacheBuilder[AnyRef, AnyRef] = {
+    val cacheRetention = conf.getConf(DeltaSQLConf.DELTA_LOG_CACHE_RETENTION_MINUTES)
+    val cacheSize = conf
+      .getConf(DeltaSQLConf.DELTA_LOG_CACHE_SIZE)
+      .max(sys.props.get("delta.log.cacheSize").map(_.toLong).getOrElse(0L))
+
+    CacheBuilder
+      .newBuilder()
+      .expireAfterAccess(cacheRetention, TimeUnit.MINUTES)
+      .maximumSize(cacheSize)
   }
 
 
@@ -637,16 +754,6 @@ object DeltaLog extends DeltaLogging {
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: String, options: Map[String, String]): DeltaLog = {
-    apply(spark, logPathFor(dataPath), options, new SystemClock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: File): DeltaLog = {
-    apply(spark, logPathFor(dataPath), new SystemClock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
     apply(spark, logPathFor(dataPath), new SystemClock)
   }
@@ -654,16 +761,6 @@ object DeltaLog extends DeltaLogging {
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, options: Map[String, String]): DeltaLog = {
     apply(spark, logPathFor(dataPath), options, new SystemClock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: String, clock: Clock): DeltaLog = {
-    apply(spark, logPathFor(dataPath), clock)
-  }
-
-  /** Helper for creating a log when it stored at the root of the data. */
-  def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
-    apply(spark, logPathFor(dataPath), clock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
@@ -695,27 +792,13 @@ object DeltaLog extends DeltaLogging {
     apply(spark, logPathFor(new Path(table.location)), clock)
   }
 
-  /** Helper for creating a log for the table. */
-  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier): DeltaLog = {
-    forTable(spark, deltaTable, new SystemClock)
-  }
-
-  /** Helper for creating a log for the table. */
-  def forTable(spark: SparkSession, deltaTable: DeltaTableIdentifier, clock: Clock): DeltaLog = {
-    if (deltaTable.path.isDefined) {
-      forTable(spark, deltaTable.path.get, clock)
-    } else {
-      forTable(spark, deltaTable.table.get, clock)
-    }
-  }
-
   private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
     apply(spark, rawPath, Map.empty, clock)
 
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: String): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, dataPath, _) }
+    withFreshSnapshot { forTable(spark, new Path(dataPath), _) }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: Path): (DeltaLog, Snapshot) =
@@ -725,12 +808,6 @@ object DeltaLog extends DeltaLogging {
   def forTableWithSnapshot(
       spark: SparkSession,
       tableName: TableIdentifier): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, tableName, _) }
-
-  /** Helper for getting a log, as well as the latest snapshot, of the table */
-  def forTableWithSnapshot(
-      spark: SparkSession,
-      tableName: DeltaTableIdentifier): (DeltaLog, Snapshot) =
     withFreshSnapshot { forTable(spark, tableName, _) }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
@@ -796,13 +873,14 @@ object DeltaLog extends DeltaLogging {
       // - Different `authority` (e.g., different user tokens in the path)
       // - Different mount point.
       try {
-        deltaLogCache.get(path -> fileSystemOptions, () => {
+        getOrCreateCache(spark.sessionState.conf)
+          .get(path -> fileSystemOptions, () => {
             createDeltaLog()
           }
         )
       } catch {
-        case e: com.google.common.util.concurrent.UncheckedExecutionException =>
-          throw e.getCause
+        case e: com.google.common.util.concurrent.UncheckedExecutionException => throw e.getCause
+        case e: java.util.concurrent.ExecutionException => throw e.getCause
       }
     }
 
@@ -810,7 +888,7 @@ object DeltaLog extends DeltaLogging {
     if (Option(deltaLog.sparkContext.get).map(_.isStopped).getOrElse(true)) {
       // Invalid the cached `DeltaLog` and create a new one because the `SparkContext` of the cached
       // `DeltaLog` has been stopped.
-      deltaLogCache.invalidate(path -> fileSystemOptions)
+      getOrCreateCache(spark.sessionState.conf).invalidate(path -> fileSystemOptions)
       getDeltaLogFromCache()
     } else {
       deltaLog
@@ -828,6 +906,7 @@ object DeltaLog extends DeltaLogging {
       // scalastyle:on deltahadoopconfiguration
       val path = fs.makeQualified(rawPath)
 
+      val deltaLogCache = getOrCreateCache(spark.sessionState.conf)
       if (spark.sessionState.conf.getConf(
           DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
         // We rely on the fact that accessing the key set doesn't modify the entry access time. See
@@ -850,12 +929,19 @@ object DeltaLog extends DeltaLogging {
   }
 
   def clearCache(): Unit = {
-    deltaLogCache.invalidateAll()
+    deltaLogCache.foreach(_.invalidateAll())
+  }
+
+  /** Unset the caches. Exposing for testing */
+  private[delta] def unsetCache(): Unit = {
+    synchronized {
+      deltaLogCache = None
+    }
   }
 
   /** Return the number of cached `DeltaLog`s. Exposing for testing */
   private[delta] def cacheSize: Long = {
-    deltaLogCache.size()
+    deltaLogCache.map(_.size()).getOrElse(0L)
   }
 
   /**

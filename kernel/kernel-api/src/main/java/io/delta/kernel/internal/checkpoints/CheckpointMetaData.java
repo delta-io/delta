@@ -15,11 +15,13 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
-import java.util.Optional;
+import java.util.*;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
+
+import io.delta.kernel.internal.data.GenericRow;
 
 public class CheckpointMetaData {
     public static CheckpointMetaData fromRow(Row row) {
@@ -30,11 +32,10 @@ public class CheckpointMetaData {
         );
     }
 
-    // TODO: there are more optional fields
     public static StructType READ_SCHEMA = new StructType()
-        .add("version", LongType.INSTANCE, false /* nullable */)
-        .add("size", LongType.INSTANCE, false /* nullable */)
-        .add("parts", LongType.INSTANCE);
+        .add("version", LongType.LONG, false /* nullable */)
+        .add("size", LongType.LONG, false /* nullable */)
+        .add("parts", LongType.LONG);
 
     public final long version;
     public final long size;
@@ -44,6 +45,15 @@ public class CheckpointMetaData {
         this.version = version;
         this.size = size;
         this.parts = parts;
+    }
+
+    public Row toRow() {
+        Map<Integer, Object> dataMap = new HashMap<>();
+        dataMap.put(0, version);
+        dataMap.put(1, size);
+        parts.ifPresent(aLong -> dataMap.put(2, aLong));
+
+        return new GenericRow(READ_SCHEMA, dataMap);
     }
 
     @Override

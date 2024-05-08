@@ -20,7 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.ByteType;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * {@link io.delta.kernel.data.ColumnVector} implementation for byte type data.
@@ -38,7 +38,7 @@ public class DefaultByteVector
      * @param values      column vector values.
      */
     public DefaultByteVector(int size, Optional<boolean[]> nullability, byte[] values) {
-        super(size, ByteType.INSTANCE, nullability);
+        super(size, ByteType.BYTE, nullability);
         this.values = requireNonNull(values, "values is null");
         checkArgument(values.length >= size,
             "invalid number of values (%s) for given size (%s)", values.length, size);

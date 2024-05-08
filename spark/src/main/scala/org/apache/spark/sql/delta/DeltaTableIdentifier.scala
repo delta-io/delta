@@ -45,14 +45,6 @@ case class DeltaTableIdentifier(
     }
   }
 
-  def getDeltaLog(spark: SparkSession): DeltaLog = {
-    DeltaLog.forTable(spark, getPath(spark))
-  }
-
-  def getDeltaLogWithSnapshot(spark: SparkSession): (DeltaLog, Snapshot) = {
-    DeltaLog.forTableWithSnapshot(spark, getPath(spark))
-  }
-
   /**
    * Escapes back-ticks within the identifier name with double-back-ticks.
    */
@@ -97,10 +89,10 @@ object DeltaTableIdentifier extends DeltaLogging {
     }
 
     spark.sessionState.conf.runSQLonFile &&
+      new Path(identifier.table).isAbsolute &&
       DeltaSourceUtils.isDeltaTable(identifier.database) &&
       !tableIsTemporaryTable &&
-      !tableExists &&
-      new Path(identifier.table).isAbsolute
+      !tableExists
   }
 
   /**

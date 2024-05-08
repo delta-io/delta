@@ -13,35 +13,42 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.internal.actions;
 
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
-public class Protocol implements Action {
-    public static Protocol fromRow(Row row) {
-        if (row == null) {
+import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+
+public class Protocol {
+
+    public static Protocol fromColumnVector(ColumnVector vector, int rowId) {
+        if (vector.isNullAt(rowId)) {
             return null;
         }
+
         return new Protocol(
-            row.getInt(0),
-            row.getInt(1),
-            row.isNullAt(2) ? Collections.emptyList() : row.getArray(2),
-            row.isNullAt(3) ? Collections.emptyList() : row.getArray(3));
+            vector.getChild(0).getInt(rowId),
+            vector.getChild(1).getInt(rowId),
+            vector.getChild(2).isNullAt(rowId) ? Collections.emptyList() :
+                VectorUtils.toJavaList(vector.getChild(2).getArray(rowId)),
+            vector.getChild(3).isNullAt(rowId) ? Collections.emptyList() :
+                VectorUtils.toJavaList(vector.getChild(3).getArray(rowId))
+        );
     }
 
-    public static final StructType READ_SCHEMA = new StructType()
-        .add("minReaderVersion", IntegerType.INSTANCE, false /* nullable */)
-        .add("minWriterVersion", IntegerType.INSTANCE, false /* nullable */)
-        .add("readerFeatures", new ArrayType(StringType.INSTANCE, false /* contains null */))
-        .add("writerFeatures", new ArrayType(StringType.INSTANCE, false /* contains null */));
+    public static final StructType FULL_SCHEMA = new StructType()
+        .add("minReaderVersion", IntegerType.INTEGER, false /* nullable */)
+        .add("minWriterVersion", IntegerType.INTEGER, false /* nullable */)
+        .add("readerFeatures", new ArrayType(StringType.STRING, false /* contains null */))
+        .add("writerFeatures", new ArrayType(StringType.STRING, false /* contains null */));
 
     private final int minReaderVersion;
     private final int minWriterVersion;
@@ -84,5 +91,20 @@ public class Protocol implements Action {
         sb.append(", writerFeatures=").append(writerFeatures);
         sb.append('}');
         return sb.toString();
+    }
+
+    /**
+     * Encode as a {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}.
+     *
+     * @return {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}
+     */
+    public Row toRow() {
+        Map<Integer, Object> protocolMap = new HashMap<>();
+        protocolMap.put(0, minReaderVersion);
+        protocolMap.put(1, minWriterVersion);
+        protocolMap.put(2, stringArrayValue(readerFeatures));
+        protocolMap.put(3, stringArrayValue(writerFeatures));
+
+        return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
     }
 }

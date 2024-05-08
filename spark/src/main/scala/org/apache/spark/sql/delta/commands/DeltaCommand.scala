@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction, ResolvedPathBasedNonDeltaTable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
@@ -33,7 +33,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, ResolvedTable, UnresolvedAttribute, UnresolvedRelation}
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.{Expression, SubqueryExpression}
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -155,14 +155,17 @@ trait DeltaCommand extends DeltaLogging {
    * Find the AddFile record corresponding to the file that was read as part of a
    * delete/update/merge operation.
    *
-   * @param filePath The path to a file. Can be either absolute or relative
-   * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`
+   * @param basePath The path of the table. Must not be escaped.
+   * @param escapedFilePath The path to a file that can be either absolute or relative. All special
+   *                        chars in this path must be already escaped by URI standards.
+   * @param nameToAddFileMap Map generated through `generateCandidateFileMap()`.
    */
   def getTouchedFile(
       basePath: Path,
-      filePath: String,
+      escapedFilePath: String,
       nameToAddFileMap: Map[String, AddFile]): AddFile = {
-    val absolutePath = DeltaFileOperations.absolutePath(basePath.toString, filePath).toString
+    val absolutePath =
+      DeltaFileOperations.absolutePath(basePath.toString, escapedFilePath).toString
     nameToAddFileMap.getOrElse(absolutePath, {
       throw DeltaErrors.notFoundFileToBeRewritten(absolutePath, nameToAddFileMap.keys)
     })
@@ -286,11 +289,57 @@ trait DeltaCommand extends DeltaLogging {
    * other cases this method will throw a "Table not found" exception.
    */
   def getDeltaTable(target: LogicalPlan, cmd: String): DeltaTableV2 = {
+    // TODO: Remove this wrapper and let former callers invoke DeltaTableV2.extractFrom directly.
+    DeltaTableV2.extractFrom(target, cmd)
+  }
+
+  /**
+   * Extracts [[CatalogTable]] metadata from a LogicalPlan if the plan is a [[ResolvedTable]]. The
+   * table can be a non delta table.
+   */
+  def getTableCatalogTable(target: LogicalPlan, cmd: String): Option[CatalogTable] = {
     target match {
-      case ResolvedTable(_, _, d: DeltaTableV2, _) => d
+      case ResolvedTable(_, _, d: DeltaTableV2, _) => d.catalogTable
+      case ResolvedTable(_, _, t: V1Table, _) => Some(t.catalogTable)
+      case _ => None
+    }
+  }
+
+  /**
+   * Helper method to extract the table id or path from a LogicalPlan representing
+   * a Delta table. This uses [[DeltaCommand.getDeltaTable]] to convert the LogicalPlan
+   * to a [[DeltaTableV2]] and then extracts either the path or identifier from it. If
+   * the [[DeltaTableV2]] has a [[CatalogTable]], the table identifier will be returned.
+   * Otherwise, the table's path will be returned. Throws an exception if the LogicalPlan
+   * does not represent a Delta table.
+   */
+  def getDeltaTablePathOrIdentifier(
+      target: LogicalPlan,
+      cmd: String): (Option[TableIdentifier], Option[String]) = {
+    val table = getDeltaTable(target, cmd)
+    table.catalogTable match {
+      case Some(catalogTable)
+        => (Some(catalogTable.identifier), None)
+      case _ => (None, Some(table.path.toString))
+    }
+  }
+
+  /**
+   * Helper method to extract the table id or path from a LogicalPlan representing a resolved table
+   * or path. This calls getDeltaTablePathOrIdentifier if the resolved table is a delta table. For
+   * non delta table with identifier, we extract its identifier. For non delta table with path, it
+   * expects the path to be wrapped in an ResolvedPathBasedNonDeltaTable and extracts it from there.
+   */
+  def getTablePathOrIdentifier(
+      target: LogicalPlan,
+      cmd: String): (Option[TableIdentifier], Option[String]) = {
+    target match {
+      case ResolvedTable(_, _, t: DeltaTableV2, _) => getDeltaTablePathOrIdentifier(target, cmd)
       case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
-        DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
-      case _ => throw DeltaErrors.notADeltaTableException(cmd)
+        getDeltaTablePathOrIdentifier(target, cmd)
+      case ResolvedTable(_, _, t: V1Table, _) => (Some(t.catalogTable.identifier), None)
+      case p: ResolvedPathBasedNonDeltaTable => (None, Some(p.path))
+      case _ => (None, None)
     }
   }
 

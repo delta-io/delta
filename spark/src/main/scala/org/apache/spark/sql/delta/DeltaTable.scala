@@ -21,12 +21,14 @@ import scala.util.{Failure, Success, Try}
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedLeafNode, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -41,15 +43,23 @@ import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
+ * Extractor Object for pulling out the file index of a logical relation.
+ */
+object RelationFileIndex {
+  def unapply(a: LogicalRelation): Option[FileIndex] = a match {
+    case LogicalRelation(hrel: HadoopFsRelation, _, _, _) => Some(hrel.location)
+    case _ => None
+  }
+}
+
+/**
  * Extractor Object for pulling out the table scan of a Delta table. It could be a full scan
  * or a partial scan.
  */
 object DeltaTable {
   def unapply(a: LogicalRelation): Option[TahoeFileIndex] = a match {
-    case LogicalRelation(HadoopFsRelation(index: TahoeFileIndex, _, _, _, _, _), _, _, _) =>
-      Some(index)
-    case _ =>
-      None
+    case RelationFileIndex(fileIndex: TahoeFileIndex) => Some(fileIndex)
+    case _ => None
   }
 }
 
@@ -57,15 +67,15 @@ object DeltaTable {
  * Extractor Object for pulling out the full table scan of a Delta table.
  */
 object DeltaFullTable {
-  def unapply(a: LogicalPlan): Option[TahoeLogFileIndex] = a match {
+  def unapply(a: LogicalPlan): Option[(LogicalRelation, TahoeLogFileIndex)] = a match {
     // `DeltaFullTable` is not only used to match a certain query pattern, but also does
     // some validations to throw errors. We need to match both Project and Filter here,
     // so that we can check if Filter is present or not during validations.
-    case NodeWithOnlyDeterministicProjectAndFilter(DeltaTable(index: TahoeLogFileIndex)) =>
+    case NodeWithOnlyDeterministicProjectAndFilter(lr @ DeltaTable(index: TahoeLogFileIndex)) =>
       if (!index.deltaLog.tableExists) return None
       val hasFilter = a.find(_.isInstanceOf[Filter]).isDefined
       if (index.partitionFilters.isEmpty && index.versionToUse.isEmpty && !hasFilter) {
-        Some(index)
+        Some(lr -> index)
       } else if (index.versionToUse.nonEmpty) {
         throw DeltaErrors.failedScanWithHistoricalVersion(index.versionToUse.get)
       } else {
@@ -204,6 +214,8 @@ object DeltaTableUtils extends PredicateHelper
     // Names of the form partitionCol=[value] are partition directories, and should be
     // GCed even if they'd normally be hidden. The _db_index directory contains (bloom filter)
     // indexes and these must be GCed when the data they are tied to is GCed.
+    // metadata name is reserved for converted iceberg metadata with delta universal format
+    pathName.equals("metadata") ||
     (pathName.startsWith(".") || pathName.startsWith("_")) &&
       !pathName.startsWith("_delta_index") && !pathName.startsWith("_change_data") &&
       !partitionColumnNames.exists(c => pathName.startsWith(c ++ "="))
@@ -330,86 +342,60 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
-   * Replace the file index in a logical plan and return the updated plan.
-   * It's a common pattern that, in Delta commands, we use data skipping to determine a subset of
-   * files that can be affected by the command, so we replace the whole-table file index in the
-   * original logical plan with a new index of potentially affected files, while everything else in
-   * the original plan, e.g., resolved references, remain unchanged.
-   *
    * Many Delta meta-queries involve nondeterminstic functions, which interfere with automatic
-   * column pruning, so columns can be manually pruned from the new scan. Note that partition
-   * columns can never be dropped even if they're not referenced in the rest of the query.
+   * column pruning, so columns can be manually pruned from the scan. Note that partition columns
+   * can never be dropped even if they're not referenced in the rest of the query.
    *
    * @param spark the spark session to use
-   * @param target the logical plan in which we replace the file index
-   * @param fileIndex the new file index
+   * @param target the logical plan in which drop columns
    * @param columnsToDrop columns to drop from the scan
-   * @param newOutput If specified, new logical output to replace the current LogicalRelation.
-   *                  Used for schema evolution to produce the new schema-evolved types from
-   *                  old files, because `target` will have the old types.
    */
-  def replaceFileIndex(
+  def dropColumns(
       spark: SparkSession,
       target: LogicalPlan,
-      fileIndex: FileIndex,
-      columnsToDrop: Seq[String],
-      newOutput: Option[Seq[AttributeReference]]): LogicalPlan = {
+      columnsToDrop: Seq[String]): LogicalPlan = {
     val resolver = spark.sessionState.analyzer.resolver
 
-    var actualNewOutput = newOutput
-    var hasChar = false
-    var newTarget = target transformDown {
-      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
-        // Prune columns from the scan.
-        val finalOutput = actualNewOutput.getOrElse(l.output).filterNot { col =>
-          columnsToDrop.exists(resolver(_, col.name))
-        }
-
-        // If the output columns were changed e.g. by schema evolution, we need to update
-        // the relation to expose all the columns that are expected after schema evolution.
-        val newDataSchema = StructType(finalOutput.map(attr =>
-          StructField(attr.name, attr.dataType, attr.nullable, attr.metadata)))
-        val newBaseRelation = hfsr.copy(
-          location = fileIndex, dataSchema = newDataSchema)(
-          hfsr.sparkSession)
-        l.copy(relation = newBaseRelation, output = finalOutput)
-
-      case p @ Project(projectList, _) =>
-        // Spark does char type read-side padding via an additional Project over the scan node.
-        // `newOutput` references the Project attributes, we need to translate their expression IDs
-        // so that `newOutput` references attributes from the LogicalRelation instead.
+    // Spark does char type read-side padding via an additional Project over the scan node.
+    // When char type read-side padding is applied, we need to apply column pruning for the
+    // Project as well, otherwise the Project will contain missing attributes.
+    val hasChar = target.exists {
+      case Project(projectList, _) =>
         def hasCharPadding(e: Expression): Boolean = e.exists {
           case s: StaticInvoke => s.staticObject == classOf[CharVarcharCodegenUtils] &&
             s.functionName == "readSidePadding"
           case _ => false
         }
-        val charColMapping = AttributeMap(projectList.collect {
-          case a: Alias if hasCharPadding(a.child) && a.references.size == 1 =>
-            hasChar = true
-            val tableCol = a.references.head.asInstanceOf[AttributeReference]
-            a.toAttribute -> tableCol
-        })
-        actualNewOutput = newOutput.map(_.map { attr =>
-          charColMapping.get(attr).map { tableCol =>
-            attr.withExprId(tableCol.exprId)
-          }.getOrElse(attr)
-        })
-        p
+        projectList.exists {
+          case a: Alias => hasCharPadding(a.child) && a.references.size == 1
+          case _ => false
+        }
+      case _ => false
     }
 
-    if (hasChar) {
-      // When char type read-side padding is applied, we need to apply column pruning for the
-      // Project as well, otherwise the Project will contain missing attributes.
-      newTarget = newTarget.transformUp {
-        case p @ Project(projectList, child) =>
-          val newProjectList = projectList.filter { e =>
-            e.references.subsetOf(child.outputSet)
-          }
-          p.copy(projectList = newProjectList)
-      }
+    target transformUp {
+      case l@LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+        // Prune columns from the scan.
+        val prunedOutput = l.output.filterNot { col =>
+          columnsToDrop.exists(resolver(_, col.name))
+        }
+
+        val prunedSchema = StructType(prunedOutput.map(attr =>
+          StructField(attr.name, attr.dataType, attr.nullable, attr.metadata)))
+        val newBaseRelation = hfsr.copy(dataSchema = prunedSchema)(hfsr.sparkSession)
+        l.copy(relation = newBaseRelation, output = prunedOutput)
+
+      case p @ Project(projectList, child) if hasChar =>
+        val newProjectList = projectList.filter { e =>
+          e.references.subsetOf(child.outputSet)
+        }
+        p.copy(projectList = newProjectList)
     }
-    newTarget
   }
+
+  /** Finds and returns the file source metadata column from a dataframe */
+  def getFileMetadataColumn(df: DataFrame): Column =
+    df.metadataColumn(FileFormat.METADATA_NAME)
 
   /**
    * Update FileFormat for a plan and return the updated plan
@@ -475,6 +461,13 @@ object DeltaTableUtils extends PredicateHelper
   def parseColToTransform(col: String): IdentityTransform = {
     IdentityTransform(FieldReference(Seq(col)))
   }
+
+  def parseColsToClusterByTransform(cols: Seq[String]): TempClusterByTransform = {
+    TempClusterByTransform(cols.map(FieldReference(_)))
+  }
+
+  // Workaround for withActive not being visible in io/delta.
+  def withActiveSession[T](spark: SparkSession)(body: => T): T = spark.withActive(body)
 
   /**
    * Uses org.apache.hadoop.fs.Path(Path, String) to concatenate a base path
@@ -546,24 +539,48 @@ object DeltaTableUtils extends PredicateHelper
   }
 }
 
-// TODO: Use `UnresolvedNode` in Spark 3.5 once it is released.
-sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends LeafNode {
+sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {
   def identifier: Identifier = Identifier.of(Array(DeltaSourceUtils.ALT_NAME), path)
   def deltaTableIdentifier: DeltaTableIdentifier = DeltaTableIdentifier(Some(path), None)
 
-  override lazy val resolved: Boolean = false
-  override val output: Seq[Attribute] = Nil
 }
 
 /** Resolves to a [[ResolvedTable]] if the DeltaTable exists */
 case class UnresolvedPathBasedDeltaTable(
     path: String,
+    options: Map[String, String],
     commandName: String) extends UnresolvedPathBasedDeltaTableBase(path)
 
 /** Resolves to a [[DataSourceV2Relation]] if the DeltaTable exists */
 case class UnresolvedPathBasedDeltaTableRelation(
     path: String,
     options: CaseInsensitiveStringMap) extends UnresolvedPathBasedDeltaTableBase(path)
+
+/**
+ * This operator represents path-based tables in general including both Delta or non-Delta tables.
+ * It resolves to a [[ResolvedTable]] if the path is for delta table,
+ * [[ResolvedPathBasedNonDeltaTable]] if the path is for a non-Delta table.
+ */
+case class UnresolvedPathBasedTable(
+    path: String,
+    options: Map[String, String],
+    commandName: String) extends LeafNode {
+  override lazy val resolved: Boolean = false
+  override val output: Seq[Attribute] = Nil
+}
+
+/**
+ * This operator is a placeholder that identifies a non-Delta path-based table. Given the fact
+ * that some Delta commands (e.g. DescribeDeltaDetail) support non-Delta table, we introduced
+ * ResolvedPathBasedNonDeltaTable as the resolved placeholder after analysis on a non delta path
+ * from UnresolvedPathBasedTable.
+ */
+case class ResolvedPathBasedNonDeltaTable(
+    path: String,
+    options: Map[String, String],
+    commandName: String) extends LeafNode {
+  override val output: Seq[Attribute] = Nil
+}
 
 /**
  * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
@@ -577,11 +594,32 @@ object UnresolvedDeltaPathOrIdentifier {
       tableIdentifier: Option[TableIdentifier],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, cmd)
-      case (None, Some(t)) =>
-        UnresolvedTable(t.nameParts, cmd, None)
+      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
+      case (None, Some(t)) => UnresolvedTable(t.nameParts, cmd)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
+    }
+  }
+}
+
+/**
+ * A helper object with an apply method to transform a path or table identifier to a LogicalPlan.
+ * This is required by Delta commands that can also run against non-Delta tables, e.g. DESC DETAIL,
+ * VACUUM command. If the tableIdentifier is set, the LogicalPlan will be an [[UnresolvedTable]].
+ * If the tableIdentifier is not set but the path is set, it will be resolved to an
+ * [[UnresolvedPathBasedTable]] since we can not tell if the path is for delta table or non delta
+ * table at this stage. If neither of the two are set, throws an exception.
+ */
+object UnresolvedPathOrIdentifier {
+  def apply(
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      cmd: String): LogicalPlan = {
+    (path, tableIdentifier) match {
+      case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
+      case _ => throw new IllegalArgumentException(
+        s"At least one of path or tableIdentifier must be provided to $cmd")
     }
   }
 }

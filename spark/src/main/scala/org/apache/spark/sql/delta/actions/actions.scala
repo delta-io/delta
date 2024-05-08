@@ -28,6 +28,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
+import org.apache.spark.sql.delta.managedcommit.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
@@ -37,7 +38,6 @@ import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
-
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
@@ -101,7 +101,7 @@ object Action {
     JsonUtils.mapper.readValue[SingleAction](json).unwrap
   }
 
-  lazy val logSchema = ExpressionEncoder[SingleAction].schema
+  lazy val logSchema = ExpressionEncoder[SingleAction]().schema
   lazy val addFileSchema = logSchema("add").dataType.asInstanceOf[StructType]
 }
 
@@ -135,6 +135,7 @@ case class Protocol private (
     @JsonInclude(Include.NON_ABSENT)
     writerFeatures: Option[Set[String]])
   extends Action
+  with AbstractProtocol
   with TableFeatureSupport {
   // Correctness check
   // Reader and writer versions must match the status of reader and writer features
@@ -176,6 +177,14 @@ case class Protocol private (
   }
 
   override def toString: String = s"Protocol($simpleString)"
+
+  override def getMinReaderVersion: Int = minReaderVersion
+
+  override def getMinWriterVersion: Int = minWriterVersion
+
+  override def getReaderFeatures: Option[Set[String]] = readerFeatures
+
+  override def getWriterFeatures: Option[Set[String]] = writerFeatures
 }
 
 object Protocol {
@@ -528,7 +537,7 @@ object Protocol {
     }
     if (manifestGenerationEnabled) {
       // Only allow enabling this, if there are no DVs present.
-      if (!DeletionVectorUtils.isTableDVFree(spark, snapshot)) {
+      if (!DeletionVectorUtils.isTableDVFree(snapshot)) {
         throw new DeltaTablePropertyValidationFailedException(
           table = tableName,
           subClass = ExistingDeletionVectorsWithIncrementalManifestGeneration)
@@ -682,7 +691,8 @@ case class AddFile(
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     baseRowId: Option[Long] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    defaultRowCommitVersion: Option[Long] = None
+    defaultRowCommitVersion: Option[Long] = None,
+    clusteringProvider: Option[String] = None
 ) extends FileAction with HasNumRecords {
   require(path.nonEmpty)
 
@@ -737,7 +747,9 @@ case class AddFile(
     val removeFileWithOldDv = this.removeWithTimestamp(dataChange = dataChange)
 
     // Sanity check for incremental DV updates.
-    require(addFileWithNewDv.numDeletedRecords >= removeFileWithOldDv.numDeletedRecords)
+    if (addFileWithNewDv.numDeletedRecords < removeFileWithOldDv.numDeletedRecords) {
+      throw DeltaErrors.deletionVectorSizeMismatch()
+    }
 
     (addFileWithNewDv, removeFileWithOldDv)
   }
@@ -841,6 +853,9 @@ object AddFile {
     /** [[OPTIMIZE_TARGET_SIZE]]: target file size the file was optimized to. */
     object OPTIMIZE_TARGET_SIZE extends AddFile.Tags.KeyType("OPTIMIZE_TARGET_SIZE")
 
+
+    /** [[ICEBERG_COMPAT_VERSION]]: IcebergCompat version */
+    object ICEBERG_COMPAT_VERSION extends AddFile.Tags.KeyType("ICEBERG_COMPAT_VERSION")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */
@@ -858,6 +873,8 @@ object AddFile {
  *
  * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
  * nullable by setting their type Option.
+ *
+ * [[path]] is URL-encoded.
  */
 // scalastyle:off
 case class RemoveFile(
@@ -913,6 +930,8 @@ case class RemoveFile(
  * A change file containing CDC data for the Delta version it's within. Non-CDC readers should
  * ignore this, CDC readers should scan all ChangeFiles in a version rather than computing
  * changes from AddFile and RemoveFile actions.
+ *
+ * [[path]] is URL-encoded.
  */
 case class AddCDCFile(
     override val path: String,
@@ -938,7 +957,6 @@ case class AddCDCFile(
   override def numLogicalRecords: Option[Long] = None
 }
 
-
 case class Format(
     provider: String = "parquet",
     // If we support `options` in future, we should not store any file system options since they may
@@ -951,7 +969,7 @@ case class Format(
  * any data already present in the table is still valid after any change.
  */
 case class Metadata(
-    id: String = if (Utils.isTesting) "testId" else java.util.UUID.randomUUID().toString,
+    id: String = java.util.UUID.randomUUID().toString,
     name: String = null,
     description: String = null,
     format: Format = Format(),
@@ -959,7 +977,7 @@ case class Metadata(
     partitionColumns: Seq[String] = Nil,
     configuration: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    createdTime: Option[Long] = None) extends Action {
+    createdTime: Option[Long] = None) extends Action with AbstractMetadata {
 
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has
@@ -1007,23 +1025,52 @@ case class Metadata(
   lazy val physicalPartitionColumns: Seq[String] = physicalPartitionSchema.fieldNames.toSeq
 
   /**
-   * Columns whose type should never be changed. For example, if a column is used by a generated
-   * column, changing its type may break the constraint defined by the generation expression. Hence,
-   * we should never change its type.
-   */
-  @JsonIgnore
-  lazy val fixedTypeColumns: Set[String] =
-    GeneratedColumn.getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema)
-
-  /**
    * Store non-partition columns and their corresponding [[OptimizablePartitionExpression]] which
    * can be used to create partition filters from data filters of these non-partition columns.
    */
   @JsonIgnore
-  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]]
-  = GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
+  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]] =
+    GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
+
+  /**
+   * The name of commit-owner which arbitrates the commits to the table. This must be available
+   * if this is a managed-commit table.
+   */
+  @JsonIgnore
+  lazy val managedCommitOwnerName: Option[String] =
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(this)
+
+  /** The configuration to uniquely identify the commit-owner for managed-commit. */
+  @JsonIgnore
+  lazy val managedCommitOwnerConf: Map[String, String] =
+    DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(this)
+
+  /** The table specific configuration for managed-commit. */
+  @JsonIgnore
+  lazy val managedCommitTableConf: Map[String, String] =
+    DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.fromMetaData(this)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
+
+  override def getId: String = id
+
+  override def getName: String = name
+
+  override def getDescription: String = description
+
+  @JsonIgnore
+  override def getProvider: String = format.provider
+
+  @JsonIgnore
+  override def getFormatOptions: Map[String, String] = format.options
+
+  override def getSchemaString: String = schemaString
+
+  override def getPartitionColumns: Seq[String] = partitionColumns
+
+  override def getConfiguration: Map[String, String] = configuration
+
+  override def getCreatedTime: Option[Long] = createdTime
 }
 
 /**
@@ -1045,6 +1092,9 @@ trait CommitMarker {
  * is not stored in the checkpoint and has reduced compatibility guarantees.
  * Information stored in it is best effort (i.e. can be falsified by the writer).
  *
+ * @param inCommitTimestamp A monotonically increasing timestamp that represents the time since
+ *                          epoch in milliseconds when the commit write was started. This should
+ *                          only be set when the feature inCommitTimestamps is enabled.
  * @param isBlindAppend Whether this commit has blindly appended without caring about existing files
  * @param engineInfo The information for the engine that makes the commit.
  *                   If a commit is made by Delta Lake 1.1.0 or above, it will be
@@ -1055,6 +1105,8 @@ case class CommitInfo(
     // infer the commit version from the file name and fill in this field then.
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     version: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    inCommitTimestamp: Option[Long],
     timestamp: Timestamp,
     userId: Option[String],
     userName: Option[String],
@@ -1072,11 +1124,21 @@ case class CommitInfo(
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
     engineInfo: Option[String],
-    txnId: Option[String]) extends Action with CommitMarker {
+    txnId: Option[String]) extends Action with CommitMarker with AbstractCommitInfo {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
     this.copy(timestamp = new Timestamp(timestamp))
+  }
+
+  // We need to explicitly ignore this field during serialization as Jackson
+  // by default calls all public getters of an object, which would lead to
+  // either an exception or the inCommitTimestamp being serialized twice.
+  @JsonIgnore
+  override def getCommitTimestamp: Long = {
+    inCommitTimestamp.getOrElse {
+      throw DeltaErrors.missingCommitTimestamp(version.map(_.toString).getOrElse("unknown"))
+    }
   }
 
   override def getTimestamp: Long = timestamp.getTime
@@ -1117,14 +1179,34 @@ object NotebookInfo {
 
 object CommitInfo {
   def empty(version: Option[Long] = None): CommitInfo = {
-    CommitInfo(version, null, None, None, null, null, None, None,
+    CommitInfo(version, None, null, None, None, null, null, None, None,
       None, None, None, None, None, None, None, None, None)
   }
 
   // scalastyle:off argcount
+
   def apply(
       time: Long,
       operation: String,
+      inCommitTimestamp: Option[Long] = None,
+      operationParameters: Map[String, String],
+      commandContext: Map[String, String],
+      readVersion: Option[Long],
+      isolationLevel: Option[String],
+      isBlindAppend: Option[Boolean],
+      operationMetrics: Option[Map[String, String]],
+      userMetadata: Option[String],
+      tags: Option[Map[String, String]],
+      txnId: Option[String]): CommitInfo = {
+    apply(None, time, operation, inCommitTimestamp, operationParameters, commandContext,
+      readVersion, isolationLevel, isBlindAppend, operationMetrics, userMetadata, tags, txnId)
+  }
+
+  def apply(
+      version: Option[Long],
+      time: Long,
+      operation: String,
+      inCommitTimestamp: Option[Long],
       operationParameters: Map[String, String],
       commandContext: Map[String, String],
       readVersion: Option[Long],
@@ -1141,7 +1223,8 @@ object CommitInfo {
     }
 
     CommitInfo(
-      None,
+      version,
+      inCommitTimestamp,
       new Timestamp(time),
       commandContext.get("userId"),
       getUserName,
@@ -1163,6 +1246,19 @@ object CommitInfo {
 
   private def getEngineInfo: Option[String] = {
     Some(s"Apache-Spark/${org.apache.spark.SPARK_VERSION} Delta-Lake/${io.delta.VERSION}")
+  }
+
+  /**
+   * Returns the `inCommitTimestamp` of the given `commitInfoOpt` if it is defined.
+   * Throws an exception if `commitInfoOpt` is empty or contains an empty `inCommitTimestamp`.
+   */
+  def getRequiredInCommitTimestamp(commitInfoOpt: Option[CommitInfo], version: String): Long = {
+    val commitInfo = commitInfoOpt.getOrElse {
+      throw DeltaErrors.missingCommitInfo(InCommitTimestampTableFeature.name, version)
+    }
+    commitInfo.inCommitTimestamp.getOrElse {
+      throw DeltaErrors.missingCommitTimestamp(version)
+    }
   }
 
 }

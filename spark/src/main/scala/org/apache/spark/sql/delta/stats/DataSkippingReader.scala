@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -145,7 +145,7 @@ object SkippingEligibleLiteral {
 object SkippingEligibleDataType {
   // Call this directly, e.g. `SkippingEligibleDataType(dataType)`
   def apply(dataType: DataType): Boolean = dataType match {
-    case _: NumericType | DateType | TimestampType | StringType => true
+    case _: NumericType | DateType | TimestampType | TimestampNTZType | StringType => true
     case _ => false
   }
 
@@ -380,8 +380,11 @@ trait DataSkippingReaderBase
      * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
      * skipping for any file that lacks the needed stats columns).
      */
-    private def constructDataFilters(dataFilter: Expression):
+    private[stats] def constructDataFilters(dataFilter: Expression):
         Option[DataSkippingPredicate] = dataFilter match {
+      // Expressions that contain only literals are not eligible for skipping.
+      case cmp: Expression if cmp.children.forall(areAllLeavesLiteral) => None
+
       // Push skipping predicate generation through the AND:
       //
       // constructDataFilters(AND(a, b))
@@ -572,6 +575,12 @@ trait DataSkippingReaderBase
       case _ => None
     }
 
+    private def areAllLeavesLiteral(e: Expression): Boolean = e match {
+      case _: Literal => true
+      case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
+      case _ => false
+    }
+
     /**
      * An extractor that matches expressions that are eligible for data skipping predicates.
      *
@@ -652,6 +661,10 @@ trait DataSkippingReaderBase
           // There is a longer term task SC-22825 to fix the serialization problem that caused this.
           // But we need the adjustment in any case to correctly read stats written by old versions.
           new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
+        case (statCol, TimestampNTZType, _) if statType == MAX =>
+          // We also apply the same adjustment of max stats that was applied to Timestamp
+          // for TimestampNTZ because these 2 types have the same precision in terms of time.
+          new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
         case (statCol, _, _) =>
           statCol
       }
@@ -767,7 +780,7 @@ trait DataSkippingReaderBase
     val ds = if (keepNumRecords) {
       withStats // use withStats instead of allFiles so the `stats` column is already parsed
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
+        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
     } else {
       allFiles.withColumn("stats", nullStringLiteral)
     }
@@ -803,7 +816,7 @@ trait DataSkippingReaderBase
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
       filteredFiles
         // keep only the numRecords field as a Json string in the stats field
-        .withColumn("stats", to_json(struct(col("stats.numRecords") as 'numRecords)))
+        .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
     } else {
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, allFiles.toDF(), partitionFilters)
@@ -841,7 +854,7 @@ trait DataSkippingReaderBase
 
     val statsColumn = if (keepNumRecords) {
       // keep only the numRecords field as a Json string in the stats field
-      to_json(struct(col("stats.numRecords") as 'numRecords))
+      to_json(struct(col("stats.numRecords") as "numRecords"))
     } else nullStringLiteral
 
     val files =
@@ -1070,7 +1083,7 @@ trait DataSkippingReaderBase
       val filesToScan = ArrayBuffer[AddFile]()
       val filesToIgnore = ArrayBuffer[AddFile]()
       while (iter.hasNext && logicalRowsToScan < limit) {
-        val file = iter.next
+        val file = iter.next()
         if (file._2.numPhysicalRecords == null || file._2.numLogicalRecords == null) {
           // this file has no stats, ignore for now
           bytesToIgnore += file._1.size

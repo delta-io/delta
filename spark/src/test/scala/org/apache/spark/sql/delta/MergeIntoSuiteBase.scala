@@ -25,6 +25,7 @@ import scala.language.implicitConversions
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -33,19 +34,20 @@ import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest,
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 abstract class MergeIntoSuiteBase
     extends QueryTest
     with SharedSparkSession
-    with SQLTestUtils
+    with DeltaSQLTestUtils
     with ScanReportHelper
     with DeltaTestUtilsForTempViews
     with MergeIntoTestUtils
     with MergeIntoSchemaEvolutionMixin
-    with MergeIntoSchemaEvolutionAllTests {
+    with MergeIntoSchemaEvolutionAllTests
+    with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
@@ -672,6 +674,63 @@ abstract class MergeIntoSuiteBase
     }
   }
 
+  test("Merge should use the same SparkSession consistently") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+        val r = dir.getCanonicalPath
+        val sourcePath = s"$r/source"
+        val targetPath = s"$r/target"
+        val numSourceRecords = 20
+        spark.range(numSourceRecords)
+          .withColumn("x", $"id")
+          .withColumn("y", $"id")
+          .write.mode("overwrite").format("delta").save(sourcePath)
+        spark.range(1)
+          .withColumn("x", $"id")
+          .write.mode("overwrite").format("delta").save(targetPath)
+        val spark2 = spark.newSession
+        spark2.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
+        val target = io.delta.tables.DeltaTable.forPath(spark2, targetPath)
+        val source = spark.read.format("delta").load(sourcePath).alias("s")
+        val merge = target.alias("t")
+          .merge(source, "t.id = s.id")
+          .whenMatched.updateExpr(Map("t.x" -> "t.x + 1"))
+          .whenNotMatched.insertAll()
+          .execute()
+        // The target table should have the same number of rows as the source after the merge
+        assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
+      }
+    }
+  }
+
+  testSparkMasterOnly("Variant type") {
+    withTable("source") {
+      // Insert ("0", 0), ("1", 1)
+      val dstDf = sql(
+        """SELECT parse_json(cast(id as string)) v, id i
+        FROM range(2)""")
+      append(dstDf)
+      // Insert ("1", 2), ("2", 3)
+      // The first row will update, the second will insert.
+      sql(
+        s"""SELECT parse_json(cast(id as string)) v, id + 1 i
+              FROM range(1, 3)""").createOrReplaceTempView("source")
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trgNew",
+        source = "source src",
+        condition = "to_json(src.v) = to_json(trgNew.v)",
+        update = "i = 10 + src.i + trgNew.i, v = trgNew.v",
+        insert = """(i, v) VALUES (i + 100, parse_json('"inserted"'))""")
+
+      checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+        Row(0, "0") :: // No change
+          Row(13, "1") :: // Update
+          Row(103, "\"inserted\"") :: // Insert
+          Nil)
+    }
+  }
+
   // Enable this test in OSS when Spark has the change to report better errors
   // when MERGE is not supported.
   ignore("Negative case - non-delta target") {
@@ -929,22 +988,6 @@ abstract class MergeIntoSuiteBase
             Row(-10, 13) :: // Insert
             Nil)
       }
-    }
-  }
-
-  protected def withKeyValueData(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
-      isKeyPartitioned: Boolean = false,
-      sourceKeyValueNames: (String, String) = ("key", "value"),
-      targetKeyValueNames: (String, String) = ("key", "value"))(
-      thunk: (String, String) => Unit = null): Unit = {
-
-    append(target.toDF(targetKeyValueNames._1, targetKeyValueNames._2).coalesce(2),
-      if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
-    withTempView("source") {
-      source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
-      thunk("source", s"delta.`$tempPath`")
     }
   }
 
@@ -2223,8 +2266,10 @@ abstract class MergeIntoSuiteBase
       .collect().head.getMap(0).asInstanceOf[Map[String, String]]
     assert(metrics.contains("numTargetFilesRemoved"))
     // If insert-only code path is not used, then the general code path will rewrite existing
-    // target files.
-    assert(metrics("numTargetFilesRemoved").toInt > 0)
+    // target files when DVs are not enabled.
+    if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+      assert(metrics("numTargetFilesRemoved").toInt > 0)
+    }
   }
 
   test("insert only merge - multiple matches when feature flag off") {
@@ -2564,7 +2609,9 @@ abstract class MergeIntoSuiteBase
             assert(stats.targetBeforeSkipping.files.get > stats.targetAfterSkipping.files.get)
           }
         } else {
-          assert(stats.targetFilesRemoved > 0)
+          if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+            assert(stats.targetFilesRemoved > 0)
+          }
           // If there is no insert clause and the flag is enabled, data skipping should be
           // performed on targetOnly predicates.
           // However, with insert clauses, it's expected that no additional data skipping
@@ -2962,10 +3009,16 @@ abstract class MergeIntoSuiteBase
               )
             }
 
-            val message = if (e.getCause != null) {
-              e.getCause.getMessage
-            } else e.getMessage
-            assert(message.matches(expectedRegex.getOrElse(expectedErrorRegex)))
+            def extractErrorClass(e: Throwable): String =
+              e match {
+                case dt: DeltaThrowable => s"\\[${dt.getErrorClass}\\] "
+                case _ => ""
+              }
+
+            val (message, errorClass) = if (e.getCause != null) {
+              (e.getCause.getMessage, extractErrorClass(e.getCause))
+            } else (e.getMessage, extractErrorClass(e))
+            assert(message.matches(errorClass + expectedRegex.getOrElse(expectedErrorRegex)))
             checkAnswer(spark.read.format("delta").table("target"), dataBeforeException)
           } else {
             executeMerge(
@@ -3039,25 +3092,9 @@ abstract class MergeIntoSuiteBase
       Option("Aggregate functions are not supported in the .* condition of MERGE operation.*")
   )
 
-  testWithTempView("test merge on temp view - basic") { isSQLTempView =>
-    withTable("tab") {
-      withTempView("src") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        createTempViewFromTable("tab", isSQLTempView)
-        sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-        executeMerge(
-          target = "v",
-          source = "src",
-          condition = "src.a = v.key AND src.b = v.value",
-          update = "v.value = src.b + 1",
-          insert = "(v.key, v.value) VALUES (src.a, src.b)")
-        checkAnswer(spark.table("v"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-      }
-    }
-  }
-
-  protected def testInvalidTempViews(name: String)(
+  protected def testTempViews(name: String)(
       text: String,
+      expectedResult: Seq[Row] = null,
       expectedErrorMsgForSQLTempView: String = null,
       expectedErrorMsgForDataSetTempView: String = null,
       expectedErrorClassForSQLTempView: String = null,
@@ -3091,26 +3128,32 @@ abstract class MergeIntoSuiteBase
               expectedErrorClassForSQLTempView,
               expectedErrorClassForDataSetTempView)
           } else {
+            require(expectedResult != null)
             executeMerge(
               target = "v",
               source = "src",
               condition = "src.a = v.key AND src.b = v.value",
               update = "v.value = src.b + 1",
               insert = "(v.key, v.value) VALUES (src.a, src.b)")
-            checkAnswer(spark.table("v"), Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+            checkAnswer(spark.table("v"), expectedResult)
           }
         }
       }
     }
   }
 
-  testInvalidTempViews("subset cols")(
+  testTempViews("basic")(
+    text = "SELECT * FROM tab",
+    expectedResult = Seq(Row(0, 3), Row(1, 3), Row(3, 4))
+  )
+
+  testTempViews("subset cols")(
     text = "SELECT key FROM tab",
     expectedErrorMsgForSQLTempView = "cannot",
     expectedErrorMsgForDataSetTempView = "cannot"
   )
 
-  testInvalidTempViews("superset cols")(
+  testTempViews("superset cols")(
     text = "SELECT key, value, 1 FROM tab",
     // The analyzer can't tell whether the table originally had the extra column or not.
     expectedErrorMsgForSQLTempView =
@@ -3119,17 +3162,46 @@ abstract class MergeIntoSuiteBase
       "The schema of your Delta table has changed in an incompatible way"
   )
 
-  testInvalidTempViews("nontrivial projection")(
+  testTempViews("nontrivial projection")(
     text = "SELECT value as key, key as value FROM tab",
-    expectedErrorMsgForSQLTempView = "Attribute(s) with the same name appear",
-    expectedErrorMsgForDataSetTempView = "Attribute(s) with the same name appear"
+    expectedResult = Seq(Row(2, 1), Row(2, 1), Row(3, 0), Row(4, 3))
   )
 
-  testInvalidTempViews("view with too many internal aliases")(
+  testTempViews("view with too many internal aliases")(
     text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    expectedErrorMsgForSQLTempView = "Attribute(s) with the same name appear",
-    expectedErrorMsgForDataSetTempView = null
+    expectedResult = Seq(Row(0, 3), Row(1, 3), Row(3, 4))
   )
+
+  test("merge correctly handle field metadata") {
+    withTable("source", "target") {
+      // Create a target table with user metadata (comments) and internal metadata (column mapping
+      // information) on both a top-level column and a nested field.
+      sql(
+        """
+          |CREATE TABLE target(
+          |  key int not null COMMENT 'data column',
+          |  value int not null,
+          |  cstruct struct<foo int COMMENT 'foo field'>)
+          |USING DELTA
+          |TBLPROPERTIES (
+          |  'delta.minReaderVersion' = '2',
+          |  'delta.minWriterVersion' = '5',
+          |  'delta.columnMapping.mode' = 'name')
+        """.stripMargin
+      )
+      sql(s"INSERT INTO target VALUES (0, 0, null)")
+
+      sql("CREATE TABLE source (key int not null, value int not null) USING DELTA")
+      sql(s"INSERT INTO source VALUES (1, 1)")
+
+      executeMerge(
+        tgt = "target",
+        src = "source",
+        cond = "source.key = target.key",
+        update(condition = "target.key = 1", set = "target.value = 42"),
+        updateNotMatched(condition = "target.key = 100", set = "target.value = 22"))
+    }
+  }
 
   test("UDT Data Types - simple and nested") {
     withTable("source") {

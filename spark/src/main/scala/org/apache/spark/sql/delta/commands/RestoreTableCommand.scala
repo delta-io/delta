@@ -29,7 +29,6 @@ import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
@@ -86,9 +85,7 @@ trait RestoreTableCommandBase {
  * 7) If table was modified in parallel then ignore restore and raise exception.
  *
  */
-case class RestoreTableCommand(
-    sourceTable: DeltaTableV2,
-    targetIdent: TableIdentifier)
+case class RestoreTableCommand(sourceTable: DeltaTableV2)
   extends LeafRunnableCommand with DeltaCommand with RestoreTableCommandBase {
 
   override val output: Seq[Attribute] = outputSchema
@@ -113,7 +110,7 @@ case class RestoreTableCommand(
       require(versionToRestore < latestVersion, s"Version to restore ($versionToRestore)" +
         s"should be less then last available version ($latestVersion)")
 
-      deltaLog.withNewTransaction { txn =>
+      deltaLog.withNewTransaction(sourceTable.catalogTable) { txn =>
         val latestSnapshot = txn.snapshot
         val snapshotToRestore = deltaLog.getSnapshotAt(versionToRestore)
         val latestSnapshotFiles = latestSnapshot.allFiles
@@ -210,7 +207,8 @@ case class RestoreTableCommand(
 
         txn.commitLarge(
           spark,
-          Iterator.single(newProtocol) ++ addActions ++ removeActions,
+          addActions ++ removeActions,
+          Some(newProtocol),
           DeltaOperations.Restore(version, timestamp),
           Map.empty,
           metrics.mapValues(_.toString).toMap)

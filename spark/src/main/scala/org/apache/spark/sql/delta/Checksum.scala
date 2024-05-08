@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -53,6 +54,7 @@ case class VersionChecksum(
     numFiles: Long,
     numMetadata: Long,
     numProtocol: Long,
+    inCommitTimestampOpt: Option[Long],
     setTransactions: Option[Seq[SetTransaction]],
     domainMetadata: Option[Seq[DomainMetadata]],
     metadata: Metadata,
@@ -117,12 +119,19 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
   val logPath: Path
   private[delta] def store: LogStore
 
-  private[delta] def readChecksum(version: Long): Option[VersionChecksum] = {
+  private[delta] def readChecksum(
+      version: Long,
+      checksumFileStatusHintOpt: Option[FileStatus] = None): Option[VersionChecksum] = {
     recordDeltaOperation(self, "delta.readChecksum") {
-      val checksumFile = FileNames.checksumFile(logPath, version)
-
+      val checksumFilePath = FileNames.checksumFile(logPath, version)
+      val verifiedChecksumFileStatusOpt =
+        checksumFileStatusHintOpt.filter(_.getPath == checksumFilePath)
       var exception: Option[String] = None
-      val content = try Some(store.read(checksumFile, newDeltaHadoopConf())) catch {
+      val content = try Some(
+        verifiedChecksumFileStatusOpt
+          .map(store.read(_, newDeltaHadoopConf()))
+          .getOrElse(store.read(checksumFilePath, newDeltaHadoopConf()))
+      ) catch {
         case NonFatal(e) =>
           // We expect FileNotFoundException; if it's another kind of exception, we still catch them
           // here but we log them in the checksum error event below.

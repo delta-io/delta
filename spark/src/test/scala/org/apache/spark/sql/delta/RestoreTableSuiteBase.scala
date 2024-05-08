@@ -121,7 +121,7 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
       deltaLog: DeltaLog,
       version: Int,
       timestamp: Long): Unit = {
-    val file = new File(FileNames.deltaFile(deltaLog.logPath, version).toUri)
+    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
     file.setLastModified(timestamp)
   }
 

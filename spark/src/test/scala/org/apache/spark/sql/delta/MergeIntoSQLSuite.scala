@@ -38,6 +38,11 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
 
   import testImplicits._
 
+  override def excluded: Seq[String] = super.excluded ++ Seq(
+    // Schema evolution SQL syntax is not yet supported
+    "schema evolution enabled for the current command"
+  )
+
   test("CTE as a source in MERGE") {
     withTable("source") {
       Seq((1, 1), (0, 3)).toDF("key1", "value").write.saveAsTable("source")
@@ -178,7 +183,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
     }
   }
 
-  def testNondeterministicOrder: Unit = {
+  def testNondeterministicOrder(insertOnly: Boolean): Unit = {
     withTable("target") {
       // For the spark sql random() function the seed is fixed for both invocations
       val trueRandom = () => Math.random()
@@ -189,15 +194,23 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
       sql("INSERT INTO target VALUES (1,2), (3,4)")
       // This generates different data sets on every execution
       val sourceSql =
-      s"""
-         |(SELECT r.id AS srcKey, r.id AS srcValue
-         | FROM range(1, 100000) as r
-         |  JOIN (SELECT trueRandom() * 100000 AS bound) ON r.id < bound
-         |) AS source
-         |""".stripMargin
-
-      sql(
         s"""
+           |(SELECT r.id AS srcKey, r.id AS srcValue
+           | FROM range(1, 100000) as r
+           |  JOIN (SELECT trueRandom() * 100000 AS bound) ON r.id < bound
+           |) AS source
+           |""".stripMargin
+
+      if (insertOnly) {
+        sql(s"""
+           |MERGE INTO target
+           |USING ${sourceSql}
+           |ON srcKey = trgKey
+           |WHEN NOT MATCHED THEN
+           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+           |""".stripMargin)
+      } else {
+        sql(s"""
            |MERGE INTO target
            |USING ${sourceSql}
            |ON srcKey = trgKey
@@ -205,20 +218,30 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
            |  UPDATE SET trgValue = srcValue
            |WHEN NOT MATCHED THEN
            |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
-      """.stripMargin)
+           |""".stripMargin)
+      }
     }
   }
 
-  test("detect nondeterministic source - flag on") {
+  test(s"detect nondeterministic source - flag on") {
     withSQLConf(
       // materializing source would fix determinism
       DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
     ) {
       val e = intercept[UnsupportedOperationException](
-        testNondeterministicOrder
+        testNondeterministicOrder(insertOnly = false)
       )
       assert(e.getMessage.contains("source dataset is not deterministic"))
+    }
+  }
+
+  test(s"detect nondeterministic source - flag on - insertOnly") {
+    withSQLConf(
+        // materializing source would fix determinism
+        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
+        DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true") {
+      testNondeterministicOrder(insertOnly = true)
     }
   }
 
@@ -228,7 +251,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
       DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false"
     ) {
-      testNondeterministicOrder
+      testNondeterministicOrder(insertOnly = false)
     }
   }
 
@@ -238,7 +261,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
       DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.ALL,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
     ) {
-      testNondeterministicOrder
+      testNondeterministicOrder(insertOnly = false)
     }
   }
 
@@ -344,6 +367,23 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
           assert(_change_type === "foo" || _change_type === "bar",
             s"Invalid _change_type for id=${row.get(0)}")
         }
+      }
+    }
+  }
+
+  test("SET * with schema evolution") {
+    withTable("tgt", "src") {
+      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+        sql("create table tgt(id int, delicious string, dummy_col string) using delta")
+        sql("create table src(id int, delicious string) using parquet")
+        // Make sure this MERGE command can resolve
+        sql(
+          """
+            |merge into tgt as target
+            |using (select * from src) as source on target.id=source.id
+            |when matched then update set *
+            |when not matched then insert *;
+            |""".stripMargin)
       }
     }
   }
