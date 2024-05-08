@@ -20,7 +20,6 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.function.Consumer;
 import java.util.function.Function;
 
 import io.delta.kernel.annotation.Evolving;
@@ -41,11 +40,6 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
             @Override
             public void remove() {
                 delegate.remove();
-            }
-
-            @Override
-            public void forEachRemaining(Consumer<? super U> action) {
-                this.forEachRemaining(action);
             }
 
             @Override
