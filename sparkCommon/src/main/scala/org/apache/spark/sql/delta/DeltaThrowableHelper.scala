@@ -23,7 +23,7 @@ import java.net.URL
 import org.apache.spark.sql.delta.DeltaThrowableHelperShims._
 
 import org.apache.spark.ErrorClassesJsonReader
-import org.apache.spark.util.Utils
+import org.apache.spark.util.SparkClassUtils
 
 /**
  * The helper object for Delta code base to pick error class template and compile
@@ -35,7 +35,7 @@ object DeltaThrowableHelper
    * Try to find the error class source file and throw exception if it is no found.
    */
   private def safeGetErrorClassesSource(sourceFile: String): URL = {
-    val classLoader = Utils.getContextOrSparkClassLoader
+    val classLoader = SparkClassUtils.getContextOrSparkClassLoader
     Option(classLoader.getResource(sourceFile)).getOrElse {
       throw new FileNotFoundException(
         s"""Cannot find the error class definition file on path $sourceFile" through the """ +

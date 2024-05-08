@@ -38,6 +38,7 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+sparkCommon / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -180,8 +181,26 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   )
 }
 
+lazy val sparkCommon = (project in file("sparkCommon"))
+  .settings(
+    name := "delta-spark-common",
+    commonSettings,
+    scalaStyleSettings,
+    sparkMimaSettings,
+    releaseSettings,
+    crossSparkSettings(),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-common-utils" % sparkVersion.value % "provided",
+    ),
+  )
+  .configureUnidoc(
+    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION
+  )
+
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
+  .dependsOn(sparkCommon)
   .enablePlugins(Antlr4Plugin)
   .settings (
     name := "delta-spark",
@@ -1282,7 +1301,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing, hudi)
+  .aggregate(spark, sparkCommon, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
