@@ -510,7 +510,7 @@ class DeltaVariantSuite
       checkError(
         e,
         "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN",
-        parameters = Map("dataType" -> "variant")
+        parameters = Map("dataType" -> "VARIANT")
       )
     }
   }

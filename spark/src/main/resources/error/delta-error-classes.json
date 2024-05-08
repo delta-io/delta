@@ -2527,6 +2527,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN" : {
+    "message" : [
+      "<dataType> cannot be the result of a generated column"
+    ],
+    "sqlState" : "42621"
+  },
   "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW" : {
     "message" : [
       "<view> is a view. DESCRIBE DETAIL is only supported for tables."
@@ -2566,12 +2572,6 @@
   "DELTA_UNSUPPORTED_EXPRESSION_GENERATED_COLUMN" : {
     "message" : [
       "<expression> cannot be used in a generated column"
-    ],
-    "sqlState" : "42621"
-  },
-  "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN" : {
-    "message" : [
-      "<dataType> cannot be the result of a generated column"
     ],
     "sqlState" : "42621"
   },
