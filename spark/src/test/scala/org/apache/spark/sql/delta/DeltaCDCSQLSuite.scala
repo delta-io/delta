@@ -52,9 +52,6 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       case startingVersion: StartingVersion =>
         s"""${startingVersion.value}"""
 
-      case startingTimestampExpr: StartingTimestampExpr =>
-        s"""${startingTimestampExpr.value}"""
-
       case startingTimestamp: StartingTimestamp =>
         s"""'${startingTimestamp.value}'"""
 
@@ -219,7 +216,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     }
   }
 
-  test("resolve expression for timestamp function - now") {
+  test("resolve expression for timestamp function") {
     val tbl = "tbl"
     withTable(tbl) {
       createTblWithThreeVersions(tblName = Some(tbl))
@@ -242,6 +239,15 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
 
       // more complex expression
       val readDf2 = sql(s"SELECT * FROM table_changes('$tbl', 0, now() + interval 5 seconds)")
+      checkCDCAnswer(
+        DeltaLog.forTable(spark, TableIdentifier("tbl")),
+        readDf2,
+        spark.range(20)
+          .withColumn("_change_type", lit("insert"))
+          .withColumn("_commit_version", (col("id") / 10).cast(LongType))
+      )
+      val readDf3 = sql(s"SELECT * FROM table_changes('$tbl', " +
+        "string(now() - interval 1 day), string(now())")
       checkCDCAnswer(
         DeltaLog.forTable(spark, TableIdentifier("tbl")),
         readDf2,

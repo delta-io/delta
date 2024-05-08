@@ -59,7 +59,6 @@ abstract class DeltaCDCSuiteBase
   trait Boundary
   case class StartingVersion(value: String) extends Boundary
   case class StartingTimestamp(value: String) extends Boundary
-  case class StartingTimestampExpr(value: String) extends Boundary
   case class EndingVersion(value: String) extends Boundary
   case class EndingTimestamp(value: String) extends Boundary
   case object Unbounded extends Boundary // used to model situation when a boundary isn't provided
@@ -270,13 +269,6 @@ abstract class DeltaCDCSuiteBase
         spark.range(20)
           .withColumn("_change_type", lit("insert"))
           .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
-
-      // Make sure this can be analyzed (current_date as "starting" and "ending")
-      cdcRead(
-        new TablePath(tempDir.getAbsolutePath),
-        StartingTimestampExpr("string(current_date())"),
-        StartingTimestampExpr("string(current_date() + interval 1 day)"))
-
     }
   }
 
@@ -885,9 +877,6 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
 
       case startingTimestamp: StartingTimestamp =>
         ("startingTimestamp", startingTimestamp.value)
-
-      case startingTimestampExpr: StartingTimestampExpr =>
-        ("startingTimestamp", startingTimestampExpr.value)
 
       case Unbounded =>
         ("", "")
