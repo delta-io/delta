@@ -33,6 +33,7 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplayUtils.UniqueFileActionTuple;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.client.WrappedExpressionHandler.wrapExpressionHandler;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_DV_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_PATH_ORDINAL;
@@ -217,11 +218,14 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
         // Step 4: TODO: remove this step. This is a temporary requirement until the path
         //         in `add` is converted to absolute path.
         if (tableRootVectorGenerator == null) {
-            tableRootVectorGenerator = engine.getExpressionHandler()
-                .getEvaluator(
-                    scanAddFiles.getSchema(),
-                    Literal.ofString(tableRoot.toUri().toString()),
-                    StringType.STRING);
+            tableRootVectorGenerator = wrapExpressionHandler(
+                engine,
+                "Evaluate the table root literal"
+            ).getEvaluator(
+                scanAddFiles.getSchema(),
+                Literal.ofString(tableRoot.toUri().toString()),
+                StringType.STRING
+            );
         }
         ColumnVector tableRootVector = tableRootVectorGenerator.eval(scanAddFiles);
         scanAddFiles = scanAddFiles.withNewColumn(
