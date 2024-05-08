@@ -155,7 +155,7 @@ public class BaseTableWriter {
         return new ColumnVector() {
             @Override
             public DataType getDataType() {
-                return StringType.STRING;
+                return IntegerType.INTEGER;
             }
 
             @Override
@@ -239,7 +239,7 @@ public class BaseTableWriter {
         return new ColumnVector() {
             @Override
             public DataType getDataType() {
-                return IntegerType.INTEGER;
+                return StringType.STRING;
             }
 
             @Override
