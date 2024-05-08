@@ -297,6 +297,37 @@ class OptimisticTransactionSuite
     }
   }
 
+  test("enabling Managed Commits on an existing table should create commit dir") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
+      val metadata = Metadata()
+      log.startTransaction().commit(Seq(metadata), ManualUpdate)
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+      val commitDir = FileNames.commitDirPath(log.logPath)
+      // Delete commit directory.
+      fs.delete(commitDir)
+      assert(!fs.exists(commitDir))
+      // With no Managed Commits conf, commit directory should not be created.
+      log.startTransaction().commit(Seq(metadata), ManualUpdate)
+      assert(!fs.exists(commitDir))
+      // Enabling Managed Commits on an existing table should create the commit dir.
+      CommitOwnerProvider.registerBuilder(InMemoryCommitOwnerBuilder(3))
+      val newMetadata = metadata.copy(configuration =
+        (metadata.configuration ++
+          Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "in-memory")).toMap)
+      log.startTransaction().commit(Seq(newMetadata), ManualUpdate)
+      assert(fs.exists(commitDir))
+      log.update().ensureCommitFilesBackfilled()
+      // With no new Managed Commits conf, commit directory should not be created and so the
+      // transaction should fail because of corrupted dir.
+      fs.delete(commitDir)
+      assert(!fs.exists(commitDir))
+      intercept[java.io.FileNotFoundException] {
+        log.startTransaction().commit(Seq(newMetadata), ManualUpdate)
+      }
+    }
+  }
+
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))

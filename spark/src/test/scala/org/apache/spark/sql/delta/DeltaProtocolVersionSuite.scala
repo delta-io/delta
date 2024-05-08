@@ -61,7 +61,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       path: File,
       schema: StructType = testTableSchema): DeltaLog = {
     val log = DeltaLog.forTable(spark, path)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
       unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = schema.json).json, protocol.json),
@@ -410,7 +410,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   test("access with protocol too high") {
     withTempDir { path =>
       val log = DeltaLog.forTable(spark, path)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
         unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata().json, Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE).json),
@@ -1228,7 +1228,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   test("create a table with no protocol") {
     withTempDir { path =>
       val log = DeltaLog.forTable(spark, path)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
         unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata().json),

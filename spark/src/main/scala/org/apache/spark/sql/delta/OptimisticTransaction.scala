@@ -1415,7 +1415,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
       if (readVersion < 0) {
-        deltaLog.createLogDirectory()
+        deltaLog.createLogDirectoriesIfNotExists()
       }
       val fsWriteStartNano = System.nanoTime()
       val jsonActions = allActions.map(_.json)
@@ -1681,8 +1681,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // `assertMetadata` call above.
     performCdcColumnMappingCheck(finalActions, op)
 
+    // Ensure Commit Directory exists when managed commits is enabled on an existing table.
+    lazy val isFsToMcConversion = snapshot.metadata.managedCommitOwnerName.isEmpty &&
+      newMetadata.flatMap(_.managedCommitOwnerName).nonEmpty
+    val shouldCreateLogDirs = snapshot.version == -1 || isFsToMcConversion
+    if (shouldCreateLogDirs) {
+      deltaLog.createLogDirectoriesIfNotExists()
+    }
+
     if (snapshot.version == -1) {
-      deltaLog.ensureLogDirectoryExist()
       // If this is the first commit and no protocol is specified, initialize the protocol version.
       if (!finalActions.exists(_.isInstanceOf[Protocol])) {
         finalActions = protocol +: finalActions

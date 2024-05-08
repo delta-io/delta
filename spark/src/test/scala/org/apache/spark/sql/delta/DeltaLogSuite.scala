@@ -681,17 +681,20 @@ class DeltaLogSuite extends QueryTest
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       val log = DeltaLog.forTable(spark, new Path(path))
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
 
       val logPath = log.logPath
       val fs = logPath.getFileSystem(log.newDeltaHadoopConf())
       assert(fs.exists(logPath), "Log path should exist.")
       assert(fs.getFileStatus(logPath).isDirectory, "Log path should be a directory")
+      val commitPath = FileNames.commitDirPath(logPath)
+      assert(fs.exists(commitPath), "Commit path should exist.")
+      assert(fs.getFileStatus(commitPath).isDirectory, "Commit path should be a directory")
     }
   }
 
   test("DeltaLog should throw exception when unable to create log directory " +
-    "with filesystem IO Exception") {
+      "with filesystem IO Exception") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       val log = DeltaLog.forTable(spark, new Path(path))
@@ -702,7 +705,7 @@ class DeltaLogSuite extends QueryTest
       fs.create(log.logPath)
 
       val e = intercept[DeltaIOException] {
-        log.ensureLogDirectoryExist()
+        log.createLogDirectoriesIfNotExists()
       }
       checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH")
       e.getCause match {
