@@ -742,7 +742,6 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  // This test needs to be extended to Managed Commits once DeltaLogSuite gets extended.
   test("DeltaFileProviderUtils.getDeltaFilesInVersionRange") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
@@ -761,7 +760,14 @@ class DeltaLogSuite extends QueryTest
       assert(FileNames.getFileVersion(fileV2) === 2)
       assert(FileNames.getFileVersion(fileV3) === 3)
 
-      assert(filesAreUnbackfilledArray === Seq(false, false, false))
+      val backfillInterval = managedCommitBackfillBatchSize.getOrElse(0L)
+      if (backfillInterval == 0 || backfillInterval == 1) {
+        assert(filesAreUnbackfilledArray === Seq(false, false, false))
+      } else if (backfillInterval == 2) {
+        assert(filesAreUnbackfilledArray === Seq(false, false, true))
+      } else {
+        assert(filesAreUnbackfilledArray === Seq(true, true, true))
+      }
     }
   }
 
