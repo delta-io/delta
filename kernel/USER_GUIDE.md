@@ -689,7 +689,7 @@ The [`FileSystemClient`](https://delta-io.github.io/delta/snapshot/kernel-api/ja
 
 #### Step 2.3: Implement `ParquetHandler`
 
-As the name suggests, this interface contains everything related to reading Parquet files. It has been designed such that a connector can plug in a wide variety of implementations, from a simple single-threaded reader to a very advanced multi-threaded reader with pre-fetching and advanced connector-specific expression pushdown. Let's explore the methods to implement, and the guarantees associated with them. 
+As the name suggests, this interface contains everything related to reading and writing Parquet files. It has been designed such that a connector can plug in a wide variety of implementations, from a simple single-threaded reader to a very advanced multi-threaded reader with pre-fetching and advanced connector-specific expression pushdown. Let's explore the methods to implement, and the guarantees associated with them. 
 
 ##### Method `readParquetFiles(CloseableIterator<FileStatus> fileIter, StructType physicalSchema, java.util.Optional<Predicate> predicate)`
 
@@ -708,6 +708,19 @@ Any implementation must adhere to the following guarantees.
   * If a data column is not found and the `StructField.isNullable = true`, then return a `ColumnVector` of nulls. Throw an error if it is not nullable.
 * The output iterator must maintain ordering as the input iterator. That is, if `file1` is before `file2` in the input iterator, then columnar batches of `file1` must be before those of `file2` in the output iterator.
 
+##### Method `writeParquetFiles(String directoryPath, CloseableIterator<FilteredColumnarBatch> dataIter, java.util.List<Column> statsColumns)`
+
+This [method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/ParquetHandler.html#writeParquetFiles-java.lang.String-io.delta.kernel.utils.CloseableIterator-java.util.List-) takes given data writes it into one or more Parquet files into the given directory. The data is given as an iterator of [FilteredColumnarBatches](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/FilteredColumnarBatch.html) which contains a [ColumnarBatch](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnarBatch.html) and an optional selection vector containing one entry for each row in `ColumnarBatch` indicating whether a row is selected or not selected. The `ColumnarBatch` also contains the schema of the data. This schema should be converted to Parquet schema, including any field IDs present [`FieldMetadata`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/types/FieldMetadata.html) for each column `StructField`.
+
+There is also the parameter `statsColumns`, which is a hint to the Parquet writer on what set of columns to collect stats for each file. The statistics include `min`, `max` and `null_count` for each column in the `statsColumns` list. Statistics collection is optional, but when present it is used by Kernel to persist the stats as part of the Delta table commit. This will help read queries prune un-needed data files based on the query predicate.
+
+For each written data file, the caller is expecting a [`DataFileStatus`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/DataFileStatus.html) object. It contains the data file path, size, modification time, and optional column statistics.
+
+#### Method `writeParquetFileAtomically(String filePath, CloseableIterator<FilteredColumnarBatch> data)`
+This [method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/ParquetHandler.html#writeParquetFiles-java.lang.String-io.delta.kernel.utils.CloseableIterator-java.util.List-) writes the given `data` into Parquet file at location `filePath`. The write is an atomic write i.e., either a Parquet file is created with all given content or no Parquet file is created at all. This should not create a file with partial content in it.
+
+The default implementation makes use of [`LogStore`](https://github.com/delta-io/delta/blob/master/storage/src/main/java/io/delta/storage/LogStore.java) implementations from the [`delta-storage`](https://github.com/delta-io/delta/tree/master/storage) module to accomplish the atomicity. A connector that wants to implement their own version of `ParquetHandler` can take a look at the default implementation for details.
+ 
 ##### Performance suggestions
 * The representation of data as `ColumnVector`s and `ColumnarBatch`es can have a significant impact on the query performance and it's best to read the Parquet file data directly into vectors and batches of the engine-native format to avoid potentially costly in-memory data format conversion. Create a Kernel `ColumnVector` and `ColumnarBatch` wrappers around the engine-native format equivalent classes.
 
@@ -746,9 +759,17 @@ When identifying the columns to read, note that there are multiple types of colu
 
 This [method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/JsonHandler.html#parseJson-io.delta.kernel.data.ColumnVector-io.delta.kernel.types.StructType-) allows parsing a `ColumnVector` of string values which are in JSON format into the output format specified by the `outputSchema`. If a given column in `outputSchema` is not found, then a null value is returned. It optionally takes a selection vector which indicates what entries in the input `ColumnVector` of strings to parse. If an entry is not selected then a `null` value is returned as parsed output for that particular entry in the output.
 
-##### Method [`deserializeStructType(String structTypeJson)`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/JsonHandler.html#deserializeStructType-java.lang.String-)
+##### Method `deserializeStructType(String structTypeJson)`
 
-This method allows parsing JSON encoded (according to [Delta schema serialization rules](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#schema-serialization-format)) `StructType` schema into a `StructType`. Most implementations of `JsonHandler` do not need to implement this method and instead use the one in the [default `JsonHandler`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/engine/DefaultJsonHandler.html) implementation.
+This [method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/JsonHandler.html#deserializeStructType-java.lang.String-) allows parsing JSON encoded (according to [Delta schema serialization rules](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#schema-serialization-format)) `StructType` schema into a `StructType`. Most implementations of `JsonHandler` do not need to implement this method and instead use the one in the [default `JsonHandler`](https://delta-io.github.io/delta/snapshot/kernel-defaults/java/io/delta/kernel/defaults/engine/DefaultJsonHandler.html) implementation.
+
+#### Method `writeJsonFileAtomically(String filePath, CloseableIterator<Row> data, boolean overwrite)`
+
+This [method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/JsonHandler.html#writeJsonFileAtomically-java.lang.String-io.delta.kernel.utils.CloseableIterator-boolean-) writes the given `data` into a JSON file at location `filePath`. The write is an atomic write i.e., either a JSON file is created with all given content or no Parquet file is created at all. This should not create a file with partial content in it.
+
+The default implementation makes use of [`LogStore`](https://github.com/delta-io/delta/blob/master/storage/src/main/java/io/delta/storage/LogStore.java) implementations from the [`delta-storage`](https://github.com/delta-io/delta/tree/master/storage) module to accomplish the atomicity. A connector that wants to implement their own version of `JsonHandler` can take a look at the default implementation for details.
+
+The implementation is expected to handle the serialization rules (converting the `Row` object to JSON string) as described in the [API Javadoc](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/JsonHandler.html#writeJsonFileAtomically-java.lang.String-io.delta.kernel.utils.CloseableIterator-boolean-).
 
 #### Step 2.6: Implement `ColumnarBatch` and `ColumnVector`
 
