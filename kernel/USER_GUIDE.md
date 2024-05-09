@@ -252,33 +252,33 @@ From this `myTable` object you can create a [`TransactionBuilder`](https://delta
 
 ```java
 TransactionBuilder txnBuilder =
-	myTable.createTransactionBuilder(
-		myEngine,
-		"Examples", /* engineInfo - connector can add its own identifier which is noted in the Delta Log */ 
-		Operation.CREATE_TABLE /* What is the operation we are trying to perform. This is noted in the Delta Log */
-);
+  myTable.createTransactionBuilder(
+    myEngine,
+    "Examples", /* engineInfo - connector can add its own identifier which is noted in the Delta Log */ 
+    Operation.CREATE_TABLE /* What is the operation we are trying to perform. This is noted in the Delta Log */
+  );
 ```
 
 Now that you have the `TransactionBuilder` object, you can set the table schema and partition columns of the table.
 
 ```java
 StructType mySchema = new StructType()
-            .add("id", IntegerType.INTEGER)
-            .add("name", StringType.STRING)
-            .add("city", StringType.STRING)
-            .add("salary", DoubleType.DOUBLE);
+  .add("id", IntegerType.INTEGER)
+  .add("name", StringType.STRING)
+  .add("city", StringType.STRING)
+  .add("salary", DoubleType.DOUBLE);
 
 // Partition columns are optional. Use it only if you are creating a partitioned table.
 List<String> myPartitionColumns = Collections.singletonList("city");
 
 // Set the schema of the new table on the transaction builder
 txnBuilder = txnBuilder
-	.withSchema(engine, mySchema);
+  .withSchema(engine, mySchema);
 
 // Set the partition columns of the new table only if you are creating
 // a partitioned table; otherwise, this step can be skipped.
 txnBuilder = txnBuilder
-	.withPartitionColumns(engine, examplePartitionColumns);
+  .withPartitionColumns(engine, examplePartitionColumns);
 ```
 
 `TransactionBuilder` allows setting additional properties of the table such as enabling a certain Delta feature or setting identifiers for idempotent writes. We will be visiting these in the next sections. The next step is to build `Transaction` out of the `TransactionBuilder` object.
@@ -295,9 +295,10 @@ Transaction txn = txnBuilder.build(engine);
 // Commit the transaction.
 // As we are just creating the table and not adding any data, the `dataActions` is empty.
 TransactionCommitResult commitResult =
-	txn.commit(
-		engine,
-		CloseableIterable.emptyIterable() /* dataActions */);
+  txn.commit(
+    engine,
+    CloseableIterable.emptyIterable() /* dataActions */
+  );
 ```
 
 The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html) contains the what version the transaction is committed as and whether the table is ready for a checkpoint. As we are creating a table the version will be `0`. We will be discussing later on what a checkpoint is and what it means for the table to be ready for the checkpoint.
@@ -324,29 +325,29 @@ Engine myEngine = DefaultEngine.create(hadoopConf);
 Table myTable = Table.forPath(myEngine, myTablePath);
 
 StructType mySchema = new StructType()
-            .add("id", IntegerType.INTEGER)
-            .add("name", StringType.STRING)
-            .add("city", StringType.STRING)
-            .add("salary", DoubleType.DOUBLE);
+  .add("id", IntegerType.INTEGER)
+  .add("name", StringType.STRING)
+  .add("city", StringType.STRING)
+  .add("salary", DoubleType.DOUBLE);
 
 // Partition columns are optional. Use it only if you are creating a partitioned table.
 List<String> myPartitionColumns = Collections.singletonList("city");
 
 TransactionBuilder txnBuilder =
-	myTable.createTransactionBuilder(
-		myEngine,
-		"Examples", /* engineInfo - connector can add its own identifier which is noted in the Delta Log */ 
-		Operation.WRITE /* What is the operation we are trying to perform? This is noted in the Delta Log */
-);
+  myTable.createTransactionBuilder(
+    myEngine,
+    "Examples", /* engineInfo - connector can add its own identifier which is noted in the Delta Log */ 
+    Operation.WRITE /* What is the operation we are trying to perform? This is noted in the Delta Log */
+  );
 
 // Set the schema of the new table on the transaction builder
 txnBuilder = txnBuilder
-	.withSchema(engine, mySchema);
+  .withSchema(engine, mySchema);
 
 // Set the partition columns of the new table only if you are creating
 // a partitioned table; otherwise, this step can be skipped.
 txnBuilder = txnBuilder
-	.withPartitionColumns(engine, examplePartitionColumns);
+  .withPartitionColumns(engine, examplePartitionColumns);
 
 // Build the transaction
 Transaction txn = txnBuilder.build(engine);
@@ -377,13 +378,13 @@ CloseableIterator<FilteredColumnarBatch> data = ...
 
 // Create partition value map
 Map<String, Literal> partitionValues =
-    Collections.singletonMap(
-	    "city", // partition column name
-	    // partition value. Depending upon the partition column type, the
-	    // partition value should be created. In this example, the partition
-	    // column is of type StringType, so we are creating a string literal.
-	    Literal.ofString(city)
-    );
+  Collections.singletonMap(
+    "city", // partition column name
+     // partition value. Depending upon the partition column type, the
+     // partition value should be created. In this example, the partition
+     // column is of type StringType, so we are creating a string literal.
+     Literal.ofString(city)
+  );
 ```
 
 The connector data is passed as an iterator of [`FilteredColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/FilteredColumnarBatch.html). Each of the `FilteredColumnarBatch` contains a [`ColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/ColumnarBatch.html) which actually contains the data in columnar access format and an optional section vector that allows the connector to specify which rows from the `ColumnarBatch` to write to the table.
@@ -394,7 +395,7 @@ Partition values are passed as a map of the partition column name to the partiti
 // Transform the logical data to physical data that needs to be written to the Parquet
 // files
 CloseableIterator<FilteredColumnarBatch> physicalData =
-	Transaction.transformLogicalData(engine, txnState, data, partitionValues);
+  Transaction.transformLogicalData(engine, txnState, data, partitionValues);
 ```
 
 The above code converts the given data for partitions into an iterator of `FilteredColumnarBatch` that needs to be written to the Parquet data files. In order to write the data files, the connector needs to get the [`WriteContext`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/DataWriteContext.html) from Kernel, which tells the connector where to write the data files and what columns to collect statistics from each data file.
@@ -408,10 +409,11 @@ Now, the connector has the physical data that needs to be written to Parquet dat
 
 ```java
 CloseableIterator<DataFileStatus> dataFiles = engine.getParquetHandler()
-    .writeParquetFiles(
-	    writeContext.getTargetDirectory(),
-	    physicalData,
-	    writeContext.getStatisticsColumns());
+  .writeParquetFiles(
+    writeContext.getTargetDirectory(),
+    physicalData,
+    writeContext.getStatisticsColumns()
+  );
 ```
 
 In the above code, the connector is making use of the `Engine` provided `ParquetHandler` to write the data, but the connector can choose its own Parquet file writer to write the data. Also note that the return of the above call is an iterator of [`DataFileStatus`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/DataFileStatus.html) for each data file written. It basically contains the file path, file metadata, and optional file-level statistics for columns specified by the [`WriteContext.getStatisticsColumns()`]([https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/DataWriteContext.html](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/DataWriteContext.html#getStatisticsColumns--))
@@ -420,11 +422,7 @@ Convert each `DataFileStatus` into a Delta log action that can be written to the
 
 ```java
 CloseableIterator<Row> dataActions =
-	Transaction.generateAppendActions(
-		engine,
-		txnState,
-		dataFiles,
-		writeContext);
+  Transaction.generateAppendActions(engine, txnState, dataFiles, writeContext);
 ```
 
 The next step is constructing [`CloseableIterable`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html) out of the all the Delta log actions generated above. The reason for constructing an `Iterable` is that the transaction committing involves accessing the list of Delta log actions more than one time (in order to resolve conflicts when there are multiple writes to the table). Kernel provides a [utility method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html#inMemoryIterable-io.delta.kernel.utils.CloseableIterator-) to create an in-memory version of `CloseableIterable`. This interface also gives the connector an option to implement a custom implementation that spills the data actions to disk when the contents are too big to fit in memory.
@@ -457,10 +455,11 @@ Table table = Table.forPath(engine, tablePath);
 
 // Create a transaction builder to build the transaction
 TransactionBuilder txnBuilder =
-	table.createTransactionBuilder(
-		engine,
-		"Examples", /* engineInfo */
-		Operation.WRITE);
+  table.createTransactionBuilder(
+    engine,
+    "Examples", /* engineInfo */
+    Operation.WRITE
+  );
 
 / Build the transaction - no need to provide the schema as the table already exists.
 Transaction txn = txnBuilder.build(engine);
@@ -477,11 +476,11 @@ List<Row> dataActions = new ArrayList<>();
 
 // In the test data `city` is a partition column
 for (String city : Arrays.asList("San Francisco", "Campbell", "San Jose")) {
-    FilteredColumnarBatch batch1 = generatedPartitionedDataBatch(
+  FilteredColumnarBatch batch1 = generatedPartitionedDataBatch(
 	    5 /* offset */, city /* partition value */);
-    FilteredColumnarBatch batch2 = generatedPartitionedDataBatch(
+  FilteredColumnarBatch batch2 = generatedPartitionedDataBatch(
 	    5 /* offset */, city /* partition value */);
-    FilteredColumnarBatch batch3 = generatedPartitionedDataBatch(
+  FilteredColumnarBatch batch3 = generatedPartitionedDataBatch(
 	    10 /* offset */, city /* partition value */);
 
     CloseableIterator<FilteredColumnarBatch> data =
@@ -552,13 +551,15 @@ To make the data append idempotent, set the transaction identifier on the [`Tran
 // Set the transaction identifiers for idempotent writes
 // Delta/Kernel makes sure that there exists only one transaction in the Delta log
 // with the given application id and txn version
-txnBuilder = txnBuilder.withTransactionId(
-	engine,
-	"my app id", /* application id */
-	100 /* txn version */);
+txnBuilder =
+  txnBuilder.withTransactionId(
+    engine,
+    "my app id", /* application id */
+    100 /* monotonically increasing txn version with each new data insert */
+  );
 ```
 
-Thats all the connector need to do for idempotent blind appends.
+That's all the connector need to do for idempotent blind appends.
 
 ## Checkpointing a Delta table
 [Checkpoints](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#checkpoints) are an optimization in Delta Log in order to construct the state of the Delta table faster. It basically contains the state of the table at the version the checkpoint is created. Delta Kernel allows the connector to optionally make the checkpoints. It is created for every few commits (configurable table property) on the table.
@@ -575,7 +576,6 @@ if (commitResult.isReadyForCheckpoint()) {
   Table.forPath(engine, tablePath).checkpoint(engine, commitResult.getVersion());
 }
 ```
-
 
 ## Build a Delta connector for a distributed processing engine
 Unlike simple applications that just read the table in a single process, building a connector for complex processing engines like Apache Spark™ and Trino can require quite a bit of additional effort. For example, to build a connector for an SQL engine you have to do the following
