@@ -281,6 +281,9 @@ class DeltaTableFeatureSuite
       .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
     assert(Protocol(1, 7).withFeature(TestWriterFeature)
       .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
+    // When there are no explicit features the protocol versions need to be downgraded
+    // below table features. The new protocol versions need to match exactly the supported
+    // legacy features.
     for (n <- 1 to 3) {
       assert(
         !Protocol(n, 7)
