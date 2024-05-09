@@ -2396,58 +2396,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
-  /**
-   * This method takes care of backfilling any unbackfilled delta files when managed commit is
-   * not enabled on the table (i.e. commit-owner is not present) but there are still unbackfilled
-   * delta files in the table. This can happen if an error occurred during the MC -> FS commit
-   * where the commit-owner was able to register the downgrade commit but it failed to backfill
-   * it. This method must be invoked before doing the next commit as otherwise there will be a
-   * gap in the backfilled commit sequence.
-   */
-  private def backfillWhenManagedCommitDisabled(): Unit = {
-    if (snapshot.tableCommitOwnerClientOpt.nonEmpty) {
-      // Managed commits is enabled on the table. Don't backfill as backfills are managed by
-      // commit-owners.
-      return
-    }
-    val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
-      case UnbackfilledDeltaFile(unbackfilledDeltaFile, version, _) =>
-        (unbackfilledDeltaFile, version)
-    }
-    if (unbackfilledFilesAndVersions.isEmpty) return
-    // Managed commits are disabled on the table but the table still has un-backfilled files.
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val fs = deltaLog.logPath.getFileSystem(hadoopConf)
-    val overwrite = !deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
-    var numAlreadyBackfilledFiles = 0L
-    unbackfilledFilesAndVersions.foreach { case (unbackfilledDeltaFile, version) =>
-      val backfilledFilePath = unsafeDeltaFile(deltaLog.logPath, version)
-      if (!fs.exists(backfilledFilePath)) {
-        val actionsIter = deltaLog.store.readAsIterator(unbackfilledDeltaFile.getPath, hadoopConf)
-        deltaLog.store.write(
-          backfilledFilePath,
-          actionsIter,
-          overwrite,
-          hadoopConf)
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} backfilled to path" +
-          s" ${backfilledFilePath.toString}.")
-      } else {
-        numAlreadyBackfilledFiles += 1
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} already backfilled.")
-      }
-    }
-    recordDeltaEvent(
-      deltaLog,
-      opType = "delta.managedCommit.backfillWhenManagedCommitSupportedAndDisabled",
-      data = Map(
-        "numUnbackfilledFiles" -> unbackfilledFilesAndVersions.size,
-        "unbackfilledFiles" -> unbackfilledFilesAndVersions.map(_._1.getPath.toString),
-        "numAlreadyBackfilledFiles" -> numAlreadyBackfilledFiles
-      )
-    )
-  }
-
   // Backfill any unbackfilled commits if managed commits are disabled -- in the Optimistic
   // Transaction constructor.
-  backfillWhenManagedCommitDisabled()
+  ManagedCommitUtils.backfillWhenManagedCommitDisabled(snapshot)
 }
