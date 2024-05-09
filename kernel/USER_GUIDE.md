@@ -6,33 +6,35 @@ Delta Kernel is a library for operating on Delta tables. Specifically, it provid
 * Read and write Delta tables from your applications.
 * Build a connector for a distributed engine like [Apache Spark™](https://github.com/apache/spark), [Apache Flink](https://github.com/apache/flink), or [Trino](https://github.com/trinodb/trino) for reading or writing massive Delta tables.
 
-<!--ts-->
    * [Delta Kernel User Guide](#delta-kernel-user-guide)
    * [What is Delta Kernel?](#what-is-delta-kernel)
+   * [Set up Delta Kernel for your project](#set-up-delta-kernel-for-your-project)
    * [Read a Delta table in a single process](#read-a-delta-table-in-a-single-process)
-      * [Step 1: Set up Delta Kernel for your project](#step-1-set-up-delta-kernel-for-your-project)
-      * [Step 2: Full scan on a Delta table](#step-2-full-scan-on-a-delta-table)
-      * [Step 3: Improve scan performance with file skipping](#step-3-improve-scan-performance-with-file-skipping)
+      * [Step 1: Full scan on a Delta table](#step-1-full-scan-on-a-delta-table)
+      * [Step 2: Improve scan performance with file skipping](#step-2-improve-scan-performance-with-file-skipping)
+   * [Create to Delta table](#create-to-delta-table)
+   * [Create a table and insert data into it](#create-a-table-and-insert-data-into-it)
+   * [Blind append into an existing Delta table](#blind-append-into-an-existing-delta-table)
+   * [Idempotent Blind Appends to a Delta Table](#idempotent-blind-appends-to-a-delta-table)
+   * [Checkpointing a Delta table](#checkpointing-a-delta-table)
    * [Build a Delta connector for a distributed processing engine](#build-a-delta-connector-for-a-distributed-processing-engine)
       * [Step 0: Validate the prerequisites](#step-0-validate-the-prerequisites)
       * [Step 1: Set up Delta Kernel in your connector project](#step-1-set-up-delta-kernel-in-your-connector-project)
+         * [Set up Java projects](#set-up-java-projects)
       * [Step 2: Build your own Engine](#step-2-build-your-own-engine)
-         * Step 2.1: Implement the `Engine` interface
-         * Step 2.2: Implement `FileSystemClient` interface
-         * Step 2.3: Implement `ParquetHandler` interface
-         * Step 2.4: Implement `ExpressionHandler` interface
-         * Step 2.5: Implement `JsonHandler` interface
-         * Step 2.6: Implement `ColumnarBatch` and `ColumnVector` interfaces
+         * [Step 2.1: Implement the Engine interface](#step-21-implement-the-engine-interface)
+         * [Step 2.2: Implement FileSystemClient interface](#step-22-implement-filesystemclient-interface)
+         * [Step 2.3: Implement ParquetHandler](#step-23-implement-parquethandler)
+         * [Step 2.5: Implement JsonHandler](#step-25-implement-jsonhandler)
+         * [Step 2.6: Implement ColumnarBatch and ColumnVector](#step-26-implement-columnarbatch-and-columnvector)
       * [Step 3: Build read support in your connector](#step-3-build-read-support-in-your-connector)
          * [Step 3.1: Resolve the table snapshot to query](#step-31-resolve-the-table-snapshot-to-query)
          * [Step 3.2: Resolve files to scan](#step-32-resolve-files-to-scan)
-            * [Requirements and guarantees](#requirements-and-guarantees-2)
          * [Step 3.3: Distribute the file information to the workers](#step-33-distribute-the-file-information-to-the-workers)
-            * [Custom Row Serializer/Deserializer](#custom-row-serializerdeserializer)
          * [Step 3.4: Read the columnar data](#step-34-read-the-columnar-data)
+      * [Step 4: Build write support in your connector](#step-4-build-write-support-in-your-connector)
    * [Migration guide](#migration-guide)
       * [Migration from Delta Lake version 3.1.0 to 3.2.0](#migration-from-delta-lake-version-310-to-320)
-<!--te-->
 
 ## Set up Delta Kernel for your project
 You need to `io.delta:delta-kernel-api` and `io.delta:delta-kernel-defaults` dependencies. Following is an example Maven `pom` file dependency list.
