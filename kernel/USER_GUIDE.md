@@ -34,13 +34,10 @@ Delta Kernel is a library for operating on Delta tables. Specifically, it provid
       * [Migration from Delta Lake version 3.1.0 to 3.2.0](#migration-from-delta-lake-version-310-to-320)
 <!--te-->
 
-## Read a Delta table in a single process
-In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
+## Set up Delta Kernel for your project
+You need to `io.delta:delta-kernel-api` and `io.delta:delta-kernel-defaults` dependencies. Following is an example Maven `pom` file dependency list.
 
-You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
-
-### Step 1: Set up Delta Kernel for your project
-You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-defaults` dependencies. Following is an example Maven `pom` file dependency list.
+The `delta-kernel-api` module contains the core of the Kernel that abstracts out the Delta protocol to enable reading and writing into Delta tables. It makes use of the `Engine` interface that is being passed to the Kernel API by the connector for heavy-lift operations such as reading/writing Parquet or JSON files, evaluating expressions or file system operations such as listing contents of the Delta Log directory, etc. Kernel supplies a default implementation of `Engine` in module `delta-kernel-defaults`. The connectors can implement their own version of `Engine` to make use of their native implementation of functionalities the `Engine` provides. For example: the connector can make use of their Parquet reader instead of using the reader from the `DefaultEngine`. More details on this [later](#step-2-build-your-own-engine).
 
 ```xml
 <dependencies>
@@ -58,7 +55,15 @@ You need to `io.delta:delta-kernel.api` and `io.delta:delta-kernel-defaults` dep
 </dependencies>
 ```
 
-### Step 2: Full scan on a Delta table
+If your connector is not using the [`DefaultEngine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) provided by the Kernel, the dependency `delta-kernel-defaults` from the above list can be skipped.
+
+
+## Read a Delta table in a single process
+In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
+
+You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
+
+### Step 1: Full scan on a Delta table
 The main entry point is [`io.delta.kernel.Table`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Table.html) which is a programmatic representation of a Delta table. Say you have a Delta table at the directory `myTablePath`. You can create a `Table` object as follows:
 
 ```java
@@ -192,7 +197,7 @@ A few working examples to read Delta tables within a single process are availabl
 > [!NOTE]
 > Observe that the same `Engine` instance `myEngine` is passed multiple times whenever a call to Delta Kernel API is made. The reason for passing this instance for every call is because it is the connector context, it should maintained outside of the Delta Kernel APIs to give the connector control over the `Engine`.
 
-### Step 3: Improve scan performance with file skipping
+### Step 2: Improve scan performance with file skipping
 We have explored how to do a full table scan. However, the real advantage of using the Delta format is that you can skip files using your query filters. To make this possible, Delta Kernel provides an [expression framework](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/expressions/package-summary.html) to encode your filters and provide them to Delta Kernel to skip files during the scan file generation. For example, say your table is partitioned by `columnX`, you want to query only the partition `columnX=1`. You can generate the expression and use it to build the scan as follows:
 
 ```java
@@ -218,6 +223,88 @@ Optional<Predicate> remainingFilter = myFilteredScan.getRemainingFilter();
 ```
 
 The scan files returned by  `myFilteredScan.getScanFiles(myEngine)` will have rows representing files only of the required partition. Similarly, you can provide filters for non-partition columns, and if the data in the table is well clustered by those columns, then Delta Kernel will be able to skip files as much as possible.
+
+## Create to Delta table
+In this section, we will walk through how to build a Delta connector that can create a Delta table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
+
+You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
+
+The main entry point is [`io.delta.kernel.Table`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Table.html) which is a programmatic representation of a Delta table. Say you want to create Delta table at the directory `myTablePath`. You can create a `Table` object as follows:
+
+```java
+package io.delta.kernel.examples;
+
+import io.delta.kernel.*;
+import io.delta.kernel.types.*;
+import io.delta.kernel.utils.CloseableIterable;
+
+String myTablePath = <my-table-path>; 
+Configuration hadoopConf = new Configuration();
+Engine myEngine = DefaultEngine.create(hadoopConf);
+Table myTable = Table.forPath(myEngine, myTablePath);
+```
+
+Note the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) we are creating to bootstrap the `myTable` object. This object allows you to plug in your own libraries for computationally intensive operations like Parquet file reading, JSON parsing, etc. You can ignore it for now. We will discuss more about this later when we discuss how to build more complex connectors for distributed processing engines.
+
+From this `myTable` object you can create a [`TransactionBuilder`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionBuilder.html) object which allows you to construct a [`Transaction`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Transaction.html) object
+
+```java
+TransactionBuilder txnBuilder =
+	myTable.createTransactionBuilder(
+		myEngine,
+		"Examples", /* engineInfo - connector can add its own identifier which is noted in the Delta Log */ 
+		Operation.CREATE_TABLE /* What is the operation we are trying to perform. This is noted in the Delta Log */
+);
+```
+
+Now that you have the `TransactionBuilder` object, you can set the table schema and partition columns of the table.
+
+```java
+StructType mySchema = new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("name", StringType.STRING)
+            .add("city", StringType.STRING)
+            .add("salary", DoubleType.DOUBLE);
+
+// Partition columns are optional. Use it only if you are creating a partitioned table.
+List<String> myPartitionColumns = Collections.singletonList("city");
+
+// Set the schema of the new table on the transaction builder
+txnBuilder = txnBuilder
+	.withSchema(engine, mySchema);
+
+// Set the partition columns of the new table only if you are creating
+// a partitioned table; otherwise, this step can be skipped.
+txnBuilder = txnBuilder
+	.withPartitionColumns(engine, examplePartitionColumns);
+```
+
+`TransactionBuilder` allows setting additional properties of the table such as enabling a certain Delta feature or setting identifiers for idempotent writes. We will be visiting these in the next sections. The next step is to build `Transaction` out of the `TransactionBuilder` object.
+
+
+```java
+// Build the transaction
+Transaction txn = txnBuilder.build(engine);
+```
+
+`Transaction` object allows the connector to optionally add any data and finally commit the transaction. A successful commit ensures that the table is created with the given schema. In this example, we are just creating a table and not adding any data as part of the table.
+
+```java
+// Commit the transaction.
+// As we are just creating the table and not adding any data, the `dataActions` is empty.
+TransactionCommitResult commitResult =
+	txn.commit(
+		engine,
+		CloseableIterable.emptyIterable() /* dataActions */);
+```
+
+The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html) contains the what version the transaction is committed as and whether the table is ready for a checkpoint. As we are creating a table the version will be `0`. We will be discussing later on what a checkpoint is and what it means for the table to be ready for the checkpoint.
+
+A few working examples to create partitioned and un-partitioned Delta tables are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
+
+##
+
+
 
 ## Build a Delta connector for a distributed processing engine
 Unlike simple applications that just read the table in a single process, building a connector for complex processing engines like Apache Spark™ and Trino can require quite a bit of additional effort. For example, to build a connector for an SQL engine you have to do the following
