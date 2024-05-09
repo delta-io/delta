@@ -330,6 +330,13 @@ StructType mySchema = new StructType()
 // Partition columns are optional. Use it only if you are creating a partitioned table.
 List<String> myPartitionColumns = Collections.singletonList("city");
 
+TransactionBuilder txnBuilder =
+	myTable.createTransactionBuilder(
+		myEngine,
+		"Examples", /* engineInfo - connector can add its own identifier which is noted in the Delta Log */ 
+		Operation.WRITE /* What is the operation we are trying to perform? This is noted in the Delta Log */
+);
+
 // Set the schema of the new table on the transaction builder
 txnBuilder = txnBuilder
 	.withSchema(engine, mySchema);
@@ -436,6 +443,136 @@ TransactionCommitStatus commitStatus = txn.commit(engine, dataActionsIterable)
 The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html) contains the what version the transaction is committed as and whether the table is ready for a checkpoint. As we are creating a table the version will be `0`. We will be discussing later on what a checkpoint is and what it means for the table to be ready for the checkpoint.
 
 A few working examples to create and insert data into partitioned and un-partitioned Delta tables are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
+
+## Blind append into an existing Delta table
+In this section, we will walk through how to build a Delta connector that inserts data into an existing Delta table (similar to `INSERT INTO <table> <query>` construct in SQL) using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
+
+You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository. The steps are exactly similar to [Create table and insert data into it](#create-a-table-and-insert-data-into-it) except that we won't be providing any schema or partition columns when building the `TransactionBuilder`
+
+```java
+// Create a `Table` object with the given destination table path
+Table table = Table.forPath(engine, tablePath);
+
+// Create a transaction builder to build the transaction
+TransactionBuilder txnBuilder =
+	table.createTransactionBuilder(
+		engine,
+		"Examples", /* engineInfo */
+		Operation.WRITE);
+
+/ Build the transaction - no need to provide the schema as the table already exists.
+Transaction txn = txnBuilder.build(engine);
+
+// Get the transaction state
+Row txnState = txn.getTransactionState(engine);
+
+List<Row> dataActions = new ArrayList<>();
+
+// Generate the sample data for three partitions. Process each partition separately.
+// This is just an example. In a real-world scenario, the data may come from different
+// partitions. Connectors already have the capability to partition by partition values
+// before writing to the table
+
+// In the test data `city` is a partition column
+for (String city : Arrays.asList("San Francisco", "Campbell", "San Jose")) {
+    FilteredColumnarBatch batch1 = generatedPartitionedDataBatch(
+	    5 /* offset */, city /* partition value */);
+    FilteredColumnarBatch batch2 = generatedPartitionedDataBatch(
+	    5 /* offset */, city /* partition value */);
+    FilteredColumnarBatch batch3 = generatedPartitionedDataBatch(
+	    10 /* offset */, city /* partition value */);
+
+    CloseableIterator<FilteredColumnarBatch> data =
+	    toCloseableIterator(Arrays.asList(batch1, batch2, batch3).iterator());
+
+    // Create partition value map
+    Map<String, Literal> partitionValues =
+	    Collections.singletonMap(
+		    "city", // partition column name
+		    // partition value. Depending upon the parition column type, the
+		    // partition value should be created. In this example, the partition
+		    // column is of type StringType, so we are creating a string literal.
+		    Literal.ofString(city));
+
+
+    // First transform the logical data to physical data that needs to be written
+    // to the Parquet
+    // files
+    CloseableIterator<FilteredColumnarBatch> physicalData =
+	    Transaction.transformLogicalData(engine, txnState, data, partitionValues);
+
+    // Get the write context
+    DataWriteContext writeContext =
+	    Transaction.getWriteContext(engine, txnState, partitionValues);
+
+
+    // Now write the physical data to Parquet files
+    CloseableIterator<DataFileStatus> dataFiles = engine.getParquetHandler()
+	    .writeParquetFiles(
+		    writeContext.getTargetDirectory(),
+		    physicalData,
+		    writeContext.getStatisticsColumns());
+
+
+    // Now convert the data file status to data actions that needs to be written to the Delta
+    // table log
+    CloseableIterator<Row> partitionDataActions = Transaction.generateAppendActions(
+	    engine,
+	    txnState,
+	    dataFiles,
+	    writeContext);
+
+    // Now add all the partition data actions to the main data actions list. In a
+    // distributed query engine, the partition data is written to files at tasks on executor
+    // nodes. The data actions are collected at the driver node and then written to the
+    // Delta table log using the `Transaction.commit`
+    while (partitionDataActions.hasNext()) {
+	dataActions.add(partitionDataActions.next());
+    }
+}
+
+// Create a iterable out of the data actions. If the contents are too big to fit in memory,
+// the connector may choose to write the data actions to a temporary file and return an
+// iterator that reads from the file.
+CloseableIterable<Row> dataActionsIterable = CloseableIterable.inMemoryIterable(
+	toCloseableIterator(dataActions.iterator()));
+
+// Commit the transaction.
+TransactionCommitResult commitResult = txn.commit(engine, dataActionsIterable);
+```
+
+## Idempotent Blind Appends to a Delta Table
+Idempotent writes allow the connector to make sure the data belonging to a particular transaction version and application id is inserted into the table at most once. In incremental processing systems (e.g. streaming systems), track progress using their own application-specific versions need to record what progress has been made in order to avoid duplicating data in the face of failures and retries during writes. By setting the transaction identifier, the Delta table can ensure that the data with the same identifier is not written multiple times. For more information refer to the Delta protocol section [Transaction Identifiers](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#transaction-identifiers)
+
+To make the data append idempotent, set the transaction identifier on the [`TransactionBuilder`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionBuilder.html#withTransactionId-io.delta.kernel.engine.Engine-java.lang.String-long-)
+
+```java
+// Set the transaction identifiers for idempotent writes
+// Delta/Kernel makes sure that there exists only one transaction in the Delta log
+// with the given application id and txn version
+txnBuilder = txnBuilder.withTransactionId(
+	engine,
+	"my app id", /* application id */
+	100 /* txn version */);
+```
+
+Thats all the connector need to do for idempotent blind appends.
+
+## Checkpointing a Delta table
+[Checkpoints](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#checkpoints) are an optimization in Delta Log in order to construct the state of the Delta table faster. It basically contains the state of the table at the version the checkpoint is created. Delta Kernel allows the connector to optionally make the checkpoints. It is created for every few commits (configurable table property) on the table.
+
+The result of `Transaction.commit` returns a `TransactionCommitResult` that contains the version the transaction is committed as and whether the table is [read for checkpoint](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html#isReadyForCheckpoint--). Creating a checkpoint takes time as it needs to construct the entire state of the table. If the connector doesn't want to checkpoint by itself but uses other connectors that are faster in creating a checkpoint, it can skip the checkpointing step. 
+
+If it wants to checkpoint, the `Table` object has an [API](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Table.html#checkpoint-io.delta.kernel.engine.Engine-long-) to checkpoint the table.
+
+```java
+TransactionCommitResult commitResult = txn.commit(engine, dataActionsIterable);
+
+if (commitResult.isReadyForCheckpoint()) {
+  // Checkpoint the table
+  Table.forPath(engine, tablePath).checkpoint(engine, commitResult.getVersion());
+}
+```
 
 
 ## Build a Delta connector for a distributed processing engine
