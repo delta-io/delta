@@ -985,8 +985,8 @@ For best performance, you can implement your own Parquet reader and other `Engin
 
 Now you should be able to read the Delta table correctly.
 
-### Step 4: Build write support in your connector
-In this section, we are going to walk through the likely sequence of Kernel API calls your connector will have to make to write to a table. The exact timing of making these calls in your connector in the context of connector-engine interactions depends entirely on the engine-connector APIs and is, therefore, beyond the scope of this guide. However, we will try to provide broad guidelines that are likely (but not guaranteed) to apply to your connector-engine setup. For this purpose, we are going to assume that the engine goes through the following phases when processing a write query - logical plan analysis, physical plan generation, and physical plan execution. Based on these broad characterizations, a typical control and data flow for reading a Delta table is going to be as follows:
+### Step 4: Build append support in your connector
+In this section, we are going to walk through the likely sequence of Kernel API calls your connector will have to make to append data to a table. The exact timing of making these calls in your connector in the context of connector-engine interactions depends entirely on the engine-connector APIs and is, therefore, beyond the scope of this guide. However, we will try to provide broad guidelines that are likely (but not guaranteed) to apply to your connector-engine setup. For this purpose, we are going to assume that the engine goes through the following phases when processing a write query - logical plan analysis, physical plan generation, and physical plan execution. Based on these broad characterizations, a typical control and data flow for reading a Delta table is going to be as follows:
 
 <table>
   <tr>
@@ -1105,29 +1105,78 @@ Row txnState = txn.getState(engine);
 String jsonTxnState = serializeToJson(txnState);
 ```
 
-#### Step 4.4: Tasks write the data to data files and send the data file info to the driver. 
+#### Step 4.4: Tasks write the data to data files and send the data file info to the driver.
 In this step (which is executed on the worker nodes inside each task):
+* Deserialize the transaction state
 * Writer operator within the task gets the data from its parent operator.
-* 
-
-* Read the physical data from Parquet file as indicated by the scan file row, scan state, and optionally the split info
-* Convert the physical data into logical data of the table using the Kernel's APIs.
-
-
-
-* Resolve the data in the batches: Each [`FilteredColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/FilteredColumnarBatch.html) has two components:
+* The data is converted into a `FilteredColumnarBatch`. Each [`FilteredColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/FilteredColumnarBatch.html) has two components:
     * Columnar batch (returned by `FilteredColumnarBatch.getData()`): This is the data read from the files having the schema matching the readSchema provided when the Scan object was built in the earlier step.
     * Optional selection vector (returned by `FilteredColumnarBatch.getSelectionVector()`): Optionally, a boolean vector that will define which rows in the batch are valid and should be consumed by the engine.
+* The connector can create `FilteredColumnBatch` wrapper around data in its own in-memory format.
+* Check if the data is partitioned or not. If not partitioned, partition the data by partition values.
+* For each partition generate the map of the partition column to the partition value
+* Use Kernel to convert the partitioned data into physical data that should go into the data files
+* Write the physical data into one or more data files.
+* Convert data file statues into a Delta log actions
+* Serialize the Delta log action `Row` objects and send them to the driver node
 
-If the selection vector is present, then you will have to apply it to the batch to resolve the final consumable data. 
+```
+Row txnState = ... deserialize from JSON string sent by the driver ...
 
-* Convert to engine-specific data format: Each connector/engine has its own native row / columnar batch formats and interfaces. To return the read data batches to the engine, you have to convert them to fit those engine-specific formats and/or interfaces. Here are a few tips that you can follow to make this efficient.
-  * Matching the engine-specific format: Some engines may expect the data in an in-memory format that may be different from the data produced by `getData()`. So you will have to do the data conversion for each column vector in the batch as needed. 
-  * Matching the engine-specific interfaces: You may have to implement wrapper classes that extend the engine-specific interfaces and appropriately encapsulate the row data.
+CloseableIterator<FilteredColumnarBatch> data = ... generate data ...
 
-For best performance, you can implement your own Parquet reader and other `Engine` implementations to make sure that every `ColumnVector` generated is already in the engine-native format thus eliminating any need to convert.
+// If the table is un-partitioned then this is an empty map
+Map<String, Literal> partitionValues = ... prepare the partition values ...
 
-Now you should be able to read the Delta table correctly.
+
+// First transform the logical data to physical data that needs to be written
+// to the Parquet files
+CloseableIterator<FilteredColumnarBatch> physicalData =
+  Transaction.transformLogicalData(engine, txnState, data, partitionValues);
+
+// Get the write context
+DataWriteContext writeContext = Transaction.getWriteContext(engine, txnState, partitionValues);
+
+// Now write the physical data to Parquet files
+CloseableIterator<DataFileStatus> dataFiles =
+  engine.getParquetHandler()
+    .writeParquetFiles(
+      writeContext.getTargetDirectory(),
+      physicalData,
+      writeContext.getStatisticsColumns());
+
+// Now convert the data file status to data actions that needs to be written to the Delta table log
+CloseableIterator<Row> partitionDataActions =
+  Transaction.generateAppendActions(
+    engine,
+    txnState,
+    dataFiles,
+    writeContext);
+
+.... serialize `partitionDataActions` and send them to driver node
+```
+
+#### Step 4.5: Finalize the query.
+At the driver node, the delta log actions from all the tasks are received and committed to the transaction. The tasks send the Delta log actions as a serialized JSON and deserialize them back to `Row` objects.
+
+```
+// Create a iterable out of the data actions. If the contents are too big to fit in memory,
+// the connector may choose to write the data actions to a temporary file and return an
+// iterator that reads from the file.
+CloseableIterable<Row> dataActionsIterable = CloseableIterable.inMemoryIterable(
+	toCloseableIterator(dataActions.iterator()));
+
+// Commit the transaction.
+TransactionCommitResult commitResult = txn.commit(engine, dataActionsIterable);
+
+// Optional step
+if (commitResult.isReadyForCheckpoint()) {
+  // Checkpoint the table
+  Table.forPath(engine, tablePath).checkpoint(engine, commitResult.getVersion());
+}
+```
+
+Thats it. Now you should be able to append data to Delta tables using the Kernel APIs.
 
 
 ## Migration guide
