@@ -33,6 +33,11 @@ Delta Kernel is a library for operating on Delta tables. Specifically, it provid
          * [Step 3.3: Distribute the file information to the workers](#step-33-distribute-the-file-information-to-the-workers)
          * [Step 3.4: Read the columnar data](#step-34-read-the-columnar-data)
       * [Step 4: Build write support in your connector](#step-4-build-write-support-in-your-connector)
+         * [Step 4.1: Determine the schema of the data that needs to be written to the table](#step-41-determine-the-schema-of-the-data-that-needs-to-be-written-to-the-table)
+         * [Step 4.2: Determine the physical partitioning of the data based on the table schema and partition columns](#step-42-determine-the-physical-partitioning-of-the-data-based-on-the-table-schema-and-partition-columns)
+         * [Step 4.3: Distribute the writer tasks definitions (which include the transaction state) to workers](#step-43-distribute-the-writer-tasks-definitions-which-include-the-transaction-state-to-workers)
+         * [Step 4.4: Tasks write the data to data files and send the data file info to the driver.](#step-44-tasks-write-the-data-to-data-files-and-send-the-data-file-info-to-the-driver)
+         * [Step 4.5: Finalize the query.](#step-45-finalize-the-query)
    * [Migration guide](#migration-guide)
       * [Migration from Delta Lake version 3.1.0 to 3.2.0](#migration-from-delta-lake-version-310-to-320)
 
