@@ -986,6 +986,148 @@ For best performance, you can implement your own Parquet reader and other `Engin
 Now you should be able to read the Delta table correctly.
 
 ### Step 4: Build write support in your connector
+In this section, we are going to walk through the likely sequence of Kernel API calls your connector will have to make to write to a table. The exact timing of making these calls in your connector in the context of connector-engine interactions depends entirely on the engine-connector APIs and is, therefore, beyond the scope of this guide. However, we will try to provide broad guidelines that are likely (but not guaranteed) to apply to your connector-engine setup. For this purpose, we are going to assume that the engine goes through the following phases when processing a write query - logical plan analysis, physical plan generation, and physical plan execution. Based on these broad characterizations, a typical control and data flow for reading a Delta table is going to be as follows:
+
+<table>
+  <tr>
+   <td><strong>Step</strong>
+   </td>
+   <td><strong>Typical query phase when this step occurs</strong>
+   </td>
+  </tr>
+  <tr>
+   <td>Determine the schema of the data that needs to be written to the table. Schema is derived from the existing table or from the parent operation of the `write` operator in the query plan when the table doesn't exist yet.
+   </td>
+   <td>Logical plan analysis phase when the plan's schema (`write` operator schema matches the table schema, etc.) and other details need to be resolved and validated.
+   </td>
+  </tr>
+  <tr>
+   <td>Determine the physical partitioning of the data based on the table schema and partition columns either from the existing table or from the query plan (for new tables)
+   </td>
+   <td>Physical plan generation, where the number of writer tasks, data schema and partitioning is determined</td>
+  </tr>
+  <tr>
+   <td>Distribute the writer tasks definitions (which include the transaction state) to workers. 
+   </td>
+   <td>Physical plan execution, only if it is a distributed engine.
+   </td>
+  </tr>
+  <tr>
+   <td>Tasks write the data to data files and send the data file info to the driver.
+   </td>
+   <td>Physical plan execution, when the data is actually written to the table location
+   </td>
+  </tr>
+  <tr>
+   <td>Finalize the query. Here, all the info of the data files written by the tasks is aggregated and committed to the transaction created at the beginning of the physical execution.
+   </td>
+   <td>Finalize the query. This happens on the driver where the query has started.
+   </td>
+  </tr>
+</table>
+
+Let's understand the details of each step.
+
+#### Step 4.1: Determine the schema of the data that needs to be written to the table
+The first step is to resolve the output data schema. This is often required by the connector/ engine to resolve and validate the logical plan of the  query (if the concept of logical plan exists in your engine). To achieve this, the connector has to do the following. At a high level query plan is a tree of operators where the leaf-level operators generate or read data from storage/tables and feed it upwards towards the parent operator nodes. This data transfer happens until it reaches the root operator node where the query is finalized (either the results are sent to the client or data is written to another table).
+
+* Create the `Table` object
+* From the `Table` object try to get the schema.
+  * If the table is not found
+    * the query includes creating the table (e.g., `CREATE TABLE AS` SQL query);
+      * the schema is derived from the operator above the `write` that feeds the data to the `write` operator.
+    * the query doesn't include creating new table, an exception is thrown saying the table is not found
+  * If the table already exists
+    * get the schema from the table and check if it matches the schema of the `write` operator. If not throw an exception. 
+* Create a `TransactionBuilder` - this basically begins the steps of transaction construction.
+```java
+import io.delta.kernel.*;
+import io.delta.kernel.defaults.engine.*;
+
+Engine myEngine = new MyEngine();
+Table myTable = Table.forPath(myTablePath);
+
+StructType writeOperatorSchema = // ... derived from the query operator tree ...
+StructType dataSchema;
+boolean isNewTable = false;
+
+try {
+  Snapshot mySnapshot = myTable.getLatestSnapshot(myEngine);
+  dataSchema = mySnapshot.getSchema(myEngine);
+
+  // .. check dataSchema and writeOperatorSchema match ...
+} catch(TableNotFoundException e) {
+  isNewTable = true;
+  dataSchema = writeOperatorSchema;
+}
+
+TransactionBuilder txnBuilder =
+  myTable.createTransactionBuilder(
+    myEngine,
+    "Examples", /* engineInfo - connector can add its own identifier which is noted in the Delta Log */ 
+    Operation /* What is the operation we are trying to perform? This is noted in the Delta Log */
+  );
+
+if (isNewTable) {
+  // For a new table set the table schema in the transaction builder
+  txnBuilder = txnBuilder.withSchema(engine, dataSchema)
+}
+
+```
+
+#### Step 4.2: Determine the physical partitioning of the data based on the table schema and partition columns
+
+Partition columns are found either from the query (for new tables, the query defines the partition columns) or from the existing table.
+
+```java
+TransactionBuilder txnBuilder = ... from the last step ...
+Transaction txn;
+
+List<String> partitionColumns = ...
+if (newTable) {
+  partitionColumns = ... derive from the query parameters (ex. PARTITION BY clause in SQL) ...
+  txnBuilder = txnBuilder.withPartitionColumns(engine, partitionColumns);
+  txn = txnBuilder.build(engine);
+} else {
+  txn = txnBuilder.build(engine);
+  partitionColumns = txn.getPartitionColumns(engine);
+}
+```
+
+At the end of this step, we have the `Transaction` and schema of the data to generate and its partitioning.
+
+#### Step 4.3: Distribute the writer tasks definitions (which include the transaction state) to workers
+If you are building a connector for a distributed engine like Spark/Presto/Trino/Flink, then your connector has to send all the writer metadata from the query planning machine (henceforth called the driver) to task execution machines (henceforth called the workers). You will have to serialize and deserialize the transaction state. It is the connector job to implement serialization and deserialization utilities for a [`Row`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/Row.html). More details on a custom `Row` SerDe are found [here](#custom-row-serializerdeserializer).
+
+```java
+Row txnState = txn.getState(engine);
+
+String jsonTxnState = serializeToJson(txnState);
+```
+
+#### Step 4.4: Tasks write the data to data files and send the data file info to the driver. 
+In this step (which is executed on the worker nodes inside each task):
+* Writer operator within the task gets the data from its parent operator.
+* 
+
+* Read the physical data from Parquet file as indicated by the scan file row, scan state, and optionally the split info
+* Convert the physical data into logical data of the table using the Kernel's APIs.
+
+
+
+* Resolve the data in the batches: Each [`FilteredColumnarBatch`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/data/FilteredColumnarBatch.html) has two components:
+    * Columnar batch (returned by `FilteredColumnarBatch.getData()`): This is the data read from the files having the schema matching the readSchema provided when the Scan object was built in the earlier step.
+    * Optional selection vector (returned by `FilteredColumnarBatch.getSelectionVector()`): Optionally, a boolean vector that will define which rows in the batch are valid and should be consumed by the engine.
+
+If the selection vector is present, then you will have to apply it to the batch to resolve the final consumable data. 
+
+* Convert to engine-specific data format: Each connector/engine has its own native row / columnar batch formats and interfaces. To return the read data batches to the engine, you have to convert them to fit those engine-specific formats and/or interfaces. Here are a few tips that you can follow to make this efficient.
+  * Matching the engine-specific format: Some engines may expect the data in an in-memory format that may be different from the data produced by `getData()`. So you will have to do the data conversion for each column vector in the batch as needed. 
+  * Matching the engine-specific interfaces: You may have to implement wrapper classes that extend the engine-specific interfaces and appropriately encapsulate the row data.
+
+For best performance, you can implement your own Parquet reader and other `Engine` implementations to make sure that every `ColumnVector` generated is already in the engine-native format thus eliminating any need to convert.
+
+Now you should be able to read the Delta table correctly.
 
 
 ## Migration guide
