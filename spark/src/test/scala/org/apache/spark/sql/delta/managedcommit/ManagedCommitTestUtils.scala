@@ -79,12 +79,13 @@ trait ManagedCommitTestUtils
     test(s"$testName [Backfill batch size: None]") {
       f(None)
     }
-    val managedCommitOwnerConf = Map("randomConf" -> "randomConfValue")
-    val managedCommitOwnerJson = JsonUtils.toJson(managedCommitOwnerConf)
-    withSQLConf(
-        DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "in-memory",
-        DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey -> managedCommitOwnerJson) {
-      testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
+    testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
+      val managedCommitOwnerConf = Map("randomConf" -> "randomConfValue")
+      val managedCommitOwnerJson = JsonUtils.toJson(managedCommitOwnerConf)
+      withSQLConf(
+          DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "tracking-in-memory",
+          DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey ->
+            managedCommitOwnerJson) {
         f(Some(backfillBatchSize))
       }
     }

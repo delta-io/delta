@@ -795,6 +795,6 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 }
 
-class ManagedCommitFill1DeltaTimeTravelSuite extends DeltaTimeTravelSuite {
+class DeltaTimeTravelWithManagedCommitBatch1Suite extends DeltaTimeTravelSuite {
   override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }
