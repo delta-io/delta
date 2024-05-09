@@ -184,6 +184,13 @@ class TrackingCommitOwnerClient(delegatingCommitOwnerClient: InMemoryCommitOwner
       logPath, managedCommitTableConf, startVersion, endVersion)
   }
 
+  def removeCommitTestOnly(
+      logPath: Path,
+      commitVersion: Long
+  ): Unit = {
+    delegatingCommitOwnerClient.perTableMap.get(logPath).commitsMap.remove(commitVersion)
+  }
+
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
