@@ -247,7 +247,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
           .withColumn("_commit_version", (col("id") / 10).cast(LongType))
       )
       val readDf3 = sql(s"SELECT * FROM table_changes('$tbl', " +
-        "string(now() - interval 1 day), string(now()))")
+        "string(date_sub(current_date(), 1)), string(now()))")
       checkCDCAnswer(
         DeltaLog.forTable(spark, TableIdentifier("tbl")),
         readDf2,
