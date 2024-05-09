@@ -53,7 +53,7 @@ case class DeltaSharingFileIndex(
     with SupportsRowIndexFilters
     with DeltaFileFormat
     with Logging {
-  private val queryCustomTablePath = client.getProfileProvider.getCustomTablePath(
+  private lazy val queryCustomTablePath = client.getProfileProvider.getCustomTablePath(
     params.path.toString
   )
 
