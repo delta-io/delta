@@ -250,55 +250,16 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
-   * Determine whether this protocol can be safely downgraded to a new protocol `to`. This
-   * includes the following:
-   *
-   *  - The current protocol needs to support at least writer features. This is because protocol
-   *    downgrade is only supported with table features.
-   *  - We can only remove one feature at a time.
-   *  - The protocol versions may be downgraded when dropping a table feature.
-   *    There are two cases:
-   *    a) If `to` protocol contains table features, the resulting versions should be the
-   *       minimum required versions to support all table features.
-   *    b) If `to` protocol only contains legacy features, the resulting versions
-   *       must support exactly the same set of legacy features supported by the current protocol.
-   *
-   * Note, this not an exhaustive list of downgrade rules. Rather, we check the most important
-   * downgrade invariants. We also perform checks during feature removal at
-   * [[AlterTableDropFeatureDeltaCommand]].
+   * Determine whether this protocol can be safely downgraded to a new protocol `to`.
+   * All we need is the implicit and explicit features between the two protocols to match,
+   * excluding the dropped feature. Note, this accounts for cases where we downgrade
+   * from table features to legacy protocol versions.
    */
   def canDowngradeTo(to: Protocol, droppedFeatureName: String): Boolean = {
-    if (!supportsWriterFeatures) return false
-
-    val featureNames = readerAndWriterFeatureNames - droppedFeatureName
-    val minRequiredVersions = TableFeatureProtocolUtils.minimumRequiredVersions(
-      featureNames.flatMap(TableFeature.featureNameToFeature).toSeq)
-    val toSupportsRequiredMinVersions =
-      (to.minReaderVersion, to.minWriterVersion) == minRequiredVersions
-
-    // When `to` protocol does not have any features, versions might get downgraded. However,
-    // the current protocol needs to contain one non-legacy feature. We also allow downgrade when
-    // there are only legacy features. This is to accommodate the case when the user attempts to
-    // remove a legacy feature in a table that only contains legacy features.
-    if (to.readerAndWriterFeatureNames.isEmpty) {
-      val sameLegacyFeaturesSupported = featureNames == to.implicitlySupportedFeatures.map(_.name)
-
-      return sameLegacyFeaturesSupported &&
-        (to.minReaderVersion, to.minWriterVersion) == minRequiredVersions &&
-        readerAndWriterFeatures.filterNot(_.isLegacyFeature).size <= 1
-    }
-
-    // When `to` protocol contains table features, protocol versions may still
-    // get downgraded. However, the resulting protocol needs to support at least writer features.
-    // Note, we check the minimum required versions only when table features exist in the protocol.
-    // This because we do not always downgrade the versions of protocols with no table features.
-    if (!to.supportsWriterFeatures ||
-      to.nativeReaderAndWriterFeatures.nonEmpty && !toSupportsRequiredMinVersions) {
-      return false
-    }
-
-    // Can only remove a maximum of one feature at a time.
-    (this.readerAndWriterFeatureNames -- to.readerAndWriterFeatureNames).size == 1
+    val thisFeatures = this.implicitlyAndExplicitlySupportedFeatures
+    val toFeatures = to.implicitlyAndExplicitlySupportedFeatures
+    val droppedFeature = Seq(droppedFeatureName).flatMap(TableFeature.featureNameToFeature)
+    (thisFeatures -- droppedFeature) == toFeatures
   }
 
   /**
