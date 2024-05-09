@@ -303,7 +303,7 @@ The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel
 A few working examples to create partitioned and un-partitioned Delta tables are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
 ## Create a table and insert data into it
-In this section, we will walk through how to build a Delta connector that can create a Delta table and insert data into the table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
+In this section, we will walk through how to build a Delta connector that can create a Delta table and insert data into the table (similar to `CREATE TABLE <table> AS <query>` construct in SQL) using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
 
 You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
 
