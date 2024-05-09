@@ -418,7 +418,7 @@ CloseableIterator<Row> dataActions =
 		writeContext);
 ```
 
-The next step is constructing [`CloseableIterable`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html) out of the all the Delta log actions generated above. The reason for constructing an `Iterable` is that the transaction committing involves accessing the list of Delta log actions more than one time (in order to resolve conflicts when there are multiple writes to the table). Kernel provides a [utility method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html#inMemoryIterable-io.delta.kernel.utils.CloseableIterator-) to create an in-memory version of `CloseableIterable`.
+The next step is constructing [`CloseableIterable`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html) out of the all the Delta log actions generated above. The reason for constructing an `Iterable` is that the transaction committing involves accessing the list of Delta log actions more than one time (in order to resolve conflicts when there are multiple writes to the table). Kernel provides a [utility method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html#inMemoryIterable-io.delta.kernel.utils.CloseableIterator-) to create an in-memory version of `CloseableIterable`. This interface also gives the connector an option to implement a custom implementation that spills the data actions to disk when the contents are too big to fit in memory.
 
 ```java
 // Create a iterable out of the data actions. If the contents are too big to fit in memory,
