@@ -3366,7 +3366,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       featuresToRemove = Seq(TestRemovableWriterFeature),
       expectedDowngradedProtocol = protocolWithReaderFeature(TestRemovableReaderWriterFeature))
   }
-q
+
   test(s"Can drop reader+writer feature when there is nothing to clean") {
     withTempPath { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
