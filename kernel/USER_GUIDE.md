@@ -307,8 +307,7 @@ In this section, we will walk through how to build a Delta connector that can cr
 
 You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
 
-
-The first step is to construct a `Transaction`. Below is the code for that. More details on what each step of the code mean, please read the [create table](#create-a-delta-table) section.
+The first step is to construct a `Transaction`. Below is the code for that. For more details on what each step of the code means, please read the [create table](#create-a-delta-table) section.
 
 ```
 package io.delta.kernel.examples;
@@ -407,6 +406,36 @@ CloseableIterator<DataFileStatus> dataFiles = engine.getParquetHandler()
 ```
 
 In the above code, the connector is making use of the `Engine` provided `ParquetHandler` to write the data, but the connector can choose its own Parquet file writer to write the data. Also note that the return of the above call is an iterator of [`DataFileStatus`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/DataFileStatus.html) for each data file written. It basically contains the file path, file metadata, and optional file-level statistics for columns specified by the [`WriteContext.getStatisticsColumns()`]([https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/DataWriteContext.html](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/DataWriteContext.html#getStatisticsColumns--))
+
+Convert each `DataFileStatus` into a Delta log action that can be written to the Delta table log.
+
+```java
+CloseableIterator<Row> dataActions =
+	Transaction.generateAppendActions(
+		engine,
+		txnState,
+		dataFiles,
+		writeContext);
+```
+
+The next step is constructing [`CloseableIterable`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html) out of the all the Delta log actions generated above. The reason for constructing an `Iterable` is that the transaction committing involves accessing the list of Delta log actions more than one time (in order to resolve conflicts when there are multiple writes to the table). Kernel provides a [utility method](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/utils/CloseableIterable.html#inMemoryIterable-io.delta.kernel.utils.CloseableIterator-) to create an in-memory version of `CloseableIterable`.
+
+```java
+// Create a iterable out of the data actions. If the contents are too big to fit in memory,
+// the connector may choose to write the data actions to a temporary file and return an
+// iterator that reads from the file.
+CloseableIterable<Row> dataActionsIterable = CloseableIterable.inMemoryIterable(dataActions);
+```
+
+The final step is committing the transaction!
+
+```java
+TransactionCommitStatus commitStatus = txn.commit(engine, dataActionsIterable)
+```
+
+The [`TransactionCommitResult`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/TransactionCommitResult.html) contains the what version the transaction is committed as and whether the table is ready for a checkpoint. As we are creating a table the version will be `0`. We will be discussing later on what a checkpoint is and what it means for the table to be ready for the checkpoint.
+
+A few working examples to create and insert data into partitioned and un-partitioned Delta tables are available [here](https://github.com/delta-io/delta/tree/master/kernel/examples).
 
 
 ## Build a Delta connector for a distributed processing engine
