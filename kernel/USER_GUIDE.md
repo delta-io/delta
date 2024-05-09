@@ -3,12 +3,11 @@
 ## What is Delta Kernel?
 Delta Kernel is a library for operating on Delta tables. Specifically, it provides simple and narrow APIs for reading and writing to Delta tables without the need to understand the [Delta protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md) details. You can use this library to do the following:
 
-* Read Delta tables from your applications.
-* Build a connector for a distributed engine like [Apache Spark™](https://github.com/apache/spark), [Apache Flink](https://github.com/apache/flink), or [Trino](https://github.com/trinodb/trino) for reading massive Delta tables.
+* Read and write Delta tables from your applications.
+* Build a connector for a distributed engine like [Apache Spark™](https://github.com/apache/spark), [Apache Flink](https://github.com/apache/flink), or [Trino](https://github.com/trinodb/trino) for reading or writing massive Delta tables.
 
-In this user guide, we are going to walk through the following: 
-* [How to read Delta table in a single process](#read-a-delta-table-in-a-single-process).
-* [How to build a Delta connector for distributed engines with custom Kernel `Engine`](#build-a-delta-connector-for-a-distributed-processing-engine).
+##### Table of Contents  
+[Headers](#headers)
 
 ## Read a Delta table in a single process
 In this section, we will walk through how to build a very simple single-process Delta connector that can read a Delta table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
@@ -580,6 +579,9 @@ If the selection vector is present, then you will have to apply it to the batch 
 For best performance, you can implement your own Parquet reader and other `Engine` implementations to make sure that every `ColumnVector` generated is already in the engine-native format thus eliminating any need to convert.
 
 Now you should be able to read the Delta table correctly.
+
+### Step 4: Build write support in your connector
+
 
 ## Migration guide
 Kernel APIs are still evolving and new features are being added. Kernel authors try to make the API changes backward compatible as much as they can with each new release, but sometimes it is hard to maintain the backward compatibility for a project that is evolving rapidly.
