@@ -42,7 +42,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-trait DataSkippingDeltaTestsBase extends QueryTest
+trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShims
     with SharedSparkSession
     with DeltaSQLCommandTest
     with PredicateHelper
@@ -1671,7 +1671,7 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
-  test("data skipping by stats - variant type") {
+  testSparkMasterOnly("data skipping by stats - variant type") {
     withTable("tbl") {
       sql("""CREATE TABLE tbl(v VARIANT,
               v_struct STRUCT<v: VARIANT>,

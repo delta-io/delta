@@ -149,7 +149,7 @@ class StatsCollectionSuite
     }
   }
 
-  statsTest("recompute variant stats") {
+  statsTestSparkMasterOnly("recompute variant stats") {
     withTempDir { tempDir =>
       withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
         val df = spark.range(2)
