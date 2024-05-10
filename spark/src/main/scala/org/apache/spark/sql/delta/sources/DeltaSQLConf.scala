@@ -1168,6 +1168,19 @@ trait DeltaSQLConfBase {
         .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
         .createWithDefault(15)
 
+  val DELTA_OPTIMIZE_BATCH_SIZE =
+    buildConf("optimize.batchSize")
+        .internal()
+        .doc(
+          """
+            |The size of a batch within an OPTIMIZE JOB. After a batch is complete, it's
+            | progress will be committed to the transaction log, allowing for incremental
+            | progress.
+            |""".stripMargin)
+        .bytesConf(ByteUnit.BYTE)
+        .checkValue(_ >= 0, "batchSize has to be positive")
+        .createOptional
+
   val DELTA_OPTIMIZE_REPARTITION_ENABLED =
     buildConf("optimize.repartition.enabled")
       .internal()
