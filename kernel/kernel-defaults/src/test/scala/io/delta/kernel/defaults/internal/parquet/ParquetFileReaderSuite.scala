@@ -21,6 +21,7 @@ import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
+
 class ParquetFileReaderSuite extends AnyFunSuite
   with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
 
@@ -73,19 +74,24 @@ class ParquetFileReaderSuite extends AnyFunSuite
     checkAnswer(actResult, expResult)
   }
 
-  private val ALL_TYPES_FILE = goldenTableFile("parquet-all-types").getAbsolutePath
+  Seq(
+      "parquet-all-types",
+      "parquet-all-types-legacy-format"
+  ).foreach { allTypesTableName =>
+    test(s"read all types of data - $allTypesTableName") {
+      val allTypesFile = goldenTableFile(allTypesTableName).getAbsolutePath
+      val readSchema = tableSchema(allTypesFile)
 
-  test("read all types of data") {
-    val readSchema = tableSchema(ALL_TYPES_FILE)
+      val actResult = readParquetFilesUsingKernel(allTypesFile, readSchema)
 
-    val actResult = readParquetFilesUsingKernel(ALL_TYPES_FILE, readSchema)
+      val expResult = readParquetFilesUsingSpark(allTypesFile, readSchema)
 
-    val expResult = readParquetFilesUsingSpark(ALL_TYPES_FILE, readSchema)
-
-    checkAnswer(actResult, expResult)
+      checkAnswer(actResult, expResult)
+    }
   }
 
   test("read subset of columns") {
+    val tablePath = goldenTableFile("parquet-all-types").getAbsolutePath
     val readSchema = new StructType()
       .add("byteType", ByteType.BYTE)
       .add("booleanType", BooleanType.BOOLEAN)
@@ -96,14 +102,15 @@ class ParquetFileReaderSuite extends AnyFunSuite
         .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
       .add("array_of_prims", new ArrayType(IntegerType.INTEGER, true))
 
-    val actResult = readParquetFilesUsingKernel(ALL_TYPES_FILE, readSchema)
+    val actResult = readParquetFilesUsingKernel(tablePath, readSchema)
 
-    val expResult = readParquetFilesUsingSpark(ALL_TYPES_FILE, readSchema)
+    val expResult = readParquetFilesUsingSpark(tablePath, readSchema)
 
     checkAnswer(actResult, expResult)
   }
 
   test("read subset of columns with missing columns in file") {
+    val tablePath = goldenTableFile("parquet-all-types").getAbsolutePath
     val readSchema = new StructType()
       .add("booleanType", BooleanType.BOOLEAN)
       .add("integerType", IntegerType.INTEGER)
@@ -114,9 +121,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
         .add("aa", StringType.STRING)
         .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
 
-    val actResult = readParquetFilesUsingKernel(ALL_TYPES_FILE, readSchema)
+    val actResult = readParquetFilesUsingKernel(tablePath, readSchema)
 
-    val expResult = readParquetFilesUsingSpark(ALL_TYPES_FILE, readSchema)
+    val expResult = readParquetFilesUsingSpark(tablePath, readSchema)
 
     checkAnswer(actResult, expResult)
   }
