@@ -82,11 +82,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
       val allTypesFile = goldenTableFile(allTypesTableName).getAbsolutePath
       val readSchema = tableSchema(allTypesFile)
 
-      val actResult = readParquetFilesUsingKernel(allTypesFile, readSchema)
-
-      val expResult = readParquetFilesUsingSpark(allTypesFile, readSchema)
-
-      checkAnswer(actResult, expResult)
+      checkAnswer(
+        readParquetFilesUsingKernel(allTypesFile, readSchema), /* actual */
+        readParquetFilesUsingSpark(allTypesFile, readSchema) /* expected */)
     }
   }
 
@@ -102,11 +100,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
         .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
       .add("array_of_prims", new ArrayType(IntegerType.INTEGER, true))
 
-    val actResult = readParquetFilesUsingKernel(tablePath, readSchema)
-
-    val expResult = readParquetFilesUsingSpark(tablePath, readSchema)
-
-    checkAnswer(actResult, expResult)
+    checkAnswer(
+      readParquetFilesUsingKernel(tablePath, readSchema), /* actual */
+      readParquetFilesUsingSpark(tablePath, readSchema) /* expected */)
   }
 
   test("read subset of columns with missing columns in file") {
@@ -121,11 +117,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
         .add("aa", StringType.STRING)
         .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
 
-    val actResult = readParquetFilesUsingKernel(tablePath, readSchema)
-
-    val expResult = readParquetFilesUsingSpark(tablePath, readSchema)
-
-    checkAnswer(actResult, expResult)
+    checkAnswer(
+      readParquetFilesUsingKernel(tablePath, readSchema), /* actual */
+      readParquetFilesUsingSpark(tablePath, readSchema) /* expected */)
   }
 
   test("request row indices") {
