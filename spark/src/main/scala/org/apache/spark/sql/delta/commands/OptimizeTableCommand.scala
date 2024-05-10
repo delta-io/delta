@@ -255,6 +255,8 @@ class OptimizeExecutor(
     }
   }
 
+  private val partitionSchema = snapshot.metadata.partitionSchema
+
   def optimize(): Seq[Row] = {
     recordDeltaOperation(snapshot.deltaLog, "delta.optimize") {
       val minFileSize = optimizeContext.minFileSize.getOrElse(
@@ -268,7 +270,6 @@ class OptimizeExecutor(
       // Get all the files from the snapshot, we will register them with the individual
       //transactions later
       val candidateFiles = snapshot.filesForScan(partitionPredicate, keepNumRecords = true).files
-      val partitionSchema = snapshot.metadata.partitionSchema
 
       val filesToProcess = optimizeContext.reorg match {
         case Some(reorgOperation) => reorgOperation.filterFilesToReorg(snapshot, candidateFiles)
@@ -277,43 +278,17 @@ class OptimizeExecutor(
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
       val jobs = groupFilesIntoBins(partitionsToCompact)
-      val batches = batchSize match {
-        case Some(size) => groupBinsIntoBatches(jobs, size)
-        case None => Seq(jobs)
-      }
-
-      val txn = table.startTransaction(Some(snapshot))
-      txn.trackFilesRead(candidateFiles)
-      txn.trackReadPredicates(partitionPredicate)
 
       val maxThreads =
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)
-      val updates = ThreadUtils.parmap(jobs, "OptimizeJob", maxThreads) { partitionBinGroup =>
-        runOptimizeBinJob(txn, partitionBinGroup._1, partitionBinGroup._2, maxFileSize)
-      }.flatten
-
-      val addedFiles = updates.collect { case a: AddFile => a }
-      val removedFiles = updates.collect { case r: RemoveFile => r }
-      val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
-      if (addedFiles.size > 0) {
-        val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
-        commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
-          val newPartitionSchema = newTxn.metadata.partitionSchema
-          val candidateSetOld = candidateFiles.map(_.path).toSet
-          val candidateSetNew = newTxn.filterFiles(partitionPredicate).map(_.path).toSet
-
-          // As long as all of the files that we compacted are still part of the table,
-          // and the partitioning has not changed it is valid to continue to try
-          // and commit this checkpoint.
-          if (candidateSetOld.subsetOf(candidateSetNew) && partitionSchema == newPartitionSchema) {
-            true
-          } else {
-            val deleted = candidateSetOld -- candidateSetNew
-            logWarning(s"The following compacted files were delete " +
-              s"during checkpoint ${deleted.mkString(",")}. Aborting the compaction.")
-            false
+      batchSize match {
+        case Some(size) =>
+          val batches = groupBinsIntoBatches(jobs, size)
+          ThreadUtils.parmap(batches, "OptimizeJobBatch", maxThreads) { batch =>
+            runOptimizeBatch(batch, maxFileSize)
           }
-        }
+        case None =>
+          runOptimizeBatch(jobs, maxFileSize)
       }
 
       val optimizeStats = OptimizeStats()
@@ -324,10 +299,10 @@ class OptimizeExecutor(
       optimizeStats.totalConsideredFiles = candidateFiles.size
       optimizeStats.totalFilesSkipped = optimizeStats.totalConsideredFiles - removedFiles.size
       optimizeStats.totalClusterParallelism = sparkSession.sparkContext.defaultParallelism
-      val numTableColumns = txn.snapshot.metadata.schema.size
+      val numTableColumns = snapshot.metadata.schema.size
       optimizeStats.numTableColumns = numTableColumns
       optimizeStats.numTableColumnsWithStats =
-        DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(txn.snapshot.metadata)
+        DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(snapshot.metadata)
           .min(numTableColumns)
       if (removedDVs.size > 0) {
         optimizeStats.deletionVectorStats = Some(DeletionVectorStats(
@@ -337,7 +312,7 @@ class OptimizeExecutor(
 
       optimizeStrategy.updateOptimizeStats(optimizeStats, removedFiles, jobs)
 
-      return Seq(Row(txn.deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
+      return Seq(Row(deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
     }
   }
 
@@ -451,8 +426,46 @@ class OptimizeExecutor(
   }
 
   private def runOptimizeBatch(
+    bins: Seq[(Map[String, String], Seq[AddFile])],
+    maxFileSize: Long
+  ): Unit = {
+    val txn = table.startTransaction(Some(snapshot))
 
-  )
+    val filesToProcess = bins.flatMap(_._2)
+
+    txn.trackFilesRead(filesToProcess)
+    txn.trackReadPredicates(partitionPredicate)
+
+    val maxThreads =
+      sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)
+    val updates = ThreadUtils.parmap(bins, "OptimizeJob", maxThreads) { partitionBinGroup =>
+      runOptimizeBinJob(txn, partitionBinGroup._1, partitionBinGroup._2, maxFileSize)
+    }.flatten
+
+    val addedFiles = updates.collect { case a: AddFile => a }
+    val removedFiles = updates.collect { case r: RemoveFile => r }
+    val removedDVs = filesToProcess.filter(_.deletionVector != null).map(_.deletionVector).toSeq
+    if (addedFiles.size > 0) {
+      val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
+      commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
+        val newPartitionSchema = newTxn.metadata.partitionSchema
+        val candidateSetOld = filesToProcess.map(_.path).toSet
+        val candidateSetNew = newTxn.filterFiles(partitionPredicate).map(_.path).toSet
+
+        // As long as all of the files that we compacted are still part of the table,
+        // and the partitioning has not changed it is valid to continue to try
+        // and commit this checkpoint.
+        if (candidateSetOld.subsetOf(candidateSetNew) && partitionSchema == newPartitionSchema) {
+          true
+        } else {
+          val deleted = candidateSetOld -- candidateSetNew
+          logWarning(s"The following compacted files were delete " +
+            s"during checkpoint ${deleted.mkString(",")}. Aborting the compaction.")
+          false
+        }
+      }
+    }
+  }
 
   /**
    * Utility method to run a Spark job to compact the files in given bin
