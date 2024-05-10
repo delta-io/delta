@@ -127,7 +127,7 @@ public class DefaultJsonHandler implements JsonHandler {
                         }
                     }
                 } catch (IOException ex) {
-                    throw new RuntimeException(ex);
+                    throw new UncheckedIOException(ex);
                 }
 
                 return nextLine != null;

@@ -85,7 +85,9 @@ public class ParquetFileReader {
                     hasNotConsumedNextElement = reader.nextKeyValue() &&
                             reader.getCurrentValue() != null;
                     return hasNotConsumedNextElement;
-                } catch (IOException | InterruptedException ie) {
+                } catch (IOException io) {
+                    throw new UncheckedIOException(io);
+                } catch (InterruptedException ie) {
                     throw new RuntimeException(ie);
                 }
             }

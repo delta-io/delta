@@ -15,8 +15,7 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -248,6 +247,11 @@ public class Checkpointer {
             Thread.currentThread().interrupt();
             return Optional.empty();
         } catch (Exception ex) {
+            // Sometimes the IOException is wrapped as UncheckedIOException
+            if (ex instanceof UncheckedIOException &&
+                    ex.getCause() instanceof FileNotFoundException) {
+                return Optional.empty(); // there is no point retrying
+            }
             String msg = String.format(
                     "Failed to load checkpoint metadata from file %s. " +
                             "Retrying after 1sec. (current attempt = %s)",

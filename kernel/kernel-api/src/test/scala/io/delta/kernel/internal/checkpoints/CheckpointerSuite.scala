@@ -21,12 +21,12 @@ import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpo
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, MockEngineUtils, VectorTestUtils}
+import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
 
-import java.io.{FileNotFoundException, IOException}
+import java.io.{FileNotFoundException, IOException, UncheckedIOException}
 import java.util.Optional
 
 class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
@@ -78,6 +78,16 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("try to load last checkpoint metadata when the file is missing") {
     val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
     val lastCheckpoint = new Checkpointer(LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE)
+      .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
+    assert(!lastCheckpoint.isPresent)
+    assert(jsonHandler.currentFailCount == 0)
+  }
+
+  test("try to load last checkpoint metadata when the file is missing " +
+    "- wrapped in UncheckedIOException") {
+    val jsonHandler = new MockLastCheckpointMetadataFileReader(maxFailures = 0)
+    val lastCheckpoint = new Checkpointer(
+        LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE_AS_UNCHECK_IOEXCEPTION)
       .readLastCheckpointFile(mockEngine(jsonHandler = jsonHandler))
     assert(!lastCheckpoint.isPresent)
     assert(jsonHandler.currentFailCount == 0)
@@ -250,6 +260,8 @@ object CheckpointerSuite extends VectorTestUtils {
   val ZERO_SIZED_LAST_CHECKPOINT_FILE_TABLE = new Path("/zero_sized")
   val INVALID_LAST_CHECKPOINT_FILE_TABLE = new Path("/invalid")
   val LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE = new Path("/filenotfoundtable")
+  val LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE_AS_UNCHECK_IOEXCEPTION =
+    new Path("/filenotfoundtable-unchecked-ioexception")
 }
 
 /** `maxFailures` allows how many times to fail before returning the valid data */
@@ -277,6 +289,8 @@ class MockLastCheckpointMetadataFileReader(maxFailures: Int) extends BaseMockJso
           throw new IOException("Invalid last checkpoint file")
         case LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE =>
           throw new FileNotFoundException("File not found")
+        case LAST_CHECKPOINT_FILE_NOT_FOUND_TABLE_AS_UNCHECK_IOEXCEPTION =>
+          throw new UncheckedIOException(new FileNotFoundException("File not found"));
         case _ => throw new IOException("Unknown table")
       })
   }
