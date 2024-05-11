@@ -450,12 +450,19 @@ class OptimizeExecutor(
       commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
         val newPartitionSchema = newTxn.metadata.partitionSchema
         val candidateSetOld = filesToProcess.map(_.path).toSet
-        val candidateSetNew = newTxn.filterFiles(partitionPredicate).map(_.path).toSet
+        // We specifically don't list the files through the transaction since we are potentially
+        // only processing a subset of them below. If the transaction is still valid, we will
+        // register the files and predicate below
+        val candidateSetNew =
+          newTxn.snapshot.filesForScan(partitionPredicate).files.map(_.path).toSet
 
         // As long as all of the files that we compacted are still part of the table,
         // and the partitioning has not changed it is valid to continue to try
         // and commit this checkpoint.
         if (candidateSetOld.subsetOf(candidateSetNew) && partitionSchema == newPartitionSchema) {
+          // Make sure the files we are processing are registered with the transaction
+          newTxn.trackFilesRead(filesToProcess)
+          newTxn.trackReadPredicates(partitionPredicate)
           true
         } else {
           val deleted = candidateSetOld -- candidateSetNew
