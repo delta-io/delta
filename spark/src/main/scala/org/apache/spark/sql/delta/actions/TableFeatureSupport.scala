@@ -351,7 +351,7 @@ trait TableFeatureSupport { this: Protocol =>
   def downgradeProtocolVersionsIfNeeded: Protocol = {
     if (nativeReaderAndWriterFeatures.nonEmpty) {
       val (minReaderVersion, minWriterVersion) =
-        TableFeatureProtocolUtils.minimumRequiredVersions(nativeReaderAndWriterFeatures)
+        TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
       // It is guaranteed by the definitions of WriterFeature and ReaderFeature, that we cannot
       // end up with invalid protocol versions such as (3, 3). Nevertheless,
       // we double check it here.

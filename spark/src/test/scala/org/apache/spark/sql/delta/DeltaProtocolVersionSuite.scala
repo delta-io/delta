@@ -3411,7 +3411,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   for (truncateHistory <- BOOLEAN_DOMAIN)
-  test(s"Protocol version downgrade with Table Features - include legacy features: " +
+  test(s"Protocol version downgrade with Table Features - include legacy writer features: " +
       s"truncateHistory: ${truncateHistory}") {
     val expectedFeatures =
       Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, AppendOnlyTableFeature)
@@ -3424,6 +3424,23 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
       featuresToRemove = Seq(TestRemovableReaderWriterFeature),
       expectedDowngradedProtocol = Protocol(1, 7).withFeatures(expectedFeatures),
+      truncateHistory = truncateHistory)
+  }
+
+  for (truncateHistory <- BOOLEAN_DOMAIN)
+  test(s"Protocol version downgrade with Table Features - include legacy reader features: " +
+    s"truncateHistory: ${truncateHistory}") {
+    val expectedFeatures =
+      Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, ColumnMappingTableFeature)
+
+    // Although the protocol contains legacy features, the versions are only downgraded to
+    // table feature versions.
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol = Protocol(2, 7).withFeatures(expectedFeatures),
       truncateHistory = truncateHistory)
   }
 
