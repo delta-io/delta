@@ -195,15 +195,14 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
       .getOrElse(maxFileSize / 2))
     val maxFileSizeOpt = Some(maxFileSize)
     recordDeltaOperation(deltaLog, s"$opType.execute") {
-      val txn = deltaLog.startTransaction(catalogTable)
       val optimizeContext = DeltaOptimizeContext(
         reorg = None,
         minFileSizeOpt,
         maxFileSizeOpt,
         maxDeletedRowsRatio = maxDeletedRowsRatio
       )
-      val rows = new OptimizeExecutor(spark, txn, partitionPredicates, Seq(), true, optimizeContext)
-        .optimize()
+      val rows = new OptimizeExecutor(spark, deltaLog.update(), catalogTable, partitionPredicates,
+        Seq(), true, optimizeContext).optimize()
       val metrics = rows.map(_.getAs[OptimizeMetrics](1))
       recordDeltaEvent(deltaLog, s"$opType.execute.metrics", data = metrics.head)
       metrics

@@ -42,7 +42,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.types._
 import org.apache.spark.util.{SystemClock, ThreadUtils}
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /** Base class defining abstract optimize command */
 abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaCommand {
@@ -142,7 +142,6 @@ case class OptimizeTableCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val table = getDeltaTable(child, "OPTIMIZE")
-    val txn = table.startTransaction()
     val snapshot = table.deltaLog.update()
     if (snapshot.version == -1) {
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
@@ -175,8 +174,8 @@ case class OptimizeTableCommand(
 
     new OptimizeExecutor(
       sparkSession,
-      table,
       snapshot,
+      table.catalogTable,
       partitionPredicates,
       zOrderByColumns,
       isAutoCompact = false,
@@ -219,8 +218,8 @@ case class DeltaOptimizeContext(
  */
 class OptimizeExecutor(
     sparkSession: SparkSession,
-    table: DeltaTableV2,
     snapshot: Snapshot,
+    catalogTable: Option[CatalogTable],
     partitionPredicate: Seq[Expression],
     zOrderByColumns: Seq[String],
     isAutoCompact: Boolean,
@@ -268,7 +267,7 @@ class OptimizeExecutor(
       val batchSize = sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_BATCH_SIZE)
 
       // Get all the files from the snapshot, we will register them with the individual
-      //transactions later
+      // transactions later
       val candidateFiles = snapshot.filesForScan(partitionPredicate, keepNumRecords = true).files
 
       val filesToProcess = optimizeContext.reorg match {
@@ -281,15 +280,16 @@ class OptimizeExecutor(
 
       val maxThreads =
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)
-      batchSize match {
+      val batchResults = batchSize match {
         case Some(size) =>
-          val batches = groupBinsIntoBatches(jobs, size)
-          ThreadUtils.parmap(batches, "OptimizeJobBatch", maxThreads) { batch =>
-            runOptimizeBatch(batch, maxFileSize)
-          }
+          groupBinsIntoBatches(jobs, size).map(runOptimizeBatch(_, maxFileSize))
         case None =>
-          runOptimizeBatch(jobs, maxFileSize)
+          Seq(runOptimizeBatch(jobs, maxFileSize))
       }
+
+      val addedFiles = batchResults.map(_._1).flatten
+      val removedFiles = batchResults.map(_._2).flatten
+      val removedDVs = batchResults.map(_._3).flatten
 
       val optimizeStats = OptimizeStats()
       optimizeStats.addedFilesSizeStats.merge(addedFiles)
@@ -312,7 +312,7 @@ class OptimizeExecutor(
 
       optimizeStrategy.updateOptimizeStats(optimizeStats, removedFiles, jobs)
 
-      return Seq(Row(deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
+      return Seq(Row(snapshot.deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
     }
   }
 
@@ -422,14 +422,14 @@ class OptimizeExecutor(
       batches += currentBatch.toVector
     }
 
-    batches
+    batches.toSeq
   }
 
   private def runOptimizeBatch(
     bins: Seq[(Map[String, String], Seq[AddFile])],
     maxFileSize: Long
-  ): Unit = {
-    val txn = table.startTransaction(Some(snapshot))
+  ): (Seq[AddFile], Seq[RemoveFile], Seq[DeletionVectorDescriptor]) = {
+    val txn = snapshot.deltaLog.startTransaction(catalogTable, Some(snapshot))
 
     val filesToProcess = bins.flatMap(_._2)
 
@@ -465,6 +465,7 @@ class OptimizeExecutor(
         }
       }
     }
+    (addedFiles, removedFiles, removedDVs)
   }
 
   /**
