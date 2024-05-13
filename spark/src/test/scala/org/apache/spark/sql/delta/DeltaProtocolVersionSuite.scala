@@ -3416,8 +3416,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     val expectedFeatures =
       Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, AppendOnlyTableFeature)
 
-    // Although the protocol contains legacy features, the versions are only downgraded to
-    // table feature versions.
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 3,
       initialMinWriterVersion = 7,
@@ -3433,8 +3431,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     val expectedFeatures =
       Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, ColumnMappingTableFeature)
 
-    // Although the protocol contains legacy features, the versions are only downgraded to
-    // table feature versions.
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 3,
       initialMinWriterVersion = 7,
