@@ -3276,7 +3276,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       initialMinWriterVersion: Int,
       featuresToAdd: Seq[TableFeature],
       featuresToRemove: Seq[TableFeature],
-      expectedDowngradedProtocol: Protocol): Unit = {
+      expectedDowngradedProtocol: Protocol,
+      truncateHistory: Boolean = false): Unit = {
     withTempDir { dir =>
       val deltaLog = DeltaLog.forTable(spark, dir)
 
@@ -3297,8 +3298,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
            |)""".stripMargin)
 
       for (feature <- featuresToRemove) {
-        AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), feature.name)
-          .run(spark)
+        AlterTableDropFeatureDeltaCommand(
+          table = DeltaTableV2(spark, deltaLog.dataPath),
+          featureName = feature.name,
+          truncateHistory = truncateHistory).run(spark)
       }
       assert(deltaLog.update().protocol === expectedDowngradedProtocol)
     }
@@ -3345,7 +3348,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = Protocol(1, 1))
   }
 
-  test("Downgrade protocol version on table created with table features") {
+  test("Downgrade protocol version on table created with (3, 7)") {
     // When the table is initialized with table features there are no active (implicit) legacy
     // features. After removing the last table feature we downgrade back to (1, 1).
     testProtocolVersionDowngrade(
@@ -3356,7 +3359,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = Protocol(1, 1))
   }
 
-  test("Downgrade protocol version on table created with writer features") {
+  test("Downgrade protocol version on table created with (1, 7)") {
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 1,
       initialMinWriterVersion = 7,
@@ -3418,7 +3421,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = protocolWithWriterFeature(DomainMetadataTableFeature))
   }
 
-  test("Protocol version is not downgraded when reader+writer features exist") {
+  test("Protocol version is not downgraded when multiple reader+writer features exist") {
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 3,
       initialMinWriterVersion = 7,
@@ -3427,15 +3430,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = protocolWithReaderFeature(DeletionVectorsTableFeature))
   }
 
-  test("Protocol version is not downgraded when both reader+writer and writer features exist") {
-    testProtocolVersionDowngrade(
-      initialMinReaderVersion = 3,
-      initialMinWriterVersion = 7,
-      featuresToAdd = Seq(TestRemovableReaderWriterFeature, TestRemovableWriterFeature),
-      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
-      expectedDowngradedProtocol =
-        Protocol(3, 7, Some(Set.empty), Some(Set(TestRemovableWriterFeature.name))))
-
+  test("Protocol version is not downgraded when reader+writer features exist") {
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 3,
       initialMinWriterVersion = 7,
@@ -3471,6 +3466,50 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       assert(targetLog.update().protocol == Protocol(1, 1))
     }
+  }
+
+  for (truncateHistory <- BOOLEAN_DOMAIN)
+  test(s"Protocol version downgrade with Table Features - Basic test " +
+      s"truncateHistory: ${truncateHistory}") {
+    val expectedFeatures = Seq(RowTrackingFeature, DomainMetadataTableFeature)
+
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 7).withFeatures(expectedFeatures),
+      truncateHistory = truncateHistory)
+  }
+
+  for (truncateHistory <- BOOLEAN_DOMAIN)
+  test(s"Protocol version downgrade with Table Features - include legacy writer features: " +
+      s"truncateHistory: ${truncateHistory}") {
+    val expectedFeatures =
+      Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, AppendOnlyTableFeature)
+
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 7).withFeatures(expectedFeatures),
+      truncateHistory = truncateHistory)
+  }
+
+  for (truncateHistory <- BOOLEAN_DOMAIN)
+  test(s"Protocol version downgrade with Table Features - include legacy reader features: " +
+    s"truncateHistory: ${truncateHistory}") {
+    val expectedFeatures =
+      Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, ColumnMappingTableFeature)
+
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol = Protocol(2, 7).withFeatures(expectedFeatures),
+      truncateHistory = truncateHistory)
   }
 
   private def dropV2CheckpointsTableFeature(spark: SparkSession, log: DeltaLog): Unit = {
