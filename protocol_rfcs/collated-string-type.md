@@ -1,19 +1,25 @@
 # Collated String Type
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2894**
 
-This protocol change adds support for collated strings.
+This protocol change adds support for collated strings. It consists of three changes to the protocol
+
+* Collations in the table schema
+* Collated AddFile statistics
+* Domain metadata with active collation version
 
 --------
 
 > ***Add a new section in front of the [Primitive Types](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types) section.***
 
-### Collations
+### Collations table feature
 
-Collations are a set of rules for how strings are compared. They do not affect how strings are stored. Collations are applied when comparing strings for equality or to determine the sort order of two strings. Case insensitive comparison is one example of a collation where case is ignored when string are compared for equality and the lower cased variant of a string is used to determine its sort order.
+Collations are a set of rules for how strings are compared. The are supported by the `collations` table feature. Collations do not affect how strings are stored. Collations are applied when comparing strings for equality or to determine the sort order of two strings. Case insensitive comparison is one example of a collation where case is ignored when string are compared for equality and the lower cased variant of a string is used to determine its sort order.
 
 Collations can be specified for all string fields in a table schema. It is also possible to store statistics per collation version. This is required because the min and max values of a column can differ based on the used collation or collation version.
 
 By default, all strings are collated using binary collation. That means that strings compare equal if their binary representations are equal. The binary representation is also used to sort them.
+
+The `collations` table feature is a writer only feature and allows clients that do not support collations to read the table using binary collation.
 
 #### Collation identifiers
 
@@ -25,21 +31,29 @@ Part | Description
 -|-
 Provider | Name of the provider. Must not contain dots
 Name | Name of the collation as provided by the provider. Must not contain dots
-Version | Version string. Is allowed to contain dots
+Version | Version string. Is allowed to contain dots. This part is optional.
 
 #### Specifying collations in the table schema
 
-Collations can be specified for all string types in a schema. This includes string fields, but also the key and value type of maps and the element type of arrays. Collations are specified in the metadata of the closest enclosing field.
-Collation identifiers are stored in a `collations` object. These object can have 4 keys:
+Collations can be specified for all string types in a schema. This includes string fields, but also the key and value type of maps and the element type of arrays. Collations are stored in the `__COLLATIONS` key of the metadata of the nearest ancestor [StructField](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#struct-field) of the Delta table schema. Nested maps and arrays are encoded the same way as ids in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2). Collation identifiers are stored without key because the version of a collation is not enforced for reading.
 
-Key | Value | Description
--|-|-
-collation | collation identifier | Collation of a string field. Only valid when none of the other keys are present.
-elementCollation | `collations object` | Collations of elements in an array. Only valid when none of the other keys are present.
-keyCollation | `collations object` | Collations for the key type of a map. Only valid on it's own or with `valueCollation`.
-valueCollation | `collations object` | Collations for the value type of a map. Only valid on it's own or with `keyCollation`.
+This example provides an overview of how collations are stored in the schema. Note that irrelevant fields have been stripped.
 
-This example provides an overview of how collations are stored. Note that irrelevant fields have been stripped.
+Example schema
+
+```
+|-- col1: map
+|       |-- keyType: string
+|       |-- valueType: array
+|                    |-- elementType: map
+|                                   |-- keyType: string
+|                                   |-- valueType: map
+|                                                |-- keyType: string
+|                                                |-- valueType: struct
+|                                                             |-- f1: string
+```
+
+Schema with collation information
 
 ```
 {
@@ -67,21 +81,36 @@ This example provides an overview of how collations are stored. Note that irrele
             } ],
           },
           metadata: {
-            "collations": { "collation": "ICU.de_DE.73" }
+            "__COLLATIONS": { "f1": "ICU.de_DE" }
           }
         }
       }
     }
     "metadata": {
-      "collations": {
-        "keyCollation": { "collation": "ICU.en_US.72" },
-        "value": {
-          "key": { "element": { "collation": "ICU.en_US.72" } },
-          "value": { "key": { "collation": "ICU.en_US.72" } },
-        }
+      "__COLLATIONS": {
+        "col1.key": "ICU.en_US",
+        "col1.value.element.key": "ICU.en_US",
+        "col1.value.element.value.key": "ICU.en_US"
       }
     }
   } ]
+}
+```
+
+#### Collation versions
+
+The [Domain Metadata](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata) for the `collations` table feature contains hints which version of a collation should be used to read from the table and for which versions of a collations clients should produce statistics when writing to the table. They allow clients to choose a collation version without having to look at the statistics of all AddFiles first. Clients are allowed to ignore the hints.
+
+`collations` [Domain Metadata](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata)
+
+```
+{
+  "readVersions": {
+    "ICU.en_US": "73"
+  },
+  "writeVersions": {
+    "ICU.en_US": ["72", "73"]
+  }
 }
 ```
 
@@ -97,7 +126,7 @@ string| UTF-8 encoded string of characters. A collation can be specified in [Col
 
 Field Name | Description
 -|-
-collations | Collations for strings stored in the field or combinations of maps and arrays that are stored in this field and do not have nested structs. Refer to [Specifying collations in the table schema](#specifying-collations-in-the-table-schema) for more details.
+__COLLATIONS | Collations for strings stored in the field or combinations of maps and arrays that are stored in this field and do not have nested structs. Refer to [Specifying collations in the table schema](#specifying-collations-in-the-table-schema) for more details.
 
 > ***Edit the [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics) section and change it from the "Per-column statistics" section onwards.***
 
