@@ -537,33 +537,34 @@ trait OptimizeCompactionSuiteBase extends QueryTest
   }
 
   test("optimize command with batching") {
-    // Batch size of 1 byte means each bin will run in its own batch
-    withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_BATCH_SIZE.key -> "1") {
-      withTempDir { tempDir =>
-        def writeData(count: Int): Unit = {
-          spark.range(count).select('id, 'id % 5 as "part")
-            .write
-            .partitionBy("part")
-            .format("delta")
-            .mode("append")
-            .save(tempDir.getAbsolutePath)
+    Seq(("1", 5), ("1g", 1)).foreach { case (batchSize, optimizeCommits) =>
+      // Batch size of 1 byte means each bin will run in its own batch
+      withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_BATCH_SIZE.key -> batchSize) {
+        withTempDir { tempDir =>
+          def writeData(count: Int): Unit = {
+            spark.range(count).select('id, 'id % 5 as "part")
+              .write
+              .partitionBy("part")
+              .format("delta")
+              .mode("append")
+              .save(tempDir.getAbsolutePath)
+          }
+
+          writeData(10)
+          writeData(100)
+
+          DeltaTable.forPath(tempDir.getAbsolutePath).optimize().executeCompaction()
+
+          val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+          val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+          val part = "part".phy(deltaLog)
+          val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
+          // All partitions should be one file now
+          assert(files.values.forall(_.length == 1))
+          // The last 5 commits in the history should be optimize batches, one for each partition
+          val commits = deltaLog.history.getHistory(None)
+          assert(commits.filter(_.operation == "OPTIMIZE").length == optimizeCommits)
         }
-
-        writeData(10)
-        writeData(100)
-
-        DeltaTable.forPath(tempDir.getAbsolutePath).optimize().executeCompaction()
-
-        val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
-        val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
-        val part = "part".phy(deltaLog)
-        val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
-        // All partitions should be one file now
-        assert(files.values.forall(_.length == 1))
-        // The last 5 commits in the history should be optimize batches, one for each partition
-        val commits = deltaLog.history.getHistory(Some(5))
-        assert(commits.length == 5)
-        assert(commits.forall(_.operation == "OPTIMIZE"))
       }
     }
   }
