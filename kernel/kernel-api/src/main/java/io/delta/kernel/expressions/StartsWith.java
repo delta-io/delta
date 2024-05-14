@@ -23,13 +23,14 @@ import io.delta.kernel.annotation.Evolving;
  * Definition:
  * <p><ul>
  *     <li>{@code expr1} STARTS WITH {@code expr2} on two inputs.</li>
- *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
+ *     <li>Requires both left and right input expressions of type {@link Expression}
+ *     and only STRING data types is supported.</li>
  *     <li>Result is null when either of the inputs is null,
  *     true if left {@code STARTS WITH} right, false otherwise.
  *     Note that matches are case insensitive.</li>
  * </ul>
  *
- * @since 3.0.0
+ * @since 3.3.0
  */
 @Evolving
 public final class StartsWith extends Predicate{
