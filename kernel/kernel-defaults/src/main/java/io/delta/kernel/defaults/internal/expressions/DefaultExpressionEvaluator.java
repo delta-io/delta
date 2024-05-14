@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import static java.lang.String.format;
@@ -278,6 +279,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                         .collect(Collectors.toList())),
                 children.get(0).outputType
             );
+        }
+
+        @Override
+        ExpressionTransformResult visitStartsWith(StartsWith startsWith) {
+            ExpressionTransformResult leftResult = visit(getLeft(startsWith));
+            ExpressionTransformResult rightResult = visit(getLeft(startsWith));
+            if(!(StringType.STRING.equivalent(leftResult.outputType) ||
+                    StringType.STRING.equivalent(rightResult.outputType))) {
+                throw unsupportedExpressionException(
+                        startsWith, "'starts with' is only supported for string type expressions");
+            }
+            return new ExpressionTransformResult(startsWith, BooleanType.BOOLEAN);
         }
 
         private Predicate validateIsPredicate(
@@ -558,6 +571,30 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     return 0; // If all are null then any idx suffices
                 }
             );
+        }
+
+        @Override
+        ColumnVector visitStartsWith(final StartsWith startsWith) {
+            PredicateChildrenEvalResult argResults =
+                    evalBinaryExpressionChildren(startsWith);
+            ColumnVector left = argResults.leftResult;
+            ColumnVector right = argResults.rightResult;
+            int numRows = argResults.rowCount;
+            boolean[] result = new boolean[numRows];
+            boolean[] nullability = new boolean[numRows];
+            for (int rowId = 0; rowId < numRows; rowId++) {
+                String leftOp = left.getString(rowId);
+                String rightOp = right.getString(rowId);
+                if (!Objects.isNull(leftOp) && !Objects.isNull(rightOp)) {
+                    nullability[rowId] = false;
+                    result[rowId] = leftOp.startsWith(rightOp);
+                } else {
+                    nullability[rowId] = true;
+                    result[rowId] = false;
+                }
+            }
+            return new DefaultBooleanVector(numRows,
+                    Optional.of(nullability), result);
         }
 
         /**

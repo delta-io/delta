@@ -59,6 +59,8 @@ abstract class ExpressionVisitor<R> {
 
     abstract R visitCoalesce(ScalarExpression ifNull);
 
+    abstract R visitStartsWith(StartsWith startsWith);
+
     final R visit(Expression expression) {
         if (expression instanceof PartitionValueExpression) {
             return visitPartitionValue((PartitionValueExpression) expression);
@@ -105,11 +107,16 @@ abstract class ExpressionVisitor<R> {
                 return visitIsNull(new Predicate(name, children));
             case "COALESCE":
                 return visitCoalesce(expression);
+            case "STARTS_WITH":
+                return visitStartsWith(
+                        new StartsWith(elemAsExpression(expression.getChildren(), 0),
+                                elemAsExpression(expression.getChildren(), 1)));
             default:
                 throw new UnsupportedOperationException(
                     String.format("Scalar expression `%s` is not supported.", name));
         }
     }
+
 
     private static Predicate elemAsPredicate(List<Expression> expressions, int index) {
         if (expressions.size() <= index) {
@@ -122,5 +129,15 @@ abstract class ExpressionVisitor<R> {
             throw new RuntimeException("Expected a predicate, but got " + elemExpression);
         }
         return (Predicate) expressions.get(index);
+    }
+
+    private static Expression elemAsExpression(List<Expression> expressions, int index) {
+        if (expressions.size() <= index) {
+            throw new RuntimeException(
+                    String.format("Trying to access invalid entry (%d) in list %s", index,
+                            expressions.stream().map(Object::toString).collect(joining(","))));
+        }
+        Expression elemExpression = expressions.get(index);
+        return expressions.get(index);
     }
 }

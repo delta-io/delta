@@ -35,6 +35,10 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     new Or(left, right)
   }
 
+  protected def startsWith(left: Expression, right: Expression): StartsWith = {
+    new StartsWith(left, right)
+  }
+
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
     new Predicate(symbol, left, right)
   }
