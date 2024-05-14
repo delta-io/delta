@@ -62,8 +62,8 @@ class MapColumnReader extends RepeatedValueConverter {
             int initialBatchSize,
             MapType typeFromClient,
             GroupType typeFromFile) {
-        // Repeated element can be any name. Late Parquet versions use "key_value" as the name,
-        // but legacy versions can use any arbitary name for the repeated group.
+        // Repeated element can be any name. Latest Parquet versions use "key_value" as the name,
+        // but legacy versions can use any arbitrary name for the repeated group.
         // See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps for details
         checkArgument(typeFromFile.getFieldCount() == 1,
                 "Expected exactly one repeated field in the map type, but got: " + typeFromFile);
