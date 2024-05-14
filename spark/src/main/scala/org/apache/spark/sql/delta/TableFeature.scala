@@ -519,7 +519,7 @@ object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz
   }
 }
 
-object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-dev")
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-preview")
     with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata, spark: SparkSession): Boolean = {

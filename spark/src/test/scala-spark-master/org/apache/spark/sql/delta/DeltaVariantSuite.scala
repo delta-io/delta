@@ -95,7 +95,7 @@ class DeltaVariantSuite
       // add table feature
       sql(
         s"ALTER TABLE tbl " +
-        s"SET TBLPROPERTIES('delta.feature.variantType-dev' = 'supported')"
+        s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
       )
 
       sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
