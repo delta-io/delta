@@ -57,10 +57,13 @@ class MapColumnReader extends RepeatedValueConverter {
     }
 
     private static Converter[] createElementConverters(
-        int initialBatchSize,
-        MapType typeFromClient,
-        GroupType typeFromFile) {
-        final GroupType innerMapType = (GroupType) typeFromFile.getType("key_value");
+            int initialBatchSize,
+            MapType typeFromClient,
+            GroupType typeFromFile) {
+        // Repeated element can be any name. Late Parquet versions use "key_value" as the name,
+        // but legacy versions can use any arbitary name for the repeated group.
+        // See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps for details
+        final GroupType innerMapType = (GroupType) typeFromFile.getType(0);
         Converter[] elemConverters = new Converter[2];
         elemConverters[0] = createConverter(
             initialBatchSize,
