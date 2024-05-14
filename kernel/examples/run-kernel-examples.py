@@ -16,6 +16,21 @@
 # limitations under the License.
 #
 
+'''
+To run examples by building the artifacts from code and using them:
+
+```
+<delta-repo-root>/kernel/examples/run-kernel-examples.py --use-local
+```
+
+
+To run examples using artifacts from a Maven repository:
+```
+<delta-repo-root>/kernel/examples/run-kernel-examples.py --version <version> --maven-repo <staged_repo_url>
+```
+
+'''
+
 import os
 import subprocess
 from os import path
@@ -29,7 +44,7 @@ def run_single_threaded_examples(version, maven_repo, examples_root_dir, golden_
         f"--table={golden_tables_dir}/data-reader-primitives --columns=as_int,as_long,as_double,as_string --limit=20",
         f"--table={golden_tables_dir}/data-reader-partition-values --columns=as_string,as_byte,as_list_of_records,as_nested_struct --limit=20"
     ]
-    project_dir = path.join(examples_root_dir, "table-reader")
+    project_dir = path.join(examples_root_dir, "kernel-examples")
 
     run_example(version, maven_repo, project_dir, main_class, test_cases)
 
@@ -41,20 +56,22 @@ def run_multi_threaded_examples(version, maven_repo, examples_root_dir, golden_t
         f"--table={golden_tables_dir}/data-reader-primitives --columns=as_int,as_long,as_double,as_string --limit=20 --parallelism=20",
         f"--table={golden_tables_dir}/data-reader-partition-values --columns=as_string,as_byte,as_list_of_records,as_nested_struct --limit=20 --parallelism=2"
     ]
-    project_dir = path.join(examples_root_dir, "table-reader")
+    project_dir = path.join(examples_root_dir, "kernel-examples")
 
     run_example(version, maven_repo, project_dir, main_class, test_cases)
 
 
 def run_integration_tests(version, maven_repo, examples_root_dir, golden_tables_dir):
-    main_class = "io.delta.kernel.integration.IntegrationTestSuite"
-    project_dir = path.join(examples_root_dir, "table-reader")
-    with WorkingDirectory(project_dir):
-        cmd = ["mvn", "package", "exec:java", f"-Dexec.mainClass={main_class}",
-               f"-Dstaging.repo.url={maven_repo}",
-               f"-Ddelta-kernel.version={version}",
-               f"-Dexec.args={golden_tables_dir}"]
-        run_cmd(cmd, stream_output=True)
+
+    main_classes = ["io.delta.kernel.integration.ReadIntegrationTestSuite", "io.delta.kernel.integration.WriteIntegrationTestSuite"]
+    for main_class in main_classes:
+        project_dir = path.join(examples_root_dir, "kernel-examples")
+        with WorkingDirectory(project_dir):
+            cmd = ["mvn", "package", "exec:java", f"-Dexec.mainClass={main_class}",
+                  f"-Dstaging.repo.url={maven_repo}",
+                  f"-Ddelta-kernel.version={version}",
+                  f"-Dexec.args={golden_tables_dir}"]
+            run_cmd(cmd, stream_output=True)
 
 
 def run_example(version, maven_repo, project_dir, main_class, test_cases):

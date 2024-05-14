@@ -24,9 +24,13 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Representation of a commit file */
 case class Commit(
-  version: Long,
-  fileStatus: FileStatus,
-  commitTimestamp: Long)
+    private val version: Long,
+    private val fileStatus: FileStatus,
+    private val commitTimestamp: Long) {
+  def getVersion: Long = version
+  def getFileStatus: FileStatus = fileStatus
+  def getCommitTimestamp: Long = commitTimestamp
+}
 
 /**
  * Exception raised by [[CommitOwnerClient.commit]] method.
@@ -37,21 +41,40 @@ case class Commit(
  *  |   yes     |   yes     | physical conflict (allowed to rebase and retry)                 |
  */
 case class CommitFailedException(
-    retryable: Boolean, conflict: Boolean, message: String) extends Exception(message)
+    private val retryable: Boolean,
+    private val conflict: Boolean,
+    private val message: String) extends Exception(message) {
+  def getRetryable: Boolean = retryable
+  def getConflict: Boolean = conflict
+}
 
 /** Response container for [[CommitOwnerClient.commit]] API */
-case class CommitResponse(commit: Commit)
+case class CommitResponse(private val commit: Commit) {
+  def getCommit: Commit = commit
+}
 
 /** Response container for [[CommitOwnerClient.getCommits]] API */
-case class GetCommitsResponse(commits: Seq[Commit], latestTableVersion: Long)
+case class GetCommitsResponse(
+    private val commits: Seq[Commit],
+    private val latestTableVersion: Long) {
+  def getCommits: Seq[Commit] = commits
+  def getLatestTableVersion: Long = latestTableVersion
+}
 
 /** A container class to inform the [[CommitOwnerClient]] about any changes in Protocol/Metadata */
 case class UpdatedActions(
-  commitInfo: AbstractCommitInfo,
-  newMetadata: AbstractMetadata,
-  newProtocol: AbstractProtocol,
-  oldMetadata: AbstractMetadata,
-  oldProtocol: AbstractProtocol)
+    private val commitInfo: AbstractCommitInfo,
+    private val newMetadata: AbstractMetadata,
+    private val newProtocol: AbstractProtocol,
+    private val oldMetadata: AbstractMetadata,
+    private val oldProtocol: AbstractProtocol) {
+  def getCommitInfo: AbstractCommitInfo = commitInfo
+  def getNewMetadata: AbstractMetadata = newMetadata
+  def getNewProtocol: AbstractProtocol = newProtocol
+  def getOldMetadata: AbstractMetadata = oldMetadata
+  def getOldProtocol: AbstractProtocol = oldProtocol
+
+}
 
 /**
  * [[CommitOwnerClient]] is responsible for managing commits for a managed-commit delta table.
@@ -173,7 +196,7 @@ object CommitOwnerClient {
 trait CommitOwnerBuilder {
 
   /** Name of the commit-owner */
-  def name: String
+  def getName: String
 
   /** Returns a commit-owner client based on the given conf */
   def build(conf: Map[String, String]): CommitOwnerClient
@@ -186,12 +209,12 @@ object CommitOwnerProvider {
 
   /** Registers a new [[CommitOwnerBuilder]] with the [[CommitOwnerProvider]] */
   def registerBuilder(commitOwnerBuilder: CommitOwnerBuilder): Unit = synchronized {
-    nameToBuilderMapping.get(commitOwnerBuilder.name) match {
+    nameToBuilderMapping.get(commitOwnerBuilder.getName) match {
       case Some(commitOwnerBuilder: CommitOwnerBuilder) =>
-        throw new IllegalArgumentException(s"commit-owner: ${commitOwnerBuilder.name} already" +
+        throw new IllegalArgumentException(s"commit-owner: ${commitOwnerBuilder.getName} already" +
           s" registered with builder ${commitOwnerBuilder.getClass.getName}")
       case None =>
-        nameToBuilderMapping.put(commitOwnerBuilder.name, commitOwnerBuilder)
+        nameToBuilderMapping.put(commitOwnerBuilder.getName, commitOwnerBuilder)
     }
   }
 
@@ -205,7 +228,7 @@ object CommitOwnerProvider {
 
   // Visible only for UTs
   private[delta] def clearNonDefaultBuilders(): Unit = synchronized {
-    val initialCommitOwnerNames = initialCommitOwnerBuilders.map(_.name).toSet
+    val initialCommitOwnerNames = initialCommitOwnerBuilders.map(_.getName).toSet
     nameToBuilderMapping.retain((k, _) => initialCommitOwnerNames.contains(k))
   }
 

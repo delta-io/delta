@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -45,7 +45,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
 class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest with ManagedCommitBaseSuite {
 
 
   /**
@@ -304,6 +304,12 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       // Delete delta files
       new File(tempDir, "_delta_log").listFiles().filter(_.getName.endsWith(".json"))
         .foreach(_.delete())
+      if (managedCommitsEnabledInTests) {
+        new File(new File(tempDir, "_delta_log"), "_commits")
+          .listFiles()
+          .filter(_.getName.endsWith(".json"))
+          .foreach(_.delete())
+      }
       makeCorruptCheckpointFile(path, checkpointVersion = 0, shouldBeEmpty = false)
       val e = intercept[IllegalStateException] {
         staleLog.update()
@@ -459,10 +465,34 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       val oldLogSegment = log.snapshot.logSegment
       spark.range(10).write.format("delta").save(path)
       val newLogSegment = log.snapshot.logSegment
-      assert(log.getLogSegmentAfterCommit(None, oldLogSegment.checkpointProvider) === newLogSegment)
+      assert(log.getLogSegmentAfterCommit(
+        log.snapshot.tableCommitOwnerClientOpt,
+        oldLogSegment.checkpointProvider) === newLogSegment)
       spark.range(10).write.format("delta").mode("append").save(path)
-      assert(log.getLogSegmentAfterCommit(None, oldLogSegment.checkpointProvider)
-        === log.snapshot.logSegment)
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+      val commitFileProvider = DeltaCommitFileProvider(log.snapshot)
+      intercept[IllegalArgumentException] {
+        val commitFile = fs.getFileStatus(commitFileProvider.deltaFile(1))
+        val commit = Commit(
+          version = 1,
+          fileStatus = commitFile,
+          commitTimestamp = 0)
+        // Version exists, but not contiguous with old logSegment
+        log.getLogSegmentAfterCommit(1, None, oldLogSegment, commit, None, EmptyCheckpointProvider)
+      }
+      intercept[IllegalArgumentException] {
+        val commitFile = fs.getFileStatus(commitFileProvider.deltaFile(0))
+        val commit = Commit(
+          version = 0,
+          fileStatus = commitFile,
+          commitTimestamp = 0)
+
+        // Version exists, but newLogSegment already contains it
+        log.getLogSegmentAfterCommit(0, None, newLogSegment, commit, None, EmptyCheckpointProvider)
+      }
+      assert(log.getLogSegmentAfterCommit(
+        log.snapshot.tableCommitOwnerClientOpt,
+        oldLogSegment.checkpointProvider) === log.snapshot.logSegment)
     }
   }
 
@@ -486,6 +516,18 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       spark.read.format("delta").load(path).collect()
     }
   }
+}
+
+class SnapshotManagementWithManagedCommitBatch1Suite extends SnapshotManagementSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class SnapshotManagementWithManagedCommitBatch2Suite extends SnapshotManagementSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class SnapshotManagementWithManagedCommitBatch100Suite extends SnapshotManagementSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(100)
 }
 
 class CountDownLatchLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
@@ -544,7 +586,7 @@ object ConcurrentBackfillCommitOwnerBuilder extends CommitOwnerBuilder {
   val batchSize = 5
   private lazy val concurrentBackfillCommitOwnerClient =
     ConcurrentBackfillCommitOwnerClient(synchronousBackfillThreshold = 2, batchSize)
-  override def name: String = "awaiting-commit-owner"
+  override def getName: String = "awaiting-commit-owner"
   override def build(conf: Map[String, String]): CommitOwnerClient = {
     concurrentBackfillCommitOwnerClient
   }
@@ -629,7 +671,7 @@ class SnapshotManagementParallelListingSuite extends QueryTest
         val endVersion = if (tryIncludeGapAtTheEnd) { batchSize } else { batchSize + 3 }
         withSQLConf(
             MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey ->
-              ConcurrentBackfillCommitOwnerBuilder.name,
+              ConcurrentBackfillCommitOwnerBuilder.getName,
             DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
           withTempDir { tempDir =>
             val path = tempDir.getCanonicalPath

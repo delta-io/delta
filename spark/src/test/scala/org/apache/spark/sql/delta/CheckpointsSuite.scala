@@ -581,7 +581,7 @@ class CheckpointsSuite
 
       // Delete the commit files 0-9, so that we are forced to read the checkpoint file
       val logPath = new Path(new File(target, "_delta_log").getAbsolutePath)
-      for (i <- 0 to 10) {
+      for (i <- 0 to 9) {
         val file = new File(FileNames.unsafeDeltaFile(logPath, version = i).toString)
         file.delete()
       }
@@ -818,6 +818,7 @@ class CheckpointsSuite
   private def writeAllActionsInV2Manifest(
       snapshot: Snapshot,
       v2CheckpointFormat: V2Checkpoint.Format): Path = {
+    snapshot.ensureCommitFilesBackfilled()
     val checkpointMetadata = CheckpointMetadata(version = snapshot.version)
     val actionsDS = snapshot.stateDS
       .where("checkpointMetadata is null and " +
@@ -1062,15 +1063,15 @@ class FakeGCSFileSystemValidatingCommits extends FakeGCSFileSystemValidatingChec
   override protected def shouldValidateFilePattern(f: Path): Boolean = f.getName.contains(".json")
 }
 
-class ManagedCommitBatch1BackFillCheckpointsSuite extends CheckpointsSuite {
+class CheckpointsWithManagedCommitBatch1Suite extends CheckpointsSuite {
   override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class ManagedCommitBatch2BackFillCheckpointsSuite extends CheckpointsSuite {
+class CheckpointsWithManagedCommitBatch2Suite extends CheckpointsSuite {
   override val managedCommitBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class ManagedCommitBatch20BackFillCheckpointsSuite extends CheckpointsSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(20)
+class CheckpointsWithManagedCommitBatch100Suite extends CheckpointsSuite {
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(100)
 }
 

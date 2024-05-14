@@ -1330,8 +1330,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         "exception" -> Utils.exceptionString(ex),
         "operation" -> op.name,
         "fromManagedCommit" -> managedCommitExceptionOpt.isDefined,
-        "fromManagedCommitConflict" -> managedCommitExceptionOpt.map(_.conflict).getOrElse(""),
-        "fromManagedCommitRetryable" -> managedCommitExceptionOpt.map(_.retryable).getOrElse(""))
+        "fromManagedCommitConflict" -> managedCommitExceptionOpt.map(_.getConflict).getOrElse(""),
+        "fromManagedCommitRetryable" -> managedCommitExceptionOpt.map(_.getRetryable).getOrElse(""))
       recordDeltaEvent(deltaLog, "delta.commitLarge.failure", data = data)
     }
 
@@ -1415,7 +1415,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
       if (readVersion < 0) {
-        deltaLog.createLogDirectory()
+        deltaLog.createLogDirectoriesIfNotExists()
       }
       val fsWriteStartNano = System.nanoTime()
       val jsonActions = allActions.map(_.json)
@@ -1427,8 +1427,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       val updatedActions = UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
-      val commitResponse =
+      val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
+      }
       // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
       // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
@@ -1441,7 +1442,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
       // Instead, manually run any necessary actions in updateAndCheckpoint.
       val postCommitSnapshot = updateAndCheckpoint(
-        spark, deltaLog, commitSize, attemptVersion, commitResponse.commit, txnId)
+        spark, deltaLog, commitSize, attemptVersion, commitResponse.getCommit, txnId)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = readVersion,
@@ -1681,8 +1682,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // `assertMetadata` call above.
     performCdcColumnMappingCheck(finalActions, op)
 
+    // Ensure Commit Directory exists when managed commits is enabled on an existing table.
+    lazy val isFsToMcConversion = snapshot.metadata.managedCommitOwnerName.isEmpty &&
+      newMetadata.flatMap(_.managedCommitOwnerName).nonEmpty
+    val shouldCreateLogDirs = snapshot.version == -1 || isFsToMcConversion
+    if (shouldCreateLogDirs) {
+      deltaLog.createLogDirectoriesIfNotExists()
+    }
+
     if (snapshot.version == -1) {
-      deltaLog.ensureLogDirectoryExist()
       // If this is the first commit and no protocol is specified, initialize the protocol version.
       if (!finalActions.exists(_.isInstanceOf[Protocol])) {
         finalActions = protocol +: finalActions
@@ -1925,13 +1933,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             // and thus retries are not performed if this exception is thrown by CommitOwnerClient.
             shouldCheckForConflicts = true
             // Do nothing, retry with next available attemptVersion
-          case ex: CommitFailedException if ex.retryable && ex.conflict =>
+          case ex: CommitFailedException if ex.getRetryable && ex.getConflict =>
             shouldCheckForConflicts = true
             // Reset nonConflictAttemptNumber if a conflict is detected.
             nonConflictAttemptNumber = 0
             // For managed-commits, only retry with next available attemptVersion when
             // retryable is set and it was a case of conflict.
-          case ex: CommitFailedException if ex.retryable && !ex.conflict =>
+          case ex: CommitFailedException if ex.getRetryable && !ex.getConflict =>
             if (nonConflictAttemptNumber < maxNonConflictRetryAttempts) {
               nonConflictAttemptNumber += 1
             } else {
@@ -2087,9 +2095,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
+      // Get thread local observer for Fuzz testing purpose.
+      val executionObserver = TransactionExecutionObserver.threadObserver.get()
       val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
+      executionObserver.beginBackfill()
       // TODO(managed-commits): Integrate with ICT and pass the correct commitTimestamp
       CommitResponse(Commit(
         commitVersion,
@@ -2167,14 +2178,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   ): Commit = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
-    val commitResponse = tableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
+    val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
+      tableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
+    }
     // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
     //  merged.
-    val commitTimestamp = commitResponse.commit.fileStatus.getModificationTime
-    val commitFile = commitResponse.commit.copy(commitTimestamp = commitTimestamp)
+    val commitTimestamp = commitResponse.getCommit.getFileStatus.getModificationTime
+    val commitFile = commitResponse.getCommit.copy(commitTimestamp = commitTimestamp)
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
-      val actualCommitPath = commitResponse.commit.fileStatus.getPath.toUri
+      val actualCommitPath = commitResponse.getCommit.getFileStatus.getPath.toUri
       if (actualCommitPath != expectedPathForCommitZero) {
         throw new IllegalStateException("Expected 0th commit to be written to " +
           s"$expectedPathForCommitZero but was written to $actualCommitPath")
@@ -2383,58 +2396,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
-  /**
-   * This method takes care of backfilling any unbackfilled delta files when managed commit is
-   * not enabled on the table (i.e. commit-owner is not present) but there are still unbackfilled
-   * delta files in the table. This can happen if an error occurred during the MC -> FS commit
-   * where the commit-owner was able to register the downgrade commit but it failed to backfill
-   * it. This method must be invoked before doing the next commit as otherwise there will be a
-   * gap in the backfilled commit sequence.
-   */
-  private def backfillWhenManagedCommitDisabled(): Unit = {
-    if (snapshot.tableCommitOwnerClientOpt.nonEmpty) {
-      // Managed commits is enabled on the table. Don't backfill as backfills are managed by
-      // commit-owners.
-      return
-    }
-    val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
-      case UnbackfilledDeltaFile(unbackfilledDeltaFile, version, _) =>
-        (unbackfilledDeltaFile, version)
-    }
-    if (unbackfilledFilesAndVersions.isEmpty) return
-    // Managed commits are disabled on the table but the table still has un-backfilled files.
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val fs = deltaLog.logPath.getFileSystem(hadoopConf)
-    val overwrite = !deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
-    var numAlreadyBackfilledFiles = 0L
-    unbackfilledFilesAndVersions.foreach { case (unbackfilledDeltaFile, version) =>
-      val backfilledFilePath = unsafeDeltaFile(deltaLog.logPath, version)
-      if (!fs.exists(backfilledFilePath)) {
-        val actionsIter = deltaLog.store.readAsIterator(unbackfilledDeltaFile.getPath, hadoopConf)
-        deltaLog.store.write(
-          backfilledFilePath,
-          actionsIter,
-          overwrite,
-          hadoopConf)
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} backfilled to path" +
-          s" ${backfilledFilePath.toString}.")
-      } else {
-        numAlreadyBackfilledFiles += 1
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} already backfilled.")
-      }
-    }
-    recordDeltaEvent(
-      deltaLog,
-      opType = "delta.managedCommit.backfillWhenManagedCommitSupportedAndDisabled",
-      data = Map(
-        "numUnbackfilledFiles" -> unbackfilledFilesAndVersions.size,
-        "unbackfilledFiles" -> unbackfilledFilesAndVersions.map(_._1.getPath.toString),
-        "numAlreadyBackfilledFiles" -> numAlreadyBackfilledFiles
-      )
-    )
-  }
-
   // Backfill any unbackfilled commits if managed commits are disabled -- in the Optimistic
   // Transaction constructor.
-  backfillWhenManagedCommitDisabled()
+  ManagedCommitUtils.backfillWhenManagedCommitDisabled(snapshot)
 }

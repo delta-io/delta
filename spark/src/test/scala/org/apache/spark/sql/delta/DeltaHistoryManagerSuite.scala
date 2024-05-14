@@ -337,7 +337,6 @@ trait DeltaTimeTravelTests extends QueryTest
           )
         }
 
-
         verifyLogging(2L, 0L, "version", "dfReader") {
           checkAnswer(
             spark.read.format("delta").option("versionAsOf", "0")
@@ -371,7 +370,11 @@ trait DeltaTimeTravelTests extends QueryTest
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        assert(e2.getMessage.contains("No recreatable commits found at"))
+        if (managedCommitBackfillBatchSize.exists(_ > 2)) {
+          assert(e2.getMessage.contains("No commits found at"))
+        } else {
+          assert(e2.getMessage.contains("No recreatable commits found at"))
+        }
       }
     }
   }
@@ -664,6 +667,14 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
   }
 }
 
-class ManagedCommitFill1DeltaHistoryManagerSuite extends DeltaHistoryManagerSuite {
+class DeltaHistoryManagerWithManagedCommitBatch1Suite extends DeltaHistoryManagerSuite {
   override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaHistoryManagerWithManagedCommitBatch2Suite extends DeltaHistoryManagerSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaHistoryManagerWithManagedCommitBatch100Suite extends DeltaHistoryManagerSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -19,9 +19,12 @@ import java.util.Optional;
 
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.Type;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.ArrayType;
+
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultArrayVector;
 import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.createConverter;
@@ -52,15 +55,38 @@ class ArrayColumnReader extends RepeatedValueConverter {
         return arrayVector;
     }
 
+    /**
+     * Currently, support for 3-level nested arrays only.
+     * <p>
+     * optional group readerFeatures (LIST) {
+     *   repeated group list {
+     *     optional binary element (STRING);
+     *   }
+     * }
+     * <p>
+     * optional group readerFeatures (LIST) {
+     *   repeated group bag {
+     *     optional binary array (STRING);
+     *   }
+     * }
+     *
+     * TODO: Add support for 2-level nested arrays.
+     */
     private static Converter createElementConverter(
         int initialBatchSize,
         ArrayType typeFromClient,
         GroupType typeFromFile) {
 
-        final GroupType innerElementType = (GroupType) typeFromFile.getType("list");
-        return createConverter(
-            initialBatchSize,
-            typeFromClient.getElementType(),
-            innerElementType.getType("element"));
+        checkArgument(
+                typeFromFile.getFieldCount() == 1, "Expected exactly one field in the array type");
+        GroupType repeatedGroup = typeFromFile.getType(0).asGroupType();
+
+        // TODO: handle the legacy 2-level list physical format
+        checkArgument(repeatedGroup.getFieldCount() == 1,
+                "Expected exactly one field in the repeated group");
+
+        Type elmentType = repeatedGroup.getType(0);
+
+        return createConverter(initialBatchSize, typeFromClient.getElementType(), elmentType);
     }
 }

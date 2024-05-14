@@ -977,8 +977,8 @@ class InCommitTimestampWithManagedCommitSuite
       val unbackfilledCommits =
         tableCommitOwnerClient
           .getCommits(Some(1))
-          .commits
-          .map { commit => DeltaHistoryManager.Commit(commit.version, commit.commitTimestamp)}
+          .getCommits
+          .map { commit => DeltaHistoryManager.Commit(commit.getVersion, commit.getCommitTimestamp)}
       val commits = (Seq(commit0) ++ unbackfilledCommits).toList
       // Search for the exact timestamp.
       for (commit <- commits) {

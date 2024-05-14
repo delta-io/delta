@@ -26,7 +26,8 @@ private[delta] class PhaseLockingTransactionExecutionObserver(
   override val phaseLocks: Seq[ExecutionPhaseLock] = Seq(
     phases.initialPhase,
     phases.preparePhase,
-    phases.commitPhase)
+    phases.commitPhase,
+    phases.backfillPhase)
 
   /**
    * When set to true this observer will automatically update the thread's current observer to
@@ -42,36 +43,49 @@ private[delta] class PhaseLockingTransactionExecutionObserver(
 
   override def preparingCommit[T](f: => T): T = phases.preparePhase.execute(f)
 
-  override def beginDoCommit(): Unit = phases.commitPhase.waitToEnter()
+  override def beginDoCommit(): Unit = {
+    phases.commitPhase.waitToEnter()
+  }
+
+  override def beginBackfill(): Unit = {
+    phases.commitPhase.leave()
+    phases.backfillPhase.waitToEnter()
+  }
 
   override def transactionCommitted(): Unit = {
     if (nextObserver.nonEmpty && autoAdvanceNextObserver) {
       waitForCommitPhaseAndAdvanceToNextObserver()
     } else {
-      phases.commitPhase.leave()
+      phases.backfillPhase.leave()
     }
   }
 
   override def transactionAborted(): Unit = {
-    if (!phases.commitPhase.hasEntered) {
-      phases.commitPhase.waitToEnter()
+    if (!phases.commitPhase.hasLeft) {
+      if (!phases.commitPhase.hasEntered) {
+        phases.commitPhase.waitToEnter()
+      }
+      phases.commitPhase.leave()
+    }
+    if (!phases.backfillPhase.hasEntered) {
+      phases.backfillPhase.waitToEnter()
     }
     if (nextObserver.nonEmpty && autoAdvanceNextObserver) {
       waitForCommitPhaseAndAdvanceToNextObserver()
     } else {
-      phases.commitPhase.leave()
+      phases.backfillPhase.leave()
     }
   }
 
   /*
-   * Wait for the commit phase to pass but do not unblock it so that callers can write tests
+   * Wait for the backfill phase to pass but do not unblock it so that callers can write tests
    * that capture errors caused by code between the end of the last txn and the start of the
    * new txn. After the commit phase is passed, update the thread observer of the thread to
    * the next observer.
    */
   def waitForCommitPhaseAndAdvanceToNextObserver(): Unit = {
     require(nextObserver.nonEmpty)
-    phases.commitPhase.waitToLeave()
+    phases.backfillPhase.waitToLeave()
     advanceToNextThreadObserver()
   }
 
