@@ -55,9 +55,9 @@ The Java API docs are available [here](https://docs.delta.io/latest/api/java/ker
 Kernel APIs are still evolving and new features are being added with every release. Kernel authors try to make the API changes backward compatible as much as they can with each new release even when an API is marked as **Evolving**, but sometimes it is hard to maintain the backward compatibility for a project that is evolving rapidly. With each new release, the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) are kept up-to-date with the latest API changes, and a detailed [migration guide](https://github.com/delta-io/delta/blob/master/kernel/USER_GUIDE.md#migration-guide) is provided for the connectors to upgrade to use the updated APIs.
 
 
-# For more Information
+# More Information
 - [Talk](https://www.youtube.com/watch?v=KVUMFv7470I) explaining the rationale behind Kernel and the API design (slides are available [here](https://docs.google.com/presentation/d/1PGSSuJ8ndghucSF9GpYgCi9oeRpWolFyehjQbPh92-U/edit) which are kept up-to-date with the changes).
-- [User guide](https://github.com/delta-io/delta/blob/branch-3.2/kernel/USER_GUIDE.md) on the step-by-step process of using Kernel in a standalone Java program or in a distributed processing connector for reading and writing to Delta tables.
+- [User guide](https://github.com/delta-io/delta/blob/master/kernel/USER_GUIDE.md) on the step-by-step process of using Kernel in a standalone Java program or in a distributed processing connector for reading and writing to Delta tables.
 - Example [Java programs](https://github.com/delta-io/delta/tree/master/kernel/examples) that illustrate how to read and write Delta tables using the Kernel APIs.
 - Table and default Engine API Java [documentation](https://docs.delta.io/latest/api/java/kernel/index.html)
 - [Migration guide](https://github.com/delta-io/delta/blob/master/kernel/USER_GUIDE.md#migration-guide)
