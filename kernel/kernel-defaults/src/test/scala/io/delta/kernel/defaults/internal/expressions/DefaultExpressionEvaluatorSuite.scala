@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.internal.expressions
 
 import java.lang.{Boolean => BooleanJ}
-import java.lang.{Float => FloatJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
