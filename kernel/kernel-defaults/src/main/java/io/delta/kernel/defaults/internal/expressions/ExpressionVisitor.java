@@ -117,14 +117,8 @@ abstract class ExpressionVisitor<R> {
         }
     }
 
-
     private static Predicate elemAsPredicate(List<Expression> expressions, int index) {
-        if (expressions.size() <= index) {
-            throw new RuntimeException(
-                String.format("Trying to access invalid entry (%d) in list %s", index,
-                    expressions.stream().map(Object::toString).collect(joining(","))));
-        }
-        Expression elemExpression = expressions.get(index);
+        Expression elemExpression = elemAsExpression(expressions, index);
         if (!(elemExpression instanceof Predicate)) {
             throw new RuntimeException("Expected a predicate, but got " + elemExpression);
         }
@@ -137,7 +131,6 @@ abstract class ExpressionVisitor<R> {
                     String.format("Trying to access invalid entry (%d) in list %s", index,
                             expressions.stream().map(Object::toString).collect(joining(","))));
         }
-        Expression elemExpression = expressions.get(index);
         return expressions.get(index);
     }
 }

@@ -284,8 +284,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         @Override
         ExpressionTransformResult visitStartsWith(StartsWith startsWith) {
             ExpressionTransformResult leftResult = visit(getLeft(startsWith));
-            ExpressionTransformResult rightResult = visit(getLeft(startsWith));
-            if(!(StringType.STRING.equivalent(leftResult.outputType) ||
+            ExpressionTransformResult rightResult = visit(getRight(startsWith));
+            if(!(StringType.STRING.equivalent(leftResult.outputType) &&
                     StringType.STRING.equivalent(rightResult.outputType))) {
                 throw unsupportedExpressionException(
                         startsWith, "'starts with' is only supported for string type expressions");

@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.expressions
 
 import java.lang.{Boolean => BooleanJ}
+import java.lang.{Float => FloatJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
@@ -305,6 +306,58 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // TODO support other types besides boolean
     checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER,
       "Coalesce is only supported for boolean type expressions")
+  }
+
+  test("evaluate expression: starts with") {
+    val col1 = stringVector(Seq[String]("one", "two", "three", "four", null, null, "seven"))
+    val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
+    val schema = new StructType()
+      .add("col1", StringType.STRING)
+      .add("col2", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    val startsWithExpression1 = startsWith(new Column("col1"), Literal.ofString("t"))
+    val expOutputVector1 =
+      booleanVector(Seq[BooleanJ](false, true, true, false, null, null, false))
+    val actOutputVector1 = new DefaultExpressionEvaluator(
+      schema, startsWithExpression1, BooleanType.BOOLEAN).eval(input)
+    checkBooleanVectors(actOutputVector1, expOutputVector1)
+
+    val startsWithExpression2 = startsWith(new Column("col1"), new Column("col2"))
+    val expOutputVector2 =
+      booleanVector(Seq[BooleanJ](true, true, false, false, null, null, null))
+    val actOutputVector2 = new DefaultExpressionEvaluator(
+      schema, startsWithExpression2, BooleanType.BOOLEAN).eval(input)
+    checkBooleanVectors(actOutputVector2, expOutputVector2)
+
+    // checking two literal expressions on both sides
+    val startsWithExpression3 = startsWith(Literal.ofString("ABC"), Literal.ofString("A"))
+    val expOutputVector3 =
+      booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true))
+    val actOutputVector3 = new DefaultExpressionEvaluator(
+      schema, startsWithExpression3, BooleanType.BOOLEAN).eval(input)
+    checkBooleanVectors(actOutputVector3, expOutputVector3)
+
+    def checkUnsupportedTypes(col1Type: DataType, col2Type: DataType): Unit = {
+      val schema = new StructType()
+        .add("col1", col1Type)
+        .add("col2", col2Type)
+      val expr = startsWith(new Column("col1"), new Column("col2"))
+      val input = new DefaultColumnarBatch(5, schema,
+        Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
+
+      val e = intercept[UnsupportedOperationException] {
+        new DefaultExpressionEvaluator(
+          schema, expr, BooleanType.BOOLEAN).eval(input)
+      }
+      assert(e.getMessage.contains("'starts with' is only supported for string type expressions"))
+    }
+    checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
+    checkUnsupportedTypes(LongType.LONG, LongType.LONG)
+    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER)
+    checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
+    checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
+    checkUnsupportedTypes(StringType.STRING, LongType.LONG)
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {

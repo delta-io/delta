@@ -105,7 +105,7 @@ import io.delta.kernel.engine.ExpressionHandler;
  *  </li>
  *  <li>Name: <code>STARTS_WITH</code>
  *   <ul>
- *    <li>SQL semantic: <code>expr STARTS WITH expr</></li>
+ *    <li>SQL semantic: <code>expr STARTS WITH expr</code></li>
  *    <li>Since version: 3.2.0</li>
  *   </ul>
  *  </li>
