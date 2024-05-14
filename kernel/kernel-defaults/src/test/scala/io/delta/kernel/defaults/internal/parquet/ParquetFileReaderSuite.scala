@@ -135,7 +135,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
     checkAnswer(actResult1, expResult1)
 
     // File with multiple row-groups [0, 20000) where rowIndex = id
-    val filePath = getTestResourceFilePath("parquet/")
+    val filePath = getTestResourceFilePath("parquet/row_index_multiple_row_groups.parquet")
     val actResult2 = readParquetFilesUsingKernel(filePath, readSchema)
     val expResult2 = (0L until 20000L).map(i => TestRow(i, i))
 
