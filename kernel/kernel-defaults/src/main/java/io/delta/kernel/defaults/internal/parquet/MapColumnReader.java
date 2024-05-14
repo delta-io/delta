@@ -24,6 +24,8 @@ import org.apache.parquet.schema.GroupType;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.MapType;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.defaults.internal.data.vector.DefaultMapVector;
 import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.createConverter;
 
@@ -57,10 +59,16 @@ class MapColumnReader extends RepeatedValueConverter {
     }
 
     private static Converter[] createElementConverters(
-        int initialBatchSize,
-        MapType typeFromClient,
-        GroupType typeFromFile) {
-        final GroupType innerMapType = (GroupType) typeFromFile.getType("key_value");
+            int initialBatchSize,
+            MapType typeFromClient,
+            GroupType typeFromFile) {
+        // Repeated element can be any name. Latest Parquet versions use "key_value" as the name,
+        // but legacy versions can use any arbitrary name for the repeated group.
+        // See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps for details
+        checkArgument(typeFromFile.getFieldCount() == 1,
+                "Expected exactly one repeated field in the map type, but got: " + typeFromFile);
+
+        GroupType innerMapType = typeFromFile.getType(0).asGroupType();
         Converter[] elemConverters = new Converter[2];
         elemConverters[0] = createConverter(
             initialBatchSize,
