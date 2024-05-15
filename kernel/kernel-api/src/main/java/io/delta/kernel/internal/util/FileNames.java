@@ -42,6 +42,8 @@ public final class FileNames {
     private static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
         Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
 
+    private static final Pattern checksumFileRegex = Pattern.compile("(\\d+)\\.crc");
+
     public static final String SIDECAR_DIRECTORY = "_sidecars";
 
     /**
@@ -79,6 +81,17 @@ public final class FileNames {
 
     public static String sidecarFile(Path path, String sidecar) {
         return String.format("%s/%s/%s", path.toString(), SIDECAR_DIRECTORY, sidecar);
+    }
+
+    /**
+     * Returns the path to the checksum file for the given version.
+     */
+    public static Path checksumFile(Path path, long version) {
+        return new Path(path, String.format("%020d.crc", version));
+    }
+
+    public static long checksumVersion(Path path) {
+        return Long.parseLong(path.getName().split("\\.")[0]);
     }
 
     /**
@@ -159,9 +172,12 @@ public final class FileNames {
         return V2_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
     }
 
-
     public static boolean isCommitFile(String fileName) {
         return DELTA_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
+    }
+
+    public static boolean isChecksumFile(Path checksumFilePath) {
+        return checksumFileRegex.matcher(checksumFilePath.getName()).matches();
     }
 
     /**
@@ -175,12 +191,11 @@ public final class FileNames {
             return checkpointVersion(path);
         } else if (isCommitFile(path.getName())) {
             return deltaVersion(path);
-            //} else if (isChecksumFile(path)) {
-            //    checksumVersion(path);
+        } else if (isChecksumFile(path)) {
+            return checksumVersion(path);
         } else {
             throw new IllegalArgumentException(
-                String.format("Unexpected file type found in transaction log: %s", path)
-            );
+                String.format("Unexpected file type found in transaction log: %s", path));
         }
     }
 }

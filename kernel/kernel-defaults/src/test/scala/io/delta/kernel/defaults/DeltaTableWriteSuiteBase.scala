@@ -19,7 +19,6 @@ import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.{Table, TransactionCommitResult}
 import io.delta.kernel.internal.actions.{Metadata, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
@@ -99,7 +98,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(new File(cpPath).exists())
   }
 
-  def copyTable(goldenTableName: String, targetLocation: String): Unit = {
+  def copyGoldenTable(goldenTableName: String, targetLocation: String): Unit = {
     val source = new File(goldenTablePath(goldenTableName))
     val target = new File(targetLocation)
     FileUtils.copyDirectory(source, target)
