@@ -128,7 +128,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(new File(cpPath).exists())
   }
 
-  def copyTable(goldenTableName: String, targetLocation: String): Unit = {
+  def copyGoldenTable(goldenTableName: String, targetLocation: String): Unit = {
     val source = new File(goldenTablePath(goldenTableName))
     val target = new File(targetLocation)
     FileUtils.copyDirectory(source, target)
