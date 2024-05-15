@@ -199,6 +199,39 @@ public class LogReplay {
             );
         }
 
+        // Compute the lower bound for the CRC search
+        // If the snapshot hint is present, we can use it as the lower bound for the CRC search.
+        // TODO: this can be further improved to make the lower bound until the checkpoint version
+        Optional<Long> crcSearchLowerBound = snapshotHint.map(SnapshotHint::getVersion);
+
+        Optional<VersionStats> versionStatsOpt =
+                ChecksumReader.getVersionStats(
+                        engine,
+                        logSegment.logPath,
+                        snapshotVersion,
+                        crcSearchLowerBound);
+
+        if (versionStatsOpt.isPresent()) {
+            // We found the protocol and metadata for the version we are looking for
+            VersionStats versionStats = versionStatsOpt.get();
+            if (versionStats.getVersion() == snapshotVersion) {
+                return new Tuple2<>(
+                    versionStats.getProtocol(),
+                    versionStats.getMetadata()
+                );
+            }
+
+            // We found the protocol and metadata in a version older than the one we are looking
+            // for. We need to replay the actions to get the latest protocol and metadata, but
+            // update the hint to read the actions from the version we found to check if the
+            // protocol and metadata are updated in the versions after the one we found.
+            snapshotHint = Optional.of(new SnapshotHint(
+                versionStats.getVersion(),
+                versionStats.getProtocol(),
+                versionStats.getMetadata()
+            ));
+        }
+
         Protocol protocol = null;
         Metadata metadata = null;
 

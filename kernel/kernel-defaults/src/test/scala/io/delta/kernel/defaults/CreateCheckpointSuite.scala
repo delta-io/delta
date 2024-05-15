@@ -331,7 +331,7 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
 
   test("create a checkpoint on a existing table") {
     withTempDirAndEngine { (tablePath, tc) =>
-      copyTable("time-travel-start-start20-start40", tablePath)
+      copyGoldenTable("time-travel-start-start20-start40", tablePath)
 
       // before creating checkpoint, read and save the expected results using Spark
       val expResults = readUsingSpark(tablePath)
@@ -345,7 +345,7 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
 
   test("try create a checkpoint on a unsupported table feature table") {
     withTempDirAndEngine { (tablePath, tc) =>
-      copyTable("dv-with-columnmapping", tablePath)
+      copyGoldenTable("dv-with-columnmapping", tablePath)
 
       val ex2 = intercept[Exception] {
         kernelCheckpoint(tc, tablePath, checkpointVersion = 5)

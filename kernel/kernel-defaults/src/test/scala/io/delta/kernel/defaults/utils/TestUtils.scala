@@ -698,4 +698,8 @@ trait TestUtils extends Assertions with SQLHelper {
     }
     resource.getFile
   }
+
+  def copyTable(sourcePath: String, targetPath: String): Unit = {
+    FileUtils.copyDirectory(new File(sourcePath), new File(targetPath))
+  }
 }
