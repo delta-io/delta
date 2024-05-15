@@ -307,6 +307,80 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "Coalesce is only supported for boolean type expressions")
   }
 
+  test("evaluate expression: like") {
+    val col1 = stringVector(Seq[String](
+      "one", "two", "three", "four", null, null, "seven", "eight"))
+    val col2 = stringVector(Seq[String](
+      "one", "Two", "thr%", "four%", "f", null, null, "%ght"))
+    val schema = new StructType()
+      .add("col1", StringType.STRING)
+      .add("col2", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+    val likeExpression1 = like(new Column("col1"), new Column("col2"))
+    val expOutputVector1 =
+      booleanVector(Seq[BooleanJ](true, false, true, true, null, null, null, true))
+    val actOutputVector1 = new DefaultExpressionEvaluator(
+      schema, likeExpression1, BooleanType.BOOLEAN).eval(input)
+    checkBooleanVectors(actOutputVector1, expOutputVector1)
+
+    def checkLiteralSupportedPattern(
+          input: DefaultColumnarBatch,
+          likeExpression: Like,
+          expOutputVector: ColumnVector): Unit = {
+      val actOutputVector =
+        new DefaultExpressionEvaluator(
+          schema, likeExpression, BooleanType.BOOLEAN).eval(input)
+      checkBooleanVectors(actOutputVector, expOutputVector)
+    }
+
+    // starts with checks
+    checkLiteralSupportedPattern(
+      input, like(new Column("col1"), Literal.ofString("t%")),
+        booleanVector(Seq[BooleanJ](false, true, true, false, null, null, false, false)))
+
+    // ends with checks
+    checkLiteralSupportedPattern(
+      input, like(new Column("col1"), Literal.ofString("%t")),
+      booleanVector(Seq[BooleanJ](false, false, false, false, null, null, false, true)))
+
+    // contains checks
+    checkLiteralSupportedPattern(
+      input, like(new Column("col1"), Literal.ofString("%t%")),
+      booleanVector(Seq[BooleanJ](false, true, true, false, null, null, false, true)))
+
+    // check two literal expressions on both sides
+    checkLiteralSupportedPattern(
+      input, like(Literal.ofString("ABC"), Literal.ofString("A%")),
+      booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true, true)))
+
+    // checks for custom escape char
+    checkLiteralSupportedPattern(
+      input, like(Literal.ofString("ABC%CBA"), Literal.ofString("AB~%CBA"), Some('~')),
+      booleanVector(Seq[BooleanJ](false, false, false, false, false, false, false, false)))
+
+    def checkUnsupportedTypes(
+         col1Type: DataType, col2Type: DataType): Unit = {
+      val schema = new StructType()
+        .add("col1", col1Type)
+        .add("col2", col2Type)
+      val expr = like(new Column("col1"), new Column("col2"), Option(null))
+      val input = new DefaultColumnarBatch(5, schema,
+        Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
+
+      val e = intercept[UnsupportedOperationException] {
+        new DefaultExpressionEvaluator(
+          schema, expr, BooleanType.BOOLEAN).eval(input)
+      }
+      assert(e.getMessage.contains("'like' is only supported for string type expressions"))
+    }
+    checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
+    checkUnsupportedTypes(LongType.LONG, LongType.LONG)
+    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER)
+    checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
+    checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
+    checkUnsupportedTypes(StringType.STRING, LongType.LONG)
+  }
+
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)

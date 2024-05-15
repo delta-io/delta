@@ -35,6 +35,11 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     new Or(left, right)
   }
 
+  protected def like(
+      left: Expression, right: Expression, escape: Option[Character] = None): Like = {
+    if (escape.isDefined) new Like(left, right, escape.get) else new Like(left, right)
+  }
+
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
     new Predicate(symbol, left, right)
   }

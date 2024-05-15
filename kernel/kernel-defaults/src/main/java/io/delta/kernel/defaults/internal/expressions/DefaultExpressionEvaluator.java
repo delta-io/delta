@@ -16,7 +16,9 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -280,6 +282,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             );
         }
 
+        @Override
+        ExpressionTransformResult visitLike(final Like like) {
+            ExpressionTransformResult leftResult = visit(getLeft(like));
+            ExpressionTransformResult rightResult = visit(getRight(like));
+            if (!(StringType.STRING.equivalent(leftResult.outputType)
+                    && StringType.STRING.equivalent(rightResult.outputType))) {
+                throw unsupportedExpressionException(like,
+                        "'like' is only supported for string type expressions");
+            }
+            return new ExpressionTransformResult(like, BooleanType.BOOLEAN);
+        }
+
         private Predicate validateIsPredicate(
             Expression baseExpression,
             ExpressionTransformResult result) {
@@ -441,7 +455,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 default:
                     // We should never reach this based on the ExpressionVisitor
                     throw new IllegalStateException(
-                        String.format("%s is not a recognized comparator", predicate.getName()));
+                            String.format("%s is not a recognized comparator",
+                                    predicate.getName()));
             }
 
             return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
@@ -451,23 +466,23 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitLiteral(Literal literal) {
             DataType dataType = literal.getDataType();
             if (dataType instanceof BooleanType ||
-                dataType instanceof ByteType ||
-                dataType instanceof ShortType ||
-                dataType instanceof IntegerType ||
-                dataType instanceof LongType ||
-                dataType instanceof FloatType ||
-                dataType instanceof DoubleType ||
-                dataType instanceof StringType ||
-                dataType instanceof BinaryType ||
-                dataType instanceof DecimalType ||
-                dataType instanceof DateType ||
-                dataType instanceof TimestampType ||
-                dataType instanceof TimestampNTZType) {
+                    dataType instanceof ByteType ||
+                    dataType instanceof ShortType ||
+                    dataType instanceof IntegerType ||
+                    dataType instanceof LongType ||
+                    dataType instanceof FloatType ||
+                    dataType instanceof DoubleType ||
+                    dataType instanceof StringType ||
+                    dataType instanceof BinaryType ||
+                    dataType instanceof DecimalType ||
+                    dataType instanceof DateType ||
+                    dataType instanceof TimestampType ||
+                    dataType instanceof TimestampNTZType) {
                 return new DefaultConstantVector(dataType, input.getSize(), literal.getValue());
             }
 
             throw new UnsupportedOperationException(
-                "unsupported expression encountered: " + literal);
+                    "unsupported expression encountered: " + literal);
         }
 
         @Override
@@ -515,9 +530,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitNot(Predicate predicate) {
             ColumnVector childResult = visit(childAt(predicate, 0));
             return booleanWrapperVector(
-                childResult,
-                rowId -> !childResult.getBoolean(rowId),
-                rowId -> childResult.isNullAt(rowId)
+                    childResult,
+                    rowId -> !childResult.getBoolean(rowId),
+                    rowId -> childResult.isNullAt(rowId)
             );
         }
 
@@ -525,9 +540,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitIsNotNull(Predicate predicate) {
             ColumnVector childResult = visit(childAt(predicate, 0));
             return booleanWrapperVector(
-                childResult,
-                rowId -> !childResult.isNullAt(rowId),
-                rowId -> false
+                    childResult,
+                    rowId -> !childResult.isNullAt(rowId),
+                    rowId -> false
             );
         }
 
@@ -535,29 +550,90 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitIsNull(Predicate predicate) {
             ColumnVector childResult = visit(getUnaryChild(predicate));
             return booleanWrapperVector(
-                childResult,
-                rowId -> childResult.isNullAt(rowId),
-                rowId -> false
+                    childResult,
+                    rowId -> childResult.isNullAt(rowId),
+                    rowId -> false
             );
         }
 
         @Override
         ColumnVector visitCoalesce(ScalarExpression coalesce) {
             List<ColumnVector> childResults = coalesce.getChildren()
-                .stream()
-                .map(this::visit)
-                .collect(Collectors.toList());
+                    .stream()
+                    .map(this::visit)
+                    .collect(Collectors.toList());
             return DefaultExpressionUtils.combinationVector(
-                childResults,
-                rowId -> {
-                    for (int idx = 0; idx < childResults.size(); idx++) {
-                        if (!childResults.get(idx).isNullAt(rowId)) {
-                            return idx;
+                    childResults,
+                    rowId -> {
+                        for (int idx = 0; idx < childResults.size(); idx++) {
+                            if (!childResults.get(idx).isNullAt(rowId)) {
+                                return idx;
+                            }
                         }
+                        return 0; // If all are null then any idx suffices
                     }
-                    return 0; // If all are null then any idx suffices
-                }
             );
+        }
+
+        @Override
+        ColumnVector visitLike(final Like like) {
+            PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(like);
+            ColumnVector left = argResults.leftResult;
+            ColumnVector right = argResults.rightResult;
+            int numRows = argResults.rowCount;
+            boolean[] result = new boolean[numRows];
+            boolean[] nullability = new boolean[numRows];
+            for (int rowId = 0; rowId < numRows; rowId++) {
+                String leftOp = left.getString(rowId);
+                String rightOp = right.getString(rowId);
+                if (!Objects.isNull(leftOp) && !Objects.isNull(rightOp)) {
+                    nullability[rowId] = false;
+                    String rightOpRegexPattern =
+                            escapeLikeRegex(rightOp, like.getEscape());
+                    result[rowId] = leftOp.matches(rightOpRegexPattern);
+                } else {
+                    nullability[rowId] = true;
+                    result[rowId] = false;
+                }
+            }
+            return new DefaultBooleanVector(numRows,
+                    Optional.of(nullability), result);
+        }
+
+        private String escapeLikeRegex(String pattern, char escape) {
+            final int len = pattern.length();
+            final StringBuilder javaPattern = new StringBuilder(len + len);
+            for (int i = 0; i < len; i++) {
+                char c = pattern.charAt(i);
+
+                if (c == escape) {
+                    if (i == (pattern.length() - 1)) {
+                        throw invalidEscapeSequence(pattern, i);
+                    }
+                    char nextChar = pattern.charAt(i + 1);
+                    if ((nextChar == '_')
+                            || (nextChar == '%')
+                            || (nextChar == escape)) {
+                        javaPattern.append(
+                                Pattern.quote(Character.toString(nextChar)));
+                        i++;
+                    } else {
+                        throw invalidEscapeSequence(pattern, i);
+                    }
+                } else if (c == '_') {
+                    javaPattern.append('.');
+                } else if (c == '%') {
+                    javaPattern.append(".*");
+                } else {
+                    javaPattern.append(Pattern.quote(Character.toString(c)));
+                }
+
+            }
+            return "(?s)" + javaPattern;
+        }
+
+        private RuntimeException invalidEscapeSequence(String s, int i) {
+            return new RuntimeException("Invalid escape sequence '" + s + "', " + i);
         }
 
         /**
