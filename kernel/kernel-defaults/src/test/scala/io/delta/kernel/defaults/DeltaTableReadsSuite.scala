@@ -34,6 +34,15 @@ import scala.collection.JavaConverters._
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
+  test("CRC metadata & protocol fetching") {
+    val path = getTestResourceFilePath("stream_table_optimize")
+
+    val snapshot = Table.forPath(defaultEngine, path)
+      .getSnapshotAsOfVersion(defaultEngine, 0)
+
+    readSnapshot(snapshot)
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp type tests
   //////////////////////////////////////////////////////////////////////////////////
