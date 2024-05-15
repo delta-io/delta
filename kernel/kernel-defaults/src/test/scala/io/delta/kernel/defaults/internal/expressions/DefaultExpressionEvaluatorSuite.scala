@@ -316,47 +316,103 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       .add("col1", StringType.STRING)
       .add("col2", StringType.STRING)
     val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
-    val likeExpression1 = like(new Column("col1"), new Column("col2"))
-    val expOutputVector1 =
-      booleanVector(Seq[BooleanJ](true, false, true, true, null, null, null, true))
-    val actOutputVector1 = new DefaultExpressionEvaluator(
-      schema, likeExpression1, BooleanType.BOOLEAN).eval(input)
-    checkBooleanVectors(actOutputVector1, expOutputVector1)
 
-    def checkLiteralSupportedPattern(
+    def checkBatch(
           input: DefaultColumnarBatch,
           likeExpression: Like,
-          expOutputVector: ColumnVector): Unit = {
+          expOutputSeq: Seq[BooleanJ]): Unit = {
       val actOutputVector =
         new DefaultExpressionEvaluator(
           schema, likeExpression, BooleanType.BOOLEAN).eval(input)
+      val expOutputVector = booleanVector(expOutputSeq);
       checkBooleanVectors(actOutputVector, expOutputVector)
     }
 
-    // starts with checks
-    checkLiteralSupportedPattern(
+    // check column expressions on both sides
+    checkBatch(
+      input, like(new Column("col1"), new Column("col2")),
+        Seq[BooleanJ](true, false, true, true, null, null, null, true))
+
+    // check column expression against literal
+    checkBatch(
       input, like(new Column("col1"), Literal.ofString("t%")),
-        booleanVector(Seq[BooleanJ](false, true, true, false, null, null, false, false)))
+        Seq[BooleanJ](false, true, true, false, null, null, false, false))
 
     // ends with checks
-    checkLiteralSupportedPattern(
+    checkBatch(
       input, like(new Column("col1"), Literal.ofString("%t")),
-      booleanVector(Seq[BooleanJ](false, false, false, false, null, null, false, true)))
+        Seq[BooleanJ](false, false, false, false, null, null, false, true))
 
     // contains checks
-    checkLiteralSupportedPattern(
+    checkBatch(
       input, like(new Column("col1"), Literal.ofString("%t%")),
-      booleanVector(Seq[BooleanJ](false, true, true, false, null, null, false, true)))
+        Seq[BooleanJ](false, true, true, false, null, null, false, true))
 
-    // check two literal expressions on both sides
-    checkLiteralSupportedPattern(
-      input, like(Literal.ofString("ABC"), Literal.ofString("A%")),
-      booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true, true)))
+    val dummyInput = new DefaultColumnarBatch(1,
+        new StructType().add("dummy", StringType.STRING),
+        Array(stringVector(Seq[String](""))))
+    def checkLiteral(left: String, right: String,
+        escape: Character = null, expOutput: BooleanJ): Unit = {
+      val expression = like(Literal.ofString(left), Literal.ofString(right), Some(escape))
+      checkBatch(dummyInput, expression, Seq[BooleanJ](expOutput))
+    }
 
-    // checks for custom escape char
-    checkLiteralSupportedPattern(
-      input, like(Literal.ofString("ABC%CBA"), Literal.ofString("AB~%CBA"), Some('~')),
-      booleanVector(Seq[BooleanJ](false, false, false, false, false, false, false, false)))
+    Seq('!', '@', '#').foreach {
+      escape => {
+        // null/empty
+        checkLiteral(null, "a", null, null)
+        checkLiteral("a", null, null, null)
+        checkLiteral(null, null, null, null)
+        checkLiteral("", "", null, true)
+        checkLiteral("a", "", null, false)
+        checkLiteral("", "a", null, false)
+
+        // simple patterns
+        checkLiteral("abc", "abc", escape, true)
+        checkLiteral("a_%b", s"a${escape}__b", escape, true)
+        checkLiteral("abbc", "a_%c", escape, true)
+        checkLiteral("abbc", s"a${escape}__c", escape, false)
+        checkLiteral("abbc", s"a%${escape}%c", escape, false)
+        checkLiteral("a_%b", s"a%${escape}%b", escape, true)
+        checkLiteral("abbc", "a%", escape, true)
+        checkLiteral("abbc", "**", escape, false)
+        checkLiteral("abc", "a%", escape, true)
+        checkLiteral("abc", "b%", escape, false)
+        checkLiteral("abc", "bc%", escape, false)
+        checkLiteral("a\nb", "a_b", escape, true)
+        checkLiteral("ab", "a%b", escape, true)
+        checkLiteral("a\nb", "a%b", escape, true)
+
+        // case
+        checkLiteral("A", "a%", escape, false)
+        checkLiteral("a", "a%", escape, true)
+        checkLiteral("a", "A%", escape, false)
+        checkLiteral(s"aAa", s"aA_", escape, true)
+
+        // regex
+        checkLiteral("a([a-b]{2,4})a", "_([a-b]{2,4})%", null, true)
+        checkLiteral("a([a-b]{2,4})a", "_([a-c]{2,6})_", null, false)
+
+        // %/_
+        checkLiteral("a%a", s"%${escape}%%", escape, true)
+        checkLiteral("a%", s"%${escape}%%", escape, true)
+        checkLiteral("a%a", s"_${escape}%_", escape, true)
+        checkLiteral("a_a", s"%${escape}_%", escape, true)
+        checkLiteral("a_", s"%${escape}_%", escape, true)
+        checkLiteral("a_a", s"_${escape}__", escape, true)
+
+        // double-escaping
+        checkLiteral(s"""$escape$escape$escape$escape""", s"""%${escape}${escape}%""", escape, true)
+        checkLiteral("""%%""", """%%""", escape, true)
+        checkLiteral(s"""${escape}__""", s"""${escape}${escape}${escape}__""", escape, true)
+        checkLiteral(s"""${escape}__""", s"""%${escape}${escape}%${escape}%""", escape, false)
+        checkLiteral(s"""_${escape}${escape}${escape}%""",
+          s"""%${escape}${escape}""", escape, false)
+
+        checkLiteral("a¥a", "_\u00A5_", escape, true)
+        checkLiteral("a\u00A5a", "_¥_", escape, true)
+      }
+    }
 
     def checkUnsupportedTypes(
          col1Type: DataType, col2Type: DataType): Unit = {

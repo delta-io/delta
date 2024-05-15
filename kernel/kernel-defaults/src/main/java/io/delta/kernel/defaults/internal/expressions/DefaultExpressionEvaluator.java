@@ -455,8 +455,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 default:
                     // We should never reach this based on the ExpressionVisitor
                     throw new IllegalStateException(
-                            String.format("%s is not a recognized comparator",
-                                    predicate.getName()));
+                        String.format("%s is not a recognized comparator", predicate.getName()));
             }
 
             return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
@@ -466,23 +465,23 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitLiteral(Literal literal) {
             DataType dataType = literal.getDataType();
             if (dataType instanceof BooleanType ||
-                    dataType instanceof ByteType ||
-                    dataType instanceof ShortType ||
-                    dataType instanceof IntegerType ||
-                    dataType instanceof LongType ||
-                    dataType instanceof FloatType ||
-                    dataType instanceof DoubleType ||
-                    dataType instanceof StringType ||
-                    dataType instanceof BinaryType ||
-                    dataType instanceof DecimalType ||
-                    dataType instanceof DateType ||
-                    dataType instanceof TimestampType ||
-                    dataType instanceof TimestampNTZType) {
+                dataType instanceof ByteType ||
+                dataType instanceof ShortType ||
+                dataType instanceof IntegerType ||
+                dataType instanceof LongType ||
+                dataType instanceof FloatType ||
+                dataType instanceof DoubleType ||
+                dataType instanceof StringType ||
+                dataType instanceof BinaryType ||
+                dataType instanceof DecimalType ||
+                dataType instanceof DateType ||
+                dataType instanceof TimestampType ||
+                dataType instanceof TimestampNTZType) {
                 return new DefaultConstantVector(dataType, input.getSize(), literal.getValue());
             }
 
             throw new UnsupportedOperationException(
-                    "unsupported expression encountered: " + literal);
+                "unsupported expression encountered: " + literal);
         }
 
         @Override
@@ -530,9 +529,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitNot(Predicate predicate) {
             ColumnVector childResult = visit(childAt(predicate, 0));
             return booleanWrapperVector(
-                    childResult,
-                    rowId -> !childResult.getBoolean(rowId),
-                    rowId -> childResult.isNullAt(rowId)
+                childResult,
+                rowId -> !childResult.getBoolean(rowId),
+                rowId -> childResult.isNullAt(rowId)
             );
         }
 
@@ -540,9 +539,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitIsNotNull(Predicate predicate) {
             ColumnVector childResult = visit(childAt(predicate, 0));
             return booleanWrapperVector(
-                    childResult,
-                    rowId -> !childResult.isNullAt(rowId),
-                    rowId -> false
+                childResult,
+                rowId -> !childResult.isNullAt(rowId),
+                rowId -> false
             );
         }
 
@@ -550,28 +549,28 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitIsNull(Predicate predicate) {
             ColumnVector childResult = visit(getUnaryChild(predicate));
             return booleanWrapperVector(
-                    childResult,
-                    rowId -> childResult.isNullAt(rowId),
-                    rowId -> false
+                childResult,
+                rowId -> childResult.isNullAt(rowId),
+                rowId -> false
             );
         }
 
         @Override
         ColumnVector visitCoalesce(ScalarExpression coalesce) {
             List<ColumnVector> childResults = coalesce.getChildren()
-                    .stream()
-                    .map(this::visit)
-                    .collect(Collectors.toList());
+                .stream()
+                .map(this::visit)
+                .collect(Collectors.toList());
             return DefaultExpressionUtils.combinationVector(
-                    childResults,
-                    rowId -> {
-                        for (int idx = 0; idx < childResults.size(); idx++) {
-                            if (!childResults.get(idx).isNullAt(rowId)) {
-                                return idx;
-                            }
+                childResults,
+                rowId -> {
+                    for (int idx = 0; idx < childResults.size(); idx++) {
+                        if (!childResults.get(idx).isNullAt(rowId)) {
+                            return idx;
                         }
-                        return 0; // If all are null then any idx suffices
                     }
+                    return 0; // If all are null then any idx suffices
+                }
             );
         }
 
