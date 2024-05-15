@@ -178,6 +178,7 @@ if __name__ == "__main__":
     if args.use_local and (args.version != default_version):
         raise Exception("Cannot specify --use-local with a --version different than in version.sbt")
 
+    # Note: comment this out to test against a local JAR (e.g. in ~/.m2). Do not use --use-local.
     clear_artifact_cache()
 
     if args.use_local:
