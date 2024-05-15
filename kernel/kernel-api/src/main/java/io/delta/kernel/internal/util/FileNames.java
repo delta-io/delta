@@ -44,6 +44,8 @@ public final class FileNames {
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
+  private static final Pattern checksumFileRegex = Pattern.compile("(\\d+)\\.crc");
+
   /** Returns the delta (json format) path for a given delta file. */
   public static String deltaFile(Path path, long version) {
     return String.format("%s/%020d.json", path, version);
@@ -73,6 +75,15 @@ public final class FileNames {
 
   public static String sidecarFile(Path path, String sidecar) {
     return String.format("%s/%s/%s", path.toString(), SIDECAR_DIRECTORY, sidecar);
+  }
+
+  /** Returns the path to the checksum file for the given version. */
+  public static Path checksumFile(Path path, long version) {
+    return new Path(path, String.format("%020d.crc", version));
+  }
+
+  public static long checksumVersion(Path path) {
+    return Long.parseLong(path.getName().split("\\.")[0]);
   }
 
   /**
@@ -150,6 +161,10 @@ public final class FileNames {
         || UUID_DELTA_FILE_REGEX.matcher(filename).matches();
   }
 
+  public static boolean isChecksumFile(Path checksumFilePath) {
+    return checksumFileRegex.matcher(checksumFilePath.getName()).matches();
+  }
+
   /**
    * Get the version of the checkpoint, checksum or delta file. Throws an error if an unexpected
    * file type is seen. These unexpected files should be filtered out to ensure forward
@@ -161,8 +176,8 @@ public final class FileNames {
       return checkpointVersion(path);
     } else if (isCommitFile(path.getName())) {
       return deltaVersion(path);
-      // } else if (isChecksumFile(path)) {
-      //    checksumVersion(path);
+    } else if (isChecksumFile(path)) {
+      return checksumVersion(path);
     } else {
       throw new IllegalArgumentException(
           String.format("Unexpected file type found in transaction log: %s", path));
