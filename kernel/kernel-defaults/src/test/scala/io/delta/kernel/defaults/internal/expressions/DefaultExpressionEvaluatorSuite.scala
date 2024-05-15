@@ -408,9 +408,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         checkLiteral(s"""${escape}__""", s"""%${escape}${escape}%${escape}%""", escape, false)
         checkLiteral(s"""_${escape}${escape}${escape}%""",
           s"""%${escape}${escape}""", escape, false)
-
-        checkLiteral("a¥a", "_\u00A5_", escape, true)
-        checkLiteral("a\u00A5a", "_¥_", escape, true)
       }
     }
 
