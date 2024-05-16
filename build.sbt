@@ -37,6 +37,7 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
 val SPARK_MASTER_VERSION = "4.0.0-preview1"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+sqlDeltaImport / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val flinkVersion = "1.16.1"
@@ -1138,13 +1139,13 @@ lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
     Test / publishArtifact := false,
     libraryDependencies ++= Seq(
       "io.netty" % "netty-buffer"  % "4.1.63.Final" % "test",
-      "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % LATEST_RELEASED_SPARK_VERSION % "provided",
+      "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % sparkVersion.value % "provided",
       "org.rogach" %% "scallop" % "3.5.1",
       "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test",
       "com.h2database" % "h2" % "1.4.200" % "test",
-      "org.apache.spark" % ("spark-catalyst_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % LATEST_RELEASED_SPARK_VERSION % "test",
-      "org.apache.spark" % ("spark-core_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % LATEST_RELEASED_SPARK_VERSION % "test",
-      "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % LATEST_RELEASED_SPARK_VERSION % "test"
+      "org.apache.spark" % ("spark-catalyst_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % sparkVersion.value% "test",
+      "org.apache.spark" % ("spark-core_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % sparkVersion.value% "test",
+      "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % sparkVersion.value% "test"
     )
   )
 
