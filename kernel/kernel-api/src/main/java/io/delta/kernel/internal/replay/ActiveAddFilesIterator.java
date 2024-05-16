@@ -17,13 +17,12 @@ package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.*;
 
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.StringType;
@@ -32,13 +31,16 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.replay.LogReplayUtils.UniqueFileActionTuple;
+import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_DV_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_PATH_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_DV_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_PATH_ORDINAL;
+import static io.delta.kernel.internal.replay.LogReplayUtils.pathToUri;
+import static io.delta.kernel.internal.replay.LogReplayUtils.prepareSelectionVectorBuffer;
 
 /**
  * This class takes an iterator of ({@link ColumnarBatch}, isFromCheckpoint), where the
@@ -48,13 +50,7 @@ import static io.delta.kernel.internal.replay.LogReplay.REMOVE_FILE_PATH_ORDINAL
  * (have not been tombstoned).
  */
 class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
-    private static class UniqueFileActionTuple extends Tuple2<URI, Optional<String>> {
-        UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorId) {
-            super(fileURI, deletionVectorId);
-        }
-    }
-
-    private final TableClient tableClient;
+    private final Engine engine;
     private final Path tableRoot;
 
     private final CloseableIterator<ActionWrapper> iter;
@@ -72,10 +68,10 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     private boolean closed;
 
     ActiveAddFilesIterator(
-            TableClient tableClient,
+            Engine engine,
             CloseableIterator<ActionWrapper> iter,
             Path tableRoot) {
-        this.tableClient = tableClient;
+        this.engine = engine;
         this.tableRoot = tableRoot;
         this.iter = iter;
         this.tombstonesFromJson = new HashSet<>();
@@ -112,10 +108,8 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
 
     @Override
     public void close() throws IOException {
-        if (!closed) {
-            iter.close();
-            closed = true;
-        }
+        closed = true;
+        Utils.closeCloseables(iter);
     }
 
     /**
@@ -178,7 +172,8 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
         // Step 2: Iterate over all the AddFiles in this columnar batch in order to build up the
         //         selection vector. We unselect an AddFile when it was removed by a RemoveFile
         final ColumnVector addsVector = addRemoveColumnarBatch.getColumnVector(ADD_FILE_ORDINAL);
-        prepareSelectionVectorBuffer(addsVector.getSize());
+        selectionVectorBuffer =
+                prepareSelectionVectorBuffer(selectionVectorBuffer, addsVector.getSize());
         boolean atLeastOneUnselected = false;
 
         for (int rowId = 0; rowId < addsVector.getSize(); rowId++) {
@@ -222,7 +217,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
         // Step 4: TODO: remove this step. This is a temporary requirement until the path
         //         in `add` is converted to absolute path.
         if (tableRootVectorGenerator == null) {
-            tableRootVectorGenerator = tableClient.getExpressionHandler()
+            tableRootVectorGenerator = engine.getExpressionHandler()
                 .getEvaluator(
                     scanAddFiles.getSchema(),
                     Literal.ofString(tableRoot.toUri().toString()),
@@ -235,27 +230,10 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
             tableRootVector);
 
         Optional<ColumnVector> selectionColumnVector = atLeastOneUnselected ?
-            Optional.of(tableClient.getExpressionHandler()
+            Optional.of(engine.getExpressionHandler()
                 .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize())) :
             Optional.empty();
         next = Optional.of(new FilteredColumnarBatch(scanAddFiles, selectionColumnVector));
-    }
-
-    private void prepareSelectionVectorBuffer(int size) {
-        if (selectionVectorBuffer == null || selectionVectorBuffer.length < size) {
-            selectionVectorBuffer = new boolean[size];
-        } else {
-            // reset the array - if we are reusing the same buffer.
-            Arrays.fill(selectionVectorBuffer, false);
-        }
-    }
-
-    private URI pathToUri(String path) {
-        try {
-            return new URI(path);
-        } catch (URISyntaxException ex) {
-            throw new RuntimeException(ex);
-        }
     }
 
     public static String getAddFilePath(ColumnVector addFileVector, int rowId) {

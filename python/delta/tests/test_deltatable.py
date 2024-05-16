@@ -24,7 +24,6 @@ from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
 from pyspark.sql import DataFrame, Row
-from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
 from pyspark.sql.utils import AnalysisException, ParseException
@@ -698,6 +697,34 @@ class DeltaTableTestsMixin:
                                        nullables={"key", "value", "value2"},
                                        partitioningColumns=["value", "value2"])
 
+    def test_create_replace_table_with_cluster_by(self) -> None:
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+        with self.table("test"):
+            # verify creating table with list of structFields
+            deltaTable = DeltaTable.create(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
+
+            deltaTable = DeltaTable.replace(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
+
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
         with self.table("test"):
             # create table.
@@ -888,6 +915,12 @@ class DeltaTableTestsMixin:
                                        tblComment="comment")
 
     def test_verify_paritionedBy_compatibility(self) -> None:
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[attr-defined]
+
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
                 .addColumn("col1", "int", comment="foo", nullable=False) \
@@ -965,6 +998,16 @@ class DeltaTableTestsMixin:
 
         with self.assertRaises(TypeError):
             builder.partitionedBy([1])  # type: ignore[list-item]
+
+        # bad clusterBy col name
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1)  # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1, "1")   # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy([1])  # type: ignore[list-item]
 
         # bad property key
         with self.assertRaises(TypeError):

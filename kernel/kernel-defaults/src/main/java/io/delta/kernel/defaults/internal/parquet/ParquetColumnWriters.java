@@ -16,8 +16,6 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import java.math.BigDecimal;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import static java.util.Objects.requireNonNull;
@@ -28,10 +26,8 @@ import org.apache.parquet.io.api.RecordConsumer;
 import io.delta.kernel.data.*;
 import io.delta.kernel.types.*;
 
-import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.MAX_BYTES_PER_PRECISION;
 
 /**
@@ -134,7 +130,8 @@ class ParquetColumnWriters {
             return new DecimalFixedBinaryWriter(colName, fieldIndex, columnVector);
         } else if (dataType instanceof DateType) {
             return new DateWriter(colName, fieldIndex, columnVector);
-        } else if (dataType instanceof TimestampType) {
+        } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
+            // for both get the input as long type from column vector and write to file as INT64
             return new TimestampWriter(colName, fieldIndex, columnVector);
         } else if (dataType instanceof ArrayType) {
             return new ArrayWriter(colName, fieldIndex, columnVector);
@@ -336,30 +333,19 @@ class ParquetColumnWriters {
         }
     }
 
-    static class TimestampWriter extends ColumnWriter {
-        // Reuse this buffer to avoid allocating a new buffer for each row
-        private final byte[] reusedBuffer = new byte[12];
 
+    /**
+     * Writer for both timestamp and timestamp with time zone.
+     */
+    static class TimestampWriter extends ColumnWriter {
         TimestampWriter(String name, int fieldId, ColumnVector columnVector) {
             super(name, fieldId, columnVector);
         }
 
         @Override
         void writeNonNullRowValue(RecordConsumer recordConsumer, int rowId) {
-            // TODO: Spark has various handling mode for DateType, need to check if it is needed
-            // for Delta Kernel.
-
-            // For now write as INT96 which is the most supported format for timestamps
-            // Later on, depending upon the config, we can write either as INT64 or INT96
             long microsSinceEpochUTC = columnVector.getLong(rowId);
-            Tuple2<Integer, Long> julianDayRemainingNanos =
-                    DefaultKernelUtils.toJulianDay(microsSinceEpochUTC);
-
-            ByteBuffer buffer = ByteBuffer.wrap(reusedBuffer);
-            buffer.order(ByteOrder.LITTLE_ENDIAN)
-                    .putLong(julianDayRemainingNanos._2) // timeOfDayNanos
-                    .putInt(julianDayRemainingNanos._1); // julianDay
-            recordConsumer.addBinary(Binary.fromReusedByteArray(reusedBuffer));
+            recordConsumer.addLong(microsSinceEpochUTC);
         }
     }
 

@@ -20,6 +20,7 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
@@ -28,7 +29,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
-import org.apache.spark.sql.delta.util.FileNames.deltaFile
+import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
 
 import org.apache.spark.SparkException
@@ -1491,7 +1492,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().collect()
         }
-        assert(thrown.getMessage.contains("is not a Parquet file"))
+        assert(thrown.getMessage.contains(THROWS_ON_CORRUPTED_FILE_ERROR_MSG))
       }
     }
   }
@@ -1543,7 +1544,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().collect()
       }
-      assert(thrown.getMessage.contains("FileNotFound"))
+      assert(thrown.getMessage.contains(THROWS_ON_DELETED_FILE_ERROR_MSG))
     }
   }
 
@@ -2037,13 +2038,13 @@ class DeltaSuite extends QueryTest
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
       overwrite = false,
       hadoopConf)
 
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 2),
       files.take(1).map(_.json).iterator,
       overwrite = false,
       hadoopConf)

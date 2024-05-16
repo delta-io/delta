@@ -25,6 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
+import org.apache.spark.sql.delta.managedcommit.{CommitOwnerProvider, ManagedCommitBaseSuite, ManagedCommitTestUtils, TrackingInMemoryCommitOwnerBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -37,7 +38,9 @@ import org.apache.spark.util.{ManualClock, SerializableConfiguration, ThreadUtil
 class InCommitTimestampSuite
   extends QueryTest
     with SharedSparkSession
-    with DeltaSQLCommandTest {
+    with DeltaSQLCommandTest
+    with DeltaTestUtilsBase
+    with ManagedCommitTestUtils {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -53,12 +56,6 @@ class InCommitTimestampSuite
     commitInfo.get.inCommitTimestamp.get
   }
 
-  def filterUsageRecords(usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
-    usageRecords.filter { r =>
-      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
-    }
-  }
-
   test("Enable ICT on commit 0") {
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
@@ -70,7 +67,9 @@ class InCommitTimestampSuite
     }
   }
 
-  test("Create a non-inCommitTimestamp table and then enable timestamp") {
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset(
+    "Create a non-inCommitTimestamp table and then enable timestamp") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
@@ -151,11 +150,11 @@ class InCommitTimestampSuite
         DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo from the commit.
-      val actions = deltaLog.store.readAsIterator(
-        FileNames.deltaFile(deltaLog.logPath, 1), deltaLog.newDeltaHadoopConf())
+      val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
+      val actions = deltaLog.store.readAsIterator(commit1Path, deltaLog.newDeltaHadoopConf())
       val actionsWithoutCommitInfo = actions.filterNot(Action.fromJson(_).isInstanceOf[CommitInfo])
       deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, 1),
+        commit1Path,
         actionsWithoutCommitInfo,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -182,8 +181,9 @@ class InCommitTimestampSuite
         DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo.commitTimestamp from the commit.
+      val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
       val actions = deltaLog.store.readAsIterator(
-        FileNames.deltaFile(deltaLog.logPath, 1),
+        commit1Path,
         deltaLog.newDeltaHadoopConf()).toList
       val actionsWithoutCommitInfoCommitTimestamp =
         actions.map(Action.fromJson).map {
@@ -193,7 +193,7 @@ class InCommitTimestampSuite
             other.json
         }.toIterator
       deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, 1),
+        commit1Path,
         actionsWithoutCommitInfoCommitTimestamp,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -260,7 +260,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("Enablement tracking works when ICT is enabled post commit 0") {
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset("Enablement tracking works when ICT is enabled post commit 0") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
@@ -286,7 +287,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("Conflict resolution of enablement version") {
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset("Conflict resolution of enablement version") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
@@ -321,7 +323,9 @@ class InCommitTimestampSuite
     }
   }
 
-  test("commitLarge should correctly set the enablement tracking properties") {
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset(
+    "commitLarge should correctly set the enablement tracking properties") {
     withTempDir { tempDir =>
       spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
@@ -419,11 +423,11 @@ class InCommitTimestampSuite
         DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       // Remove CommitInfo from the commit.
-      val actions = deltaLog.store.readAsIterator(
-        FileNames.deltaFile(deltaLog.logPath, 1), deltaLog.newDeltaHadoopConf())
+      val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
+      val actions = deltaLog.store.readAsIterator(commit1Path, deltaLog.newDeltaHadoopConf())
       val actionsWithoutCommitInfo = actions.filterNot(Action.fromJson(_).isInstanceOf[CommitInfo])
       deltaLog.store.write(
-        FileNames.deltaFile(deltaLog.logPath, 1),
+        commit1Path,
         actionsWithoutCommitInfo,
         overwrite = true,
         deltaLog.newDeltaHadoopConf())
@@ -551,7 +555,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("DeltaHistoryManager.getActiveCommitAtTime: " +
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset("DeltaHistoryManager.getActiveCommitAtTime: " +
     "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
@@ -603,7 +608,7 @@ class InCommitTimestampSuite
         val searchTimestamp = getInCommitTimestamp(deltaLog, enablementCommit.version + 1)
         // Delete the first two ICT commits before performing the search.
         (enablementCommit.version to enablementCommit.version + 1).foreach { version =>
-          fs.delete(FileNames.deltaFile(deltaLog.logPath, version), false)
+          fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version), false)
         }
         val e = intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
           deltaLog.history.getActiveCommitAtTime(
@@ -615,7 +620,7 @@ class InCommitTimestampSuite
         // Search for a non-ICT commit when all the non-ICT commits are missing.
         // Delete all the non-ICT commits.
         (0L until numNonICTCommits).foreach { version =>
-          fs.delete(FileNames.deltaFile(deltaLog.logPath, version), false)
+          fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version), false)
         }
         intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
           deltaLog.history.getActiveCommitAtTime(
@@ -635,7 +640,8 @@ class InCommitTimestampSuite
     }
   }
 
-  test("DeltaHistoryManager.getHistory --- " +
+  // Managed Commits will also automatically enable ICT.
+  testWithDefaultCommitOwnerUnset("DeltaHistoryManager.getHistory --- " +
       "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
@@ -667,7 +673,7 @@ class InCommitTimestampSuite
         history.reverse.zipWithIndex.foreach { case (hist, version) =>
           assert(hist.getVersion == version)
           val expectedTimestamp = if (version < ictEnablementVersion) {
-            fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version))
+            fs.getFileStatus(FileNames.unsafeDeltaFile(deltaLog.logPath, version))
               .getModificationTime
           } else {
             getInCommitTimestamp(deltaLog, version)
@@ -680,8 +686,9 @@ class InCommitTimestampSuite
         assert(nonICTHistory.length == ictEnablementVersion)
         nonICTHistory.reverse.zipWithIndex.foreach { case (hist, version) =>
           assert(hist.getVersion == version)
-          val expectedTimestamp = fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version))
-            .getModificationTime
+          val expectedTimestamp =
+            fs.getFileStatus(FileNames.unsafeDeltaFile(deltaLog.logPath, version))
+              .getModificationTime
           assert(hist.timestamp.getTime == expectedTimestamp)
         }
         // Try fetching only the ICT commits.
@@ -703,7 +710,8 @@ class InCommitTimestampSuite
           .foreach { case (hist, version) =>
             assert(hist.getVersion == version)
             val expectedTimestamp = if (version < ictEnablementVersion) {
-                fs.getFileStatus(FileNames.deltaFile(deltaLog.logPath, version)).getModificationTime
+                fs.getFileStatus(FileNames.unsafeDeltaFile(deltaLog.logPath, version))
+                  .getModificationTime
               } else {
                 getInCommitTimestamp(deltaLog, version)
               }
@@ -802,8 +810,8 @@ class InCommitTimestampSuite
 
       // Delete the last few commits in the window.
       val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 5), false)
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 6), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 5), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 6), false)
       // Search for the commit just before the deleted commits.
       commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
           getICTCommit(4).timestamp,
@@ -836,7 +844,7 @@ class InCommitTimestampSuite
       // Window -> [0, 11)
       // numChunks = 5, chunkSize = (11-0)/5 = 2
       // chunks -> [0, 2), [2, 4), [4, 6), [6, 8), [8, 10), [10, 11)
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 4), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 4), false)
       // 4, 5, 6 have been deleted, so window [4, 6) is completely empty.
 
       // Search for the commit 6.
@@ -867,8 +875,8 @@ class InCommitTimestampSuite
       assert(commit == getICTCommit(7))
 
       // Scenario with many empty chunks.
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 8), false)
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 9), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 8), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 9), false)
 
       // Window -> [0, 11)
       // numChunks = 11, chunkSize = (11-0)/11 = 1
@@ -902,7 +910,7 @@ class InCommitTimestampSuite
           deltaCommitFileProvider).get
       assert(commit == getICTCommit(10))
 
-      fs.delete(FileNames.deltaFile(deltaLog.logPath, 10), false)
+      fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, 10), false)
       // Everything after and including `end` does not exist.
       commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
         getICTCommit(7).timestamp,
@@ -941,3 +949,72 @@ class InCommitTimestampSuite
   }
 }
 
+class InCommitTimestampWithManagedCommitSuite
+  extends InCommitTimestampSuite
+    with ManagedCommitBaseSuite {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")
+  }
+
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(5)
+
+  test("getActiveCommitAtTime works correctly within managed commit range") {
+    CommitOwnerProvider.clearNonDefaultBuilders()
+    val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
+    CommitOwnerProvider.registerBuilder(builder)
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
+      val tableCommitOwnerClient = deltaLog.snapshot.tableCommitOwnerClientOpt.get
+      val numberAdditionalCommits = 4
+      // Create 4 unbackfilled commits.
+      for (i <- 1 to numberAdditionalCommits) {
+        deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
+      }
+      val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
+      val unbackfilledCommits =
+        tableCommitOwnerClient
+          .getCommits(Some(1))
+          .getCommits
+          .map { commit => DeltaHistoryManager.Commit(commit.getVersion, commit.getCommitTimestamp)}
+      val commits = (Seq(commit0) ++ unbackfilledCommits).toList
+      // Search for the exact timestamp.
+      for (commit <- commits) {
+        val resCommit = deltaLog.history.getActiveCommitAtTime(
+          new Timestamp(commit.timestamp), canReturnLastCommit = false)
+        assert(resCommit.version == commit.version)
+        assert(resCommit.timestamp == commit.timestamp)
+      }
+
+      // getActiveCommitAtTimeFromICTRange should throw an IllegalStateException
+      // if it does not manage to find an unbackfilled commit.
+
+      // Delete the target unbackfilled commit:
+      val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+      val commit3Path = commitFileProvider.deltaFile(3)
+      fs.delete(commit3Path, false)
+      val commit3Timestamp = unbackfilledCommits(2).timestamp
+      var errorOpt = Option.empty[org.apache.spark.SparkException]
+      try {
+        DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
+          commit3Timestamp,
+          commit0,
+          numberAdditionalCommits + 1,
+          deltaLog.newDeltaHadoopConf(),
+          deltaLog.logPath,
+          deltaLog.store,
+          numChunks = 5,
+          spark,
+          commitFileProvider)
+      } catch {
+        case e: org.apache.spark.SparkException => errorOpt = Some(e)
+          e.getStackTrace.exists(_.toString.contains(
+            s"Could not find commit 3 which was expected to be at " +
+              s"path ${commit3Path.toString}."))
+      }
+      assert(errorOpt.isDefined)
+    }
+  }
+}

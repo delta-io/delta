@@ -31,6 +31,7 @@ import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
@@ -274,35 +275,64 @@ class DeltaLog private(
   /**
    * Get all actions starting from "startVersion" (inclusive). If `startVersion` doesn't exist,
    * return an empty Iterator.
+   * Callers are encouraged to use the other override which takes the endVersion if available to
+   * avoid I/O and improve performance of this method.
    */
   def getChanges(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, Seq[Action])] = {
-    val hadoopConf = newDeltaHadoopConf()
-    val deltasWithVersion = store.listFrom(listingPrefix(logPath, startVersion), hadoopConf)
-      .flatMap(DeltaFile.unapply(_))
-    // Subtract 1 to ensure that we have the same check for the inclusive startVersion
-    var lastSeenVersion = startVersion - 1
-    deltasWithVersion.map { case (status, version) =>
-      val p = status.getPath
-      if (failOnDataLoss && version > lastSeenVersion + 1) {
-        throw DeltaErrors.failOnDataLossException(lastSeenVersion + 1, version)
-      }
-      lastSeenVersion = version
-      (version, store.read(status, hadoopConf).map(Action.fromJson))
+    getChangeLogFiles(startVersion, failOnDataLoss).map { case (version, status) =>
+      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
     }
+  }
+
+  private[sql] def getChanges(
+      startVersion: Long,
+      endVersion: Long,
+      failOnDataLoss: Boolean): Iterator[(Long, Seq[Action])] = {
+    getChangeLogFiles(startVersion, endVersion, failOnDataLoss).map { case (version, status) =>
+      (version, store.read(status, newDeltaHadoopConf()).map(Action.fromJson(_)))
+    }
+  }
+
+  private[sql] def getChangeLogFiles(
+      startVersion: Long,
+      endVersion: Long,
+      failOnDataLoss: Boolean): Iterator[(Long, FileStatus)] = {
+    implicit class IteratorWithStopAtHelper[T](underlying: Iterator[T]) {
+      // This method is used to stop the iterator when the condition is met.
+      def stopAt(stopAtFunc: (T) => Boolean): Iterator[T] = new Iterator[T] {
+        var shouldStop = false
+
+        override def hasNext: Boolean = !shouldStop && underlying.hasNext
+
+        override def next(): T = {
+          val v = underlying.next()
+          shouldStop = stopAtFunc(v)
+          v
+        }
+      }
+    }
+
+    getChangeLogFiles(startVersion, failOnDataLoss)
+      // takeWhile always looks at one extra item, which can trigger unnecessary work. Instead, we
+      // stop if we've seen the item we believe should be the last interesting item, without
+      // examining the one that follows.
+      .stopAt { case (version, _) => version >= endVersion }
+      // The last element in this iterator may not be <= endVersion, so we need to filter it out.
+      .takeWhile { case (version, _) => version <= endVersion }
   }
 
   /**
    * Get access to all actions starting from "startVersion" (inclusive) via [[FileStatus]].
    * If `startVersion` doesn't exist, return an empty Iterator.
+   * Callers are encouraged to use the other override which takes the endVersion if available to
+   * avoid I/O and improve performance of this method.
    */
   def getChangeLogFiles(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltasWithVersion = store
-      .listFrom(listingPrefix(logPath, startVersion), newDeltaHadoopConf())
-      .flatMap(DeltaFile.unapply(_))
+    val deltasWithVersion = ManagedCommitUtils.commitFilesIterator(this, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltasWithVersion.map { case (status, version) =>
@@ -437,8 +467,8 @@ class DeltaLog private(
 
   def isSameLogAs(otherLog: DeltaLog): Boolean = this.compositeId == otherLog.compositeId
 
-  /** Creates the log directory if it does not exist. */
-  def ensureLogDirectoryExist(): Unit = {
+  /** Creates the log directory and commit directory if it does not exist. */
+  def createLogDirectoriesIfNotExists(): Unit = {
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
     def createDirIfNotExists(path: Path): Unit = {
       // Optimistically attempt to create the directory first without checking its existence.
@@ -470,14 +500,6 @@ class DeltaLog private(
     createDirIfNotExists(FileNames.commitDirPath(logPath))
   }
 
-  /**
-   * Create the log directory. Unlike `ensureLogDirectoryExist`, this method doesn't check whether
-   * the log directory exists and it will ignore the return value of `mkdirs`.
-   */
-  def createLogDirectory(): Unit = {
-    logPath.getFileSystem(newDeltaHadoopConf()).mkdirs(logPath)
-  }
-
   /* ------------  *
    |  Integration  |
    * ------------  */
@@ -496,7 +518,20 @@ class DeltaLog private(
     // ensure any partitionSchema changes will be captured, and upon restart, the new snapshot will
     // be initialized with the correct partition schema again.
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
-    val relation = buildHadoopFsRelationWithFileIndex(snapshot, fileIndex, bucketSpec = None)
+    // Drop null type columns from the relation's schema if it's not a streaming query until
+    // null type columns are fully supported.
+    val dropNullTypeColumnsFromSchema = if (isStreaming) {
+      // Can force the legacy behavior(dropping nullType columns) with a flag.
+      SQLConf.get.getConf(DeltaSQLConf.DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    } else {
+      // Allow configurable behavior for non-streaming sources. This is used for testing.
+      SQLConf.get.getConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    }
+    val relation = buildHadoopFsRelationWithFileIndex(
+      snapshot,
+      fileIndex,
+      bucketSpec = None,
+      dropNullTypeColumnsFromSchema = dropNullTypeColumnsFromSchema)
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
@@ -548,8 +583,16 @@ class DeltaLog private(
     }
   }
 
-  def buildHadoopFsRelationWithFileIndex(snapshot: SnapshotDescriptor, fileIndex: TahoeFileIndex,
-      bucketSpec: Option[BucketSpec]): HadoopFsRelation = {
+  def buildHadoopFsRelationWithFileIndex(
+      snapshot: SnapshotDescriptor,
+      fileIndex: TahoeFileIndex,
+      bucketSpec: Option[BucketSpec],
+      dropNullTypeColumnsFromSchema: Boolean = true): HadoopFsRelation = {
+    val dataSchema = if (dropNullTypeColumnsFromSchema) {
+      SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema)
+    } else {
+      snapshot.metadata.schema
+    }
     HadoopFsRelation(
       fileIndex,
       partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
@@ -558,8 +601,8 @@ class DeltaLog private(
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark,
-          SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema))),
+        DeltaTableUtils.removeInternalMetadata(spark, dataSchema)
+      ),
       bucketSpec = bucketSpec,
       fileFormat(snapshot.protocol, snapshot.metadata),
       // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
@@ -578,8 +621,7 @@ class DeltaLog private(
    */
   protected def checkRequiredConfigurations(): Unit = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK)) {
-      if (spark.conf.getOption(
-        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key).isEmpty) {
+      if (!spark.conf.contains(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key)) {
         throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(None)
       }
     }

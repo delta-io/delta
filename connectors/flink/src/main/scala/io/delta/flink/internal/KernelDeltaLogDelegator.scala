@@ -20,13 +20,13 @@ package io.delta.standalone.internal
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
-import io.delta.kernel.{Table, TableNotFoundException}
-import io.delta.kernel.defaults.client.DefaultTableClient
-import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel, TableImpl}
+import io.delta.kernel.Table
+import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.exceptions.TableNotFoundException
+import io.delta.kernel.internal.{TableImpl, SnapshotImpl => SnapshotImplKernel}
 import io.delta.standalone.VersionLog
 import io.delta.standalone.actions.{CommitInfo => CommitInfoJ}
-import io.delta.standalone.internal.{SnapshotImpl => StandaloneSnapshotImpl, InitialSnapshotImpl => StandaloneInitialSnapshotImpl}
+import io.delta.standalone.internal.{InitialSnapshotImpl => StandaloneInitialSnapshotImpl, SnapshotImpl => StandaloneSnapshotImpl}
 import io.delta.standalone.internal.util.{Clock, SystemClock}
 
 class KernelOptTxn(kernelDeltaLog: KernelDeltaLogDelegator, kernelSnapshot: KernelSnapshotDelegator)
@@ -44,7 +44,7 @@ class KernelOptTxn(kernelDeltaLog: KernelDeltaLogDelegator, kernelSnapshot: Kern
  * provides features used by flink+startTransaction.
  */
 class KernelDeltaLogDelegator(
-    tableClient: DefaultTableClient,
+    engine: DefaultEngine,
     table: TableImpl,
     standaloneDeltaLog: DeltaLogImpl,
     hadoopConf: Configuration,
@@ -68,7 +68,7 @@ class KernelDeltaLogDelegator(
   override def update(): StandaloneSnapshotImpl = {
     // get latest snapshot via kernel
     val kernelSnapshot = try {
-      table.getLatestSnapshot(tableClient).asInstanceOf[SnapshotImplKernel]
+      table.getLatestSnapshot(engine).asInstanceOf[SnapshotImplKernel]
     } catch {
       case e: TableNotFoundException =>
         return new StandaloneInitialSnapshotImpl(hadoopConf, logPath, this)
@@ -82,7 +82,7 @@ class KernelDeltaLogDelegator(
       kernelSnapshotWrapper,
       hadoopConf,
       logPath,
-      kernelSnapshot.getVersion(tableClient), // note: tableClient isn't used
+      kernelSnapshot.getVersion(engine), // note: engine isn't used
       this,
       standaloneDeltaLog
     ))
@@ -128,9 +128,9 @@ object KernelDeltaLogDelegator {
     // the kernel does not
     val standaloneDeltaLog = new DeltaLogImpl(hadoopConf, logPath, dataPathFromLog, clock)
     standaloneDeltaLog.ensureLogDirectoryExist()
-    val tableClient = DefaultTableClient.create(hadoopConf)
-    val table = Table.forPath(tableClient, dataPath).asInstanceOf[TableImpl]
+    val engine = DefaultEngine.create(hadoopConf)
+    val table = Table.forPath(engine, dataPath).asInstanceOf[TableImpl]
     // Todo: Potentially we could get the resolved paths out of the table above
-    new KernelDeltaLogDelegator(tableClient, table, standaloneDeltaLog, hadoopConf, logPath, dataPathFromLog, clock)
+    new KernelDeltaLogDelegator(engine, table, standaloneDeltaLog, hadoopConf, logPath, dataPathFromLog, clock)
   }
 }

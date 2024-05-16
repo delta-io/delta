@@ -19,10 +19,9 @@ import java.io.FileNotFoundException
 
 import scala.reflect.ClassTag
 
+import io.delta.kernel.exceptions.TableNotFoundException
 import org.scalatest.funsuite.AnyFunSuite
-
 import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.TableNotFoundException
 import io.delta.kernel.test.MockFileSystemClientUtils
 
 class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
@@ -32,7 +31,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     timestamp: Long,
     expectedVersion: Long): Unit = {
     val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-      createMockFSListFromTableClient(fileList),
+      createMockFSListFromEngine(fileList),
       logPath,
       timestamp
     )
@@ -46,7 +45,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     expectedErrorMessageContains: String)(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
       DeltaHistoryManager.getActiveCommitAtTimestamp(
-        createMockFSListFromTableClient(fileList),
+        createMockFSListFromEngine(fileList),
         logPath,
         timestamp
       )
@@ -66,12 +65,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       -1,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, -1, 0).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, -1, 0, 0).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       21,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 21, 20, 2).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
   }
 
@@ -87,12 +86,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       -1,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, -1, 0).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, -1, 0, 0).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       21,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 21, 20, 2).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
   }
 
@@ -106,12 +105,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       8,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, 8, 20).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, 8, 20, 2).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       31,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 31, 30, 3).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 31, 30, 3).getMessage
     )
   }
 
@@ -123,12 +122,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       8,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, 8, 20).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, 8, 20, 2).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       21,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 21, 20, 2).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
   }
 
@@ -142,12 +141,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       8,
-      DeltaErrors.timestampEarlierThanTableFirstCommitException(dataPath.toString, 8, 20).getMessage
+      DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, 8, 20, 2).getMessage
     )
     checkGetActiveCommitAtTimestampError[RuntimeException](
       deltaFiles,
       31,
-      DeltaErrors.timestampLaterThanTableLastCommit(dataPath.toString, 31, 30, 3).getMessage
+      DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 31, 30, 3).getMessage
     )
   }
 
@@ -155,7 +154,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Non-existent path
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
-        createMockFSListFromTableClient(p => throw new FileNotFoundException(p)),
+        createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         logPath,
         0
       )
@@ -163,7 +162,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     // Empty _delta_log directory
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
-        createMockFSListFromTableClient(p => Seq()),
+        createMockFSListFromEngine(p => Seq()),
         logPath,
         0
       )
@@ -194,7 +193,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     )
     // No delta files
     checkGetActiveCommitAtTimestampError[RuntimeException](
-      Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00foo0.parquet")
+      Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00f.oo0.parquet")
         .map(FileStatus.of(_, 10, 10)),
       25,
       "No delta files found in the directory"

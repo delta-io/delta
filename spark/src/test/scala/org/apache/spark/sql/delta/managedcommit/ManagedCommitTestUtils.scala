@@ -16,7 +16,11 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaTestUtilsBase}
+import java.util.concurrent.atomic.AtomicInteger
+
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
+import org.apache.spark.sql.delta.DeltaConfigs.MANAGED_COMMIT_OWNER_NAME
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -28,13 +32,40 @@ import org.apache.spark.sql.test.SharedSparkSession
 trait ManagedCommitTestUtils
   extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
 
+  /**
+   * Runs a specific test with managed commits default properties unset.
+   * Any table created in this test won't have managed commits enabled by default.
+   */
+  def testWithDefaultCommitOwnerUnset(testName: String)(f: => Unit): Unit = {
+    test(testName) {
+      withoutManagedCommitsDefaultTableProperties {
+        f
+      }
+    }
+  }
+
+  /**
+   * Runs the function `f` with managed commits default properties unset.
+   * Any table created in function `f`` won't have managed commits enabled by default.
+   */
+  def withoutManagedCommitsDefaultTableProperties[T](f: => T): T = {
+    val commitOwnerKey = MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey
+    val oldCommitOwnerValue = spark.conf.getOption(commitOwnerKey)
+    spark.conf.unset(commitOwnerKey)
+    try { f } finally {
+      oldCommitOwnerValue.foreach {
+        spark.conf.set(commitOwnerKey, _)
+      }
+    }
+  }
+
   /** Run the test with different backfill batch sizes: 1, 2, 10 */
   def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
     Seq(1, 2, 10).foreach { backfillBatchSize =>
       test(s"$testName [Backfill batch size: $backfillBatchSize]") {
-        CommitStoreProvider.clearNonDefaultBuilders()
-        CommitStoreProvider.registerBuilder(TrackingInMemoryCommitStoreBuilder(backfillBatchSize))
-        CommitStoreProvider.registerBuilder(InMemoryCommitStoreBuilder(backfillBatchSize))
+        CommitOwnerProvider.clearNonDefaultBuilders()
+        CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(backfillBatchSize))
+        CommitOwnerProvider.registerBuilder(InMemoryCommitOwnerBuilder(backfillBatchSize))
         f(backfillBatchSize)
       }
     }
@@ -48,58 +79,88 @@ trait ManagedCommitTestUtils
     test(s"$testName [Backfill batch size: None]") {
       f(None)
     }
-    val managedCommitOwnerConf = Map("randomConf" -> "randomConfValue")
-    val managedCommitOwnerJson = JsonUtils.toJson(managedCommitOwnerConf)
-    withSQLConf(
-        DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "in-memory",
-        DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey -> managedCommitOwnerJson) {
-      testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
+    testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
+      val managedCommitOwnerConf = Map("randomConf" -> "randomConfValue")
+      val managedCommitOwnerJson = JsonUtils.toJson(managedCommitOwnerConf)
+      withSQLConf(
+          DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "tracking-in-memory",
+          DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey ->
+            managedCommitOwnerJson) {
         f(Some(backfillBatchSize))
       }
     }
   }
+
+  def getUpdatedActionsForZerothCommit(
+      commitInfo: CommitInfo,
+      oldMetadata: Metadata = Metadata()): UpdatedActions = {
+    val newMetadataConfiguration =
+      oldMetadata.configuration +
+        (DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "tracking-in-memory")
+    val newMetadata = oldMetadata.copy(configuration = newMetadataConfiguration)
+    UpdatedActions(commitInfo, newMetadata, Protocol(), oldMetadata, Protocol())
+  }
+
+  def getUpdatedActionsForNonZerothCommit(commitInfo: CommitInfo): UpdatedActions = {
+    val updatedActions = getUpdatedActionsForZerothCommit(commitInfo)
+    updatedActions.copy(oldMetadata = updatedActions.getNewMetadata)
+  }
 }
 
-case class TrackingInMemoryCommitStoreBuilder(
+case class TrackingInMemoryCommitOwnerBuilder(
     batchSize: Long,
-    defaultCommitStoreOpt: Option[CommitStore] = None) extends CommitStoreBuilder {
-  private lazy val trackingInMemoryCommitStore =
-    defaultCommitStoreOpt.getOrElse {
-      new TrackingCommitStore(new PredictableUuidInMemoryCommitStore(batchSize))
+    defaultCommitOwnerClientOpt: Option[CommitOwnerClient] = None) extends CommitOwnerBuilder {
+  lazy val trackingInMemoryCommitOwnerClient =
+    defaultCommitOwnerClientOpt.getOrElse {
+      new TrackingCommitOwnerClient(new PredictableUuidInMemoryCommitOwnerClient(batchSize))
     }
 
-  override def name: String = "tracking-in-memory"
-  override def build(conf: Map[String, String]): CommitStore = trackingInMemoryCommitStore
+  override def getName: String = "tracking-in-memory"
+  override def build(conf: Map[String, String]): CommitOwnerClient = {
+    trackingInMemoryCommitOwnerClient
+  }
 }
 
-class PredictableUuidInMemoryCommitStore(batchSize: Long) extends InMemoryCommitStore(batchSize) {
-  var nextUuidSuffix = 0L
+class PredictableUuidInMemoryCommitOwnerClient(batchSize: Long)
+  extends InMemoryCommitOwner(batchSize) {
+
+  var nextUuidSuffix = 1L
   override def generateUUID(): String = {
     nextUuidSuffix += 1
     s"uuid-${nextUuidSuffix - 1}"
   }
 }
 
-class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends CommitStore {
+object TrackingCommitOwnerClient {
+  private val insideOperation = new ThreadLocal[Boolean] {
+    override def initialValue(): Boolean = false
+  }
+}
 
-  var numCommitsCalled: Int = 0
-  var numGetCommitsCalled: Int = 0
-  var insideOperation: Boolean = false
+class TrackingCommitOwnerClient(delegatingCommitOwnerClient: InMemoryCommitOwner)
+  extends CommitOwnerClient {
 
-  def recordOperation[T](op: String)(f: => T): T = synchronized {
-    val oldInsideOperation = insideOperation
+  val numCommitsCalled = new AtomicInteger(0)
+  val numGetCommitsCalled = new AtomicInteger(0)
+  val numBackfillToVersionCalled = new AtomicInteger(0)
+  val numRegisterTableCalled = new AtomicInteger(0)
+
+  def recordOperation[T](op: String)(f: => T): T = {
+    val oldInsideOperation = TrackingCommitOwnerClient.insideOperation.get()
     try {
-      if (!insideOperation) {
-        if (op == "commit") {
-          numCommitsCalled += 1
-        } else if (op == "getCommits") {
-          numGetCommitsCalled += 1
+      if (!TrackingCommitOwnerClient.insideOperation.get()) {
+        op match {
+          case "commit" => numCommitsCalled.incrementAndGet()
+          case "getCommits" => numGetCommitsCalled.incrementAndGet()
+          case "backfillToVersion" => numBackfillToVersionCalled.incrementAndGet()
+          case "registerTable" => numRegisterTableCalled.incrementAndGet()
+          case _ => ()
         }
       }
-      insideOperation = true
+      TrackingCommitOwnerClient.insideOperation.set(true)
       f
     } finally {
-      insideOperation = oldInsideOperation
+      TrackingCommitOwnerClient.insideOperation.set(oldInsideOperation)
     }
   }
 
@@ -107,38 +168,56 @@ class TrackingCommitStore(delegatingCommitStore: InMemoryCommitStore) extends Co
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
+      managedCommitTableConf: Map[String, String],
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
-    delegatingCommitStore
-      .commit(logStore, hadoopConf, logPath, commitVersion, actions, updatedActions)
+    delegatingCommitOwnerClient.commit(
+      logStore, hadoopConf, logPath, managedCommitTableConf, commitVersion, actions, updatedActions)
   }
 
   override def getCommits(
       logPath: Path,
-      startVersion: Long,
+      managedCommitTableConf: Map[String, String],
+      startVersion: Option[Long],
       endVersion: Option[Long] = None): GetCommitsResponse = recordOperation("getCommits") {
-    delegatingCommitStore.getCommits(logPath, startVersion, endVersion)
+    delegatingCommitOwnerClient.getCommits(
+      logPath, managedCommitTableConf, startVersion, endVersion)
+  }
+
+  def removeCommitTestOnly(
+      logPath: Path,
+      commitVersion: Long
+  ): Unit = {
+    delegatingCommitOwnerClient.perTableMap.get(logPath).commitsMap.remove(commitVersion)
   }
 
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      startVersion: Long,
-      endVersion: Option[Long]): Unit = {
-    delegatingCommitStore.backfillToVersion(logStore, hadoopConf, logPath, startVersion, endVersion)
+      managedCommitTableConf: Map[String, String],
+      version: Long,
+      lastKnownBackfilledVersion: Option[Long]): Unit = recordOperation("backfillToVersion") {
+    delegatingCommitOwnerClient.backfillToVersion(
+      logStore, hadoopConf, logPath, managedCommitTableConf, version, lastKnownBackfilledVersion)
   }
 
-  def registerTable(
-      logPath: Path,
-      maxCommitVersion: Long): Unit = {
-    delegatingCommitStore.registerTable(logPath, maxCommitVersion)
-  }
+  override def semanticEquals(other: CommitOwnerClient): Boolean = this == other
 
   def reset(): Unit = {
-    numCommitsCalled = 0
-    numGetCommitsCalled = 0
+    numCommitsCalled.set(0)
+    numGetCommitsCalled.set(0)
+    numBackfillToVersionCalled.set(0)
+  }
+
+  override def registerTable(
+      logPath: Path,
+      currentVersion: Long,
+      currentMetadata: AbstractMetadata,
+      currentProtocol: AbstractProtocol): Map[String, String] = recordOperation("registerTable") {
+    delegatingCommitOwnerClient.registerTable(
+      logPath, currentVersion, currentMetadata, currentProtocol)
   }
 }
 
@@ -167,9 +246,15 @@ trait ManagedCommitBaseSuite extends SparkFunSuite with SharedSparkSession {
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    CommitStoreProvider.clearNonDefaultBuilders()
+    CommitOwnerProvider.clearNonDefaultBuilders()
     managedCommitBackfillBatchSize.foreach { batchSize =>
-      CommitStoreProvider.registerBuilder(TrackingInMemoryCommitStoreBuilder(batchSize))
+      CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(batchSize))
     }
+  }
+
+  protected def isICTEnabledForNewTables: Boolean = {
+    spark.conf.getOption(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey).nonEmpty ||
+      spark.conf.getOption(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
   }
 }

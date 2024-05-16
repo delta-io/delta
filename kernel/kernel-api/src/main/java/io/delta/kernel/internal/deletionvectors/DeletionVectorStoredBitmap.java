@@ -22,8 +22,8 @@ import java.io.IOException;
 import java.util.Optional;
 import java.util.zip.CRC32;
 
-import io.delta.kernel.client.FileReadRequest;
-import io.delta.kernel.client.FileSystemClient;
+import io.delta.kernel.engine.FileReadRequest;
+import io.delta.kernel.engine.FileSystemClient;
 import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;

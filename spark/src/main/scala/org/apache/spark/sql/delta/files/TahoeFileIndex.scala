@@ -22,13 +22,14 @@ import java.util.Objects
 
 import scala.collection.mutable
 import org.apache.spark.sql.delta.RowIndexFilterType
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaParquetFileFormat, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.DefaultRowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
@@ -126,6 +127,17 @@ abstract class TahoeFileIndex(
     addFile.defaultRowCommitVersion.foreach(defaultRowCommitVersion =>
       metadata.put(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, defaultRowCommitVersion))
 
+    if (addFile.deletionVector != null) {
+      metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED,
+        JsonUtils.toJson(addFile.deletionVector))
+
+      // Set the filter type to IF_CONTAINED by default to let [[DeltaParquetFileFormat]] filter
+      // out rows unless a filter type was explicitly provided in rowIndexFilters. This can happen
+      // e.g. when reading CDC data to keep deleted rows instead of filtering them out.
+      val filterType = rowIndexFilters.getOrElse(Map.empty)
+        .getOrElse(addFile.path, RowIndexFilterType.IF_CONTAINED)
+      metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE, filterType)
+    }
     FileStatusWithMetadata(fs, metadata.toMap)
   }
 
@@ -236,6 +248,9 @@ case class TahoeLogFileIndex(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)
   }
 
+  private def includeTableIdInComparisons: Boolean =
+    spark.conf.get(DeltaSQLConf.DELTA_INCLUDE_TABLE_ID_IN_FILE_INDEX_COMPARISON)
+
   protected def getSnapshotToScan: Snapshot = {
     if (isTimeTravelQuery) {
       snapshotAtAnalysis
@@ -292,13 +307,22 @@ case class TahoeLogFileIndex(
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
-      t.path == path && t.deltaLog.isSameLogAs(deltaLog) &&
+      t.path == path &&
+        (if (includeTableIdInComparisons) {
+          t.deltaLog.isSameLogAs(deltaLog)
+        } else {
+          t.deltaLog.dataPath == deltaLog.dataPath
+        }) &&
         t.versionToUse == versionToUse && t.partitionFilters == partitionFilters
     case _ => false
   }
 
   override def hashCode: scala.Int = {
-    Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
+    if (includeTableIdInComparisons) {
+      Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
+    } else {
+      Objects.hashCode(path, deltaLog.dataPath, versionToUse, partitionFilters)
+    }
   }
 
   protected[delta] def numOfFilesIfKnown: Option[Long] =

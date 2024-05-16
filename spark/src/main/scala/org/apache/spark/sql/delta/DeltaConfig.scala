@@ -741,8 +741,8 @@ trait DeltaConfigsBase extends DeltaLogging {
     null,
     v => Option(v),
     _ => true,
-    """The managed commit owner name for this table. This is used to determine which
-      |implementation of CommitStore to use when committing to this table. If this property is not
+    """The managed commit-owner name for this table. This is used to determine which
+      |implementation of commit-owner to use when committing to this table. If this property is not
       |set, the table will be considered as file system table and commits will be done via
       |atomically publishing the commit file.
       |""".stripMargin)
@@ -752,10 +752,18 @@ trait DeltaConfigsBase extends DeltaLogging {
     null,
     v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
     _ => true,
-    "A string-to-string map of configuration properties for the managed commit owner.")
+    "A string-to-string map of configuration properties for the managed commit-owner.")
+
+  val MANAGED_COMMIT_TABLE_CONF = buildConfig[Map[String, String]](
+    "managedCommits.tableConf-dev",
+    null,
+    v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
+    _ => true,
+    "A string-to-string map of configuration properties for describing the table to" +
+      " managed commit-owner.")
 
   val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
-    "enableInCommitTimestamps-dev",
+    "enableInCommitTimestamps-preview",
     false.toString,
     _.toBoolean,
     validationFunction = _ => true,
@@ -767,7 +775,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * inCommitTimestamps were enabled.
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
-    "inCommitTimestampEnablementVersion-dev",
+    "inCommitTimestampEnablementVersion-preview",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
@@ -780,7 +788,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
-    "inCommitTimestampEnablementTimestamp-dev",
+    "inCommitTimestampEnablementTimestamp-preview",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,

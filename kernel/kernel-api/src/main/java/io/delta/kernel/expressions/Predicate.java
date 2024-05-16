@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.client.ExpressionHandler;
+import io.delta.kernel.engine.ExpressionHandler;
 
 /**
  * Defines predicate scalar expression which is an extension of {@link ScalarExpression}

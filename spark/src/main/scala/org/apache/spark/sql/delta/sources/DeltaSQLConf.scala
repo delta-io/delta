@@ -83,6 +83,17 @@ trait DeltaSQLConfBase {
       .stringConf
       .createOptional
 
+  val DELTA_FORCE_ALL_COMMIT_STATS =
+    buildConf("commitStats.force")
+      .internal()
+      .doc(
+        """When true, forces commit statistics to be collected for logging purposes.
+        | Enabling this feature requires the Snapshot State to be computed, which is
+        | potentially expensive.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CONVERT_USE_METADATA_LOG =
     buildConf("convert.useMetadataLog")
       .doc(
@@ -179,6 +190,18 @@ trait DeltaSQLConfBase {
         "enables a check that ensures that users won't read corrupt data if the source schema " +
         "changes in an incompatible way.")
       .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_INCLUDE_TABLE_ID_IN_FILE_INDEX_COMPARISON =
+    buildConf("includeTableIdInFileIndexComparison")
+      .internal()
+      .doc(
+        """
+          |Include the deltaLog.tableId field in equals and hashCode for TahoeLogFileIndex.
+          |The field is unstable, so including it can lead semantic violations for equals and
+          |hashCode.""".stripMargin)
+      .booleanConf
+      // TODO: Phase this out towards `false` eventually remove the flag altogether again.
       .createWithDefault(true)
 
   val DELTA_ALLOW_CREATE_EMPTY_SCHEMA_TABLE =
@@ -515,13 +538,22 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
-  val DELTA_LIST_FROM_COMMIT_STORE_THREAD_POOL_SIZE =
-    buildStaticConf("commitStore.getCommits.threadPoolSize")
+  val MANAGED_COMMIT_GET_COMMITS_THREAD_POOL_SIZE =
+    buildStaticConf("managedCommits.getCommits.threadPoolSize")
       .internal()
-      .doc("The size of the thread pool for listing files from the CommitStore.")
+      .doc("The size of the thread pool for listing files from the commit-owner.")
       .intConf
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
+
+  val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =
+    buildConf("catalog.update.longFieldTruncationThreshold")
+      .internal()
+      .doc(
+        "When syncing table schema to the catalog, Delta will truncate the whole schema " +
+        "if any field is longer than this threshold.")
+      .longConf
+      .createWithDefault(4000)
 
   val DELTA_ASSUMES_DROP_CONSTRAINT_IF_EXISTS =
     buildConf("constraints.assumesDropIfExists.enabled")
@@ -1263,6 +1295,20 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
+    buildConf("streaming.createDataFrame.dropNullColumns")
+      .internal()
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS =
+    buildConf("createDataFrame.dropNullColumns")
+      .internal()
+      .doc("Whether to drop columns with NullType in DeltaLog.createDataFrame.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(
@@ -1502,6 +1548,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELETION_VECTORS_USE_METADATA_ROW_INDEX =
+    buildConf("deletionVectors.useMetadataRowIndex")
+      .internal()
+      .doc(
+        """Controls whether we use the Parquet reader generated row_index column for
+          | filtering deleted rows with deletion vectors. When enabled, it allows
+          | predicate pushdown and file splitting in scans.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val WRITE_DATA_FILES_TO_SUBDIR = buildConf("write.dataFilesToSubdir")
     .internal()
     .doc("Delta will write all data files to subdir 'data/' under table dir if enabled")
@@ -1702,6 +1758,21 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  ///////////////////
+  // IDENTITY COLUMN
+  ///////////////////
+
+  val DELTA_IDENTITY_COLUMN_ENABLED =
+    buildConf("identityColumn.enabled")
+      .internal()
+      .doc(
+        """
+          | The umbrella config to turn on/off the IDENTITY column support.
+          | If true, enable Delta IDENTITY column write support. If a table has an IDENTITY column,
+          | it is not writable but still readable if this config is set to false.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   ///////////
   // TESTING

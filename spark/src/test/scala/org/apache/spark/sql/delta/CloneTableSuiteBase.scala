@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
-import org.apache.spark.sql.delta.util.FileNames.{checksumFile, deltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{checksumFile, unsafeDeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
@@ -231,7 +231,7 @@ trait CloneTableSuiteBase extends QueryTest
       targetLocation.isEmpty && targetIsTable,
       isReplaceOperation)
 
-    val commit = deltaFile(targetLog.logPath, targetLog.unsafeVolatileSnapshot.version)
+    val commit = unsafeDeltaFile(targetLog.logPath, targetLog.unsafeVolatileSnapshot.version)
     val hadoopConf = targetLog.newDeltaHadoopConf()
     val filePaths: Seq[FileAction] = targetLog.store.read(commit, hadoopConf).flatMap { line =>
       JsonUtils.fromJson[SingleAction](line) match {
@@ -686,9 +686,9 @@ trait CloneTableSuiteBase extends QueryTest
     val log = DeltaLog.forTable(spark, source)
     // make sure to have a dummy schema because we can't have empty schema table by default
     val newSchema = new StructType().add("id", IntegerType, nullable = true)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
-      deltaFile(log.logPath, 0),
+      unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = newSchema.json).json, sourceProtocol.json),
       overwrite = false,
       log.newDeltaHadoopConf())

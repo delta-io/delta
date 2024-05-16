@@ -21,21 +21,26 @@ import java.util.stream.Collectors;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
-import io.delta.kernel.internal.DeltaErrors;
 import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
 import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
+import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
@@ -61,9 +66,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ExpressionTransformResult transformResult =
             new ExpressionTransformer(inputSchema).visit(expression);
         if (!transformResult.outputType.equivalent(outputType)) {
-            String reason = format(
-                    "Can not create an expression handler returns result of type %s", outputType);
-            throw DeltaErrors.unsupportedExpression(expression, Optional.of(reason));
+            String reason = String.format(
+                "Expression %s does not match expected output type %s", expression, outputType);
+            throw unsupportedExpressionException(expression, reason);
         }
         this.expression = transformResult.expression;
     }
@@ -148,8 +153,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                         transformBinaryComparator(predicate),
                         BooleanType.BOOLEAN);
                 default:
-                    throw DeltaErrors.unsupportedExpression(
-                            predicate, Optional.of("unsupported expression encountered"));
+                    // We should never reach this based on the ExpressionVisitor
+                    throw new IllegalStateException(
+                        String.format("%s is not a recognized comparator", predicate.getName()));
             }
         }
 
@@ -190,9 +196,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             if (partitionColType instanceof StructType ||
                 partitionColType instanceof ArrayType ||
                 partitionColType instanceof MapType) {
-                throw DeltaErrors.unsupportedExpression(
+                throw unsupportedExpressionException(
                         partitionValue,
-                        Optional.of("unsupported partition data type: " + partitionColType));
+                        "unsupported partition data type: " + partitionColType);
             }
             return new ExpressionTransformResult(
                 new PartitionValueExpression(serializedPartValueInput.expression, partitionColType),
@@ -248,22 +254,22 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 .map(this::visit)
                 .collect(Collectors.toList());
             if (children.size() == 0) {
-                throw DeltaErrors.unsupportedExpression(
-                    coalesce, Optional.of("Coalesce requires at least one expression"));
+                throw unsupportedExpressionException(
+                    coalesce, "Coalesce requires at least one expression");
             }
             // TODO support least-common-type resolution
             long numDistinctTypes = children.stream().map(e -> e.outputType)
                 .distinct()
                 .count();
             if (numDistinctTypes > 1) {
-                throw DeltaErrors.unsupportedExpression(
+                throw unsupportedExpressionException(
                         coalesce,
-                        Optional.of("Coalesce is only supported for arguments of the same type"));
+                        "Coalesce is only supported for arguments of the same type");
             }
             // TODO support other data types besides boolean (just needs tests)
             if (!(children.get(0).outputType instanceof BooleanType)) {
-                throw new UnsupportedOperationException(
-                    "Coalesce is only supported for boolean type expressions");
+                throw unsupportedExpressionException(
+                    coalesce, "Coalesce is only supported for boolean type expressions");
             }
             return new ExpressionTransformResult(
                 new ScalarExpression(
@@ -302,7 +308,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     String msg = format("operands are of different types which are not " +
                             "comparable: left type=%s, right type=%s",
                             leftResult.outputType, rightResult.outputType);
-                    throw DeltaErrors.unsupportedExpression(predicate, Optional.of(msg));
+                    throw unsupportedExpressionException(predicate, msg);
                 }
             }
             return new Predicate(predicate.getName(), left, right);
@@ -429,9 +435,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                             argResults.rightResult,
                             (compareResult) -> (compareResult <= 0));
                 default:
-                    throw DeltaErrors.unsupportedExpression(
-                            predicate,
-                            Optional.of("unsupported expression encountered"));
+                    // We should never reach this based on the ExpressionVisitor
+                    throw new IllegalStateException(
+                        String.format("%s is not a recognized comparator", predicate.getName()));
             }
         }
 

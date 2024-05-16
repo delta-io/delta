@@ -181,6 +181,17 @@ public class ParquetStatsReader {
                     statistics instanceof IntStatistics,
                     "Column with DATE type contained invalid statistics: %s", statistics);
             return Literal.ofDate((Integer) statValue); // stats are stored as epoch days in Parquet
+        } else if (dataType instanceof TimestampType) {
+            // Kernel Parquet writer always writes timestamps in INT64 format
+            checkArgument(
+                    statistics instanceof LongStatistics,
+                    "Column with TIMESTAMP type contained invalid statistics: %s", statistics);
+            return Literal.ofTimestamp((Long) statValue);
+        } else if (dataType instanceof TimestampNTZType) {
+            checkArgument(
+                    statistics instanceof LongStatistics,
+                    "Column with TIMESTAMP_NTZ type contained invalid statistics: %s", statistics);
+            return Literal.ofTimestampNtz((Long) statValue);
         } else if (dataType instanceof StringType) {
             byte[] binaryStat = getBinaryStat(statistics, decodeMin);
             return Literal.ofString(new String(binaryStat, UTF_8));
@@ -230,10 +241,10 @@ public class ParquetStatsReader {
                 dataType instanceof DoubleType ||
                 dataType instanceof DecimalType ||
                 dataType instanceof DateType ||
+                dataType instanceof TimestampType ||
+                dataType instanceof TimestampNTZType ||
                 dataType instanceof StringType ||
                 dataType instanceof BinaryType;
-        // TODO: timestamp is complicated to handle because of the storage format (INT96 or INT64).
-        // Add support later.
     }
 
     private static byte[] getBinaryStat(Statistics<?> statistics, boolean decodeMin) {

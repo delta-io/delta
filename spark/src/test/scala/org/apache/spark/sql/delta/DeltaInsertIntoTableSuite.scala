@@ -21,6 +21,7 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaInsertIntoTableSuiteShims._
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -43,7 +44,8 @@ class DeltaInsertIntoSQLSuite
   extends DeltaInsertIntoTestsWithTempViews(
     supportsDynamicOverwrite = true,
     includeSQLOnlyTests = true)
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
 
@@ -53,6 +55,19 @@ class DeltaInsertIntoSQLSuite
       insert.createOrReplaceTempView(tmpView)
       val overwrite = if (mode == SaveMode.Overwrite) "OVERWRITE" else "INTO"
       sql(s"INSERT $overwrite TABLE $tableName SELECT * FROM $tmpView")
+    }
+  }
+
+  testSparkMasterOnly("Variant type") {
+    withTable("t") {
+      sql("CREATE TABLE t (id LONG, v VARIANT) USING delta")
+      sql("INSERT INTO t (id, v) VALUES (1, parse_json('{\"a\": 1}'))")
+      sql("INSERT INTO t (id, v) VALUES (2, parse_json('{\"b\": 2}'))")
+      sql(
+        "INSERT INTO t SELECT id, parse_json(cast(id as string)) v FROM range(2)")
+
+      checkAnswer(sql("select * from t").selectExpr("id", "to_json(v)"),
+        Seq(Row(1, "{\"a\":1}"), Row(2, "{\"b\":2}"), Row(0, "0"), Row(1, "1")))
     }
   }
 
@@ -435,7 +450,8 @@ abstract class DeltaInsertIntoTestsWithTempViews(
           checkAnswer(spark.table("v"), expectedResult)
         } catch {
           case e: AnalysisException =>
-            assert(e.getMessage.contains("Inserting into a view is not allowed") ||
+            assert(
+              e.getMessage.contains(INSERT_INTO_TMP_VIEW_ERROR_MSG) ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
               e.getMessage.contains("Table default.v not found") ||
               e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
@@ -615,7 +631,7 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        errorClass = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION",
+        errorClass = INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",

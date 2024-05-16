@@ -42,13 +42,8 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       startVersion: Long,
       endVersion: Long): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
-    deltaLog.update().commitStoreOpt.foreach { commitStore =>
-      commitStore.backfillToVersion(
-        deltaLog.store,
-        deltaLog.newDeltaHadoopConf(),
-        deltaLog.logPath,
-        startVersion = 0,
-        Some(endVersion))
+    deltaLog.update().tableCommitOwnerClientOpt.foreach { tableCommitOwnerClient =>
+      tableCommitOwnerClient.backfillToVersion(endVersion)
     }
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = 0,
@@ -56,7 +51,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     (startVersion to endVersion).foreach { versionToRead =>
-      val file = FileNames.deltaFile(deltaLog.logPath, versionToRead)
+      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
       val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
       logReplay.append(versionToRead, actionsIterator)
     }
@@ -429,7 +424,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       postSetupFunc = Some(
         (deltaLog: DeltaLog) => {
           val logPath = deltaLog.logPath
-          val deltaFileToDelete = FileNames.deltaFile(logPath, version = 4)
+          val deltaFileToDelete = FileNames.unsafeDeltaFile(logPath, version = 4)
           logPath.getFileSystem(deltaLog.newDeltaHadoopConf()).delete(deltaFileToDelete, true)
         }
       ),
@@ -445,15 +440,15 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   }
 }
 
-class ManagedCommitBatchBackfill1DeltaLogMinorCompactionSuite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithManagedCommitBatch1Suite extends DeltaLogMinorCompactionSuite {
   override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class ManagedCommitBatchBackFill2DeltaLogMinorCompactionSuite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithManagedCommitBatch2Suite extends DeltaLogMinorCompactionSuite {
   override val managedCommitBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class ManagedCommitBatchBackFill20DeltaLogMinorCompactionSuite
+class DeltaLogMinorCompactionWithManagedCommitBatch100Suite
     extends DeltaLogMinorCompactionSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(20)
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(100)
 }

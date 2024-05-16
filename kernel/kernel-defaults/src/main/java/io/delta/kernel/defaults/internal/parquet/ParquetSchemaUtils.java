@@ -21,6 +21,8 @@ import static java.lang.String.format;
 
 import org.apache.parquet.schema.*;
 import org.apache.parquet.schema.Type.Repetition;
+import static org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit.MICROS;
+import static org.apache.parquet.schema.LogicalTypeAnnotation.timestampType;
 import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.*;
 import static org.apache.parquet.schema.Type.Repetition.OPTIONAL;
 import static org.apache.parquet.schema.Type.Repetition.REQUIRED;
@@ -227,8 +229,19 @@ class ParquetSchemaUtils {
         } else if (dataType instanceof DateType) {
             type = primitive(INT32, repetition).as(LogicalTypeAnnotation.dateType()).named(name);
         } else if (dataType instanceof TimestampType) {
-            // We are supporting only the INT96 format now.
-            type = primitive(INT96, repetition).named(name);
+            // Kernel is by default going to write as INT64 with isAdjustedToUTC set to true
+            // Delta-Spark writes as INT96 for legacy reasons (maintaining compatibility with
+            // unknown consumers with very, very old versions of Parquet reader). Kernel is a new
+            // project, and we are ok if it breaks readers (we use this opportunity to find such
+            // readers and ask them to upgrade).
+            type = primitive(INT64, repetition)
+                    .as(timestampType(true /* isAdjustedToUTC */, MICROS))
+                    .named(name);
+        } else if (dataType instanceof TimestampNTZType) {
+            // Write as INT64 with isAdjustedToUTC set to false
+            type = primitive(INT64, repetition)
+                    .as(timestampType(false /* isAdjustedToUTC */, MICROS))
+                    .named(name);
         } else if (dataType instanceof ArrayType) {
             type = toParquetArrayType((ArrayType) dataType, name, repetition);
         } else if (dataType instanceof MapType) {

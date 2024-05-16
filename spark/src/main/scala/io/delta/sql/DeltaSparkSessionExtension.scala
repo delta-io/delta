@@ -125,12 +125,18 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectPostHocResolutionRule { session =>
       PostHocResolveUpCast(session)
     }
+
+    extensions.injectPlanNormalizationRule { _ => GenerateRowIDs }
+
     // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
     // `PrepareDeltaScan`.
     // For example, `ConstantFolding` will break unit tests in `OptimizeGeneratedColumnSuite`.
     extensions.injectPreCBORule { session =>
       new PrepareDeltaScan(session)
     }
+
+    // Add skip row column and filter.
+    extensions.injectPlannerStrategy(PreprocessTableWithDVsStrategy)
 
     // Tries to load PrepareDeltaSharingScan class with class reflection, when delta-sharing-spark
     // 3.1+ package is installed, this will be loaded and delta sharing batch queries with

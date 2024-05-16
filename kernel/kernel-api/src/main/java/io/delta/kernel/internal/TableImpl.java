@@ -15,26 +15,20 @@
  */
 package io.delta.kernel.internal;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.Table;
-import io.delta.kernel.TableNotFoundException;
-import io.delta.kernel.client.TableClient;
-
+import io.delta.kernel.*;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 
 public class TableImpl implements Table {
-    public static Table forPath(TableClient tableClient, String path)
-        throws TableNotFoundException {
-        // Resolve the path to fully qualified table path using the `TableClient` APIs
+    public static Table forPath(Engine engine, String path) {
         String resolvedPath;
         try {
-            resolvedPath = tableClient.getFileSystemClient().resolvePath(path);
-        } catch (FileNotFoundException fnf) {
-            throw new TableNotFoundException(path, fnf);
+            resolvedPath = engine.getFileSystemClient().resolvePath(path);
         } catch (IOException io) {
             throw new RuntimeException(io);
         }
@@ -52,24 +46,46 @@ public class TableImpl implements Table {
     }
 
     @Override
-    public Snapshot getLatestSnapshot(TableClient tableClient) throws TableNotFoundException {
-        return snapshotManager.buildLatestSnapshot(tableClient);
-    }
-
-    @Override
-    public String getPath() {
+    public String getPath(Engine engine) {
         return tablePath;
     }
 
     @Override
-    public Snapshot getSnapshotAtVersion(TableClient tableClient, long versionId)
-        throws TableNotFoundException {
-        return snapshotManager.getSnapshotAt(tableClient, versionId);
+    public Snapshot getLatestSnapshot(Engine engine) throws TableNotFoundException {
+        return snapshotManager.buildLatestSnapshot(engine);
     }
 
     @Override
-    public Snapshot getSnapshotAtTimestamp(TableClient tableClient, long millisSinceEpochUTC)
+    public Snapshot getSnapshotAsOfVersion(Engine engine, long versionId)
         throws TableNotFoundException {
-        return snapshotManager.getSnapshotForTimestamp(tableClient, millisSinceEpochUTC);
+        return snapshotManager.getSnapshotAt(engine, versionId);
+    }
+
+    @Override
+    public Snapshot getSnapshotAsOfTimestamp(Engine engine, long millisSinceEpochUTC)
+        throws TableNotFoundException {
+        return snapshotManager.getSnapshotForTimestamp(engine, millisSinceEpochUTC);
+    }
+
+    @Override
+    public void checkpoint(Engine engine, long version)
+            throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
+        snapshotManager.checkpoint(engine, version);
+    }
+
+    @Override
+    public TransactionBuilder createTransactionBuilder(
+            Engine engine,
+            String engineInfo,
+            Operation operation) {
+        return new TransactionBuilderImpl(this, engineInfo, operation);
+    }
+
+    protected Path getDataPath() {
+        return new Path(tablePath);
+    }
+
+    protected Path getLogPath() {
+        return new Path(tablePath, "_delta_log");
     }
 }

@@ -19,6 +19,8 @@ package io.delta.golden
 import java.io.File
 import java.math.{BigDecimal => JBigDecimal}
 import java.sql.Timestamp
+import java.time.ZoneOffset.UTC
+import java.time.LocalDateTime
 import java.util.{Locale, TimeZone}
 
 import scala.concurrent.duration._
@@ -1036,7 +1038,18 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     writeBasicTimestampTable(tablePath, TimeZone.getTimeZone("PST"))
   }
 
+  generateGoldenTable("parquet-all-types-legacy-format") { tablePath =>
+    withSQLConf(("spark.sql.parquet.writeLegacyFormat", "true")) {
+      generateAllTypesTable(tablePath)
+    }
+  }
+
   generateGoldenTable("parquet-all-types") { tablePath =>
+    // generating using the standard parquet format
+    generateAllTypesTable(tablePath)
+  }
+
+  def generateAllTypesTable(tablePath: String): Unit = {
     val timeZone = java.util.TimeZone.getTimeZone("UTC")
     java.util.TimeZone.setDefault(timeZone)
     import java.sql._
@@ -1055,7 +1068,8 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       StringType,
       BinaryType,
       DateType,
-      TimestampType
+      TimestampType,
+      TimestampNTZType
     )
 
     var fields = allDataTypes.map(dt => {
@@ -1109,6 +1123,8 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         if (i % 59 != 0) (i).toString.getBytes else null,
         if (i % 61 != 0) new java.sql.Date(i * 20000000L) else null,
         if (i % 62 != 0) new Timestamp(i * 23423523L) else null,
+        if (i % 69 != 0) LocalDateTime.ofEpochSecond(i * 234234L, 200012, UTC) else null,
+        // nested_struct
         if (i % 63 != 0) {
           if (i % 19 == 0) {
             // write a struct with all fields null
@@ -1117,6 +1133,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
             Row(i.toString, if (i % 23 != 0) Row(i) else null)
           }
         } else null,
+        // array_of_prims
         if (i % 25 != 0) {
           if (i % 29 == 0) {
             scala.Array()
@@ -1124,6 +1141,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
             scala.Array(i, null, i + 1)
           }
         } else null,
+        // array_of_arrays
         if (i % 8 != 0) {
           val singleElemArray = scala.Array(i)
           val doubleElemArray = scala.Array(i + 10, i + 20)
@@ -1140,7 +1158,11 @@ class GoldenTables extends QueryTest with SharedSparkSession {
             case 6 => scala.Array()
           }
         } else null,
-        scala.Array(Row(i.longValue()), null),
+        // array_of_structs
+        if (i % 10 != 0) {
+          scala.Array(Row(i.longValue()), null)
+        } else null,
+        // map_of_prims
         if (i % 28 != 0) {
           if (i % 30 == 0) {
             Map()
@@ -1151,7 +1173,11 @@ class GoldenTables extends QueryTest with SharedSparkSession {
             )
           }
         } else null,
-        Map(i + 1 -> (if (i % 10 == 0) Row((i * 20).longValue()) else null)),
+        // map_of_rows
+        if (i % 25 != 0) {
+          Map(i + 1 -> (if (i % 10 == 0) Row((i * 20).longValue()) else null))
+        } else null,
+        // map_of_arrays
         if (i % 30 != 0) {
           if (i % 24 == 0) {
             Map()
@@ -1176,7 +1202,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       .mode("append")
       .save(tablePath)
   }
-
 
   def writeBasicDecimalTable(tablePath: String): Unit = {
     val data = Seq(
@@ -1349,6 +1374,24 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     ) {
       spark.range(1).repartition(1).write.format("delta").save(tablePath)
       spark.range(30).repartition(9).write.format("delta").mode("append").save(tablePath)
+    }
+  }
+
+  Seq("parquet", "json").foreach { ckptFormat =>
+    val tbl = "tbl"
+    generateGoldenTable(s"v2-checkpoint-$ckptFormat") { tablePath =>
+      withTable(tbl) {
+        withSQLConf(
+          (DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key, "2"),
+          ("spark.databricks.delta.properties.defaults.checkpointInterval", "2"),
+          (DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, ckptFormat)) {
+          spark.conf.set(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, ckptFormat)
+          sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
+          sql(s"ALTER TABLE $tbl SET TBLPROPERTIES('delta.checkpointPolicy' = 'v2')")
+          spark.range(10).repartition(4)
+            .write.format("delta").mode("append").saveAsTable(tbl)
+        }
+      }
     }
   }
 

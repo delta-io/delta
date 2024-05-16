@@ -17,17 +17,16 @@ package io.delta.kernel.defaults.internal.parquet
 
 import java.nio.file.{Files, Paths}
 import java.util.Optional
-
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
-
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.expressions.Column
+import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.{ArrayType, DataType, MapType, StructType}
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
 
@@ -190,38 +189,42 @@ trait ParquetSuiteBase extends TestUtils {
     location: String,
     targetFileSize: Long = 1024 * 1024,
     statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
+    val conf = new Configuration(configuration);
+    conf.setLong(ParquetFileWriter.TARGET_FILE_SIZE_CONF, targetFileSize)
     val parquetWriter = new ParquetFileWriter(
-      configuration, new Path(location), targetFileSize, statsColumns.asJava)
+      conf, new Path(location), statsColumns.asJava)
 
     parquetWriter.write(toCloseableIterator(filteredData.asJava.iterator())).toSeq
   }
 
   def readParquetFilesUsingKernel(
-    actualFileDir: String, readSchema: StructType): Seq[TestRow] = {
-    val columnarBatches = readParquetUsingKernelAsColumnarBatches(actualFileDir, readSchema)
+      actualFileDir: String,
+      readSchema: StructType,
+      predicate: Optional[Predicate] = Optional.empty()): Seq[TestRow] = {
+    val columnarBatches =
+      readParquetUsingKernelAsColumnarBatches(actualFileDir, readSchema, predicate)
     columnarBatches.map(_.getRows).flatMap(_.toSeq).map(TestRow(_))
   }
 
   def readParquetUsingKernelAsColumnarBatches(
-    actualFileDir: String, readSchema: StructType): Seq[ColumnarBatch] = {
-    val parquetFiles = Files.list(Paths.get(actualFileDir))
-      .iterator().asScala
-      .map(_.toString)
-      .filter(path => path.endsWith(".parquet"))
-      .map(path => FileStatus.of(path, 0L, 0L))
+      inputFileOrDir: String,
+      readSchema: StructType,
+      predicate: Optional[Predicate] = Optional.empty()): Seq[ColumnarBatch] = {
+    val parquetFileList = parquetFiles(inputFileOrDir)
+      .map(FileStatus.of(_, 0, 0))
 
-    val data = defaultTableClient.getParquetHandler.readParquetFiles(
-      toCloseableIterator(parquetFiles.asJava),
+    val data = defaultEngine.getParquetHandler.readParquetFiles(
+      toCloseableIterator(parquetFileList.asJava.iterator()),
       readSchema,
-      Optional.empty())
+      predicate)
 
     data.asScala.toSeq
   }
 
-  def parquetFileCount(path: String): Long = parquetFiles(path).size
+  def parquetFileCount(fileOrDir: String): Long = parquetFiles(fileOrDir).size
 
-  def parquetFileRowCount(path: String): Long = {
-    val files = parquetFiles(path)
+  def parquetFileRowCount(fileOrDir: String): Long = {
+    val files = parquetFiles(fileOrDir)
 
     var rowCount = 0L
     files.foreach { file =>
@@ -232,12 +235,17 @@ trait ParquetSuiteBase extends TestUtils {
     rowCount
   }
 
-  def parquetFiles(path: String): Seq[String] = {
-    Files.list(Paths.get(path))
-      .iterator().asScala
-      .map(_.toString)
-      .filter(path => path.endsWith(".parquet"))
-      .toSeq
+  def parquetFiles(fileOrDir: String): Seq[String] = {
+    val fileOrDirPath = Paths.get(fileOrDir)
+    if (Files.isDirectory(fileOrDirPath)) {
+      Files.list(fileOrDirPath)
+        .iterator().asScala
+        .map(_.toString)
+        .filter(path => path.endsWith(".parquet"))
+        .toSeq
+    } else {
+      Seq(fileOrDir)
+    }
   }
 
   def footer(path: String): ParquetMetadata = {
