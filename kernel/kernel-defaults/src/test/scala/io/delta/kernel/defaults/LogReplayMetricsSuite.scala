@@ -326,6 +326,8 @@ class LogReplayMetricsSuite extends QueryTest
           expParquetVersionsRead = Seq(10),
           // we read the checkpoint twice: once for the P &M and once for the scan files
           expParquetReadSetSizes = Seq(1, 1),
+          // We try to read `_last_checkpoint` once. If it doesn't exist, we don't try reading
+          // again. If it exists, we succeed reading in the first time
           expLastCheckpointReadCalls = Some(1)
         )
       }

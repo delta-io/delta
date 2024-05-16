@@ -262,8 +262,8 @@ public class Checkpointer {
             } else if (cause instanceof Exception) {
                 String msg = String.format(
                         "Failed to load checkpoint metadata from file %s. " +
-                                "It must be in the process of being writing. " +
-                                "Retrying after 1sec. (current attempt = %s)",
+                                "It must be in the process of being written. " +
+                                "Retrying after 1sec. (current attempt of %s (max 3)",
                         lastCheckpointFilePath, tries);
                 logger.warn(msg, cause);
                 // we can retry until max tries are exhausted. It saves latency as the alternative

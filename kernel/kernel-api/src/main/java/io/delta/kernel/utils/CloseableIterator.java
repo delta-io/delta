@@ -65,7 +65,9 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
      *                                {@link IOException} thrown while trying to read from a Delta
      *                                log file. It will be wrapped in this exception as cause.
      * @throws KernelException        When encountered an operation or state that is invalid or
-     *                                unsupported.
+     *                                unsupported in Kernel. For example, trying to read from a
+     *                                Delta table that has advanced features which are not yet
+     *                                supported by Kernel.
      */
     @Override
     T next();
