@@ -22,6 +22,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
@@ -201,6 +202,69 @@ case class VacuumProtocolCheckPreDowngradeCommand(table: DeltaTableV2)
    * just need to remove the feature from the [[Protocol]].
    */
   override def removeFeatureTracesIfNeeded(): Boolean = false
+}
+
+case class ManagedCommitPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+
+  /**
+   * We disable the feature by removing the following table properties:
+   *    1. DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key
+   *    2. DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key
+   *    3. DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key
+   * If these properties have been removed but unbackfilled commits are still present, we
+   * backfill them.
+   *
+   * @return true if any change to the metadata (the three properties listed above) was made OR
+   *         if there were any unbackfilled commits that were backfilled.
+   *         false otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val startTimeNs = System.nanoTime()
+
+    var traceRemovalNeeded = false
+    var exceptionOpt = Option.empty[Throwable]
+    val propertyPresenceLogs = ManagedCommitUtils.TABLE_PROPERTY_KEYS.map( key =>
+      key -> table.initialSnapshot.metadata.configuration.contains(key).toString
+    )
+    if (ManagedCommitUtils.tablePropertiesPresent(table.initialSnapshot.metadata)) {
+      traceRemovalNeeded = true
+      try {
+        AlterTableUnsetPropertiesDeltaCommand(
+          table, ManagedCommitUtils.TABLE_PROPERTY_KEYS, ifExists = true).run(table.spark)
+      } catch {
+        case NonFatal(e) =>
+          exceptionOpt = Some(e)
+      }
+    }
+    var postDisablementUnbackfilledCommitsPresent = false
+    if (exceptionOpt.isEmpty) {
+      val snapshotAfterDisabling = table.deltaLog.update()
+      assert(snapshotAfterDisabling.tableCommitOwnerClientOpt.isEmpty)
+      postDisablementUnbackfilledCommitsPresent =
+        ManagedCommitUtils.unbackfilledCommitsPresent(snapshotAfterDisabling)
+      if (postDisablementUnbackfilledCommitsPresent) {
+        traceRemovalNeeded = true
+        // Managed commits have already been disabled but there are unbackfilled commits.
+        ManagedCommitUtils.backfillWhenManagedCommitDisabled(snapshotAfterDisabling)
+      }
+    }
+    recordDeltaEvent(
+      table.deltaLog,
+      opType = "delta.managedCommitFeatureRemovalMetrics",
+      data = Map(
+          "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
+          "traceRemovalNeeded" -> traceRemovalNeeded.toString,
+          "traceRemovalSuccess" -> exceptionOpt.isEmpty.toString,
+          "traceRemovalException" -> exceptionOpt.map(_.getMessage).getOrElse(""),
+          "postDisablementUnbackfilledCommitsPresent" ->
+            postDisablementUnbackfilledCommitsPresent.toString
+      ) ++ propertyPresenceLogs
+    )
+    exceptionOpt.foreach(throw _)
+    traceRemovalNeeded
+  }
 }
 
 case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)

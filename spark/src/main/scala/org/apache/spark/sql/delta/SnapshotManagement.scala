@@ -218,11 +218,12 @@ trait SnapshotManagement { self: DeltaLog =>
         versionToLoad.forall(maxDeltaVersionSeen < _) && areDeltaFilesMissing
       }
 
+      val initialMaxDeltaVersionSeen = maxDeltaVersionSeen
       val additionalLogTuplesFromFsListingOpt: Option[Array[(FileStatus, FileType.Value, Long)]] =
         if (requiresAdditionalListing()) {
           recordDeltaEvent(this, "delta.listDeltaAndCheckpointFiles.requiresAdditionalFsListing")
           listFromFileSystemInternal(
-            startVersion = maxDeltaVersionSeen + 1, versionToLoad, includeMinorCompactions)
+            startVersion = initialMaxDeltaVersionSeen + 1, versionToLoad, includeMinorCompactions)
         } else {
           None
         }
@@ -252,7 +253,14 @@ trait SnapshotManagement { self: DeltaLog =>
 
       val finalLogTuplesFromFsListingOpt: Option[Array[(FileStatus, FileType.Value, Long)]] =
         (initialLogTuplesFromFsListingOpt, additionalLogTuplesFromFsListingOpt) match {
-          case (Some(initial), Some(additional)) => Some(initial ++ additional)
+          case (Some(initial), Some(additional)) =>
+            // Filter initial list to exclude files with versions beyond
+            // `initialListingMaxDeltaVersionSeen` to prevent duplicating non-delta files with
+            // higher versions in the combined list. Ideally we shouldn't need this, but we are
+            // being defensive here if the log has missing files.
+            // E.g. initial = [0.json, 1.json, 2.checkpoint], initialListingMaxDeltaVersionSeen = 1,
+            // additional = [2.checkpoint], final = [0.json, 1.json, 2.checkpoint]
+            Some(initial.takeWhile(_._3 <= initialMaxDeltaVersionSeen) ++ additional)
           case (Some(initial), None) => Some(initial)
           case (None, Some(additional)) => Some(additional)
           case _ => None

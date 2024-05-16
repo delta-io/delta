@@ -21,6 +21,7 @@ import java.util.Locale
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -651,8 +652,9 @@ object V2CheckpointTableFeature
 
 /** Table feature to represent tables whose commits are managed by separate commit-owner */
 object ManagedCommitTableFeature
-  extends ReaderWriterFeature(name = "managed-commit-dev")
-    with FeatureAutomaticallyEnabledByMetadata {
+  extends WriterFeature(name = "managed-commit-dev")
+    with FeatureAutomaticallyEnabledByMetadata
+    with RemovableFeature {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
@@ -664,6 +666,17 @@ object ManagedCommitTableFeature
 
   override def requiredFeatures: Set[TableFeature] =
     Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2)
+      : PreDowngradeTableFeatureCommand = ManagedCommitPreDowngradeCommand(table)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    !ManagedCommitUtils.tablePropertiesPresent(snapshot.metadata) &&
+      !ManagedCommitUtils.unbackfilledCommitsPresent(snapshot)
+  }
+
+  // This is a writer feature, so it should directly return false.
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening-preview")

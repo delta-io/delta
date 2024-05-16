@@ -28,9 +28,6 @@ import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.DefaultParser;
-import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
@@ -132,38 +129,19 @@ public abstract class BaseTableReader {
      */
     protected static Options baseOptions() {
         return new Options()
-            .addRequiredOption("t", "table", true, "Fully qualified table path")
-            .addOption("c", "columns", true,
-                "Comma separated list of columns to read from the table. " +
-                    "Ex. --columns=id,name,address")
-            .addOption(
-                Option.builder()
-                    .option("l")
-                    .longOpt("limit")
-                    .hasArg(true)
-                    .desc("Maximum number of rows to read from the table (default 20).")
-                    .type(Number.class)
-                    .build()
-            );
-    }
-
-    /**
-     * Helper method to parse the command line arguments.
-     */
-    protected static CommandLine parseArgs(Options options, String[] args) {
-        CommandLineParser cliParser = new DefaultParser();
-
-        try {
-            return cliParser.parse(options, args);
-        } catch (ParseException parseException) {
-            new HelpFormatter().printHelp(
-                "java " + SingleThreadedTableReader.class.getCanonicalName(),
-                options,
-                true
-            );
-        }
-        System.exit(-1);
-        return null;
+                .addRequiredOption("t", "table", true, "Fully qualified table path")
+                .addOption("c", "columns", true,
+                        "Comma separated list of columns to read from the table. " +
+                                "Ex. --columns=id,name,address")
+                .addOption(
+                        Option.builder()
+                                .option("l")
+                                .longOpt("limit")
+                                .hasArg(true)
+                                .desc("Maximum number of rows to read from the table (default 20).")
+                                .type(Number.class)
+                                .build()
+                );
     }
 
     protected static Optional<List<String>> parseColumnList(CommandLine cli, String optionName) {

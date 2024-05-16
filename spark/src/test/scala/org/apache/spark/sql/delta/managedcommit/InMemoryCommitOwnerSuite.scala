@@ -16,116 +16,51 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import java.io.File
-import java.util.concurrent.{Executors, TimeUnit}
-import java.util.concurrent.atomic.AtomicInteger
-
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
-import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider}
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
-import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
-import org.apache.hadoop.conf.Configuration
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.Utils
+abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClientImplSuiteBase {
 
-class InMemoryCommitOwnerSuite extends QueryTest
-  with DeltaSQLTestUtils
-  with SharedSparkSession
-  with LogStoreProvider
-  with DeltaSQLCommandTest
-  with ManagedCommitTestUtils {
-
-  // scalastyle:off deltahadoopconfiguration
-  def sessionHadoopConf: Configuration = spark.sessionState.newHadoopConf()
-  // scalastyle:on deltahadoopconfiguration
-
-  def store: LogStore = createLogStore(spark)
-
-  private def withTempTableDir(f: File => Unit): Unit = {
-    val dir = Utils.createTempDir()
-    val deltaLogDir = new File(dir, DeltaLog.LOG_DIR_NAME)
-    deltaLogDir.mkdir()
-    val commitLogDir = new File(deltaLogDir, FileNames.COMMIT_SUBDIR)
-    commitLogDir.mkdir()
-    try f(dir)
-    finally {
-      Utils.deleteRecursively(dir)
-    }
+  override protected def createTableCommitOwnerClient(
+      deltaLog: DeltaLog): TableCommitOwnerClient = {
+    val cs = InMemoryCommitOwnerBuilder(batchSize).build(Map.empty)
+    TableCommitOwnerClient(cs, deltaLog, Map.empty[String, String])
   }
 
-  protected def commit(
-      version: Long,
-      timestamp: Long,
-      tableCommitOwnerClient: TableCommitOwnerClient): Commit = {
-    val commitInfo = CommitInfo.empty(version = Some(version)).withTimestamp(timestamp)
-    val updatedActions = if (version == 0) {
-      getUpdatedActionsForZerothCommit(commitInfo)
-    } else {
-      getUpdatedActionsForNonZerothCommit(commitInfo)
-    }
-    tableCommitOwnerClient.commit(
-      version,
-      Iterator(s"$version", s"$timestamp"),
-      updatedActions).getCommit
+  override protected def registerBackfillOp(
+      commitOwnerClient: CommitOwnerClient,
+      deltaLog: DeltaLog,
+      version: Long): Unit = {
+    val inMemoryCS = commitOwnerClient.asInstanceOf[InMemoryCommitOwner]
+    inMemoryCS.registerBackfill(deltaLog.logPath, version)
   }
 
-  private def assertBackfilled(
-      version: Long,
+  override protected def validateBackfillStrategy(
+      tableCommitOwnerClient: TableCommitOwnerClient,
       logPath: Path,
-      timestampOpt: Option[Long] = None): Unit = {
-    val delta = FileNames.unsafeDeltaFile(logPath, version)
-    if (timestampOpt.isDefined) {
-      assert(store.read(delta, sessionHadoopConf) == Seq(s"$version", s"${timestampOpt.get}"))
-    } else {
-      assert(store.read(delta, sessionHadoopConf).take(1) == Seq(s"$version"))
+      version: Long): Unit = {
+    val lastExpectedBackfilledVersion = (version - (version % batchSize)).toInt
+    val unbackfilledCommitVersionsAll = tableCommitOwnerClient
+      .getCommits().getCommits.map(_.getVersion)
+    val expectedVersions = lastExpectedBackfilledVersion + 1 to version.toInt
+
+    assert(unbackfilledCommitVersionsAll == expectedVersions)
+    (0 to lastExpectedBackfilledVersion).foreach { v =>
+      assertBackfilled(v, logPath, Some(v))
     }
   }
 
-  private def assertCommitFail(
-      currentVersion: Long,
-      expectedVersion: Long,
-      retryable: Boolean,
-      commitFunc: => Commit): Unit = {
-    val e = intercept[CommitFailedException] {
-      commitFunc
-    }
-    assert(e.getRetryable == retryable)
-    assert(e.getConflict == retryable)
-    val expectedMessage = if (currentVersion == 0) {
-      "Commit version 0 must go via filesystem."
-    } else {
-      s"Commit version $currentVersion is not valid. Expected version: $expectedVersion."
-    }
-    assert(e.getMessage === expectedMessage)
-  }
-
-  private def assertInvariants(
-      logPath: Path,
-      cs: InMemoryCommitOwner,
-      commitTimestampsOpt: Option[Array[Long]] = None): Unit = {
-    val maxUntrackedVersion: Int = cs.withReadLock[Int](logPath) {
-      val tableData = cs.perTableMap.get(logPath)
-      if (tableData.commitsMap.isEmpty) {
-        tableData.maxCommitVersion.toInt
-      } else {
-        assert(
-          tableData.commitsMap.last._1 == tableData.maxCommitVersion,
-          s"Max version in commitMap ${tableData.commitsMap.last._1} must match max version in " +
-            s"maxCommitVersionMap $tableData.maxCommitVersion.")
-        val minVersion = tableData.commitsMap.head._1
-        assert(
-          tableData.maxCommitVersion - minVersion + 1 == tableData.commitsMap.size,
-          "Commit map should have a contiguous range of unbackfilled commits.")
-        minVersion.toInt - 1
-      }
-    }
-    (0 to maxUntrackedVersion).foreach { version =>
-      assertBackfilled(version, logPath, commitTimestampsOpt.map(_(version)))}
+  protected def validateGetCommitsResult(
+      result: GetCommitsResponse,
+      startVersion: Option[Long],
+      endVersion: Option[Long],
+      maxVersion: Long): Unit = {
+    val commitVersions = result.getCommits.map(_.getVersion)
+    val lastExpectedBackfilledVersion = (maxVersion - (maxVersion % batchSize)).toInt
+    val expectedVersions = lastExpectedBackfilledVersion + 1 to maxVersion.toInt
+    assert(commitVersions == expectedVersions)
+    assert(result.getLatestTableVersion == maxVersion)
   }
 
   test("InMemoryCommitOwnerBuilder works as expected") {
@@ -151,192 +86,21 @@ class InMemoryCommitOwnerSuite extends QueryTest
     assert(cs3 ne cs2)
   }
 
-  test("test basic commit and backfill functionality") {
+  test("test commit > 1 is rejected as first commit") {
     withTempTableDir { tempDir =>
-      val log = DeltaLog.forTable(spark, tempDir)
+      val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
-      val cs = InMemoryCommitOwnerBuilder(batchSize = 3).build(Map.empty)
-      val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
-
-      cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
-      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, -1))
-
-      // Commit 0 must be done by file-system
-      val e = intercept[CommitFailedException] { commit(version = 0, timestamp = 0, tcs) }
-      assert(e.getMessage === "Commit version 0 must go via filesystem.")
-      store.write(FileNames.unsafeDeltaFile(logPath, 0), Iterator("0", "0"), overwrite = false)
-      // Commit 0 doesn't go through commit-owner. So commit-owner is not aware of it in getCommits
-      // response.
-      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, -1))
-      assertBackfilled(0, logPath, Some(0))
-
-      val c1 = commit(1, 1, tcs)
-      val c2 = commit(2, 2, tcs)
-      assert(tcs.getCommits().getCommits.takeRight(2) == Seq(c1, c2))
-
-      // All 3 commits are backfilled since batchSize == 3
-      val c3 = commit(3, 3, tcs)
-      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, 3))
-      (1 to 3).foreach(i => assertBackfilled(i, logPath, Some(i)))
-
-      // Test that startVersion and endVersion are respected in getCommits
-      val c4 = commit(4, 4, tcs)
-      val c5 = commit(5, 5, tcs)
-      assert(tcs.getCommits(Some(4)) == GetCommitsResponse(Seq(c4, c5), 5))
-      assert(tcs.getCommits(Some(4), Some(4)) == GetCommitsResponse(Seq(c4), 5))
-      assert(tcs.getCommits(Some(5)) == GetCommitsResponse(Seq(c5), 5))
-
-      // Commit [4, 6] are backfilled since batchSize == 3
-      val c6 = commit(6, 6, tcs)
-      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, 6))
-      (4 to 6).foreach(i => assertBackfilled(i, logPath, Some(i)))
-      assertInvariants(logPath, tcs.commitOwnerClient.asInstanceOf[InMemoryCommitOwner])
-    }
-  }
-
-  test("test basic commit and backfill functionality with 1 batch size") {
-    withTempTableDir { tempDir =>
-      val log = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-      val logPath = log.logPath
-      val cs = InMemoryCommitOwnerBuilder(batchSize = 1).build(Map.empty)
-      cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
-      val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
-
-      val e = intercept[CommitFailedException] { commit(version = 0, timestamp = 0, tcs) }
-      assert(e.getMessage === "Commit version 0 must go via filesystem.")
-      store.write(FileNames.unsafeDeltaFile(logPath, 0), Iterator("0", "0"), overwrite = false)
-      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, -1))
-      assertBackfilled(version = 0, logPath, Some(0L))
-
-      // Test that all commits are immediately backfilled
-      (1 to 3).foreach { version =>
-        commit(version, version, tcs)
-        assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, version))
-        assertBackfilled(version, logPath, Some(version))
-      }
-
-      // Test that out-of-order backfill is rejected
-      intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitOwner]
-          .registerBackfill(logPath, 5)
-      }
-      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitOwner])
-    }
-  }
-
-  test("test out-of-order commits are rejected") {
-    withTempTableDir { tempDir =>
-      val log = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-      val logPath = log.logPath
-      val cs = InMemoryCommitOwnerBuilder(batchSize = 5).build(Map.empty)
-      cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
-      val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
+      val tcs = createTableCommitOwnerClient(log)
+      tcs.commitOwnerClient.registerTable(
+        logPath, currentVersion = -1L, initMetadata, Protocol(1, 1))
 
       // Anything other than version-0 or version-1 should be rejected as the first commit
       // version-0 will be directly backfilled and won't be recorded in InMemoryCommitOwner.
       // version-1 is what commit-owner is accepting.
       assertCommitFail(2, 1, retryable = false, commit(2, 0, tcs))
-
-      // commit-0 must be file system based
-      store.write(FileNames.unsafeDeltaFile(logPath, 0), Iterator("0", "0"), overwrite = false)
-      // Verify that conflict-checker rejects out-of-order commits.
-      (1 to 4).foreach(i => commit(i, i, tcs))
-      // A retry of commit 0 fails from commit-owner with a conflict and it can't be retried as
-      // commit 0 is upgrading the commit-owner.
-      assertCommitFail(0, 5, retryable = false, commit(0, 5, tcs))
-      assertCommitFail(4, 5, retryable = true, commit(4, 6, tcs))
-
-      // Verify that the conflict-checker still works even when everything has been backfilled
-      commit(5, 5, tcs)
-      assert(tcs.getCommits() == GetCommitsResponse(Seq.empty, 5))
-      assertCommitFail(5, 6, retryable = true, commit(5, 5, tcs))
-      assertCommitFail(7, 6, retryable = false, commit(7, 7, tcs))
-
-      assertInvariants(logPath, cs.asInstanceOf[InMemoryCommitOwner])
-    }
-  }
-
-  test("test out-of-order backfills are rejected") {
-    withTempTableDir { tempDir =>
-      val log = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
-      val logPath = log.logPath
-      val cs = InMemoryCommitOwnerBuilder(batchSize = 5).build(Map.empty)
-      val tcs = TableCommitOwnerClient(cs, log, Map.empty[String, String])
-      intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitOwner].registerBackfill(logPath, 0)
-      }
-      cs.registerTable(logPath, currentVersion = -1L, Metadata(), Protocol(1, 1))
-      // commit-0 must be file system based
-      store.write(FileNames.unsafeDeltaFile(logPath, 0), Iterator("0", "0"), overwrite = false)
-      (1 to 3).foreach(i => commit(i, i, tcs))
-
-      // Test that backfilling is idempotent for already-backfilled commits.
-      cs.asInstanceOf[InMemoryCommitOwner].registerBackfill(logPath, 2)
-      cs.asInstanceOf[InMemoryCommitOwner].registerBackfill(logPath, 2)
-
-      // Test that backfilling uncommited commits fail.
-      intercept[IllegalArgumentException] {
-        cs.asInstanceOf[InMemoryCommitOwner].registerBackfill(logPath, 4)
-      }
-    }
-  }
-
-  test("should handle concurrent readers and writers") {
-    withTempTableDir { tempDir =>
-      val tablePath = new Path(tempDir.getCanonicalPath)
-      val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
-      val batchSize = 6
-      val cs = InMemoryCommitOwnerBuilder(batchSize).build(Map.empty)
-      val tcs =
-        TableCommitOwnerClient(cs, DeltaLog.forTable(spark, tablePath), Map.empty[String, String])
-
-      val numberOfWriters = 10
-      val numberOfCommitsPerWriter = 10
-      // scalastyle:off sparkThreadPools
-      val executor = Executors.newFixedThreadPool(numberOfWriters)
-      // scalastyle:on sparkThreadPools
-      val runningTimestamp = new AtomicInteger(0)
-      val commitFailedExceptions = new AtomicInteger(0)
-      val totalCommits = numberOfWriters * numberOfCommitsPerWriter
-      val commitTimestamp: Array[Long] = new Array[Long](totalCommits)
-
-      try {
-        (0 until numberOfWriters).foreach { i =>
-          executor.submit(new Runnable {
-            override def run(): Unit = {
-              var currentWriterCommits = 0
-              while (currentWriterCommits < numberOfCommitsPerWriter) {
-                val nextVersion = tcs.getCommits().getLatestTableVersion + 1
-                try {
-                  val currentTimestamp = runningTimestamp.getAndIncrement()
-                  val commitResponse = commit(nextVersion, currentTimestamp, tcs)
-                  currentWriterCommits += 1
-                  assert(commitResponse.getCommitTimestamp == currentTimestamp)
-                  assert(commitResponse.getVersion == nextVersion)
-                  commitTimestamp(commitResponse.getVersion.toInt) =
-                    commitResponse.getCommitTimestamp
-                } catch {
-                  case e: CommitFailedException =>
-                    assert(e.getConflict)
-                    assert(e.getRetryable)
-                    commitFailedExceptions.getAndIncrement()
-                } finally {
-                  assertInvariants(
-                    logPath,
-                    cs.asInstanceOf[InMemoryCommitOwner],
-                    Some(commitTimestamp))
-                }
-              }
-            }
-          })
-        }
-
-        executor.shutdown()
-        executor.awaitTermination(15, TimeUnit.SECONDS)
-      } catch {
-        case e: InterruptedException =>
-          fail("Test interrupted: " + e.getMessage)
-      }
     }
   }
 }
+
+class InMemoryCommitOwner1Suite extends InMemoryCommitOwnerSuite(1)
+class InMemoryCommitOwner5Suite extends InMemoryCommitOwnerSuite(5)

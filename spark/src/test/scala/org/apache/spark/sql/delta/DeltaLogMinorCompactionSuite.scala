@@ -440,15 +440,15 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   }
 }
 
-class ManagedCommitBatchBackfill1DeltaLogMinorCompactionSuite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithManagedCommitBatch1Suite extends DeltaLogMinorCompactionSuite {
   override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class ManagedCommitBatchBackFill2DeltaLogMinorCompactionSuite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithManagedCommitBatch2Suite extends DeltaLogMinorCompactionSuite {
   override val managedCommitBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class ManagedCommitBatchBackFill20DeltaLogMinorCompactionSuite
+class DeltaLogMinorCompactionWithManagedCommitBatch100Suite
     extends DeltaLogMinorCompactionSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(20)
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(100)
 }
