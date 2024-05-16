@@ -39,8 +39,6 @@ import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedE
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.compare;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.evalNullability;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 /**
