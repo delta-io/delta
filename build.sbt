@@ -200,7 +200,7 @@ lazy val sparkCommon = (project in file("sparkCommon"))
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
-  .dependsOn(sparkCommon)
+  .dependsOn(sparkCommon % "compile->compile;test->test;provided->provided")
   .enablePlugins(Antlr4Plugin)
   .settings (
     name := "delta-spark",
