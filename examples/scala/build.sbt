@@ -18,7 +18,6 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala212 = "2.12.18"
 val scala213 = "2.13.13"
 val icebergVersion = "1.4.1"
 val defaultDeltaVersion = {
@@ -75,13 +74,11 @@ val getIcebergSparkRuntimeArtifactName = settingKey[String](
 )
 getScalaVersion := {
   sys.env.get("SCALA_VERSION") match {
-    case Some("2.12") | Some(`scala212`) =>
-      scala212
     case Some("2.13") | Some(`scala213`) =>
       scala213
     case Some(v) =>
       println(
-        s"[warn] Invalid  SCALA_VERSION. Expected one of {2.12, $scala212, 2.13, $scala213} but " +
+        s"[warn] Invalid  SCALA_VERSION. Expected one of {2.13, $scala213} but " +
         s"got $v. Fallback to $scala213."
       )
       scala213
@@ -123,21 +120,17 @@ lazy val root = (project in file("."))
   .settings(
     run / fork := true,
     name := "hello-world",
-    crossScalaVersions := Seq(scala212, scala213),
+    crossScalaVersions := Seq(scala213),
     libraryDependencies ++= Seq(
       "io.delta" %% getDeltaArtifactName.value % getDeltaVersion.value,
-      "io.delta" %% "delta-iceberg" % getDeltaVersion.value,
-      "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
-        getMajorMinor(getDeltaVersion.value)
-      ),
-      "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
-        getMajorMinor(getDeltaVersion.value)
-      ),
-      "org.apache.iceberg" %% getIcebergSparkRuntimeArtifactName.value % icebergVersion,
-      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
+      "org.apache.spark" %% "spark-sql" % "4.0.0-preview1",
+      "org.apache.spark" %% "spark-hive" % "4.0.0-preview1"
     ),
     extraMavenRepo,
-    resolvers += Resolver.mavenLocal,
+    resolvers ++= Seq(
+      Resolver.mavenLocal,
+      "Apache Spark 4.0 Preview (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1454/"
+    ),
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature"
