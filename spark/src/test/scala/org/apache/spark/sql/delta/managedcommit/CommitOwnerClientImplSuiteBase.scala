@@ -70,10 +70,10 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
    * where maxVersion is the current latest version of the table.
    */
   protected def validateGetCommitsResult(
-      startVersion: Option[Long],
-      endVersion: Option[Long],
-      maxVersion: Long,
-      commitVersions: Seq[Long]): Unit
+    response: GetCommitsResponse,
+    startVersion: Option[Long],
+    endVersion: Option[Long],
+    maxVersion: Long): Unit
 
   /**
    * Checks that the commit owner state is correct in terms of
@@ -230,8 +230,8 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
         startVersion: Option[Long],
         endVersion: Option[Long],
         maxVersion: Long): Unit = {
-      val result = client.getCommits(startVersion, endVersion).getCommits.map(_.getVersion)
-      validateGetCommitsResult(startVersion, endVersion, maxVersion, result)
+      val result = client.getCommits(startVersion, endVersion)
+      validateGetCommitsResult(result, startVersion, endVersion, maxVersion)
     }
 
     withTempTableDir { tempDir =>
@@ -299,7 +299,7 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
       assertCommitFail(4, 5, retryable = true, commit(4, 6, tableCommitOwnerClient))
 
       commit(5, 5, tableCommitOwnerClient)
-      assert(tableCommitOwnerClient.getCommits() == GetCommitsResponse(Seq.empty, 5))
+      validateGetCommitsResult(tableCommitOwnerClient.getCommits(), None, None, 5)
       assertCommitFail(5, 6, retryable = true, commit(5, 5, tableCommitOwnerClient))
       assertCommitFail(7, 6, retryable = false, commit(7, 7, tableCommitOwnerClient))
 
