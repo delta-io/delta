@@ -463,6 +463,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   ).configureUnidoc()
 
+/*
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(LATEST_RELEASED_SPARK_VERSION)
  s"iceberg-spark-runtime-$expMaj.$expMin"
@@ -652,6 +653,7 @@ lazy val hudi = (project in file("hudi"))
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
     Compile / packageBin := assembly.value
   )
+ */
 
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
