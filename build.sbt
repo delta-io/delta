@@ -1151,6 +1151,7 @@ lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
     )
   )
 
+/*
 def flinkScalaVersion(scalaBinaryVersion: String): String = {
   scalaBinaryVersion match {
     // Flink doesn't support 2.13. We return 2.12 so that we can resolve the dependencies but we
@@ -1265,6 +1266,7 @@ lazy val flink = (project in file("connectors/flink"))
     //  standalone-specific import orders
     javaCheckstyleSettings("dev/connectors-checkstyle.xml")
   ).configureUnidoc()
+ */
 
 /**
  * Get list of python files and return the mapping between source files and target paths
