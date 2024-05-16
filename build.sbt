@@ -65,7 +65,7 @@ crossScalaVersions := Nil
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
 val targetJvm = settingKey[String]("Target JVM version")
-Global / targetJvm := "1.8"
+Global / targetJvm := "8"
 
 /**
  * Returns the current spark version, which is the same value as `sparkVersion.value`.
@@ -103,10 +103,8 @@ lazy val commonSettings = Seq(
   scalaVersion := default_scala_version.value,
   crossScalaVersions := all_scala_versions,
   fork := true,
-  scalacOptions ++= Seq(s"-target:jvm-${targetJvm.value}", "-Ywarn-unused:imports"),
-  javacOptions ++= Seq("-source", targetJvm.value),
-  // -target cannot be passed as a parameter to javadoc. See https://github.com/sbt/sbt/issues/355
-  Compile / compile / javacOptions ++= Seq("-target", targetJvm.value),
+  scalacOptions ++= Seq("-Ywarn-unused:imports"),
+  javacOptions ++= Seq("--release", targetJvm.value),
 
   // Make sure any tests in any project that uses Spark is configured for running well locally
   Test / javaOptions ++= Seq(
@@ -134,7 +132,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   case LATEST_RELEASED_SPARK_VERSION => Seq(
     scalaVersion := default_scala_version.value,
     crossScalaVersions := all_scala_versions,
-    targetJvm := "1.8",
+    targetJvm := "8",
     // For adding staged Spark RC versions, e.g.:
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
