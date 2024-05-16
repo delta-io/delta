@@ -25,6 +25,7 @@ To remove a Delta table feature, you run an `ALTER TABLE <table-name> DROP FEATU
 You can drop the following Delta table features:
 
 - `deletionVectors`. See [_](delta-deletion-vectors.md).
+- `typeWidening-preview`. See [_](delta-type-widening.md). Type widening is available in preview in <Delta> 3.2.0 and above.
 - `v2Checkpoint`. See [V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec). Drop support for V2 Checkpoints is available in <Delta> 3.1.0 and above.
 
 You cannot drop other [Delta table features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#valid-feature-names-in-table-features).

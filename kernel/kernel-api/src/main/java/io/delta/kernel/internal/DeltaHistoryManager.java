@@ -22,8 +22,8 @@ import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.delta.kernel.TableNotFoundException;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
@@ -44,30 +44,31 @@ public final class DeltaHistoryManager {
      * exception. If the provided timestamp is before the timestamp of the earliest version of the
      * table throws an exception.
      *
-     * @param tableClient instance of {@link TableClient} to use
+     * @param engine instance of {@link Engine} to use
      * @param logPath the _delta_log path of the table
      * @param timestamp the timestamp find the version for in milliseconds since the unix epoch
      * @return the active recreatable commit version at the provided timestamp
      * @throws TableNotFoundException when there is no Delta table at the given path
      */
     public static long getActiveCommitAtTimestamp(
-            TableClient tableClient, Path logPath, long timestamp) throws TableNotFoundException {
+            Engine engine, Path logPath, long timestamp) throws TableNotFoundException {
 
-        long earliestRecreatableCommit = getEarliestRecreatableCommit(tableClient, logPath);
+        long earliestRecreatableCommit = getEarliestRecreatableCommit(engine, logPath);
 
         // Search for the commit
-        List<Commit> commits = getCommits(tableClient, logPath, earliestRecreatableCommit);
+        List<Commit> commits = getCommits(engine, logPath, earliestRecreatableCommit);
         Commit commit = lastCommitBeforeOrAtTimestamp(commits, timestamp)
             .orElseThrow(() ->
-                DeltaErrors.timestampEarlierThanTableFirstCommitException(
+                DeltaErrors.timestampBeforeFirstAvailableCommit(
                     logPath.getParent().toString(), /* use dataPath */
                     timestamp,
-                    commits.get(0).timestamp)
+                    commits.get(0).timestamp,
+                    commits.get(0).version)
             );
 
         // If timestamp is after the last commit of the table
         if (commit == commits.get(commits.size() - 1) && commit.timestamp < timestamp) {
-            throw DeltaErrors.timestampLaterThanTableLastCommit(
+            throw DeltaErrors.timestampAfterLatestCommit(
                 logPath.getParent().toString(), /* use dataPath */
                 timestamp,
                 commit.timestamp,
@@ -85,9 +86,9 @@ public final class DeltaHistoryManager {
      * We search for the earliest checkpoint we have, or whether we have the 0th delta file. This
      * method assumes that the commits are contiguous.
      */
-    private static long getEarliestRecreatableCommit(TableClient tableClient, Path logPath)
+    public static long getEarliestRecreatableCommit(Engine engine, Path logPath)
             throws TableNotFoundException {
-        try (CloseableIterator<FileStatus> files = listFrom(tableClient, logPath, 0)
+        try (CloseableIterator<FileStatus> files = listFrom(engine, logPath, 0)
             .filter(fs ->
                 FileNames.isCommitFile(getName(fs.getPath())) ||
                     FileNames.isCheckpointFile(getName(fs.getPath()))
@@ -167,20 +168,21 @@ public final class DeltaHistoryManager {
      * exist or is empty.
      */
     private static CloseableIterator<FileStatus> listFrom(
-            TableClient tableClient,
+            Engine engine,
             Path logPath,
             long startVersion) throws TableNotFoundException {
+        Path tablePath = logPath.getParent();
         try {
-            CloseableIterator<FileStatus> files = tableClient
+            CloseableIterator<FileStatus> files = engine
                 .getFileSystemClient()
                 .listFrom(FileNames.listingPrefix(logPath, startVersion));
             if (!files.hasNext()) {
                 // We treat an empty directory as table not found
-                throw new TableNotFoundException(logPath.getParent().toString()); /* use dataPath */
+                throw new TableNotFoundException(tablePath.toString());
             }
             return files;
         } catch (FileNotFoundException e) {
-            throw new TableNotFoundException(logPath.toString());
+            throw new TableNotFoundException(tablePath.toString());
         } catch (IOException io) {
             throw new RuntimeException("Failed to list the files in delta log", io);
         }
@@ -191,9 +193,9 @@ public final class DeltaHistoryManager {
      * Guarantees that the commits returned have both monotonically increasing versions and
      * timestamps.
      */
-    private static List<Commit> getCommits(TableClient tableClient, Path logPath, long start)
+    private static List<Commit> getCommits(Engine engine, Path logPath, long start)
             throws TableNotFoundException{
-        CloseableIterator<Commit> commits = listFrom(tableClient, logPath, start)
+        CloseableIterator<Commit> commits = listFrom(engine, logPath, start)
             .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
             .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
         return monotonizeCommitTimestamps(commits);

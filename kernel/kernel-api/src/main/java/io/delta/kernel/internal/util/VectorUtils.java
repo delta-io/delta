@@ -27,6 +27,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.data.StructRow;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public final class VectorUtils {
 
@@ -69,6 +70,100 @@ public final class VectorUtils {
             values.put((K) key, (V) value);
         }
         return values;
+    }
+
+    /**
+     * Creates an {@link ArrayValue} from list of strings. The type {@code array(string)} is a
+     * common occurrence in Delta Log schema. We don't have any non-string array type in Delta Log.
+     * If we end up needing to support other types, we can make this generic.
+     *
+     * @param values list of strings
+     * @return an {@link ArrayValue} with the given values of type {@link StringType}
+     */
+    public static ArrayValue stringArrayValue(List<String> values) {
+        if (values == null) {
+            return null;
+        }
+        return new ArrayValue() {
+            @Override
+            public int getSize() {
+                return values.size();
+            }
+
+            @Override
+            public ColumnVector getElements() {
+                return stringVector(values);
+            }
+        };
+    }
+
+    /**
+     * Creates a {@link MapValue} from map of string keys and string values. The type
+     * {@code map(string -> string)} is a common occurrence in Delta Log schema.
+     *
+     * @param keyValues
+     * @return
+     */
+    public static MapValue stringStringMapValue(Map<String, String> keyValues) {
+        List<String> keys = new ArrayList<>();
+        List<String> values = new ArrayList<>();
+        for (Map.Entry<String, String> entry : keyValues.entrySet()) {
+            keys.add(entry.getKey());
+            values.add(entry.getValue());
+        }
+        return new MapValue() {
+            @Override
+            public int getSize() {
+                return values.size();
+            }
+
+            @Override
+            public ColumnVector getKeys() {
+                return stringVector(keys);
+            }
+
+            @Override
+            public ColumnVector getValues() {
+                return stringVector(values);
+            }
+        };
+    }
+
+    /**
+     * Utility method to create a {@link ColumnVector} for given list of strings.
+     *
+     * @param values list of strings
+     * @return a {@link ColumnVector} with the given values of type {@link StringType}
+     */
+    public static ColumnVector stringVector(List<String> values) {
+        return new ColumnVector() {
+            @Override
+            public DataType getDataType() {
+                return StringType.STRING;
+            }
+
+            @Override
+            public int getSize() {
+                return values.size();
+            }
+
+            @Override
+            public void close() {
+                // no-op
+            }
+
+            @Override
+            public boolean isNullAt(int rowId) {
+                checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: " + rowId);
+                return values.get(rowId) == null;
+            }
+
+            @Override
+            public String getString(int rowId) {
+                checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: " + rowId);
+                return values.get(rowId);
+            }
+        };
     }
 
     /**

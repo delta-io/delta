@@ -42,15 +42,91 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.{NullType, StringType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
+
+  def testNullTypeColumn(shouldDropNullTypeColumns: Boolean): Unit = {
+    withTempPaths(3) { case Seq(sourcePath, sinkPath, checkpointPath) =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key ->
+          shouldDropNullTypeColumns.toString) {
+
+        spark.sql("select CAST(null as VOID) as nullTypeCol, id from range(10)")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(sourcePath.getCanonicalPath)
+
+        def runStream() = {
+          spark.readStream
+            .format("delta")
+            .load(sourcePath.getCanonicalPath)
+            // Need to drop null type columns because it's not supported by the writer.
+            .drop("nullTypeCol")
+            .writeStream
+            .option("checkpointLocation", checkpointPath.getCanonicalPath)
+            .format("delta")
+            .start(sinkPath.getCanonicalPath)
+            .processAllAvailable()
+        }
+        if (shouldDropNullTypeColumns) {
+          val e = intercept[StreamingQueryException] {
+            runStream()
+          }
+          assert(e.getErrorClass == "STREAM_FAILED")
+          // This assertion checks the schema of the source did not change while processing a batch.
+          assert(e.getMessage.contains("assertion failed: Invalid batch: nullTypeCol"))
+        } else {
+          runStream()
+        }
+      }
+    }
+  }
+
+  test("streaming delta source should not drop null columns") {
+    testNullTypeColumn(shouldDropNullTypeColumns = false)
+  }
+
+  test("streaming delta source should drop null columns without feature flag") {
+    testNullTypeColumn(shouldDropNullTypeColumns = true)
+  }
+
+  def testCreateDataFrame(shouldDropNullTypeColumns: Boolean): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key ->
+        shouldDropNullTypeColumns.toString) {
+      withTempPath { tempPath =>
+        spark.sql("select CAST(null as VOID) as nullTypeCol, id from range(10)")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(tempPath.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, tempPath)
+        val df = deltaLog.createDataFrame(deltaLog.update(), Seq.empty, isStreaming = false)
+        val nullTypeFields = df.schema.filter(_.dataType == NullType)
+        if(shouldDropNullTypeColumns) {
+          assert(nullTypeFields.isEmpty)
+        } else {
+          assert(nullTypeFields.size == 1)
+        }
+      }
+    }
+  }
+
+  test("DeltaLog.createDataFrame should drop null columns with feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = true)
+  }
+
+  test("DeltaLog.createDataFrame should not drop null columns without feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = false)
+  }
 
   test("no schema should throw an exception") {
     withTempDir { inputDir =>
@@ -1698,10 +1774,13 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           q.processAllAvailable()
           checkAnswer(
             sql("select * from startingVersionTest"),
-            ((10 until 20).map(x => (x.toLong, x.toLong, None.toString)) ++
+            ((10 until 20).map(x => (x.toLong, x.toLong, "null")) ++
               (20 until 30).map(x => (x.toLong, x.toLong, x.toString)))
               .toDF("id", "id2", "id3")
-              .selectExpr("id", "id2", "cast(id3 as long) as id3")
+              .selectExpr(
+                "id",
+                "id2",
+                "CASE WHEN id3 = 'null' THEN NULL ELSE cast(id3 as long) END as id3")
           )
         } finally {
           q.stop()

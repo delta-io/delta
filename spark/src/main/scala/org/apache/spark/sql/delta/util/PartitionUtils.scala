@@ -605,7 +605,8 @@ private[delta] object PartitionUtils {
 
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
-        case _: AtomicType => // OK
+        // Variant types are not orderable and thus cannot be partition columns.
+        case a: AtomicType if !VariantShims.isVariantType(a) => // OK
         case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }

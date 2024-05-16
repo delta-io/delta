@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -26,15 +27,18 @@ import scala.language.implicitConversions
 
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.actions.{Action, CommitInfo, SingleAction}
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.util.ManualClock
 
 class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession
@@ -67,11 +71,12 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   /** Generate commits with the given timestamp in millis. */
-  private def generateCommitsCheap(deltaLog: DeltaLog, commits: Long*): Unit = {
+  private def generateCommitsCheap(deltaLog: DeltaLog, clock: ManualClock, commits: Long*): Unit = {
     var startVersion = deltaLog.snapshot.version + 1
     commits.foreach { ts =>
       val action =
         createTestAddFile(encodedPath = startVersion.toString, modificationTime = startVersion)
+      clock.setTime(ts)
       deltaLog.startTransaction().commitManually(action)
       modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
@@ -86,8 +91,13 @@ class DeltaTimeTravelSuite extends QueryTest
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
-      file.setLastModified(ts)
+      val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
+      if (isICTEnabledForNewTables) {
+        InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
+      } else {
+        val file = new File(filePath.toUri)
+        file.setLastModified(ts)
+      }
       startVersion += 1
     }
   }
@@ -111,16 +121,18 @@ class DeltaTimeTravelSuite extends QueryTest
       .map(i => s"$i")
   }
 
-  private def historyTest(testName: String)(f: DeltaLog => Unit): Unit = {
+  private def historyTest(testName: String)(f: (DeltaLog, ManualClock) => Unit): Unit = {
     testQuietly(testName) {
-      withTempDir { dir => f(DeltaLog.forTable(spark, dir)) }
+      val clock = new ManualClock()
+      withTempDir { dir => f(DeltaLog.forTable(spark, dir, clock), clock) }
     }
   }
 
-  historyTest("getCommits should monotonize timestamps") { deltaLog =>
+  historyTest("getCommits should monotonize timestamps") { (deltaLog, clock) =>
     val start = 1540415658000L
     // Make the commits out of order
     generateCommitsCheap(deltaLog,
+      clock,
       start,
       start - 5.seconds, // adjusts to start + 1 ms
       start + 1.milli,   // adjusts to start + 2 ms
@@ -134,16 +146,26 @@ class DeltaTimeTravelSuite extends QueryTest
       0,
       None,
       deltaLog.newDeltaHadoopConf())
+    // Note that when InCommitTimestamps are enabled, the monotization of timestamps is not
+    // performed by getCommits. Instead, the timestamps are already monotonized before they
+    // are written in the commit.
     assert(commits.map(_.timestamp) === Seq(start,
       start + 1.millis, start + 2.millis, start + 3.millis, start + 4.millis, start + 10.seconds))
   }
 
-  historyTest("describe history timestamps are adjusted according to file timestamp") { deltaLog =>
+  historyTest("describe history timestamps are adjusted according to file timestamp") {
+      (deltaLog, clock) =>
+    if (isICTEnabledForNewTables) {
+      // File timestamp adjustment is not needed when ICT is enabled.
+      cancel("This test is not compatible with InCommitTimestamps.")
+    }
     // this is in '2018-10-24', so earlier than today. The recorded timestamps in commitInfo will
     // be much after this
     val start = 1540415658000L
     // Make the commits out of order
-    generateCommitsCheap(deltaLog, start,
+    generateCommitsCheap(deltaLog,
+      clock,
+      start,
       start - 5.seconds, // adjusts to start + 1 ms
       start + 1.milli   // adjusts to start + 2 ms
     )
@@ -153,9 +175,11 @@ class DeltaTimeTravelSuite extends QueryTest
     assert(commits.map(_.timestamp.getTime) === Seq(start + 2.millis, start + 1.milli, start))
   }
 
-  historyTest("should filter only delta files when computing earliest version") { deltaLog =>
+  historyTest("should filter only delta files when computing earliest version") {
+      (deltaLog, clock) =>
     val start = 1540415658000L
-    generateCommitsCheap(deltaLog, start, start + 10.seconds, start + 20.seconds)
+    clock.setTime(start)
+    generateCommitsCheap(deltaLog, clock, start, start + 10.seconds, start + 20.seconds)
 
     val history = new DeltaHistoryManager(deltaLog)
     assert(history.getActiveCommitAtTime(start + 15.seconds, false).version === 1)
@@ -170,11 +194,12 @@ class DeltaTimeTravelSuite extends QueryTest
     assert(e.getMessage.contains("recreatable"))
   }
 
-  historyTest("resolving commits should return commit before timestamp") { deltaLog =>
+  historyTest("resolving commits should return commit before timestamp") { (deltaLog, clock) =>
     val start = 1540415658000L
+    clock.setTime(start)
     // Make a commit every 20 minutes
     val commits = Seq.tabulate(10)(i => start + (i * 20).minutes)
-    generateCommitsCheap(deltaLog, commits: _*)
+    generateCommitsCheap(deltaLog, clock, commits: _*)
     // When maxKeys is 2, we will use the parallel search algorithm, when it is 1000, we will
     // use the linear search method
     Seq(1, 2, 1000).foreach { maxKeys =>
@@ -552,6 +577,11 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
+    if (isICTEnabledForNewTables) {
+      // ICT Timestamps are always monotonically increasing. Therefore,
+      // this test is not needed when ICT is enabled.
+      cancel("This test is not compatible with InCommitTimestamps.")
+    }
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
       val start = 1540415658000L
@@ -765,6 +795,6 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 }
 
-class ManagedCommitFill1DeltaTimeTravelSuite extends DeltaTimeTravelSuite {
+class DeltaTimeTravelWithManagedCommitBatch1Suite extends DeltaTimeTravelSuite {
   override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }

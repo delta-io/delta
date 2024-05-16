@@ -145,9 +145,11 @@ public class JsonUtils {
             ColumnVector keys = mapValue.getKeys();
             ColumnVector values = mapValue.getValues();
             for (int i = 0; i < mapValue.getSize(); i++) {
+                gen.writeFieldName(keys.getString(i));
                 if (!values.isNullAt(i)) {
-                    gen.writeFieldName(keys.getString(i));
                     writeValue(gen, values, i, mapType.getValueType());
+                } else {
+                    gen.writeNull();
                 }
             }
             gen.writeEndObject();

@@ -15,26 +15,37 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.Timestamp;
+import java.time.*;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import static java.util.Arrays.asList;
 
-import io.delta.kernel.client.ExpressionHandler;
-import io.delta.kernel.client.TableClient;
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 
 public class PartitionUtils {
+    private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+
     private PartitionUtils() {}
 
     /**
@@ -100,6 +111,87 @@ public class PartitionUtils {
         }
 
         return dataBatch;
+    }
+
+    /**
+     * Convert the given partition values to a {@link MapValue} that can be serialized to a Delta
+     * commit file.
+     *
+     * @param partitionValueMap Expected the partition column names to be same case as in the
+     *                          schema. We want to preserve the case of the partition column names
+     *                          when serializing to the Delta commit file.
+     * @return {@link MapValue} representing the serialized partition values that can be written to
+     * a Delta commit file.
+     */
+    public static MapValue serializePartitionMap(Map<String, Literal> partitionValueMap) {
+        if (partitionValueMap == null || partitionValueMap.isEmpty()) {
+            return VectorUtils.stringStringMapValue(Collections.emptyMap());
+        }
+
+        Map<String, String> serializedPartValues = new HashMap<>();
+        for(Map.Entry<String, Literal> entry : partitionValueMap.entrySet()) {
+            serializedPartValues.put(
+                    entry.getKey(), // partition column name
+                    serializePartitionValue(entry.getValue())); // serialized partition value as str
+        }
+
+        return VectorUtils.stringStringMapValue(serializedPartValues);
+    }
+
+    /**
+     * Validate {@code partitionValues} contains values for every partition column in the table
+     * and the type of the value is correct. Once validated the partition values are sanitized
+     * to match the case of the partition column names in the table schema and returned
+     *
+     * @param tableSchema       Schema of the table.
+     * @param partitionColNames Partition column name. These should be from the table metadata
+     *                          that retain the same case as in the table schema.
+     * @param partitionValues   Map of partition column to value map given by the connector
+     * @return Sanitized partition values.
+     */
+    public static Map<String, Literal> validateAndSanitizePartitionValues(
+            StructType tableSchema,
+            List<String> partitionColNames,
+            Map<String, Literal> partitionValues) {
+
+        if (!toLowerCaseSet(partitionColNames)
+                .equals(toLowerCaseSet(partitionValues.keySet()))) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Partition values provided are not matching the partition columns. " +
+                                    "Partition columns: %s, Partition values: %s",
+                            partitionColNames, partitionValues));
+        }
+
+        // Convert the partition column names in given `partitionValues` to schema case. Schema
+        // case is the exact case the column name was given by the connector when creating the
+        // table. Comparing the column names is case-insensitive, but preserve the case as stored
+        // in the table metadata when writing the partition column name to DeltaLog
+        // (`partitionValues` in `AddFile`) or generating the target directory for writing the
+        // data belonging to a partition.
+        Map<String, Literal> schemaCasePartitionValues =
+                casePreservingPartitionColNames(partitionColNames, partitionValues);
+
+        // validate types are the same
+        schemaCasePartitionValues.entrySet().forEach(entry -> {
+            String partColName = entry.getKey();
+            Literal partValue = entry.getValue();
+            StructField partColField = tableSchema.get(partColName);
+
+            // this shouldn't happen as we have already validated the partition column names
+            checkArgument(
+                    partColField != null,
+                    "Partition column " + partColName + " is not present in the table schema");
+            DataType partColType = partColField.getDataType();
+
+            if (!partColType.equivalent(partValue.getDataType())) {
+                throw new IllegalArgumentException(String.format(
+                        "Partition column %s is of type %s but the value provided is of type %s",
+                        partColName, partColType, partValue.getDataType()));
+            }
+        });
+
+        return schemaCasePartitionValues;
     }
 
     /**
@@ -182,7 +274,7 @@ public class PartitionUtils {
     /**
      * Utility method to rewrite the partition predicate referring to the table schema as predicate
      * referring to the {@code partitionValues} in scan files read from Delta log. The scan file
-     * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(TableClient)}.
+     * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(Engine)}.
      * <p>
      * E.g. given predicate on partition columns:
      *   {@code p1 = 'new york' && p2 >= 26} where p1 is of type string and p2 is of int
@@ -242,6 +334,46 @@ public class PartitionUtils {
         return expression;
     }
 
+    /**
+     * Get the target directory for writing data for given partition values. Example:
+     * Given partition values (part1=1, part2='abc'), the target directory will be for a table
+     * rooted at 's3://bucket/table': 's3://bucket/table/part1=1/part2=abc'.
+     *
+     * @param dataRoot          Root directory where the data is stored.
+     * @param partitionColNames Partition column names. We need this to create the target directory
+     *                          structure that is consistent levels of directories.
+     * @param partitionValues   Partition values to create the target directory.
+     * @return Target directory path.
+     */
+    public static String getTargetDirectory(
+            String dataRoot,
+            List<String> partitionColNames,
+            Map<String, Literal> partitionValues) {
+        Path targetDirectory = new Path(dataRoot);
+        for (String partitionColName : partitionColNames) {
+            Literal partitionValue = partitionValues.get(partitionColName);
+            checkArgument(
+                    partitionValue != null,
+                    "Partition column value is missing for column: " + partitionColName);
+            String serializedValue = serializePartitionValue(partitionValue);
+            if (serializedValue == null) {
+                // Follow the delta-spark behavior to use "__HIVE_DEFAULT_PARTITION__" for null
+                serializedValue = "__HIVE_DEFAULT_PARTITION__";
+            } else {
+                try {
+                    serializedValue = URLEncoder.encode(serializedValue, "UTF-8");
+                } catch (UnsupportedEncodingException e) {
+                    throw new RuntimeException(
+                            "Failed to encode partition value: " + serializedValue, e);
+                }
+            }
+            String partitionDirectory = partitionColName + "=" + serializedValue;
+            targetDirectory = new Path(targetDirectory, partitionDirectory);
+        }
+
+        return targetDirectory.toString();
+    }
+
     private static boolean hasNonPartitionColumns(
         List<Expression> children,
         Set<String> partitionColNames) {
@@ -277,7 +409,7 @@ public class PartitionUtils {
         return new And(left, right);
     }
 
-    private static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
+    protected static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
         if (partitionValue == null) {
             return Literal.ofNull(dataType);
         }
@@ -329,5 +461,52 @@ public class PartitionUtils {
         }
 
         throw new UnsupportedOperationException("Unsupported partition column: " + dataType);
+    }
+
+    /**
+     * Serialize the given partition value to a string according to the Delta protocol <a
+     * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md
+     * #partition-value-serialization">partition value serialization rules</a>.
+     *
+     * @param literal Literal representing the partition value of specific datatype.
+     * @return Serialized string representation of the partition value.
+     */
+    protected static String serializePartitionValue(Literal literal) {
+        Object value = literal.getValue();
+        if (value == null) {
+            return null;
+        }
+        DataType dataType = literal.getDataType();
+        if (dataType instanceof ByteType
+                || dataType instanceof ShortType
+                || dataType instanceof IntegerType
+                || dataType instanceof LongType
+                || dataType instanceof FloatType
+                || dataType instanceof DoubleType
+                || dataType instanceof BooleanType) {
+            return String.valueOf(value);
+        } else if (dataType instanceof StringType) {
+            return (String) value;
+        } else if (dataType instanceof DateType) {
+            int daysSinceEpochUTC = (int) value;
+            return LocalDate.ofEpochDay(daysSinceEpochUTC).toString();
+        } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
+            long microsSinceEpochUTC = (long) value;
+            long seconds = microsSinceEpochUTC / 1_000_000;
+            int microsOfSecond = (int) (microsSinceEpochUTC % 1_000_000);
+            if (microsOfSecond < 0) {
+                // also adjust for negative microsSinceEpochUTC
+                microsOfSecond = 1_000_000 + microsOfSecond;
+            }
+            int nanosOfSecond = microsOfSecond * 1_000;
+            LocalDateTime localDateTime =
+                    LocalDateTime.ofEpochSecond(seconds, nanosOfSecond, ZoneOffset.UTC);
+            return localDateTime.format(PARTITION_TIMESTAMP_FORMATTER);
+        } else if (dataType instanceof DecimalType) {
+            return ((BigDecimal) value).toString();
+        } else if (dataType instanceof BinaryType) {
+            return new String((byte[]) value, StandardCharsets.UTF_8);
+        }
+        throw new UnsupportedOperationException("Unsupported partition column type: " + dataType);
     }
 }

@@ -1271,6 +1271,14 @@ def normalizeColumnNamesInDataType(
     SchemaUtils.typeExistsRecursively(schema)(_.isInstanceOf[TimestampNTZType])
   }
 
+
+  /**
+   * Returns 'true' if any VariantType exists in the table schema.
+   */
+  def checkForVariantTypeColumnsRecursively(schema: StructType): Boolean = {
+    SchemaUtils.typeExistsRecursively(schema)(VariantShims.isVariantType(_))
+  }
+
   /**
    * Find the unsupported data types in a `DataType` recursively. Add the unsupported data types to
    * the provided `unsupportedDataTypes` buffer.
@@ -1303,6 +1311,7 @@ def normalizeColumnNamesInDataType(
     case DateType =>
     case TimestampType =>
     case TimestampNTZType =>
+    case dt if VariantShims.isVariantType(dt) =>
     case BinaryType =>
     case _: DecimalType =>
     case a: ArrayType =>
@@ -1336,28 +1345,29 @@ def normalizeColumnNamesInDataType(
   }
 
   /**
-   * Find all the generated columns that depend on the given target column.
+   * Find all the generated columns that depend on the given target column. Returns a map of
+   * generated names to their corresponding expression.
    */
   def findDependentGeneratedColumns(
       sparkSession: SparkSession,
       targetColumn: Seq[String],
       protocol: Protocol,
-      schema: StructType): Seq[StructField] = {
+      schema: StructType): Map[String, String] = {
     if (GeneratedColumn.satisfyGeneratedColumnProtocol(protocol) &&
         GeneratedColumn.hasGeneratedColumns(schema)) {
 
-      val dependentGenCols = ArrayBuffer[StructField]()
+      val dependentGenCols = mutable.Map[String, String]()
       SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
         GeneratedColumn.getGenerationExpressionStr(field.metadata).foreach { exprStr =>
           val needsToChangeExpr = SchemaUtils.containsDependentExpression(
             sparkSession, targetColumn, exprStr, sparkSession.sessionState.conf.resolver)
-          if (needsToChangeExpr) dependentGenCols += field
+          if (needsToChangeExpr) dependentGenCols += field.name -> exprStr
         }
         field
       }
-      dependentGenCols.toList
+      dependentGenCols.toMap
     } else {
-      Seq.empty
+      Map.empty
     }
   }
 

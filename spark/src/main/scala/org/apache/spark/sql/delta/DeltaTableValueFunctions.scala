@@ -110,15 +110,15 @@ trait CDCStatementBase extends DeltaTableValueFunction {
 
   protected def getOptions: CaseInsensitiveStringMap = {
     def toDeltaOption(keyPrefix: String, value: Expression): (String, String) = {
+      val evaluated = DeltaTableValueFunctionsShims.evaluateTimeOption(value)
       value.dataType match {
         // We dont need to explicitly handle ShortType as it is parsed as IntegerType.
-        case _: IntegerType | LongType => (keyPrefix + "Version") -> value.eval().toString
-        case _: StringType => (keyPrefix + "Timestamp") -> value.eval().toString
+        case _: IntegerType | LongType => (keyPrefix + "Version") -> evaluated
+        case _: StringType => (keyPrefix + "Timestamp") -> evaluated
         case _: TimestampType => (keyPrefix + "Timestamp") -> {
-          val time = DeltaTableValueFunctionsShims.evaluateTimeOption(value)
           val fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
           // when evaluated the time is represented with microseconds, which needs to be trimmed.
-          fmt.format(new Date(time.toLong / 1000))
+          fmt.format(new Date(evaluated.toLong / 1000))
         }
         case _ =>
           throw DeltaErrors.unsupportedExpression(s"${keyPrefix} option", value.dataType,

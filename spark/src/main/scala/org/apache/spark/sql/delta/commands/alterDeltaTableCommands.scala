@@ -74,8 +74,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
       sparkSession: SparkSession,
       columnParts: Seq[String],
       newMetadata: actions.Metadata,
-      protocol: Protocol,
-      operationName: String): Unit = {
+      protocol: Protocol): Unit = {
     if (!sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
       return
@@ -85,14 +84,14 @@ trait AlterDeltaTableCommand extends DeltaCommand {
       Constraints.findDependentConstraints(sparkSession, columnParts, newMetadata)
     if (dependentConstraints.nonEmpty) {
       throw DeltaErrors.foundViolatingConstraintsForColumnChange(
-        operationName, UnresolvedAttribute(columnParts).name, dependentConstraints)
+        UnresolvedAttribute(columnParts).name, dependentConstraints)
     }
     // check if the column to change is referenced by any generated columns
     val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
       sparkSession, columnParts, protocol, newMetadata.schema)
     if (dependentGenCols.nonEmpty) {
       throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-        operationName, UnresolvedAttribute(columnParts).name, dependentGenCols.toList)
+        UnresolvedAttribute(columnParts).name, dependentGenCols)
     }
   }
 }
@@ -306,6 +305,10 @@ case class AlterTableDropFeatureDeltaCommand(
         throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
       }
 
+      // Validate that the `removableFeature` is not a dependency of any other feature that is
+      // enabled on the table.
+      dependentFeatureCheck(removableFeature, table.initialSnapshot.protocol)
+
       // The removableFeature.preDowngradeCommand needs to adhere to the following requirements:
       //
       // a) Bring the table to a state the validation passes.
@@ -372,6 +375,25 @@ case class AlterTableDropFeatureDeltaCommand(
       txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
       txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, truncateHistory))
       Nil
+    }
+  }
+
+  /**
+   * Checks if the `removableFeature` is a requirement for some other feature that is enabled on the
+   * table. In such a scenario, we need to fail the drop feature command. The dependent features
+   * needs to be dropped first before this `removableFeature` can be removed.
+   */
+  private def dependentFeatureCheck(
+      removableFeature: TableFeature,
+      protocol: Protocol): Unit = {
+    val dependentFeatures = TableFeature.getDependentFeatures(removableFeature)
+    if (dependentFeatures.nonEmpty) {
+      val dependentFeaturesInProtocol = dependentFeatures.filter(protocol.isFeatureSupported)
+      if (dependentFeaturesInProtocol.nonEmpty) {
+        val dependentFeatureNames = dependentFeaturesInProtocol.map(_.name)
+        throw DeltaErrors.dropTableFeatureFailedBecauseOfDependentFeatures(
+          removableFeature.name, dependentFeatureNames.toSeq)
+      }
     }
   }
 }
@@ -524,7 +546,7 @@ case class AlterTableDropColumnsDeltaCommand(
         configuration = newConfiguration
       )
       columnsToDrop.foreach { columnParts =>
-        checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol, "drop")
+        checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol)
       }
 
       txn.updateMetadata(newMetadata)
@@ -659,7 +681,7 @@ case class AlterTableChangeColumnDeltaCommand(
       if (newColumn.name != columnName) {
         // need to validate the changes if the column is renamed
         checkDependentExpressions(
-          sparkSession, columnPath :+ columnName, newMetadata, txn.protocol, "rename")
+          sparkSession, columnPath :+ columnName, newMetadata, txn.protocol)
       }
 
 
@@ -773,6 +795,11 @@ case class AlterTableChangeColumnDeltaCommand(
       if (txn.metadata.columnMappingMode == NoMapping) {
         throw DeltaErrors.columnRenameNotSupported
       }
+    }
+
+    if (originalField.dataType != newType) {
+      checkDependentExpressions(
+        spark, columnPath :+ columnName, txn.metadata, txn.protocol)
     }
 
     if (originalField.nullable && !newColumn.nullable) {

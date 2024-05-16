@@ -15,7 +15,8 @@
  */
 package io.delta.kernel.defaults.internal.json
 
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils, VectorTestUtils}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -121,7 +122,7 @@ class JsonUtilsSuite extends AnyFunSuite with TestUtils with VectorTestUtils {
       ),
       """{
         |"c0":{"24":200,"25":201},
-        |"c1":{"25":203},
+        |"c1":{"27":null,"25":203},
         |"c3":{}
         |}""".stripMargin
     ),

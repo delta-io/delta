@@ -17,25 +17,25 @@
 package io.delta.kernel.internal.replay;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Optional;
 
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -62,8 +62,8 @@ public class LogReplay {
 
     /** Read schema when searching for the latest Protocol and Metadata. */
     public static final StructType PROTOCOL_METADATA_READ_SCHEMA = new StructType()
-        .add("protocol", Protocol.READ_SCHEMA)
-        .add("metaData", Metadata.READ_SCHEMA);
+        .add("protocol", Protocol.FULL_SCHEMA)
+        .add("metaData", Metadata.FULL_SCHEMA);
 
     /** We don't need to read the entire RemoveFile, only the path and dv info */
     private static StructType REMOVE_FILE_SCHEMA = new StructType()
@@ -72,11 +72,24 @@ public class LogReplay {
 
     /** Read schema when searching for just the transaction identifiers */
     public static final StructType SET_TRANSACTION_READ_SCHEMA = new StructType()
-        .add("txn", SetTransaction.READ_SCHEMA);
+        .add("txn", SetTransaction.FULL_SCHEMA);
 
     private static StructType getAddSchema(boolean shouldReadStats) {
         return shouldReadStats ? AddFile.SCHEMA_WITH_STATS :
             AddFile.SCHEMA_WITHOUT_STATS;
+    }
+
+    public static String SIDECAR_FIELD_NAME = "sidecar";
+    public static String ADDFILE_FIELD_NAME = "add";
+    public static String REMOVEFILE_FIELD_NAME = "remove";
+
+    public static StructType withSidecarFileSchema(StructType schema) {
+        return schema.add(SIDECAR_FIELD_NAME, SidecarFile.READ_SCHEMA);
+    }
+
+    public static boolean containsAddOrRemoveFileActions(StructType schema) {
+        return schema.fieldNames().contains(ADDFILE_FIELD_NAME) ||
+                schema.fieldNames().contains(REMOVEFILE_FIELD_NAME);
     }
 
     /**
@@ -84,8 +97,8 @@ public class LogReplay {
      */
     public static StructType getAddRemoveReadSchema(boolean shouldReadStats) {
         return new StructType()
-            .add("add", getAddSchema(shouldReadStats))
-            .add("remove", REMOVE_FILE_SCHEMA);
+            .add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats))
+            .add(REMOVEFILE_FIELD_NAME, REMOVE_FILE_SCHEMA);
     }
 
     public static int ADD_FILE_ORDINAL = 0;
@@ -102,21 +115,21 @@ public class LogReplay {
 
     private final Path dataPath;
     private final LogSegment logSegment;
-    private final TableClient tableClient;
+    private final Engine engine;
     private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
             Path logPath,
             Path dataPath,
             long snapshotVersion,
-            TableClient tableClient,
+            Engine engine,
             LogSegment logSegment,
             Optional<SnapshotHint> snapshotHint) {
         assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.tableClient = tableClient;
+        this.engine = engine;
         this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint, snapshotVersion);
     }
 
@@ -155,12 +168,11 @@ public class LogReplay {
             boolean shouldReadStats,
             Optional<Predicate> checkpointPredicate) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
-                new ActionsIterator(
-                        tableClient,
+                new ActionsIterator(engine,
                         logSegment.allLogFilesReversed(),
                         getAddRemoveReadSchema(shouldReadStats),
                         checkpointPredicate);
-        return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
+        return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath);
     }
 
     ////////////////////
@@ -175,7 +187,7 @@ public class LogReplay {
      * delta files newer than the hint to search for any new P & M. If we don't find them, we can
      * just use the P and/or M from the hint.
      */
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+    protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
             Optional<SnapshotHint> snapshotHint,
             long snapshotVersion) {
 
@@ -191,8 +203,7 @@ public class LogReplay {
         Metadata metadata = null;
 
         try (CloseableIterator<ActionWrapper> reverseIter =
-                     new ActionsIterator(
-                             tableClient,
+                     new ActionsIterator(engine,
                              logSegment.allLogFilesReversed(),
                              PROTOCOL_METADATA_READ_SCHEMA,
                              Optional.empty())) {
@@ -232,11 +243,12 @@ public class LogReplay {
 
                     for (int i = 0; i < metadataVector.getSize(); i++) {
                         if (!metadataVector.isNullAt(i)) {
-                            metadata = Metadata.fromColumnVector(metadataVector, i, tableClient);
+                            metadata = Metadata.fromColumnVector(metadataVector, i, engine);
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
-                                TableFeatures.validateReadSupportedTable(protocol, metadata);
+                                TableFeatures.validateReadSupportedTable(
+                                    protocol, metadata, dataPath.toString());
                                 return new Tuple2<>(protocol, metadata);
                             }
 
@@ -275,8 +287,7 @@ public class LogReplay {
 
     private Optional<Long> loadLatestTransactionVersion(String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
-                     new ActionsIterator(
-                             tableClient,
+                     new ActionsIterator(engine,
                              logSegment.allLogFilesReversed(),
                              SET_TRANSACTION_READ_SCHEMA,
                              Optional.empty())) {
@@ -300,20 +311,5 @@ public class LogReplay {
         }
 
         return Optional.empty();
-    }
-
-    /**
-     * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
-     * Visible only for testing.
-     */
-    protected static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
-        String logPathStr = logPath.toString(); // fully qualified path
-        for (FileStatus fileStatus : allFiles) {
-            String filePath = fileStatus.getPath();
-            if (!filePath.startsWith(logPathStr)) {
-                throw new RuntimeException("File (" + filePath + ") doesn't belong in the " +
-                    "transaction log at " + logPathStr + ".");
-            }
-        }
     }
 }

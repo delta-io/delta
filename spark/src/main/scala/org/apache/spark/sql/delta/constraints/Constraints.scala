@@ -96,7 +96,8 @@ object Constraints {
   }
 
   /**
-   * Find all the check constraints that reference the given column name.
+   * Find all the check constraints that reference the given column name. Returns a map of
+   * constraint names to their corresponding expression.
    */
   def findDependentConstraints(
       sparkSession: SparkSession,

@@ -152,7 +152,7 @@ trait DeltaLogging
     : Unit = {
     if (Utils.isTesting) {
       assert(check, msg)
-    } else {
+    } else if (!check) {
       recordDeltaEvent(
         deltaLog = deltaLog,
         opType = s"delta.assertions.$name",

@@ -21,7 +21,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.managedcommit.{CommitStore, CommitStoreProvider, TableCommitStore}
+import org.apache.spark.sql.delta.managedcommit.{CommitOwnerClient, CommitOwnerProvider, ManagedCommitUtils, TableCommitOwnerClient}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -228,13 +228,13 @@ class Snapshot(
   }
 
   /**
-   * [[CommitStore]] for the given delta table as of this snapshot.
+   * [[CommitOwnerClient]] for the given delta table as of this snapshot.
    * - This must be present when managed commit is enabled.
    * - This must be None when managed commit is disabled.
    */
-  val tableCommitStoreOpt: Option[TableCommitStore] = initializeTableCommitStore()
-  protected def initializeTableCommitStore(): Option[TableCommitStore] = {
-    CommitStoreProvider.getTableCommitStore(this)
+  val tableCommitOwnerClientOpt: Option[TableCommitOwnerClient] = initializeTableCommitOwner()
+  protected def initializeTableCommitOwner(): Option[TableCommitOwnerClient] = {
+    ManagedCommitUtils.getTableCommitOwner(this)
   }
 
   /** Number of columns to collect stats on for data skipping */
@@ -474,21 +474,22 @@ class Snapshot(
    * Ensures that commit files are backfilled up to the current version in the snapshot.
    *
    * This method checks if there are any un-backfilled versions up to the current version and
-   * triggers the backfilling process using the commit store. It verifies that the delta file for
+   * triggers the backfilling process using the commit-owner. It verifies that the delta file for
    * the current version exists after the backfilling process.
    *
    * @throws IllegalStateException
    *   if the delta file for the current version is not found after backfilling.
    */
   def ensureCommitFilesBackfilled(): Unit = {
-    val tableCommitStore = tableCommitStoreOpt.getOrElse {
+    val tableCommitOwnerClient = tableCommitOwnerClientOpt.getOrElse {
       return
     }
     val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
     if (minUnbackfilledVersion <= version) {
       val hadoopConf = deltaLog.newDeltaHadoopConf()
-      tableCommitStore.backfillToVersion(
-        startVersion = minUnbackfilledVersion, endVersion = Some(version))
+      tableCommitOwnerClient.backfillToVersion(
+        version,
+        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)
       val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
       if (!fs.exists(expectedBackfilledDeltaFile)) {
@@ -593,7 +594,7 @@ class InitialSnapshot(
   override def protocol: Protocol = computedState.protocol
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
 
-  // The [[InitialSnapshot]] is not backed by any external Commit Store.
-  override def initializeTableCommitStore(): Option[TableCommitStore] = None
+  // The [[InitialSnapshot]] is not backed by any external commit-owner.
+  override def initializeTableCommitOwner(): Option[TableCommitOwnerClient] = None
   override def timestamp: Long = -1L
 }

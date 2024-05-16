@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.test
 
-import io.delta.kernel.client._
+import java.util.UUID
+
+import io.delta.kernel.engine._
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -29,7 +31,7 @@ import scala.collection.JavaConverters._
  *
  * [[MockListFromFileSystemClient]] - mocks the `listFrom` API within [[FileSystemClient]].
  */
-trait MockFileSystemClientUtils extends MockTableClientUtils {
+trait MockFileSystemClientUtils extends MockEngineUtils {
 
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
@@ -58,7 +60,33 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
     )
   }
 
-  /* Create input function for createMockTableClient to implement listFrom from a list of
+  /**
+   * Checkpoint file status for a top-level V2 checkpoint file.
+   *
+   * @param checkpointVersions List of checkpoint versions, given as Seq(version, whether to use
+   *                           UUID naming scheme, number of sidecars).
+   * Returns top-level checkpoint file and sidecar files for each checkpoint version.
+   */
+  def v2CheckpointFileStatuses(
+      checkpointVersions: Seq[(Long, Boolean, Int)],
+      fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
+    checkpointVersions.map { case (v, useUUID, numSidecars) =>
+      val topLevelFile = if (useUUID) {
+        FileStatus.of(FileNames.topLevelV2CheckpointFile(
+          logPath, v, UUID.randomUUID().toString, fileType).toString, v, v * 10)
+      } else {
+        FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
+      }
+      val sidecars = (0 until numSidecars).map { _ =>
+        FileStatus.of(
+          FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
+          v, v * 10)
+      }
+      (topLevelFile, sidecars)
+    }
+  }
+
+  /* Create input function for createMockEngine to implement listFrom from a list of
    * file statuses.
    */
   def listFromProvider(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
@@ -66,20 +94,34 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
   }
 
   /**
-   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
    */
-  def createMockFSListFromTableClient(contents: Seq[FileStatus]): TableClient = {
-    mockTableClient(fileSystemClient =
+  def createMockFSListFromEngine(
+      contents: Seq[FileStatus],
+      parquetHandler: ParquetHandler,
+      jsonHandler: JsonHandler): Engine = {
+    mockEngine(fileSystemClient =
+      new MockListFromFileSystemClient(listFromProvider(contents)),
+      parquetHandler = parquetHandler,
+      jsonHandler = jsonHandler)
+  }
+
+  /**
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
+   * the given contents. The contents are filtered depending upon the list from path prefix.
+   */
+  def createMockFSListFromEngine(contents: Seq[FileStatus]): Engine = {
+    mockEngine(fileSystemClient =
       new MockListFromFileSystemClient(listFromProvider(contents)))
   }
 
   /**
-   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * [[MockListFromFileSystemClient]].
    */
-  def createMockFSListFromTableClient(listFromProvider: String => Seq[FileStatus]): TableClient = {
-    mockTableClient(fileSystemClient = new MockListFromFileSystemClient(listFromProvider))
+  def createMockFSListFromEngine(listFromProvider: String => Seq[FileStatus]): Engine = {
+    mockEngine(fileSystemClient = new MockListFromFileSystemClient(listFromProvider))
   }
 }
 
