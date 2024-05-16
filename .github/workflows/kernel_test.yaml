@@ -7,14 +7,27 @@ jobs:
       SCALA_VERSION: 2.13.13
     steps:
       - uses: actions/checkout@v3
+
+      # Install JDK 17
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+
+      # Run unit tests with JDK 17. These unit tests depend on Spark, and Spark 4.0+ is JDK 17.
+      - name: Run unit tests (JDK 17)
+        run: |
+          python run-tests.py --group kernel --coverage
+
+      # Install JDK 8
       - name: install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
           java-version: "8"
-      - name: Run tests
-        run: |
-          python run-tests.py --group kernel --coverage
-      - name: Run integration tests
+
+      # Run integration tests with JDK 8, as they have no Spark dependency
+      - name: Run integration tests (JDK 8)
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local

@@ -611,7 +611,7 @@ lazy val hudi = (project in file("hudi"))
     name := "delta-hudi",
     commonSettings,
     scalaStyleSettings,
-    releaseSettings,
+    skipReleaseSettings,
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "compile" excludeAll(
         ExclusionRule(organization = "org.apache.hadoop"),
@@ -1165,7 +1165,7 @@ lazy val flink = (project in file("connectors/flink"))
   .settings (
     name := "delta-flink",
     commonSettings,
-    releaseSettings,
+    skipReleaseSettings, // Flink only supports 2.12 not 2.13
     flinkMimaSettings,
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
@@ -1195,7 +1195,7 @@ lazy val flink = (project in file("connectors/flink"))
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion % "provided",
       "org.apache.flink" % "flink-connector-files" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-runtime" % flinkVersion % "provided",
-      "org.apache.flink" % "flink-scala_2.12" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-scala_2.12" % flinkVersion % "provided", // TODO: can we remove this scala dependency?
       "org.apache.flink" % "flink-connector-hive_2.12" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-planner_2.12" % flinkVersion % "provided",
 
@@ -1292,7 +1292,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing, hudi)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
