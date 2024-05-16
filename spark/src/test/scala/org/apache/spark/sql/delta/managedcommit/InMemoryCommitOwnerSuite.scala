@@ -52,13 +52,15 @@ abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClien
   }
 
   protected def validateGetCommitsResult(
+      result: GetCommitsResponse,
       startVersion: Option[Long],
       endVersion: Option[Long],
-      maxVersion: Long,
-      commitVersions: Seq[Long]): Unit = {
+      maxVersion: Long): Unit = {
+    val commitVersions = result.getCommits.map(_.getVersion)
     val lastExpectedBackfilledVersion = (maxVersion - (maxVersion % batchSize)).toInt
     val expectedVersions = lastExpectedBackfilledVersion + 1 to maxVersion.toInt
     assert(commitVersions == expectedVersions)
+    assert(result.getLatestTableVersion == maxVersion)
   }
 
   test("InMemoryCommitOwnerBuilder works as expected") {
