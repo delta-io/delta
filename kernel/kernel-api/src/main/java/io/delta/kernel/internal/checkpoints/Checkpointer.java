@@ -15,8 +15,7 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -26,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -239,22 +239,39 @@ public class Checkpointer {
                                 "Retrying after 1sec. (current attempt = {})",
                         lastCheckpointFilePath,
                         tries);
-                Thread.sleep(1000);
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return Optional.empty();
+                }
                 return loadMetadataFromFile(engine, tries + 1);
             }
-        } catch (FileNotFoundException ex) {
-            return Optional.empty(); // there is no point retrying
-        } catch (InterruptedException ex) {
-            Thread.currentThread().interrupt();
+        } catch (IOException ex) {
+            // TODO: this exception is thrown when `readJsonFiles` is called and not before
+            // the file is actually read. In current implementation this never happens as the file
+            // is actually read when the data is fetched from the returned `CloseableIterator`
+            // from `readJsonFiles`. Once we wrap all calls to engine and throw
+            // {@link KernelEngineException} instead of {@link IOException}, we can remove this
+            // catch block.
             return Optional.empty();
-        } catch (Exception ex) {
-            String msg = String.format(
-                    "Failed to load checkpoint metadata from file %s. " +
-                            "Retrying after 1sec. (current attempt = %s)",
-                    lastCheckpointFilePath, tries);
-            logger.warn(msg, ex);
-            // we can retry until max tries are exhausted
-            return loadMetadataFromFile(engine, tries + 1);
+        } catch (KernelEngineException ex) {
+            Throwable cause = ex.getCause();
+            if (cause instanceof FileNotFoundException) {
+                return Optional.empty(); // there is no point retrying
+            } else if (cause instanceof Exception) {
+                String msg = String.format(
+                        "Failed to load checkpoint metadata from file %s. " +
+                                "It must be in the process of being written. " +
+                                "Retrying after 1sec. (current attempt of %s (max 3)",
+                        lastCheckpointFilePath, tries);
+                logger.warn(msg, cause);
+                // we can retry until max tries are exhausted. It saves latency as the alternative
+                // is to list files and find the last checkpoint file. And the `_last_checkpoint`
+                // file is possibly being written to.
+                return loadMetadataFromFile(engine, tries + 1);
+            }
+            throw ex;
         }
     }
 }
