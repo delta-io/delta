@@ -19,6 +19,7 @@ import java.io.*;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import static java.lang.String.format;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
@@ -29,6 +30,7 @@ import org.apache.hadoop.fs.*;
 
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.JsonHandler;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
@@ -89,7 +91,7 @@ public class DefaultJsonHandler implements JsonHandler {
             return DataTypeParser.parseSchema(defaultObjectReader.readTree(structTypeJson));
         } catch (JsonProcessingException ex) {
             throw new RuntimeException(
-                String.format("Could not parse JSON: %s", structTypeJson), ex);
+                format("Could not parse JSON: %s", structTypeJson), ex);
         }
     }
 
@@ -127,7 +129,8 @@ public class DefaultJsonHandler implements JsonHandler {
                         }
                     }
                 } catch (IOException ex) {
-                    throw new UncheckedIOException(ex);
+                    throw new KernelEngineException(
+                            format("Error reading JSON file: %s", currentFile.getPath()), ex);
                 }
 
                 return nextLine != null;
@@ -215,7 +218,7 @@ public class DefaultJsonHandler implements JsonHandler {
             final JsonNode jsonNode = objectReaderReadBigDecimals.readTree(json);
             return new DefaultJsonRow((ObjectNode) jsonNode, readSchema);
         } catch (JsonProcessingException ex) {
-            throw new RuntimeException(String.format("Could not parse JSON: %s", json), ex);
+            throw new KernelEngineException(format("Could not parse JSON: %s", json), ex);
         }
     }
 }
