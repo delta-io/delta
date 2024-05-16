@@ -762,7 +762,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .take(4)
     val deltas = deltaFileStatuses(10L to 13L)
     testExpectedError[RuntimeException](
-      corruptedCheckpointStatuses ++ deltas,
+      corruptedCheckpointStatuses.toSeq ++ deltas,
       Optional.empty(),
       Optional.empty(),
       expectedErrorMessageContains = expectedErrorMessage(10)
@@ -810,7 +810,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .map(p => FileStatus.of(p.toString, 10, 10))
       .take(4)
     testExpectedError[RuntimeException](
-      files = corruptedCheckpointStatuses ++ deltaFileStatuses(10L to 20L) ++
+      files = corruptedCheckpointStatuses.toSeq ++ deltaFileStatuses(10L to 20L) ++
         singularCheckpointFileStatuses(Seq(10L)),
       startCheckpoint = Optional.of(20),
       expectedErrorMessageContains = "Checkpoint file to load version: 20 is missing."
