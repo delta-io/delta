@@ -4,7 +4,7 @@
 This protocol change adds support for collated strings. It consists of three changes to the protocol
 
 * Collations in the table schema
-* Collated AddFile statistics
+* Per-column statistics are annotated with the collation that was used to collect them
 * Domain metadata with active collation version
 
 --------
@@ -13,9 +13,9 @@ This protocol change adds support for collated strings. It consists of three cha
 
 ### Collations table feature
 
-Collations are a set of rules for how strings are compared. The are supported by the `collations` table feature. Collations do not affect how strings are stored. Collations are applied when comparing strings for equality or to determine the sort order of two strings. Case insensitive comparison is one example of a collation where case is ignored when string are compared for equality and the lower cased variant of a string is used to determine its sort order.
+Collations are a set of rules for how strings are compared. They are supported by the `collations` table feature. Collations do not affect how strings are stored. Collations are applied when comparing strings for equality or to determine the sort order of two strings. Case insensitive comparison is one example of a collation where case is ignored when string are compared for equality and the lower cased variant of a string is used to determine its sort order.
 
-Collations can be specified for all string fields in a table schema. It is also possible to store statistics per collation version. This is required because the min and max values of a column can differ based on the used collation or collation version.
+Each string field can have a collation, which is specified in the table schema. It is also possible to store statistics per collation version. This is required because the min and max values of a column can differ based on the used collation or collation version.
 
 By default, all strings are collated using binary collation. That means that strings compare equal if their binary representations are equal. The binary representation is also used to sort them.
 
@@ -35,14 +35,15 @@ Version | Version string. Is allowed to contain dots. This part is optional.
 
 #### Specifying collations in the table schema
 
-Collations can be specified for all string types in a schema. This includes string fields, but also the key and value type of maps and the element type of arrays. Collations are stored in the `__COLLATIONS` key of the metadata of the nearest ancestor [StructField](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#struct-field) of the Delta table schema. Nested maps and arrays are encoded the same way as ids in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2). Collation identifiers are stored without key because the version of a collation is not enforced for reading.
+Collations can be specified for any string type in a schema. This includes string fields, but also the key and value type of maps and the element type of arrays. Collations are stored in the `__COLLATIONS` key of the metadata of the nearest ancestor [StructField](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#struct-field) of the Delta table schema. Nested maps and arrays are encoded the same way as ids in [IcebergCompatV2](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#writer-requirements-for-icebergcompatv2). Collation identifiers are stored without key because the version of a collation is not enforced for reading.
 
 This example provides an overview of how collations are stored in the schema. Note that irrelevant fields have been stripped.
 
 Example schema
 
 ```
-|-- col1: map
+|-- col2: string
+|-- col2: map
 |       |-- keyType: string
 |       |-- valueType: array
 |                    |-- elementType: map
@@ -58,42 +59,51 @@ Schema with collation information
 ```
 {
   "type" : "struct",
-  "fields" : [ {
-    "name" : "col1",
-    "type" : "map",
-    "keyType": "string"
-    "valueType": {
-      "type": "array"
-      "elementType": {
-        "type": "map"
-        "keyType: {
-          "type": "array"
-          "elementType": "string"
-        },
-        "valueType": {
-          "type": "map",
-          "keyType": "string",
-          "valueType": {
-            "type": "struct",
-            "fields": [ {
-              "name": "f1"
-              "type": "string"      
-            } ],
+  "fields" : [
+    {
+      "name" : "col1",
+      "type" : "string",
+      "metadata": {
+        "__COLLATIONS": { "col1": "ICU.de_DE" }
+      }
+    },
+    {
+      "name" : "col2",
+      "type" : "map",
+      "keyType": "string"
+      "valueType": {
+        "type": "array"
+        "elementType": {
+          "type": "map"
+          "keyType: {
+            "type": "array"
+            "elementType": "string"
           },
-          metadata: {
-            "__COLLATIONS": { "f1": "ICU.de_DE" }
+          "valueType": {
+            "type": "map",
+            "keyType": "string",
+            "valueType": {
+              "type": "struct",
+              "fields": [ {
+                "name": "f1"
+                "type": "string"
+              } ],
+            },
+            "metadata": {
+              "__COLLATIONS": { "f1": "ICU.de_DE" }
+            }
           }
         }
       }
-    }
-    "metadata": {
-      "__COLLATIONS": {
-        "col1.key": "ICU.en_US",
-        "col1.value.element.key": "ICU.en_US",
-        "col1.value.element.value.key": "ICU.en_US"
+      "metadata": {
+        "__COLLATIONS": {
+          "col1.key": "ICU.en_US",
+          "col1.value.element.key": "ICU.en_US",
+          "col1.value.element.value.key": "ICU.en_US"
+        }
       }
     }
-  } ]
+  ]
 }
 ```
 
