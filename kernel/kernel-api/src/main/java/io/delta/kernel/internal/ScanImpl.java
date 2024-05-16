@@ -37,6 +37,7 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
+import static io.delta.kernel.internal.client.WrappedExpressionHandler.wrapExpressionHandler;
 import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
@@ -231,14 +232,21 @@ public class ScanImpl implements Scan {
             public FilteredColumnarBatch next() {
                 FilteredColumnarBatch next = scanFileIter.next();
                 if (predicateEvaluator == null) {
-                    predicateEvaluator =
-                        engine.getExpressionHandler().getPredicateEvaluator(
-                            next.getData().getSchema(),
-                            predicateOnScanFileBatch);
+                    predicateEvaluator = wrapExpressionHandler(
+                        engine,
+                        String.format(
+                            "Evaluate partition predicate %s on schema %s",
+                            predicateOnScanFileBatch,
+                            next.getData().getSchema())
+                    ).getPredicateEvaluator(
+                        next.getData().getSchema(),
+                        predicateOnScanFileBatch
+                    );
                 }
                 ColumnVector newSelectionVector = predicateEvaluator.eval(
-                    next.getData(),
-                    next.getSelectionVector());
+                        next.getData(),
+                        next.getSelectionVector());
+
                 return new FilteredColumnarBatch(
                     next.getData(),
                     Optional.of(newSelectionVector));
