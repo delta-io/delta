@@ -1765,6 +1765,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def generatedColumnsUnsupportedType(dt: DataType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN",
+      messageParameters = Array(s"${dt.sql}")
+    )
+  }
+
   def generatedColumnsExprTypeMismatch(
       column: String,
       columnType: DataType,
@@ -2334,6 +2341,14 @@ trait DeltaErrorsBase
       messageParameters = Array(feature))
   }
 
+  def dropTableFeatureFailedBecauseOfDependentFeatures(
+      feature: String,
+      dependentFeatures: Seq[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+      messageParameters = Array(feature, dependentFeatures.mkString(", "), feature))
+  }
+
   def dropTableFeatureConflictRevalidationFailed(
       conflictingCommit: Option[CommitInfo] = None): DeltaTableFeatureException = {
     val concurrentCommit = DeltaErrors.concurrentModificationExceptionMsg(
@@ -2435,6 +2450,22 @@ trait DeltaErrorsBase
 
   def unsetNonExistentProperty(key: String, table: String): Throwable = {
     new DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
+  }
+
+  def identityColumnWithGenerationExpression(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION", Array.empty)
+  }
+
+  def identityColumnIllegalStep(): Throwable = {
+    new DeltaAnalysisException(errorClass = "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP", Array.empty)
+  }
+
+  def identityColumnDataTypeNotSupported(unsupportedType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(unsupportedType.typeName)
+    )
   }
 
   def identityColumnInconsistentMetadata(
@@ -3159,7 +3190,7 @@ trait DeltaErrorsBase
       icebergCompatVersion: Int,
       cause: Throwable): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "",
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.REWRITE_DATA_FAILED",
       messageParameters = Array(
         icebergCompatVersion.toString,
         icebergCompatVersion.toString

@@ -48,6 +48,18 @@ public class TableConfig<T> {
                     " and years are not accepted. You may specify '365 days' for a year instead."
     );
 
+    /**
+     * How often to checkpoint the delta log? For every N (this config) commits to the log, we will
+     * suggest write out a checkpoint file that can speed up the Delta table state reconstruction.
+     */
+    public static final TableConfig<Integer> CHECKPOINT_INTERVAL = new TableConfig<>(
+            "delta.checkpointInterval",
+            "10",
+            Integer::valueOf,
+            value -> value > 0,
+            "needs to be a positive integer."
+    );
+
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;

@@ -49,16 +49,16 @@ case class TableCommitOwnerClient(
   }
 
   def getCommits(
-      startVersion: Long,
+      startVersion: Option[Long] = None,
       endVersion: Option[Long] = None): GetCommitsResponse = {
     commitOwnerClient.getCommits(logPath, tableConf, startVersion, endVersion)
   }
 
   def backfillToVersion(
-      startVersion: Long,
-      endVersion: Option[Long]): Unit = {
+      version: Long,
+      lastKnownBackfilledVersion: Option[Long] = None): Unit = {
     commitOwnerClient.backfillToVersion(
-      logStore, hadoopConf, logPath, tableConf, startVersion, endVersion)
+      logStore, hadoopConf, logPath, tableConf, version, lastKnownBackfilledVersion)
   }
 
   /**

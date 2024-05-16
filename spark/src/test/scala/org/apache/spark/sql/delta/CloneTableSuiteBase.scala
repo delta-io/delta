@@ -686,7 +686,7 @@ trait CloneTableSuiteBase extends QueryTest
     val log = DeltaLog.forTable(spark, source)
     // make sure to have a dummy schema because we can't have empty schema table by default
     val newSchema = new StructType().add("id", IntegerType, nullable = true)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
       unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = newSchema.json).json, sourceProtocol.json),

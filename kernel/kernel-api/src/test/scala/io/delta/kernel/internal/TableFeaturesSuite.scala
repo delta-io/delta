@@ -16,6 +16,7 @@
 package io.delta.kernel.internal
 
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
@@ -84,15 +85,15 @@ class TableFeaturesSuite extends AnyFunSuite {
     protocol: Protocol,
     metadata: Metadata = null,
     schema: StructType = createTestSchema()): Unit = {
-    validateWriteSupportedTable(protocol, metadata, schema)
+    validateWriteSupportedTable(protocol, metadata, schema, "/test/table")
   }
 
   def checkUnsupported(
     protocol: Protocol,
     metadata: Metadata = null,
     schema: StructType = createTestSchema()): Unit = {
-    intercept[UnsupportedOperationException] {
-      validateWriteSupportedTable(protocol, metadata, schema)
+    intercept[KernelException] {
+      validateWriteSupportedTable(protocol, metadata, schema, "/test/table")
     }
   }
 

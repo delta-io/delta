@@ -18,17 +18,19 @@ package org.apache.spark.sql.delta.managedcommit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaConfigs, ManagedCommitTableFeature, SnapshotDescriptor}
-import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Representation of a commit file */
 case class Commit(
-  version: Long,
-  fileStatus: FileStatus,
-  commitTimestamp: Long)
+    private val version: Long,
+    private val fileStatus: FileStatus,
+    private val commitTimestamp: Long) {
+  def getVersion: Long = version
+  def getFileStatus: FileStatus = fileStatus
+  def getCommitTimestamp: Long = commitTimestamp
+}
 
 /**
  * Exception raised by [[CommitOwnerClient.commit]] method.
@@ -39,21 +41,40 @@ case class Commit(
  *  |   yes     |   yes     | physical conflict (allowed to rebase and retry)                 |
  */
 case class CommitFailedException(
-    retryable: Boolean, conflict: Boolean, message: String) extends Exception(message)
+    private val retryable: Boolean,
+    private val conflict: Boolean,
+    private val message: String) extends Exception(message) {
+  def getRetryable: Boolean = retryable
+  def getConflict: Boolean = conflict
+}
 
 /** Response container for [[CommitOwnerClient.commit]] API */
-case class CommitResponse(commit: Commit)
+case class CommitResponse(private val commit: Commit) {
+  def getCommit: Commit = commit
+}
 
 /** Response container for [[CommitOwnerClient.getCommits]] API */
-case class GetCommitsResponse(commits: Seq[Commit], latestTableVersion: Long)
+case class GetCommitsResponse(
+    private val commits: Seq[Commit],
+    private val latestTableVersion: Long) {
+  def getCommits: Seq[Commit] = commits
+  def getLatestTableVersion: Long = latestTableVersion
+}
 
 /** A container class to inform the [[CommitOwnerClient]] about any changes in Protocol/Metadata */
 case class UpdatedActions(
-  commitInfo: CommitInfo,
-  newMetadata: Metadata,
-  newProtocol: Protocol,
-  oldMetadata: Metadata,
-  oldProtocol: Protocol)
+    private val commitInfo: AbstractCommitInfo,
+    private val newMetadata: AbstractMetadata,
+    private val newProtocol: AbstractProtocol,
+    private val oldMetadata: AbstractMetadata,
+    private val oldProtocol: AbstractProtocol) {
+  def getCommitInfo: AbstractCommitInfo = commitInfo
+  def getNewMetadata: AbstractMetadata = newMetadata
+  def getNewProtocol: AbstractProtocol = newProtocol
+  def getOldMetadata: AbstractMetadata = oldMetadata
+  def getOldProtocol: AbstractProtocol = oldProtocol
+
+}
 
 /**
  * [[CommitOwnerClient]] is responsible for managing commits for a managed-commit delta table.
@@ -85,8 +106,8 @@ trait CommitOwnerClient {
   def registerTable(
       logPath: Path,
       currentVersion: Long,
-      currentMetadata: Metadata,
-      currentProtocol: Protocol): Map[String, String] = Map.empty
+      currentMetadata: AbstractMetadata,
+      currentProtocol: AbstractProtocol): Map[String, String] = Map.empty
 
   /**
    * API to commit the given set of `actions` to the table represented by given `logPath` at the
@@ -121,22 +142,28 @@ trait CommitOwnerClient {
   def getCommits(
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
+      startVersion: Option[Long] = None,
       endVersion: Option[Long] = None): GetCommitsResponse
 
   /**
-   * API to ask the Commit-Owner to backfill all commits >= 'startVersion' and <= `endVersion`.
+   * API to ask the Commit-Owner to backfill all commits > `lastKnownBackfilledVersion` and
+   * <= `endVersion`.
    *
    * If this API returns successfully, that means the backfill must have been completed, although
    * the Commit-Owner may not be aware of it yet.
+   *
+   * @param version The version till which the Commit-Owner should backfill.
+   * @param lastKnownBackfilledVersion The last known version that was backfilled by Commit-Owner
+   *                                   before this API was called. If it's None or invalid, then the
+   *                                   Commit-Owner should backfill from the beginning of the table.
    */
   def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
-      endVersion: Option[Long]): Unit
+      version: Long,
+      lastKnownBackfilledVersion: Option[Long]): Unit
 
   /**
    * Determines whether this [[CommitOwnerClient]] is semantically equal to another
@@ -169,7 +196,7 @@ object CommitOwnerClient {
 trait CommitOwnerBuilder {
 
   /** Name of the commit-owner */
-  def name: String
+  def getName: String
 
   /** Returns a commit-owner client based on the given conf */
   def build(conf: Map[String, String]): CommitOwnerClient
@@ -182,12 +209,12 @@ object CommitOwnerProvider {
 
   /** Registers a new [[CommitOwnerBuilder]] with the [[CommitOwnerProvider]] */
   def registerBuilder(commitOwnerBuilder: CommitOwnerBuilder): Unit = synchronized {
-    nameToBuilderMapping.get(commitOwnerBuilder.name) match {
+    nameToBuilderMapping.get(commitOwnerBuilder.getName) match {
       case Some(commitOwnerBuilder: CommitOwnerBuilder) =>
-        throw new IllegalArgumentException(s"commit-owner: ${commitOwnerBuilder.name} already" +
+        throw new IllegalArgumentException(s"commit-owner: ${commitOwnerBuilder.getName} already" +
           s" registered with builder ${commitOwnerBuilder.getClass.getName}")
       case None =>
-        nameToBuilderMapping.put(commitOwnerBuilder.name, commitOwnerBuilder)
+        nameToBuilderMapping.put(commitOwnerBuilder.getName, commitOwnerBuilder)
     }
   }
 
@@ -199,29 +226,9 @@ object CommitOwnerProvider {
     }
   }
 
-  def getCommitOwnerClient(metadata: Metadata, protocol: Protocol): Option[CommitOwnerClient] = {
-    metadata.managedCommitOwnerName.map { commitOwnerStr =>
-      assert(protocol.isFeatureSupported(ManagedCommitTableFeature))
-      CommitOwnerProvider.getCommitOwnerClient(commitOwnerStr, metadata.managedCommitOwnerConf)
-    }
-  }
-
-  def getTableCommitOwner(
-      snapshotDescriptor: SnapshotDescriptor): Option[TableCommitOwnerClient] = {
-    getCommitOwnerClient(
-        snapshotDescriptor.metadata, snapshotDescriptor.protocol).map { commitOwner =>
-      TableCommitOwnerClient(
-        commitOwner,
-        snapshotDescriptor.deltaLog.logPath,
-        snapshotDescriptor.metadata.managedCommitTableConf,
-        snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
-        snapshotDescriptor.deltaLog.store)
-    }
-  }
-
   // Visible only for UTs
   private[delta] def clearNonDefaultBuilders(): Unit = synchronized {
-    val initialCommitOwnerNames = initialCommitOwnerBuilders.map(_.name).toSet
+    val initialCommitOwnerNames = initialCommitOwnerBuilders.map(_.getName).toSet
     nameToBuilderMapping.retain((k, _) => initialCommitOwnerNames.contains(k))
   }
 
@@ -229,13 +236,4 @@ object CommitOwnerProvider {
     // Any new commit-owner builder will be registered here.
   )
   initialCommitOwnerBuilders.foreach(registerBuilder)
-}
-
-object CommitOwner {
-  def getManagedCommitConfs(metadata: Metadata): (Option[String], Map[String, String]) = {
-    metadata.managedCommitOwnerName match {
-      case Some(name) => (Some(name), metadata.managedCommitOwnerConf)
-      case None => (None, Map.empty)
-    }
-  }
 }

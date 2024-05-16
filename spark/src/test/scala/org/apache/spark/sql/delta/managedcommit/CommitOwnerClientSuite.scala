@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
+import scala.reflect.runtime.universe._
+
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, ManagedCommitTableFeature}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.storage.LogStore
@@ -30,7 +32,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest {
 
-  trait TestCommitOwnerClientBase extends CommitOwnerClient {
+  private trait TestCommitOwnerClientBase extends CommitOwnerClient {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
@@ -45,7 +47,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
     override def getCommits(
       logPath: Path,
       managedCommitTableConf: Map[String, String],
-      startVersion: Long,
+      startVersion: Option[Long],
       endVersion: Option[Long] = None): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
 
     override def backfillToVersion(
@@ -53,14 +55,14 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
         hadoopConf: Configuration,
         logPath: Path,
         managedCommitTableConf: Map[String, String],
-        startVersion: Long,
-        endVersion: Option[Long]): Unit = {}
+        version: Long,
+        lastKnownBackfilledVersion: Option[Long]): Unit = {}
 
     override def semanticEquals(other: CommitOwnerClient): Boolean = this == other
   }
 
-  class TestCommitOwnerClient1 extends TestCommitOwnerClientBase
-  class TestCommitOwnerClient2 extends TestCommitOwnerClientBase
+  private class TestCommitOwnerClient1 extends TestCommitOwnerClientBase
+  private class TestCommitOwnerClient2 extends TestCommitOwnerClientBase
 
   override def beforeEach(): Unit = {
     super.beforeEach()
@@ -71,15 +73,15 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
   test("registering multiple commit-owner builders with same name") {
     object Builder1 extends CommitOwnerBuilder {
       override def build(conf: Map[String, String]): CommitOwnerClient = null
-      override def name: String = "builder-1"
+      override def getName: String = "builder-1"
     }
     object BuilderWithSameName extends CommitOwnerBuilder {
       override def build(conf: Map[String, String]): CommitOwnerClient = null
-      override def name: String = "builder-1"
+      override def getName: String = "builder-1"
     }
     object Builder3 extends CommitOwnerBuilder {
       override def build(conf: Map[String, String]): CommitOwnerClient = null
-      override def name: String = "builder-3"
+      override def getName: String = "builder-3"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
     intercept[Exception] {
@@ -99,7 +101,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
           case _ => throw new IllegalArgumentException("Invalid url")
         }
       }
-      override def name: String = "cs-x"
+      override def getName: String = "cs-x"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
     val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url1"))
@@ -122,7 +124,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
           case _ => throw new IllegalArgumentException("Invalid url")
         }
       }
-      override def name: String = "cs-name"
+      override def getName: String = "cs-name"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
     val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("url" -> "url1"))
@@ -203,7 +205,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
       override def build(conf: Map[String, String]): CommitOwnerClient = {
         new TestCommitOwnerClient(conf("key"))
       }
-      override def name: String = "cs-name"
+      override def getName: String = "cs-name"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
 
@@ -217,5 +219,55 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
     val obj3 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url2"))
     assert(obj1 != obj3)
     assert(!obj1.semanticEquals(obj3))
+  }
+
+  private def checkMissing[Interface: TypeTag, Class: TypeTag](): Set[String] = {
+    val fields = typeOf[Class].decls.collect {
+      case m: MethodSymbol if m.isCaseAccessor => m.name.toString
+    }
+
+    val getters = typeOf[Interface].decls.collect {
+      case m: MethodSymbol if m.isAbstract => m.name.toString
+    }.toSet
+
+    fields.filterNot { field =>
+      getters.contains(s"get${field.capitalize}")
+    }.toSet
+  }
+
+  /**
+   * We expect the Protocol action to have the same fields as AbstractProtocol (part of the
+   * CommitOwnerClient interface). With this if any change has happened in the Protocol of the
+   * table, the same change is propagated to the CommitOwnerClient as AbstractProtocol. The
+   * CommitOwnerClient can access the changes using getters and decide to act on the changes
+   * based on the spec of the commit owner.
+   *
+   * This test case ensures that any new field added in the Protocol action is also accessible in
+   * the CommitOwnerClient via the getter. If the new field is something which we do not expect to
+   * be passed to the CommitOwnerClient, the test needs to be modified accordingly.
+   */
+  test("AbstractProtocol should have getter methods for all fields in Protocol") {
+    val missingFields = checkMissing[AbstractProtocol, Protocol]()
+    val expectedMissingFields = Set.empty[String]
+    assert(missingFields == expectedMissingFields,
+      s"Missing getter methods in AbstractProtocol")
+  }
+
+  /**
+   * We expect the Metadata action to have the same fields as AbstractMetadata (part of the
+   * CommitOwnerClient interface). With this if any change has happened in the Metadata of the
+   * table, the same change is propagated to the CommitOwnerClient as AbstractMetadata. The
+   * CommitOwnerClient can access the changes using getters and decide to act on the changes
+   * based on the spec of the commit owner.
+   *
+   * This test case ensures that any new field added in the Metadata action is also accessible in
+   * the CommitOwnerClient via the getter. If the new field is something which we do not expect to
+   * be passed to the CommitOwnerClient, the test needs to be modified accordingly.
+   */
+  test("BaseMetadata should have getter methods for all fields in Metadata") {
+    val missingFields = checkMissing[AbstractMetadata, Metadata]()
+    val expectedMissingFields = Set("format")
+    assert(missingFields == expectedMissingFields,
+      s"Missing getter methods in AbstractMetadata")
   }
 }

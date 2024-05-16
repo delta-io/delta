@@ -467,8 +467,8 @@ class DeltaLog private(
 
   def isSameLogAs(otherLog: DeltaLog): Boolean = this.compositeId == otherLog.compositeId
 
-  /** Creates the log directory if it does not exist. */
-  def ensureLogDirectoryExist(): Unit = {
+  /** Creates the log directory and commit directory if it does not exist. */
+  def createLogDirectoriesIfNotExists(): Unit = {
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
     def createDirIfNotExists(path: Path): Unit = {
       // Optimistically attempt to create the directory first without checking its existence.
@@ -500,14 +500,6 @@ class DeltaLog private(
     createDirIfNotExists(FileNames.commitDirPath(logPath))
   }
 
-  /**
-   * Create the log directory. Unlike `ensureLogDirectoryExist`, this method doesn't check whether
-   * the log directory exists and it will ignore the return value of `mkdirs`.
-   */
-  def createLogDirectory(): Unit = {
-    logPath.getFileSystem(newDeltaHadoopConf()).mkdirs(logPath)
-  }
-
   /* ------------  *
    |  Integration  |
    * ------------  */
@@ -526,7 +518,20 @@ class DeltaLog private(
     // ensure any partitionSchema changes will be captured, and upon restart, the new snapshot will
     // be initialized with the correct partition schema again.
     val fileIndex = new TahoeBatchFileIndex(spark, actionType, addFiles, this, dataPath, snapshot)
-    val relation = buildHadoopFsRelationWithFileIndex(snapshot, fileIndex, bucketSpec = None)
+    // Drop null type columns from the relation's schema if it's not a streaming query until
+    // null type columns are fully supported.
+    val dropNullTypeColumnsFromSchema = if (isStreaming) {
+      // Can force the legacy behavior(dropping nullType columns) with a flag.
+      SQLConf.get.getConf(DeltaSQLConf.DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    } else {
+      // Allow configurable behavior for non-streaming sources. This is used for testing.
+      SQLConf.get.getConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS)
+    }
+    val relation = buildHadoopFsRelationWithFileIndex(
+      snapshot,
+      fileIndex,
+      bucketSpec = None,
+      dropNullTypeColumnsFromSchema = dropNullTypeColumnsFromSchema)
     Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
@@ -578,8 +583,16 @@ class DeltaLog private(
     }
   }
 
-  def buildHadoopFsRelationWithFileIndex(snapshot: SnapshotDescriptor, fileIndex: TahoeFileIndex,
-      bucketSpec: Option[BucketSpec]): HadoopFsRelation = {
+  def buildHadoopFsRelationWithFileIndex(
+      snapshot: SnapshotDescriptor,
+      fileIndex: TahoeFileIndex,
+      bucketSpec: Option[BucketSpec],
+      dropNullTypeColumnsFromSchema: Boolean = true): HadoopFsRelation = {
+    val dataSchema = if (dropNullTypeColumnsFromSchema) {
+      SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema)
+    } else {
+      snapshot.metadata.schema
+    }
     HadoopFsRelation(
       fileIndex,
       partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
@@ -588,8 +601,8 @@ class DeltaLog private(
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark,
-          SchemaUtils.dropNullTypeColumns(snapshot.metadata.schema))),
+        DeltaTableUtils.removeInternalMetadata(spark, dataSchema)
+      ),
       bucketSpec = bucketSpec,
       fileFormat(snapshot.protocol, snapshot.metadata),
       // `metadata.format.options` is not set today. Even if we support it in future, we shouldn't
@@ -608,8 +621,7 @@ class DeltaLog private(
    */
   protected def checkRequiredConfigurations(): Unit = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK)) {
-      if (spark.conf.getOption(
-        SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key).isEmpty) {
+      if (!spark.conf.contains(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key)) {
         throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(None)
       }
     }

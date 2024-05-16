@@ -20,23 +20,90 @@ import org.apache.spark.sql.delta.{OptimisticTransaction, TransactionExecutionOb
 
 private[delta] class PhaseLockingTransactionExecutionObserver(
     val phases: OptimisticTransactionPhases)
-  extends TransactionExecutionObserver {
+  extends TransactionExecutionObserver
+  with PhaseLockingExecutionObserver {
+
+  override val phaseLocks: Seq[ExecutionPhaseLock] = Seq(
+    phases.initialPhase,
+    phases.preparePhase,
+    phases.commitPhase,
+    phases.backfillPhase)
+
+  /**
+   * When set to true this observer will automatically update the thread's current observer to
+   * the next one. Also, it will not unblock the exit barrier of the commit phase automatically.
+   * Instead, the caller will have to automatically unblock it. This allows writing tests that
+   * can capture errors caused by code written between the end of the last txn and the start of
+   * the next txn.
+   */
+  @volatile protected var autoAdvanceNextObserver: Boolean = false
 
   override def startingTransaction(f: => OptimisticTransaction): OptimisticTransaction =
     phases.initialPhase.execute(f)
 
   override def preparingCommit[T](f: => T): T = phases.preparePhase.execute(f)
 
-  override def beginDoCommit(): Unit = phases.commitPhase.waitToEnter()
+  override def beginDoCommit(): Unit = {
+    phases.commitPhase.waitToEnter()
+  }
 
-  override def transactionCommitted(): Unit = phases.commitPhase.leave()
+  override def beginBackfill(): Unit = {
+    phases.commitPhase.leave()
+    phases.backfillPhase.waitToEnter()
+  }
 
-  override def transactionAborted(): Unit = {
-    if (!phases.commitPhase.hasEntered) {
-      // If an Exception was thrown earlier we may not have called `beginDoCommit`, yet.
-      phases.commitPhase.passThrough()
+  override def transactionCommitted(): Unit = {
+    if (nextObserver.nonEmpty && autoAdvanceNextObserver) {
+      waitForCommitPhaseAndAdvanceToNextObserver()
     } else {
-      phases.commitPhase.leave()
+      phases.backfillPhase.leave()
     }
   }
+
+  override def transactionAborted(): Unit = {
+    if (!phases.commitPhase.hasLeft) {
+      if (!phases.commitPhase.hasEntered) {
+        phases.commitPhase.waitToEnter()
+      }
+      phases.commitPhase.leave()
+    }
+    if (!phases.backfillPhase.hasEntered) {
+      phases.backfillPhase.waitToEnter()
+    }
+    if (nextObserver.nonEmpty && autoAdvanceNextObserver) {
+      waitForCommitPhaseAndAdvanceToNextObserver()
+    } else {
+      phases.backfillPhase.leave()
+    }
+  }
+
+  /*
+   * Wait for the backfill phase to pass but do not unblock it so that callers can write tests
+   * that capture errors caused by code between the end of the last txn and the start of the
+   * new txn. After the commit phase is passed, update the thread observer of the thread to
+   * the next observer.
+   */
+  def waitForCommitPhaseAndAdvanceToNextObserver(): Unit = {
+    require(nextObserver.nonEmpty)
+    phases.backfillPhase.waitToLeave()
+    advanceToNextThreadObserver()
+  }
+
+  /**
+   * Set the next observer, which will replace the txn observer on the thread after a successful
+   * commit. This method only works as expected if we haven't entered the commit phase yet.
+   *
+   * Note that when a next observer is set, the caller needs to manually unblock the exit barrier
+   * of the commit phase.
+   *
+   * For example, see [[waitForCommitPhaseAndAdvanceToNextObserver]].
+   */
+  def setNextObserver(
+      nextTxnObserver: TransactionExecutionObserver,
+      autoAdvance: Boolean): Unit = {
+    setNextObserver(nextTxnObserver)
+    autoAdvanceNextObserver = autoAdvance
+  }
+
+  override def advanceToNextThreadObserver(): Unit = super.advanceToNextThreadObserver()
 }

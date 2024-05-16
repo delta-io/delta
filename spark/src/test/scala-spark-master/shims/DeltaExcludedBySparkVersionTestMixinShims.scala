@@ -31,4 +31,15 @@ trait DeltaExcludedBySparkVersionTestMixinShims extends QueryTest {
     ignore(testName + " (Spark Latest Release Only)", testTags: _*)(testFun)(pos)
   }
 
+  /**
+   * Tests that are meant for Delta compiled against Spark Master (4.0+). Executed since this is the
+   * Spark Master shim.
+   */
+  protected def testSparkMasterOnly(
+      testName: String, testTags: org.scalatest.Tag*)
+      (testFun: => Any)
+      (implicit pos: org.scalactic.source.Position): Unit = {
+    test(testName, testTags: _*)(testFun)(pos)
+  }
+
 }

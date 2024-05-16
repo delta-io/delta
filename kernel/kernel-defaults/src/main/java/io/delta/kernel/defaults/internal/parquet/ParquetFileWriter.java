@@ -31,6 +31,7 @@ import org.apache.parquet.io.api.RecordConsumer;
 import org.apache.parquet.schema.MessageType;
 import static org.apache.parquet.hadoop.ParquetOutputFormat.*;
 
+import io.delta.kernel.Meta;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.StructType;
@@ -53,6 +54,10 @@ import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readD
  * {@link ParquetWriter} through {@link RecordConsumer}.
  */
 public class ParquetFileWriter {
+    public static final String TARGET_FILE_SIZE_CONF =
+            "delta.kernel.default.parquet.writer.targetMaxFileSize";
+    public static final long DEFAULT_TARGET_FILE_SIZE = 128 * 1024 * 1024; // 128MB
+
     private final Configuration configuration;
     private final boolean writeAsSingleFile;
     private final Path location;
@@ -63,18 +68,19 @@ public class ParquetFileWriter {
 
     /**
      * Create writer to write data into one or more files depending upon the
-     * {@code targetMaxFileSize} value and the given data.
+     * {@code delta.kernel.default.parquet.writer.targetMaxFileSize} value and the given data.
      */
     public ParquetFileWriter(
             Configuration configuration,
             Path location,
-            long targetMaxFileSize,
             List<Column> statsColumns) {
         this.configuration = requireNonNull(configuration, "configuration is null");
         this.location = requireNonNull(location, "directory is null");
+        // Default target file size is 128 MB.
+        this.targetMaxFileSize =
+                configuration.getLong(TARGET_FILE_SIZE_CONF, DEFAULT_TARGET_FILE_SIZE);
         checkArgument(
                 targetMaxFileSize > 0, "Invalid target Parquet file size: " + targetMaxFileSize);
-        this.targetMaxFileSize = targetMaxFileSize;
         this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
         this.writeAsSingleFile = false;
     }
@@ -281,9 +287,9 @@ public class ParquetFileWriter {
 
         @Override
         public WriteContext init(Configuration configuration) {
-            // TODO: figure out a way to dynamically fetch the Kernel version.
             Map<String, String> extraProps = Collections.singletonMap(
-                    "io.delta.kernel.default-parquet-writer", "3.2.0-SNAPSHOT");
+                    "io.delta.kernel.default-parquet-writer",
+                    "Kernel-Defaults-" + Meta.KERNEL_VERSION);
             return new WriteContext(parquetSchema, extraProps);
         }
 
