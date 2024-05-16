@@ -4,7 +4,7 @@ jobs:
   test:
     runs-on: ubuntu-20.04
     env:
-      SCALA_VERSION: 2.12.18
+      SCALA_VERSION: 2.13.13
     steps:
       - uses: actions/checkout@v3
       - name: install java
