@@ -26,6 +26,8 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.sql.SparkSession
+
 class InMemoryCommitOwner(val batchSize: Long)
   extends AbstractBatchBackfillingCommitOwnerClient {
 
@@ -206,7 +208,7 @@ case class InMemoryCommitOwnerBuilder(batchSize: Long) extends CommitOwnerBuilde
   def getName: String = "in-memory"
 
   /** Returns a commit-owner based on the given conf */
-  def build(conf: Map[String, String]): CommitOwnerClient = {
+  def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
     inMemoryStore
   }
 }
