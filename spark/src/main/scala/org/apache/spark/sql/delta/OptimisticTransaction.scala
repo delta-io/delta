@@ -1337,10 +1337,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     try {
       val tags = Map.empty[String, String]
+      val commitTimestampMs = clock.getTimeMillis()
       val commitInfo = CommitInfo(
-        NANOSECONDS.toMillis(commitStartNano),
+        commitTimestampMs,
         operation = op.name,
-        generateInCommitTimestampForFirstCommitAttempt(NANOSECONDS.toMillis(commitStartNano)),
+        generateInCommitTimestampForFirstCommitAttempt(commitTimestampMs),
         operationParameters = op.jsonEncodedValues,
         context,
         readVersion = Some(readVersion),
