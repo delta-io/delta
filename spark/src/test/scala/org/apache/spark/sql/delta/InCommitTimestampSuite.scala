@@ -143,7 +143,7 @@ class InCommitTimestampSuite
     }
   }
 
-   for (useCommitLarge <- BOOLEAN_DOMAIN)
+  for (useCommitLarge <- BOOLEAN_DOMAIN)
   test("txn.commit should use clock.currentTimeMillis() for ICT" +
     s" [useCommitLarge: $useCommitLarge]") {
     withTempDir { tempDir =>
