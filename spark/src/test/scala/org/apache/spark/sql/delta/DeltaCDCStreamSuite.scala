@@ -340,6 +340,43 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
     }
   }
 
+  test("cdc streams should only read required log files for the given start/end versions " +
+    s"and provided maxFilesPerTrigger and return the expected results") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // write the first version
+      Seq(0).toDF("id").write.format("delta").save(inputDir.getAbsolutePath)
+
+      // write another 25 versions
+      (1 to 25).foreach { case id =>
+        Seq(id).toDF("id").write.format("delta").mode("append").save(inputDir.getAbsolutePath)
+      }
+
+      // run the query processing a version at a time with maxFilesPerTrigger = 1
+      // and provided starting and ending version
+      val q = spark.readStream
+        .format("delta")
+        .option(DeltaOptions.CDC_READ_OPTION, "true")
+        .option("startingVersion", 0)
+        .option("endingVersion", 0)
+        .option("maxFilesPerTrigger", 1)
+        .load(inputDir.getCanonicalPath)
+        .select("id")
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+      try {
+        q.processAllAvailable()
+      } finally {
+        q.stop()
+      }
+
+      checkAnswer(
+        spark.read.format("delta").load(outputDir.getCanonicalPath),
+        (0 to 25).toList.map(_.toLong).toDF("id"))
+    }
+  }
+
   test("cdc streams should respect checkpoint") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       // write 3 versions
