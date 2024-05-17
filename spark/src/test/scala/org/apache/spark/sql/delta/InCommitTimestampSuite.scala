@@ -143,6 +143,31 @@ class InCommitTimestampSuite
     }
   }
 
+  test("txn.commit should use clock.currentTimeMillis() for ICT") {
+    withTempDir { tempDir =>
+      spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
+      // Clear the DeltaLog cache so that a new DeltaLog is created with the manual clock.
+      DeltaLog.clearCache()
+      val expectedCommit1Time = System.currentTimeMillis()
+      val clock = new ManualClock(expectedCommit1Time)
+      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val ver0Snapshot = deltaLog.snapshot
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(ver0Snapshot.metadata))
+      val usageRecords = Log4jUsageLogger.track {
+        deltaLog.startTransaction().commit(
+          Seq(createTestAddFile("1")),
+          DeltaOperations.ManualUpdate,
+          Map.empty
+        )
+      }
+      val ver1Snapshot = deltaLog.snapshot
+      val retrievedTimestamp = getInCommitTimestamp(deltaLog, version = 1)
+      assert(ver1Snapshot.timestamp == retrievedTimestamp)
+      assert(ver1Snapshot.timestamp == expectedCommit1Time)
+      assert(filterUsageRecords(usageRecords, "delta.commit").length == 1)
+    }
+  }
+
   test("commitLarge should use clock.currentTimeMillis() for ICT") {
     withTempDir { tempDir =>
       spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
