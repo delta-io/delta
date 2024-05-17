@@ -34,6 +34,31 @@ public enum Operation {
     WRITE("WRITE"),
 
     /**
+     * Recorded when truncating the table.
+     */
+    TRUNCATE("TRUNCATE"),
+
+    /**
+     * Recorded when the table schema change.
+     */
+    UPGRADE_SCHEMA("UPDATE SCHEMA"),
+
+    /**
+     * Recorded when the vacuum start.
+     */
+    VACUUM_START("VACUUM START"),
+
+    /**
+     * Recorded when the vacuum end.
+     */
+    VACUUM_END("VACUUM END"),
+
+    /**
+     * Recorded during the compact.
+     */
+    COMPACT("COMPACT"),
+
+    /**
      * Recorded during streaming inserts.
      */
     STREAMING_UPDATE("STREAMING UPDATE"),
