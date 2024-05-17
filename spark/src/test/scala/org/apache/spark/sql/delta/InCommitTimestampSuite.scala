@@ -163,7 +163,7 @@ class InCommitTimestampSuite
           Map.empty)
       }
       val ver1Snapshot = deltaLog.snapshot
-      val retrievedTimestamp = getInCommitTimestamp(deltaLog, 1)
+      val retrievedTimestamp = getInCommitTimestamp(deltaLog, version = 1)
       assert(ver1Snapshot.timestamp == retrievedTimestamp)
       assert(ver1Snapshot.timestamp == expectedCommit1Time)
       assert(filterUsageRecords(usageRecords, "delta.commit.large").length == 1)
