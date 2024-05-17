@@ -1523,7 +1523,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     var newManagedCommitTableConf: Option[Map[String, String]] = None
     if (finalMetadata.configuration != snapshot.metadata.configuration || snapshot.version == -1L) {
       val newCommitOwnerClientOpt =
-        ManagedCommitUtils.getCommitOwnerClient(finalMetadata, finalProtocol)
+        ManagedCommitUtils.getCommitOwnerClient(spark, finalMetadata, finalProtocol)
       (newCommitOwnerClientOpt, readSnapshotTableCommitOwnerClientOpt) match {
         case (Some(newCommitOwnerClient), None) =>
           // FS -> MC conversion

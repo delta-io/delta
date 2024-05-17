@@ -22,6 +22,8 @@ import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.sql.SparkSession
+
 /** Representation of a commit file */
 case class Commit(
     private val version: Long,
@@ -199,7 +201,7 @@ trait CommitOwnerBuilder {
   def getName: String
 
   /** Returns a commit-owner client based on the given conf */
-  def build(conf: Map[String, String]): CommitOwnerClient
+  def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient
 }
 
 /** Factory to get the correct [[CommitOwnerClient]] for a table */
@@ -218,10 +220,12 @@ object CommitOwnerProvider {
     }
   }
 
-  /** Returns a [[CommitOwnerClient]] for the given `name` and `conf` */
+  /** Returns a [[CommitOwnerClient]] for the given `name`, `conf`, and `spark` */
   def getCommitOwnerClient(
-      name: String, conf: Map[String, String]): CommitOwnerClient = synchronized {
-    nameToBuilderMapping.get(name).map(_.build(conf)).getOrElse {
+      name: String,
+      conf: Map[String, String],
+      spark: SparkSession): CommitOwnerClient = synchronized {
+    nameToBuilderMapping.get(name).map(_.build(spark, conf)).getOrElse {
       throw new IllegalArgumentException(s"Unknown commit-owner: $name")
     }
   }
