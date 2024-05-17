@@ -160,15 +160,15 @@ class InCommitTimestampSuite
           deltaLog.startTransaction().commitLarge(
             spark,
             Seq(createTestAddFile("1")).toIterator,
-            None,
+            newProtocolOpt = None,
             DeltaOperations.ManualUpdate,
-            Map.empty,
-            Map.empty)
+            context = Map.empty,
+            metrics = Map.empty)
         } else {
           deltaLog.startTransaction().commit(
             Seq(createTestAddFile("1")),
             DeltaOperations.ManualUpdate,
-            Map.empty
+            tags = Map.empty
           )
         }
       }
