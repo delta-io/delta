@@ -143,7 +143,7 @@ class InCommitTimestampSuite
     }
   }
 
-  test("commitLarge should use System.currentTimeMillis() for ICT") {
+  test("commitLarge should use clock.currentTimeMillis() for ICT") {
     withTempDir { tempDir =>
       spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
       // Clear the DeltaLog cache so that a new DeltaLog is created with the manual clock.
