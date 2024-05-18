@@ -17,8 +17,8 @@
 // scalastyle:off line.size.limit
 
 import java.nio.file.Files
-import Mima._
-import Unidoc._
+import Mima.*
+import Unidoc.*
 
 // Scala versions
 val scala212 = "2.12.18"
@@ -192,7 +192,7 @@ lazy val spark = (project in file("spark"))
   .settings (
     name := "delta-spark",
     commonSettings,
-    scalaStyleSettings,
+    Checkstyle.scalaStyleSettings,
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
@@ -272,7 +272,7 @@ lazy val contribs = (project in file("contribs"))
   .settings (
     name := "delta-contribs",
     commonSettings,
-    scalaStyleSettings,
+    Checkstyle.scalaStyleSettings,
     releaseSettings,
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -310,7 +310,7 @@ lazy val sharing = (project in file("sharing"))
   .settings(
     name := "delta-sharing-spark",
     commonSettings,
-    scalaStyleSettings,
+    Checkstyle.scalaStyleSettings,
     releaseSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
@@ -334,7 +334,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
   .settings(
     name := "delta-kernel-api",
     commonSettings,
-    scalaStyleSettings,
+    Checkstyle.scalaStyleSettings,
     javaOnlyReleaseSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
@@ -374,7 +374,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
            |""".stripMargin)
       Seq(file)
     },
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
+    Checkstyle.javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
   ).configureUnidoc(docTitle = "Delta Kernel")
@@ -388,7 +388,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .settings(
     name := "delta-kernel-defaults",
     commonSettings,
-    scalaStyleSettings,
+    Checkstyle.scalaStyleSettings,
     javaOnlyReleaseSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
@@ -412,7 +412,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
     ),
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
+    Checkstyle.javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
@@ -502,7 +502,7 @@ lazy val iceberg = (project in file("iceberg"))
   .settings (
     name := "delta-iceberg",
     commonSettings,
-    scalaStyleSettings,
+    Checkstyle.scalaStyleSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
@@ -606,7 +606,7 @@ lazy val hudi = (project in file("hudi"))
   .settings (
     name := "delta-hudi",
     commonSettings,
-    scalaStyleSettings,
+    Checkstyle.scalaStyleSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "compile" excludeAll(
@@ -1072,7 +1072,7 @@ lazy val standalone = (project in file("connectors/standalone"))
 
     // Unidoc setting
     unidocSourceFilePatterns += SourceFilePattern("io/delta/standalone/"),
-    javaCheckstyleSettings("dev/connectors-checkstyle.xml")
+    Checkstyle.javaCheckstyleSettings("dev/connectors-checkstyle.xml")
   ).configureUnidoc()
 
 
@@ -1257,7 +1257,7 @@ lazy val flink = (project in file("connectors/flink"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/flink/"),
     // TODO: this is the config that was used before archiving connectors but it has
     //  standalone-specific import orders
-    javaCheckstyleSettings("dev/connectors-checkstyle.xml")
+    Checkstyle.javaCheckstyleSettings("dev/connectors-checkstyle.xml")
   ).configureUnidoc()
 
 /**
@@ -1308,44 +1308,6 @@ lazy val kernelGroup = project
       (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
     }
   ).configureUnidoc(docTitle = "Delta Kernel")
-
-/*
- ***********************
- * ScalaStyle settings *
- ***********************
- */
-ThisBuild / scalastyleConfig := baseDirectory.value / "scalastyle-config.xml"
-
-lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
-lazy val testScalastyle = taskKey[Unit]("testScalastyle")
-
-lazy val scalaStyleSettings = Seq(
-  compileScalastyle := (Compile / scalastyle).toTask("").value,
-
-  Compile / compile := ((Compile / compile) dependsOn compileScalastyle).value,
-
-  testScalastyle := (Test / scalastyle).toTask("").value,
-
-  Test / test := ((Test / test) dependsOn testScalastyle).value
-)
-
-/*
- ****************************
- * Java checkstyle settings *
- ****************************
- */
-
-def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
-  // Can be run explicitly via: build/sbt $module/checkstyle
-  // Will automatically be run during compilation (e.g. build/sbt compile)
-  // and during tests (e.g. build/sbt test)
-  Seq(
-    checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
-    checkstyleSeverityLevel := CheckstyleSeverityLevel.Error,
-    (Compile / compile) := ((Compile / compile) dependsOn (Compile / checkstyle)).value,
-    (Test / test) := ((Test / test) dependsOn (Test / checkstyle)).value
-  )
-}
 
 /*
  ********************
