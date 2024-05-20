@@ -13,7 +13,7 @@
           uses: actions/setup-java@v3
           with:
             distribution: "zulu"
-            java-version: "8"
+            java-version: "17"
         - uses: actions/checkout@v3
         - name: generate unidoc
           run: build/sbt "++ ${{ matrix.scala }}" unidoc
