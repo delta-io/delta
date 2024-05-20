@@ -57,6 +57,9 @@ public class AddFile {
         .add("dataChange", BooleanType.BOOLEAN, false /* nullable*/)
         .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
 
+    public static final StructType SCHEMA_WITH_TAGS = SCHEMA_WITHOUT_STATS
+        .add("tags", new MapType(StringType.STRING, StringType.STRING, true), true);
+
     public static final StructType SCHEMA_WITH_STATS = SCHEMA_WITHOUT_STATS
         .add(JSON_STATS_FIELD);
 

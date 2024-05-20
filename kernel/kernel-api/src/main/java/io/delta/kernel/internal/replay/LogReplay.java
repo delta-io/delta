@@ -74,9 +74,19 @@ public class LogReplay {
     public static final StructType SET_TRANSACTION_READ_SCHEMA = new StructType()
         .add("txn", SetTransaction.FULL_SCHEMA);
 
-    private static StructType getAddSchema(boolean shouldReadStats) {
-        return shouldReadStats ? AddFile.SCHEMA_WITH_STATS :
-            AddFile.SCHEMA_WITHOUT_STATS;
+    private static StructType getAddSchema(boolean shouldReadStats, boolean shouldReadTags) {
+        if (shouldReadStats) {
+            if (shouldReadTags) {
+                return AddFile.FULL_SCHEMA;
+            } else {
+                return AddFile.SCHEMA_WITH_STATS;
+            }
+        }
+        if (shouldReadTags) {
+            return AddFile.SCHEMA_WITH_TAGS;
+        } else {
+            return AddFile.SCHEMA_WITHOUT_STATS;
+        }
     }
 
     public static String SIDECAR_FIELD_NAME = "sidecar";
@@ -96,8 +106,12 @@ public class LogReplay {
      * Read schema when searching for all the active AddFiles
      */
     public static StructType getAddRemoveReadSchema(boolean shouldReadStats) {
+        return getAddRemoveReadSchema(shouldReadStats, false);
+    }
+
+    public static StructType getAddRemoveReadSchema(boolean shouldReadStats, boolean shouldReadTags) {
         return new StructType()
-            .add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats))
+            .add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats, shouldReadTags))
             .add(REMOVEFILE_FIELD_NAME, REMOVE_FILE_SCHEMA);
     }
 
