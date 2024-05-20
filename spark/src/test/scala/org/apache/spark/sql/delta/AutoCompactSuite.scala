@@ -21,6 +21,7 @@ import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import org.apache.spark.sql.delta.DeltaExcludedBySparkVersionTestMixinShims
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.hooks.{AutoCompact, AutoCompactType}
@@ -32,7 +33,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.Column
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.test.SharedSparkSession
@@ -60,7 +61,8 @@ class AutoCompactSuite extends
     CompactionTestHelperForAutoCompaction
   with DeltaSQLCommandTest
   with SharedSparkSession
-  with AutoCompactTestUtils {
+  with AutoCompactTestUtils
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   test("auto-compact-type: test table properties") {
     withTempDir { tempDir =>
@@ -184,15 +186,20 @@ class AutoCompactSuite extends
     }
   }
 
-  private def checkAutoCompactionWorks(dir: String): Unit = {
-    spark.range(10).write.format("delta").mode("append").save(dir)
+  /**
+   * Writes `df` twice to the same location and checks that
+   *   1. There is only one resultant file.
+   *   2. The result is equal to `df` unioned with itself.
+   */
+  private def checkAutoCompactionWorks(dir: String, df: DataFrame): Unit = {
+    df.write.format("delta").mode("append").save(dir)
     val deltaLog = DeltaLog.forTable(spark, dir)
     val newSnapshot = deltaLog.update()
     assert(newSnapshot.version === 1) // 0 is the first commit, 1 is optimize
     assert(deltaLog.update().numOfFiles === 1)
 
     val isLogged = checkAutoOptimizeLogging {
-      spark.range(10).write.format("delta").mode("append").save(dir)
+      df.write.format("delta").mode("append").save(dir)
     }
 
     assert(isLogged)
@@ -202,17 +209,40 @@ class AutoCompactSuite extends
 
     assert(deltaLog.update().numOfFiles === 1, "Files should be optimized into a single one")
     checkAnswer(
-      spark.range(10).union(spark.range(10)).toDF(),
+      df.union(df).toDF(),
       spark.read.format("delta").load(dir)
     )
   }
 
   testBothModesViaProperty("auto compact should kick in when enabled - table config") { dir =>
-    checkAutoCompactionWorks(dir)
+    checkAutoCompactionWorks(dir, spark.range(10).toDF("id"))
   }
 
   testBothModesViaConf("auto compact should kick in when enabled - session config") { dir =>
-    checkAutoCompactionWorks(dir)
+    checkAutoCompactionWorks(dir, spark.range(10).toDF("id"))
+  }
+
+  testSparkMasterOnly("variant auto compact kicks in when enabled - table config") {
+    withTempDir { dir =>
+      withSQLConf(
+          "spark.databricks.delta.properties.defaults.autoOptimize.autoCompact" -> "true",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "0",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_MODIFIED_PARTITIONS_ONLY_ENABLED.key -> "false") {
+        checkAutoCompactionWorks(
+          dir.getCanonicalPath, spark.range(10).selectExpr("parse_json(cast(id as string)) as v"))
+      }
+    }
+  }
+
+  testSparkMasterOnly("variant auto compact kicks in when enabled - session config") {
+    withTempDir { dir =>
+      withSQLConf(
+          DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
+          DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "0") {
+        checkAutoCompactionWorks(
+          dir.getCanonicalPath, spark.range(10).selectExpr("parse_json(cast(id as string)) as v"))
+      }
+    }
   }
 
   testBothModesViaProperty("auto compact should not kick in when session config is off") { dir =>
