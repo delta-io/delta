@@ -105,10 +105,6 @@ public class LogReplay {
     /**
      * Read schema when searching for all the active AddFiles
      */
-    public static StructType getAddRemoveReadSchema(boolean shouldReadStats) {
-        return getAddRemoveReadSchema(shouldReadStats, false);
-    }
-
     public static StructType getAddRemoveReadSchema(boolean shouldReadStats, boolean shouldReadTags) {
         return new StructType()
             .add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats, shouldReadTags))
@@ -179,12 +175,12 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-            boolean shouldReadStats,
+            boolean shouldReadStats, boolean shouldReadTags,
             Optional<Predicate> checkpointPredicate) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
                 new ActionsIterator(engine,
                         logSegment.allLogFilesReversed(),
-                        getAddRemoveReadSchema(shouldReadStats),
+                        getAddRemoveReadSchema(shouldReadStats, shouldReadTags),
                         checkpointPredicate);
         return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath);
     }
