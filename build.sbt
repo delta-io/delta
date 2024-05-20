@@ -180,6 +180,15 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
     )
 
+    // TODO come back to this after resolving kernel stuff
+    /*
+    // Java-/Scala-/Uni-Doc Settings
+    scalacOptions ++= Seq(
+      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+    ),
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
+    */
+
     // Java-/Scala-/Uni-Doc Settings
     // This isn't working yet against Spark Master.
     // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
@@ -310,6 +319,7 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
+// TODO what about sharing?
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings(
@@ -664,7 +674,7 @@ lazy val hive = (project in file("connectors/hive"))
   .settings (
     name := "delta-hive",
     commonSettings,
-    releaseSettings,
+    skipReleaseSettings,
 
     // Minimal dependencies to compile the codes. This project doesn't run any tests so we don't
     // need any runtime dependencies.
@@ -903,7 +913,7 @@ lazy val standaloneCosmetic = project
   .settings(
     name := "delta-standalone",
     commonSettings,
-    releaseSettings,
+    skipReleaseSettings,
     exportJars := true,
     Compile / packageBin := (standaloneParquet / assembly).value,
     Compile / packageSrc := (standalone / Compile / packageSrc).value,
