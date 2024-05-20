@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.managedcommit
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.storage.LogStore
+import io.delta.dynamodbcommitstore.DynamoDBCommitOwnerClientBuilder
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -45,7 +46,7 @@ case class Commit(
 case class CommitFailedException(
     private val retryable: Boolean,
     private val conflict: Boolean,
-    private val message: String) extends Exception(message) {
+    private val message: String) extends RuntimeException(message) {
   def getRetryable: Boolean = retryable
   def getConflict: Boolean = conflict
 }
@@ -237,7 +238,7 @@ object CommitOwnerProvider {
   }
 
   private val initialCommitOwnerBuilders = Seq[CommitOwnerBuilder](
-    // Any new commit-owner builder will be registered here.
+    new DynamoDBCommitOwnerClientBuilder()
   )
   initialCommitOwnerBuilders.foreach(registerBuilder)
 }

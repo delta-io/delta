@@ -20,17 +20,21 @@ import java.io.File
 import java.util.concurrent.{Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.concurrent.duration._
+
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider}
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
+import io.delta.dynamodbcommitstore.DynamoDBCommitOwnerClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{ThreadUtils, Utils}
 
 trait CommitOwnerClientImplSuiteBase extends QueryTest
     with SharedSparkSession
@@ -50,7 +54,7 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
    * of backfill registration.
    */
   protected def registerBackfillOp(
-      commitOwnerClient: CommitOwnerClient,
+      tableCommitOwnerClient: TableCommitOwnerClient,
       deltaLog: DeltaLog,
       version: Long): Unit
 
@@ -90,11 +94,7 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
        tableCommitOwnerClient: TableCommitOwnerClient,
        commitTimestampsOpt: Option[Array[Long]] = None): Unit = {
     val maxUntrackedVersion: Int = {
-      val commitResponse =
-        tableCommitOwnerClient.commitOwnerClient.getCommits(
-          logPath,
-          tableCommitOwnerClient.tableConf
-        )
+      val commitResponse = tableCommitOwnerClient.getCommits()
       if (commitResponse.getCommits.isEmpty) {
         commitResponse.getLatestTableVersion.toInt
       } else {
@@ -198,15 +198,19 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
       val tableCommitOwnerClient = createTableCommitOwnerClient(log)
-      tableCommitOwnerClient.commitOwnerClient.registerTable(
-        logPath, currentVersion = -1L, initMetadata, Protocol(1, 1))
 
       val e = intercept[CommitFailedException] {
         commit(version = 0, timestamp = 0, tableCommitOwnerClient)
       }
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       writeCommitZero(logPath)
-      assert(tableCommitOwnerClient.getCommits() == GetCommitsResponse(Seq.empty, -1))
+      var expectedVersion = -1
+      if (tableCommitOwnerClient.commitOwnerClient.isInstanceOf[DynamoDBCommitOwnerClient]) {
+        // DynamoDBCommitOwnerClient stores attemptVersion as the current table version when
+        // registerTable is called.
+        expectedVersion = 0
+      }
+      assert(tableCommitOwnerClient.getCommits() == GetCommitsResponse(Seq.empty, expectedVersion))
       assertBackfilled(version = 0, logPath, Some(0L))
 
       // Test backfilling functionality for commits 1 - 8
@@ -218,7 +222,7 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
 
       // Test that out-of-order backfill is rejected
       intercept[IllegalArgumentException] {
-        registerBackfillOp(tableCommitOwnerClient.commitOwnerClient, log, 10)
+        registerBackfillOp(tableCommitOwnerClient, log, 10)
       }
       assertInvariants(logPath, tableCommitOwnerClient)
     }
@@ -239,9 +243,6 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
       val tableCommitOwnerClient = createTableCommitOwnerClient(log)
-      tableCommitOwnerClient.commitOwnerClient.registerTable(
-        logPath, currentVersion = -1L, initMetadata, Protocol(1, 1)
-      )
       writeCommitZero(logPath)
       val maxVersion = 15
       (1 to maxVersion).foreach { version =>
@@ -261,22 +262,17 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
       val log = DeltaLog.forTable(spark, tempDir.getPath)
       val logPath = log.logPath
       val tableCommitOwnerClient = createTableCommitOwnerClient(log)
-      intercept[IllegalArgumentException] {
-        registerBackfillOp(tableCommitOwnerClient.commitOwnerClient, log, 0)
-      }
-      tableCommitOwnerClient.commitOwnerClient.registerTable(
-        logPath, currentVersion = -1L, initMetadata, Protocol(1, 1))
       // commit-0 must be file system based
       writeCommitZero(logPath)
       (1 to 3).foreach(i => commit(i, i, tableCommitOwnerClient))
 
       // Test that backfilling is idempotent for already-backfilled commits.
-      registerBackfillOp(tableCommitOwnerClient.commitOwnerClient, log, 2)
-      registerBackfillOp(tableCommitOwnerClient.commitOwnerClient, log, 2)
+      registerBackfillOp(tableCommitOwnerClient, log, 2)
+      registerBackfillOp(tableCommitOwnerClient, log, 2)
 
       // Test that backfilling uncommited commits fail.
       intercept[IllegalArgumentException] {
-        registerBackfillOp(tableCommitOwnerClient.commitOwnerClient, log, 4)
+        registerBackfillOp(tableCommitOwnerClient, log, 4)
       }
     }
   }
@@ -286,8 +282,6 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
       val tableCommitOwnerClient = createTableCommitOwnerClient(log)
-      tableCommitOwnerClient.commitOwnerClient.registerTable(
-        logPath, currentVersion = -1L, initMetadata, Protocol(1, 1))
 
       // commit-0 must be file system based
       writeCommitZero(logPath)
@@ -316,43 +310,37 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
       val numberOfWriters = 11
       val numberOfCommitsPerWriter = 11
       // scalastyle:off sparkThreadPools
-      val executor = Executors.newFixedThreadPool(numberOfWriters)
+      val executor = DeltaThreadPool("commitOwnerSuite", numberOfWriters)
       // scalastyle:on sparkThreadPools
       val runningTimestamp = new AtomicInteger(0)
       val commitFailedExceptions = new AtomicInteger(0)
-      val totalCommits = numberOfWriters * numberOfCommitsPerWriter
-      val commitTimestamp: Array[Long] = new Array[Long](totalCommits)
+      // commit-0 must be file system based
+      writeCommitZero(logPath)
 
       try {
-        (0 until numberOfWriters).foreach { i =>
-          executor.submit(new Runnable {
-            override def run(): Unit = {
+        val tasks = (0 until numberOfWriters).map { i =>
+          executor.submit(spark) {
               var currentWriterCommits = 0
               while (currentWriterCommits < numberOfCommitsPerWriter) {
-                val nextVersion = tcs.getCommits().getLatestTableVersion + 1
+                val nextVersion = math.max(tcs.getCommits().getLatestTableVersion + 1, 1)
                 try {
                   val currentTimestamp = runningTimestamp.getAndIncrement()
                   val commitResponse = commit(nextVersion, currentTimestamp, tcs)
                   currentWriterCommits += 1
                   assert(commitResponse.getCommitTimestamp == currentTimestamp)
                   assert(commitResponse.getVersion == nextVersion)
-                  commitTimestamp(commitResponse.getVersion.toInt) =
-                    commitResponse.getCommitTimestamp
                 } catch {
                   case e: CommitFailedException =>
                     assert(e.getConflict)
                     assert(e.getRetryable)
                     commitFailedExceptions.getAndIncrement()
                 } finally {
-                  assertInvariants(logPath, tcs, Some(commitTimestamp))
+                  assertInvariants(logPath, tcs)
                 }
               }
             }
-          })
         }
-
-        executor.shutdown()
-        executor.awaitTermination(15, TimeUnit.SECONDS)
+        tasks.foreach(ThreadUtils.awaitResult(_, 150.seconds))
       } catch {
         case e: InterruptedException =>
           fail("Test interrupted: " + e.getMessage)

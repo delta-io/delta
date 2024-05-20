@@ -25,13 +25,19 @@ abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClien
   override protected def createTableCommitOwnerClient(
       deltaLog: DeltaLog): TableCommitOwnerClient = {
     val cs = InMemoryCommitOwnerBuilder(batchSize).build(spark, Map.empty)
-    TableCommitOwnerClient(cs, deltaLog, Map.empty[String, String])
+    val conf = cs.registerTable(
+      deltaLog.logPath,
+      currentVersion = -1L,
+      initMetadata,
+      Protocol(1, 1))
+    TableCommitOwnerClient(cs, deltaLog, conf)
   }
 
   override protected def registerBackfillOp(
-      commitOwnerClient: CommitOwnerClient,
+      tableCommitOwnerClient: TableCommitOwnerClient,
       deltaLog: DeltaLog,
       version: Long): Unit = {
+    val commitOwnerClient = tableCommitOwnerClient.commitOwnerClient
     val inMemoryCS = commitOwnerClient.asInstanceOf[InMemoryCommitOwner]
     inMemoryCS.registerBackfill(deltaLog.logPath, version)
   }
@@ -91,8 +97,6 @@ abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClien
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
       val tcs = createTableCommitOwnerClient(log)
-      tcs.commitOwnerClient.registerTable(
-        logPath, currentVersion = -1L, initMetadata, Protocol(1, 1))
 
       // Anything other than version-0 or version-1 should be rejected as the first commit
       // version-0 will be directly backfilled and won't be recorded in InMemoryCommitOwner.
