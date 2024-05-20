@@ -178,23 +178,13 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    )
+    ),
 
-    // TODO come back to this after resolving kernel stuff
-    /*
     // Java-/Scala-/Uni-Doc Settings
     scalacOptions ++= Seq(
       "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
     ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
-    */
-
-    // Java-/Scala-/Uni-Doc Settings
-    // This isn't working yet against Spark Master.
-    // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
-    //    generating delta-spark unidoc compiles delta-iceberg
-    // 2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
-    //    issue above.
   )
 }
 
@@ -276,10 +266,7 @@ lazy val spark = (project in file("spark"))
     },
     TestParallelization.settings,
   )
-  .configureUnidoc(
-    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
-    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION
-  )
+  .configureUnidoc(generateScalaDoc = true)
 
 lazy val contribs = (project in file("contribs"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
