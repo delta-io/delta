@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.stats
 
 import org.apache.spark.sql.Column
+import org.apache.spark.sql.types.DataType
 
 /**
  * A helper class that provides the functionalities to create [[DataSkippingPredicate]] with
@@ -40,7 +41,7 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
    * @return A [[DataSkippingPredicate]] with a data skipping expression, or None if the given
    *         stats column does not exist.
    */
-  def getPredicateWithStatsColumn(statCol: StatsColumn)
+  private def getPredicateWithStatsColumn(statCol: StatsColumn)
     (f: Column => Column): Option[DataSkippingPredicate] = {
     for (stat <- getStat(statCol))
       yield DataSkippingPredicate(f(stat), statCol)
@@ -54,7 +55,7 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
   }
 
   /** A variant of [[getPredicateWithStatsColumn]] with three stats columns. */
-  def getPredicateWithStatsColumns(
+  private def getPredicateWithStatsColumns(
       statCol1: StatsColumn,
       statCol2: StatsColumn,
       statCol3: StatsColumn)
@@ -76,29 +77,32 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
    * @return A [[DataSkippingPredicate]] with a data skipping expression, or None if the given
    *         stats column does not exist.
    */
-  def getPredicateWithStatType(pathToColumn: Seq[String], statType: String)
+  def getPredicateWithStatType(
+      pathToColumn: Seq[String], columnDataType: DataType, statType: String)
     (f: Column => Column): Option[DataSkippingPredicate] = {
-    getPredicateWithStatsColumn(StatsColumn(statType, pathToColumn))(f)
+    getPredicateWithStatsColumn(StatsColumn(statType, pathToColumn, columnDataType))(f)
   }
 
   /** A variant of [[getPredicateWithStatType]] with two stat types. */
-  def getPredicateWithStatTypes(pathToColumn: Seq[String], statType1: String, statType2: String)
+  def getPredicateWithStatTypes(
+      pathToColumn: Seq[String], columnDataType: DataType, statType1: String, statType2: String)
     (f: (Column, Column) => Column): Option[DataSkippingPredicate] = {
     getPredicateWithStatsColumns(
-      StatsColumn(statType1, pathToColumn),
-      StatsColumn(statType2, pathToColumn))(f)
+      StatsColumn(statType1, pathToColumn, columnDataType),
+      StatsColumn(statType2, pathToColumn, columnDataType))(f)
   }
 
   /** A variant of [[getPredicateWithStatType]] with three stat types. */
   def getPredicateWithStatTypes(
       pathToColumn: Seq[String],
+      columnDataType: DataType,
       statType1: String,
       statType2: String,
       statType3: String)
     (f: (Column, Column, Column) => Column): Option[DataSkippingPredicate] = {
     getPredicateWithStatsColumns(
-      StatsColumn(statType1, pathToColumn),
-      StatsColumn(statType2, pathToColumn),
-      StatsColumn(statType3, pathToColumn))(f)
+      StatsColumn(statType1, pathToColumn, columnDataType),
+      StatsColumn(statType2, pathToColumn, columnDataType),
+      StatsColumn(statType3, pathToColumn, columnDataType))(f)
   }
 }
