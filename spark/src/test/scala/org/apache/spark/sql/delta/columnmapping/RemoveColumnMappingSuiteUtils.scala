@@ -35,12 +35,12 @@ import org.apache.spark.sql.functions.col
  */
 trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSuiteUtils {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(ALLOW_COLUMN_MAPPING_REMOVAL.key, "true")
   }
 
-  override def afterEach(): Unit = {
+  override protected def afterEach(): Unit = {
     sql(s"DROP TABLE IF EXISTS $testTableName")
     super.afterEach()
   }
@@ -50,7 +50,12 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
   protected val rowsPerFile = totalRows / numFiles
   protected val logicalColumnName = "logical_column_name"
   protected val secondColumn = "second_column_name"
+  protected val firstColumn = "first_column_name"
+  protected val thirdColumn = "third_column_name"
+  protected val renamedThirdColumn = "renamed_third_column_name"
+
   protected val testTableName: String = "test_table_" + this.getClass.getSimpleName
+  protected def deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
 
   import testImplicits._
 
@@ -122,6 +127,23 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
       s"""
          |ALTER TABLE $testTableName $unsetStr
          |""".stripMargin)
+  }
+
+  protected def enableColumnMapping(): Unit = {
+    sql(
+      s"""ALTER TABLE $testTableName
+        SET TBLPROPERTIES (
+        '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
+        'delta.minReaderVersion' = '2',
+        'delta.minWriterVersion' = '5')""")
+  }
+
+  protected def renameColumn(): Unit = {
+    sql(s"ALTER TABLE $testTableName RENAME COLUMN $thirdColumn TO $renamedThirdColumn")
+  }
+
+  protected def dropColumn(): Unit = {
+    sql(s"ALTER TABLE $testTableName DROP COLUMN $thirdColumn")
   }
 
   /**

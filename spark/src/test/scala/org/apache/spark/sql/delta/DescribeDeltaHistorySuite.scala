@@ -386,7 +386,7 @@ trait DescribeDeltaHistorySuiteBase
     val writerVersion = Action.supportedProtocolVersion().minWriterVersion
     withTempDir { path =>
       val log = DeltaLog.forTable(spark, path)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
         FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(

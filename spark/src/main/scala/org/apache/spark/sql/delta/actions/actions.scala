@@ -28,6 +28,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
+import org.apache.spark.sql.delta.managedcommit.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
@@ -37,7 +38,6 @@ import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
-
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
@@ -135,6 +135,7 @@ case class Protocol private (
     @JsonInclude(Include.NON_ABSENT)
     writerFeatures: Option[Set[String]])
   extends Action
+  with AbstractProtocol
   with TableFeatureSupport {
   // Correctness check
   // Reader and writer versions must match the status of reader and writer features
@@ -176,6 +177,14 @@ case class Protocol private (
   }
 
   override def toString: String = s"Protocol($simpleString)"
+
+  override def getMinReaderVersion: Int = minReaderVersion
+
+  override def getMinWriterVersion: Int = minWriterVersion
+
+  override def getReaderFeatures: Option[Set[String]] = readerFeatures
+
+  override def getWriterFeatures: Option[Set[String]] = writerFeatures
 }
 
 object Protocol {
@@ -948,7 +957,6 @@ case class AddCDCFile(
   override def numLogicalRecords: Option[Long] = None
 }
 
-
 case class Format(
     provider: String = "parquet",
     // If we support `options` in future, we should not store any file system options since they may
@@ -969,7 +977,7 @@ case class Metadata(
     partitionColumns: Seq[String] = Nil,
     configuration: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    createdTime: Option[Long] = None) extends Action {
+    createdTime: Option[Long] = None) extends Action with AbstractMetadata {
 
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has
@@ -1043,6 +1051,26 @@ case class Metadata(
     DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.fromMetaData(this)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
+
+  override def getId: String = id
+
+  override def getName: String = name
+
+  override def getDescription: String = description
+
+  @JsonIgnore
+  override def getProvider: String = format.provider
+
+  @JsonIgnore
+  override def getFormatOptions: Map[String, String] = format.options
+
+  override def getSchemaString: String = schemaString
+
+  override def getPartitionColumns: Seq[String] = partitionColumns
+
+  override def getConfiguration: Map[String, String] = configuration
+
+  override def getCreatedTime: Option[Long] = createdTime
 }
 
 /**
@@ -1077,6 +1105,7 @@ case class CommitInfo(
     // infer the commit version from the file name and fill in this field then.
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     version: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     inCommitTimestamp: Option[Long],
     timestamp: Timestamp,
     userId: Option[String],
@@ -1095,11 +1124,21 @@ case class CommitInfo(
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
     engineInfo: Option[String],
-    txnId: Option[String]) extends Action with CommitMarker {
+    txnId: Option[String]) extends Action with CommitMarker with AbstractCommitInfo {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
     this.copy(timestamp = new Timestamp(timestamp))
+  }
+
+  // We need to explicitly ignore this field during serialization as Jackson
+  // by default calls all public getters of an object, which would lead to
+  // either an exception or the inCommitTimestamp being serialized twice.
+  @JsonIgnore
+  override def getCommitTimestamp: Long = {
+    inCommitTimestamp.getOrElse {
+      throw DeltaErrors.missingCommitTimestamp(version.map(_.toString).getOrElse("unknown"))
+    }
   }
 
   override def getTimestamp: Long = timestamp.getTime
