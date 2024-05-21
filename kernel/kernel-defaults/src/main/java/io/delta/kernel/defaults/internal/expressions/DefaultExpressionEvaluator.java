@@ -16,10 +16,12 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -31,7 +33,6 @@ import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
 import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-
 
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
@@ -154,7 +155,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 default:
                     // We should never reach this based on the ExpressionVisitor
                     throw new IllegalStateException(
-                        String.format("%s is not a recognized comparator", predicate.getName()));
+                        format("%s is not a recognized comparator", predicate.getName()));
             }
         }
 
@@ -284,24 +285,14 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ExpressionTransformResult visitLike(final Predicate like) {
             List<ExpressionTransformResult> children =
                     like.getChildren().stream()
-                        .map(this::visit)
+                            .filter(Objects::nonNull)
+                            .map(this::visit)
                         .collect(Collectors.toList());
-            int size = children.size();
-            if (size < 2 || size > 3) {
-                throw unsupportedExpressionException(like,
-                    "Invalid number of inputs to LIKE expression. " +
-                            "Example usage: LIKE(column, 'test%'), LIKE(column, 'test\\[%', '\\')");
-            }
-
             Predicate transformedExpression =
                     LikeExpressionEvaluator.validateAndTransform(
                         like,
-                        children.get(0).expression,
-                        children.get(0).outputType,
-                        children.get(1).expression,
-                        children.get(1).outputType,
-                        size==3 ? children.get(2).expression : null,
-                        size==3 ? children.get(2).outputType : null);
+                        children.stream().map(e -> e.expression).collect(toList()),
+                        children.stream().map(e -> e.outputType).collect(toList()));
 
             return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
         }
@@ -589,16 +580,10 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         @Override
         ColumnVector visitLike(final Predicate like) {
             List<Expression> children = like.getChildren();
-            int size = children.size();
-            ColumnVector left = visit(children.get(0));
-            ColumnVector right = visit(children.get(1));
-            ColumnVector escapeChar = (size == 3 && children.get(2)!=null) ?
-                                        visit(children.get(2)) :
-                                        null;
             return LikeExpressionEvaluator.eval(
-                    left,
-                    right,
-                    escapeChar);
+                        children.stream()
+                        .filter(Objects::nonNull)
+                        .map(this::visit).collect(toList()));
         }
 
         /**

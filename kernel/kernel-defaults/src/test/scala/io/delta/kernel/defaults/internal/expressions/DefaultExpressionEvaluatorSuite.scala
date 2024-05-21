@@ -317,7 +317,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       .add("col2", StringType.STRING)
     val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
 
-    def checkBatch(
+    def checkLike(
           input: DefaultColumnarBatch,
           likeExpression: Predicate,
           expOutputSeq: Seq[BooleanJ]): Unit = {
@@ -329,22 +329,22 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
 
     // check column expressions on both sides
-    checkBatch(
+    checkLike(
       input, like(new Column("col1"), new Column("col2")),
         Seq[BooleanJ](true, false, true, true, null, null, null, true))
 
     // check column expression against literal
-    checkBatch(
+    checkLike(
       input, like(new Column("col1"), Literal.ofString("t%")),
         Seq[BooleanJ](false, true, true, false, null, null, false, false))
 
     // ends with checks
-    checkBatch(
+    checkLike(
       input, like(new Column("col1"), Literal.ofString("%t")),
         Seq[BooleanJ](false, false, false, false, null, null, false, true))
 
     // contains checks
-    checkBatch(
+    checkLike(
       input, like(new Column("col1"), Literal.ofString("%t%")),
         Seq[BooleanJ](false, true, true, false, null, null, false, true))
 
@@ -352,62 +352,63 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         new StructType().add("dummy", StringType.STRING),
         Array(stringVector(Seq[String](""))))
 
-    def checkLiteral(left: String, right: String,
+    def checkLikeLiteral(left: String, right: String,
         escape: Character = null, expOutput: BooleanJ): Unit = {
       val expression = like(Literal.ofString(left), Literal.ofString(right), Option(escape))
-      checkBatch(dummyInput, expression, Seq[BooleanJ](expOutput))
+      checkLike(dummyInput, expression, Seq[BooleanJ](expOutput))
     }
 
     Seq('!', '@', '#').foreach {
       escape => {
         // null/empty
-        checkLiteral(null, "a", null, null)
-        checkLiteral("a", null, null, null)
-        checkLiteral(null, null, null, null)
-        checkLiteral("", "", null, true)
-        checkLiteral("a", "", null, false)
-        checkLiteral("", "a", null, false)
+        checkLikeLiteral(null, "a", null, null)
+        checkLikeLiteral("a", null, null, null)
+        checkLikeLiteral(null, null, null, null)
+        checkLikeLiteral("", "", null, true)
+        checkLikeLiteral("a", "", null, false)
+        checkLikeLiteral("", "a", null, false)
 
         // simple patterns
-        checkLiteral("abc", "abc", escape, true)
-        checkLiteral("a_%b", s"a${escape}__b", escape, true)
-        checkLiteral("abbc", "a_%c", escape, true)
-        checkLiteral("abbc", s"a${escape}__c", escape, false)
-        checkLiteral("abbc", s"a%${escape}%c", escape, false)
-        checkLiteral("a_%b", s"a%${escape}%b", escape, true)
-        checkLiteral("abbc", "a%", escape, true)
-        checkLiteral("abbc", "**", escape, false)
-        checkLiteral("abc", "a%", escape, true)
-        checkLiteral("abc", "b%", escape, false)
-        checkLiteral("abc", "bc%", escape, false)
-        checkLiteral("a\nb", "a_b", escape, true)
-        checkLiteral("ab", "a%b", escape, true)
-        checkLiteral("a\nb", "a%b", escape, true)
+        checkLikeLiteral("abc", "abc", escape, true)
+        checkLikeLiteral("a_%b", s"a${escape}__b", escape, true)
+        checkLikeLiteral("abbc", "a_%c", escape, true)
+        checkLikeLiteral("abbc", s"a${escape}__c", escape, false)
+        checkLikeLiteral("abbc", s"a%${escape}%c", escape, false)
+        checkLikeLiteral("a_%b", s"a%${escape}%b", escape, true)
+        checkLikeLiteral("abbc", "a%", escape, true)
+        checkLikeLiteral("abbc", "**", escape, false)
+        checkLikeLiteral("abc", "a%", escape, true)
+        checkLikeLiteral("abc", "b%", escape, false)
+        checkLikeLiteral("abc", "bc%", escape, false)
+        checkLikeLiteral("a\nb", "a_b", escape, true)
+        checkLikeLiteral("ab", "a%b", escape, true)
+        checkLikeLiteral("a\nb", "a%b", escape, true)
 
         // case
-        checkLiteral("A", "a%", escape, false)
-        checkLiteral("a", "a%", escape, true)
-        checkLiteral("a", "A%", escape, false)
-        checkLiteral(s"aAa", s"aA_", escape, true)
+        checkLikeLiteral("A", "a%", escape, false)
+        checkLikeLiteral("a", "a%", escape, true)
+        checkLikeLiteral("a", "A%", escape, false)
+        checkLikeLiteral(s"aAa", s"aA_", escape, true)
 
         // regex
-        checkLiteral("a([a-b]{2,4})a", "_([a-b]{2,4})%", null, true)
-        checkLiteral("a([a-b]{2,4})a", "_([a-c]{2,6})_", null, false)
+        checkLikeLiteral("a([a-b]{2,4})a", "_([a-b]{2,4})%", null, true)
+        checkLikeLiteral("a([a-b]{2,4})a", "_([a-c]{2,6})_", null, false)
 
         // %/_
-        checkLiteral("a%a", s"%${escape}%%", escape, true)
-        checkLiteral("a%", s"%${escape}%%", escape, true)
-        checkLiteral("a%a", s"_${escape}%_", escape, true)
-        checkLiteral("a_a", s"%${escape}_%", escape, true)
-        checkLiteral("a_", s"%${escape}_%", escape, true)
-        checkLiteral("a_a", s"_${escape}__", escape, true)
+        checkLikeLiteral("a%a", s"%${escape}%%", escape, true)
+        checkLikeLiteral("a%", s"%${escape}%%", escape, true)
+        checkLikeLiteral("a%a", s"_${escape}%_", escape, true)
+        checkLikeLiteral("a_a", s"%${escape}_%", escape, true)
+        checkLikeLiteral("a_", s"%${escape}_%", escape, true)
+        checkLikeLiteral("a_a", s"_${escape}__", escape, true)
 
         // double-escaping
-        checkLiteral(s"""$escape$escape$escape$escape""", s"""%${escape}${escape}%""", escape, true)
-        checkLiteral("""%%""", """%%""", escape, true)
-        checkLiteral(s"""${escape}__""", s"""${escape}${escape}${escape}__""", escape, true)
-        checkLiteral(s"""${escape}__""", s"""%${escape}${escape}%${escape}%""", escape, false)
-        checkLiteral(s"""_${escape}${escape}${escape}%""",
+        checkLikeLiteral(
+          s"""$escape$escape$escape$escape""", s"""%${escape}${escape}%""", escape, true)
+        checkLikeLiteral("""%%""", """%%""", escape, true)
+        checkLikeLiteral(s"""${escape}__""", s"""${escape}${escape}${escape}__""", escape, true)
+        checkLikeLiteral(s"""${escape}__""", s"""%${escape}${escape}%${escape}%""", escape, false)
+        checkLikeLiteral(s"""_${escape}${escape}${escape}%""",
           s"""%${escape}${escape}""", escape, false)
       }
     }
@@ -425,7 +426,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         new DefaultExpressionEvaluator(
           schema, expr, BooleanType.BOOLEAN).eval(input)
       }
-      assert(e.getMessage.contains("'like' is only supported for string type expressions"))
+      assert(e.getMessage.contains("LIKE is only supported for string type expressions"))
     }
     checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
     checkUnsupportedTypes(LongType.LONG, LongType.LONG)
@@ -440,14 +441,14 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "Invalid number of inputs to LIKE expression. Example usage:"
     val inputCountError1 = intercept[UnsupportedOperationException] {
       val expression = like(List(Literal.ofString("a")))
-      checkBatch(dummyInput, expression, Seq[BooleanJ](null))
+      checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(inputCountError1.getMessage.contains(inputCountCheckUserMessage))
 
     val inputCountError2 = intercept[UnsupportedOperationException] {
       val expression = like(List(Literal.ofString("a"), Literal.ofString("b"),
         Literal.ofString("c"), Literal.ofString("d")))
-      checkBatch(dummyInput, expression, Seq[BooleanJ](null))
+      checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(inputCountError2.getMessage.contains(inputCountCheckUserMessage))
 
@@ -455,17 +456,17 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val escapeCharError1 = intercept[UnsupportedOperationException] {
       val expression =
         like(List(Literal.ofString("a"), Literal.ofString("b"), Literal.ofString("~~")))
-      checkBatch(dummyInput, expression, Seq[BooleanJ](null))
+      checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(escapeCharError1.getMessage.contains(
-      "'like' expects escape token to be a single character"))
+      "LIKE expects escape token to be a single character"))
 
     val escapeCharError2 = intercept[UnsupportedOperationException] {
       val expression = like(List(Literal.ofString("a"), Literal.ofString("b"), Literal.ofInt(1)))
-      checkBatch(dummyInput, expression, Seq[BooleanJ](null))
+      checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(escapeCharError2.getMessage.contains(
-      "'like' expects escape token expression to be a literal of String type"))
+      "LIKE expects escape token expression to be a literal of String type"))
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {

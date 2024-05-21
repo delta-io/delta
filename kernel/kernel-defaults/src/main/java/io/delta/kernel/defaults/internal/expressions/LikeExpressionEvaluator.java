@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -32,7 +33,7 @@ import static io.delta.kernel.defaults.internal.DefaultEngineErrors.invalidEscap
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 
 /**
- *
+ * Utility methods to evaluate {@code like} expression.
  */
 public class LikeExpressionEvaluator {
     private LikeExpressionEvaluator() {
@@ -40,39 +41,54 @@ public class LikeExpressionEvaluator {
 
     static Predicate validateAndTransform(
             Predicate like,
-            Expression left, DataType leftOutputType,
-            Expression right, DataType rightOutputType,
-            Expression escapeCharExpr, DataType escapeCharOutputType) {
+            List<Expression> childrenExpressions, List<DataType> childrenOutputTypes) {
+        int size = childrenExpressions.size();
+        if (size < 2 || size > 3) {
+            throw unsupportedExpressionException(like,
+                    "Invalid number of inputs to LIKE expression. " +
+                            "Example usage: LIKE(column, 'test%'), LIKE(column, 'test\\[%', '\\')");
+        }
+
+        Expression left = childrenExpressions.get(0);
+        DataType leftOutputType = childrenOutputTypes.get(0);
+        Expression right = childrenExpressions.get(1);
+        DataType rightOutputType = childrenOutputTypes.get(1);
+        Expression escapeCharExpr = size==3 ? childrenExpressions.get(2) : null;
+        DataType escapeCharOutputType = size==3 ? childrenOutputTypes.get(2) : null;
 
         if (!(StringType.STRING.equivalent(leftOutputType)
                 && StringType.STRING.equivalent(rightOutputType))) {
             throw unsupportedExpressionException(like,
-                    "'like' is only supported for string type expressions");
+                    "LIKE is only supported for string type expressions");
         }
 
         if (escapeCharExpr != null &&
                 (!(escapeCharExpr instanceof Literal &&
                 StringType.STRING.equivalent(escapeCharOutputType)))) {
             throw unsupportedExpressionException(like,
-                    "'like' expects escape token expression to be a literal of String type");
+                    "LIKE expects escape token expression to be a literal of String type");
         }
 
         Literal literal = (Literal) escapeCharExpr;
         if (literal!=null &&
                 literal.getValue().toString().length() != 1) {
             throw unsupportedExpressionException(like,
-                    "'like' expects escape token to be a single character");
+                    "LIKE expects escape token to be a single character");
         }
 
         return new Predicate(like.getName(), Arrays.asList(left, right, escapeCharExpr));
     }
 
-    static ColumnVector eval(ColumnVector left,
-                             ColumnVector right,
-                             ColumnVector escapeCharLiteral) {
+    static ColumnVector eval(List<ColumnVector> children) {
         final char DEFAULT_ESCAPE_CHAR = '\\';
 
         return new ColumnVector() {
+            final ColumnVector escapeCharLiteral =
+                    children.size() == 3 ?
+                    children.get(2) :
+                    null;
+            final ColumnVector left = children.get(0);
+            final ColumnVector right = children.get(1);
 
             final char escape = escapeCharLiteral!=null ?
                     escapeCharLiteral.getString(0).charAt(0) : DEFAULT_ESCAPE_CHAR;
@@ -112,44 +128,44 @@ public class LikeExpressionEvaluator {
                 }
                 return false;
             }
-
-            /**
-             * utility method to convert a predicate pattern to a java regex
-             * @param pattern the pattern used in the expression
-             * @param escape escape character to use
-             * @return java regex
-             */
-            private String escapeLikeRegex(String pattern, char escape) {
-                final int len = pattern.length();
-                final StringBuilder javaPattern = new StringBuilder(len + len);
-                for (int i = 0; i < len; i++) {
-                    char c = pattern.charAt(i);
-
-                    if (c == escape) {
-                        if (i == (pattern.length() - 1)) {
-                            throw invalidEscapeSequence(pattern, i);
-                        }
-                        char nextChar = pattern.charAt(i + 1);
-                        if ((nextChar == '_')
-                                || (nextChar == '%')
-                                || (nextChar == escape)) {
-                            javaPattern.append(
-                                    Pattern.quote(Character.toString(nextChar)));
-                            i++;
-                        } else {
-                            throw invalidEscapeSequence(pattern, i);
-                        }
-                    } else if (c == '_') {
-                        javaPattern.append('.');
-                    } else if (c == '%') {
-                        javaPattern.append(".*");
-                    } else {
-                        javaPattern.append(Pattern.quote(Character.toString(c)));
-                    }
-
-                }
-                return "(?s)" + javaPattern;
-            }
         };
+    }
+
+    /**
+     * utility method to convert a predicate pattern to a java regex
+     * @param pattern the pattern used in the expression
+     * @param escape escape character to use
+     * @return java regex
+     */
+    private static String escapeLikeRegex(String pattern, char escape) {
+        final int len = pattern.length();
+        final StringBuilder javaPattern = new StringBuilder(len + len);
+        for (int i = 0; i < len; i++) {
+            char c = pattern.charAt(i);
+
+            if (c == escape) {
+                if (i == (pattern.length() - 1)) {
+                    throw invalidEscapeSequence(pattern, i);
+                }
+                char nextChar = pattern.charAt(i + 1);
+                if ((nextChar == '_')
+                        || (nextChar == '%')
+                        || (nextChar == escape)) {
+                    javaPattern.append(
+                            Pattern.quote(Character.toString(nextChar)));
+                    i++;
+                } else {
+                    throw invalidEscapeSequence(pattern, i);
+                }
+            } else if (c == '_') {
+                javaPattern.append('.');
+            } else if (c == '%') {
+                javaPattern.append(".*");
+            } else {
+                javaPattern.append(Pattern.quote(Character.toString(c)));
+            }
+
+        }
+        return "(?s)" + javaPattern;
     }
 }
