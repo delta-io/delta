@@ -94,7 +94,7 @@ public class ScanImpl implements Scan {
      */
     @Override
     public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
-        return getScanFiles(engine, false, false);
+        return getScanFiles(engine, false);
     }
 
     /**
@@ -111,7 +111,7 @@ public class ScanImpl implements Scan {
      * @return the surviving scan files as {@link FilteredColumnarBatch}s
      */
     public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-            Engine engine, boolean includeStats, boolean includeTags) {
+            Engine engine, boolean includeStats) {
         if (accessedScanFiles) {
             throw new IllegalStateException("Scan files are already fetched from this instance");
         }
@@ -127,7 +127,7 @@ public class ScanImpl implements Scan {
         // while constructing the table state.
         CloseableIterator<FilteredColumnarBatch> scanFileIter =
                 logReplay.getAddFilesAsColumnarBatches(
-                        shouldReadStats, includeTags,
+                        shouldReadStats,
                         getPartitionsFilters().map(predicate ->
                                 rewritePartitionPredicateOnCheckpointFileSchema(
                                         predicate,
