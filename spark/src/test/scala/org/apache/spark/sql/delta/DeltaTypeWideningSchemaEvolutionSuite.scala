@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -80,9 +79,10 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
 
         assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
         checkAnswerWithTolerance(
-          readDeltaTable(tempPath).select("value"),
-          testCase.expectedResult.select($"value".cast(testCase.toType)),
-          testCase.toType)
+          actualDf = readDeltaTable(tempPath).select("value"),
+          expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+          toType = testCase.toType
+        )
       }
     }
   }
@@ -387,9 +387,11 @@ trait DeltaInsertTypeWideningSchemaEvolutionTeststs extends DeltaTypeWideningTes
         .insertInto(s"delta.`$tempPath`")
 
       assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-      checkAnswerWithTolerance(readDeltaTable(tempPath).select("value"),
-        testCase.expectedResult.select($"value".cast(testCase.toType)),
-        testCase.toType)
+      checkAnswerWithTolerance(
+        actualDf = readDeltaTable(tempPath).select("value"),
+        expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+        toType = testCase.toType
+      )
     }
   }
 

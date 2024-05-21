@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
+import com.google.common.math.DoubleMath
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
@@ -93,16 +94,38 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUti
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
       append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
 
-  // Float/Double partition values are serialized as string leading to loss of
-  // precision. Also checkAnswer treats -0f and 0f as different without tolerance.
-  def checkAnswerWithTolerance(df: DataFrame, expected: DataFrame, dataType: DataType): Unit = {
-    if (Seq(FloatType, DoubleType).contains(dataType)) {
-      checkAggregatesWithTol(
-        df.sort("value"),
-        expected.sort("value").collect(),
-        absTol = 0.001)
+  /**
+   * Similar to `QueryTest.checkAnswer` but using fuzzy equality for double values. This is needed
+   * because double partition values are serialized as string leading to loss of precision. Also
+   * `checkAnswer` treats -0f and 0f as different values without tolerance.
+   */
+  def checkAnswerWithTolerance(
+      actualDf: DataFrame,
+      expectedDf: DataFrame,
+      toType: DataType,
+      tolerance: Double = 0.001)
+    : Unit = {
+    // Widening to float isn't supported so only handle double here.
+    if (toType == DoubleType) {
+      val actual = actualDf.sort("value").collect()
+      val expected = expectedDf.sort("value").collect()
+      assert(actual.length === expected.length, s"Wrong result: $actual did not equal $expected")
+
+      actual.zip(expected).foreach { case (a, e) =>
+        val expectedValue = e.getAs[Double]("value")
+        val actualValue = a.getAs[Double]("value")
+        val absTolerance = if (expectedValue.isNaN || expectedValue.isInfinity) {
+          0
+        } else {
+          tolerance * Math.abs(expectedValue)
+        }
+        assert(
+          DoubleMath.fuzzyEquals(actualValue, expectedValue, absTolerance),
+          s"$actualValue did not equal $expectedValue"
+        )
+      }
     } else {
-      checkAnswer(df, expected)
+      checkAnswer(actualDf, expectedDf)
     }
   }
 }
@@ -310,19 +333,21 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
 
       writeData(testCase.initialValuesDF)
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}")
-
       withAllParquetReaders {
         assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-        checkAnswerWithTolerance(readDeltaTable(tempPath).select("value"),
-          testCase.initialValuesDF.select($"value".cast(testCase.toType)),
-          testCase.toType)
+        checkAnswerWithTolerance(
+          actualDf = readDeltaTable(tempPath).select("value"),
+          expectedDf = testCase.initialValuesDF.select($"value".cast(testCase.toType)),
+          toType = testCase.toType
+        )
       }
       writeData(testCase.additionalValuesDF)
       withAllParquetReaders {
         checkAnswerWithTolerance(
-          readDeltaTable(tempPath).select("value"),
-          testCase.expectedResult.sort("value"),
-          testCase.toType)
+          actualDf = readDeltaTable(tempPath).select("value"),
+          expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+          toType = testCase.toType
+        )
       }
     }
   }
