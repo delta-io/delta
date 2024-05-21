@@ -1,3 +1,6 @@
+# Linter
+mypy==1.8.0
+
 # pandas API on Spark Code formatter.
 black==23.9.1
 py
