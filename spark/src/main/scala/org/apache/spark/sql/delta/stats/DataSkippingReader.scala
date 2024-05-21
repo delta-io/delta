@@ -69,7 +69,7 @@ case class NumRecords(numPhysicalRecords: java.lang.Long, numLogicalRecords: jav
  * `pathToColumn` is the nested name of the user column whose stats are to be accessed.
  * `columnDataType` is the data type of the column.
  */
-private [stats] case class StatsColumn private(
+private[stats] case class StatsColumn private(
     pathToStatType: Seq[String],
     pathToColumn: Seq[String])
 

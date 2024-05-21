@@ -41,7 +41,7 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
    * @return A [[DataSkippingPredicate]] with a data skipping expression, or None if the given
    *         stats column does not exist.
    */
-  private def getPredicateWithStatsColumn(statCol: StatsColumn)
+  def getPredicateWithStatsColumn(statCol: StatsColumn)
     (f: Column => Column): Option[DataSkippingPredicate] = {
     for (stat <- getStat(statCol))
       yield DataSkippingPredicate(f(stat), statCol)
@@ -55,7 +55,7 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
   }
 
   /** A variant of [[getPredicateWithStatsColumn]] with three stats columns. */
-  private def getPredicateWithStatsColumns(
+  def getPredicateWithStatsColumns(
       statCol1: StatsColumn,
       statCol2: StatsColumn,
       statCol3: StatsColumn)
