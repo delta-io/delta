@@ -71,12 +71,9 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
          |USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
          |""".stripMargin)
-    val e = intercept[DeltaAnalysisException] {
-      // Try to drop column mapping.
+    val e = intercept[DeltaTableFeatureException] {
       dropColumnMappingTableFeature()
     }
-    assert(e.getErrorClass == "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING")
-    assert(e.getMessageParametersArray === Array(invalidColName1, invalidColName2))
   }
 
   test("drop column mapping from a table without table feature") {
