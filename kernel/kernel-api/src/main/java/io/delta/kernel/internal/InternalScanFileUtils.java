@@ -89,8 +89,6 @@ public class InternalScanFileUtils {
     private static final int ADD_FILE_MOD_TIME_ORDINAL =
         ADD_FILE_SCHEMA.indexOf("modificationTime");
 
-    private static final int ADD_FILE_TAGS_ORDINAL = ADD_FILE_SCHEMA.indexOf("tags");
-
     private static final int ADD_FILE_DATA_CHANGE_ORDINAL = ADD_FILE_SCHEMA.indexOf("dataChange");
 
     private static final int ADD_FILE_DV_ORDINAL = ADD_FILE_SCHEMA.indexOf("deletionVector");
@@ -111,13 +109,12 @@ public class InternalScanFileUtils {
         String path = addFile.getString(ADD_FILE_PATH_ORDINAL);
         Long size = addFile.getLong(ADD_FILE_SIZE_ORDINAL);
         Long modificationTime = addFile.getLong(ADD_FILE_MOD_TIME_ORDINAL);
-        String stats = addFile.getString(ADD_FILE_STATS_ORDINAL);
-        Map<String, String> tags = VectorUtils.toJavaMap(addFile.getMap(ADD_FILE_TAGS_ORDINAL));
 
         // TODO: this is hack until the path in `add.path` is converted to an absolute path
         String tableRoot = scanFileInfo.getString(TABLE_ROOT_ORDINAL);
         String absolutePath = new Path(tableRoot, path).toString();
-        return FileStatus.of(absolutePath, size, modificationTime, tags, stats);
+
+        return FileStatus.of(absolutePath, size, modificationTime);
     }
 
     /**
