@@ -437,7 +437,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     // input count checks
     val inputCountCheckUserMessage =
-      "like requires at least two expressions and a maximum of 3 expressions"
+      "Invalid number of inputs to LIKE expression. Example usage:"
     val inputCountError1 = intercept[UnsupportedOperationException] {
       val expression = like(List(Literal.ofString("a")))
       checkBatch(dummyInput, expression, Seq[BooleanJ](null))

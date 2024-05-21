@@ -287,9 +287,10 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                         .map(this::visit)
                         .collect(Collectors.toList());
             int size = children.size();
-            if (size<2 || size>3) {
+            if (size < 2 || size > 3) {
                 throw unsupportedExpressionException(like,
-                        "like requires at least two expressions and a maximum of 3 expressions");
+                    "Invalid number of inputs to LIKE expression. " +
+                            "Example usage: LIKE(column, 'test%'), LIKE(column, 'test\\[%', '\\')");
             }
 
             Predicate transformedExpression =
