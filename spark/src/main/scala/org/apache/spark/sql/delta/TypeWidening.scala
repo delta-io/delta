@@ -71,7 +71,6 @@ object TypeWidening {
       // All supported type changes below are supposed to be widening, but to be safe, reject any
       // non-widening change upfront.
       case (from, to) if !Cast.canUpCast(from, to) => false
-      case (ByteType, ShortType) => true
       case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
       case (FloatType, DoubleType) => true
       case (DateType, TimestampNTZType) => true
