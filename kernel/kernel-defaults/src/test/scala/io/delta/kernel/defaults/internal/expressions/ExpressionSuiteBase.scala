@@ -40,12 +40,12 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
   protected def like(
       left: Expression, right: Expression, escape: Option[Character] = None): Predicate = {
     if (escape.isDefined && escape.get!=null) {
-      new Predicate("like", List(left, right, Literal.ofString(escape.get.toString)).asJava)
-    } else new Predicate("like", Seq(left, right).asJava)
+      like(List(left, right, Literal.ofString(escape.get.toString)))
+    } else like(List(left, right))
   }
 
-  protected def like(left: Expression, right: Expression, escape: Expression): Predicate = {
-      new Predicate("like", List(left, right, escape).asJava)
+  protected def like(children: List[Expression]): Predicate = {
+    new Predicate("like", children.asJava)
   }
 
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {

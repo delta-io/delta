@@ -33,9 +33,6 @@ import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
-import scala.collection.JavaConverters._
-
-
 class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
   test("evaluate expression: literal") {
     val testLiterals = Seq(
@@ -438,16 +435,33 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkUnsupportedTypes(StringType.STRING, LongType.LONG)
     checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
 
+    // input count checks
+    val inputCountCheckUserMessage =
+      "like requires at least two expressions and a maximum of 3 expressions"
+    val inputCountError1 = intercept[UnsupportedOperationException] {
+      val expression = like(List(Literal.ofString("a")))
+      checkBatch(dummyInput, expression, Seq[BooleanJ](null))
+    }
+    assert(inputCountError1.getMessage.contains(inputCountCheckUserMessage))
+
+    val inputCountError2 = intercept[UnsupportedOperationException] {
+      val expression = like(List(Literal.ofString("a"), Literal.ofString("b"),
+        Literal.ofString("c"), Literal.ofString("d")))
+      checkBatch(dummyInput, expression, Seq[BooleanJ](null))
+    }
+    assert(inputCountError2.getMessage.contains(inputCountCheckUserMessage))
+
     // additional escape token checks
     val escapeCharError1 = intercept[UnsupportedOperationException] {
-      val expression = like(Literal.ofString("a"), Literal.ofString("b"), Literal.ofString("~~"))
+      val expression =
+        like(List(Literal.ofString("a"), Literal.ofString("b"), Literal.ofString("~~")))
       checkBatch(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(escapeCharError1.getMessage.contains(
       "'like' expects escape token to be a single character"))
 
     val escapeCharError2 = intercept[UnsupportedOperationException] {
-      val expression = like(Literal.ofString("a"), Literal.ofString("b"), Literal.ofInt(1))
+      val expression = like(List(Literal.ofString("a"), Literal.ofString("b"), Literal.ofInt(1)))
       checkBatch(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(escapeCharError2.getMessage.contains(
