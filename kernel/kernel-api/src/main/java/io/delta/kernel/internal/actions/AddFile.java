@@ -56,7 +56,9 @@ public class AddFile {
         .add("modificationTime", LongType.LONG, false /* nullable*/)
         .add("dataChange", BooleanType.BOOLEAN, false /* nullable*/)
         .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
-        .add("tags", new MapType(StringType.STRING, StringType.STRING, true), true);
+        .add("tags",
+                new MapType(StringType.STRING, StringType.STRING, true /* valueContainsNull */),
+                true /* nullable */);
 
     public static final StructType SCHEMA_WITH_STATS = SCHEMA_WITHOUT_STATS
         .add(JSON_STATS_FIELD);
