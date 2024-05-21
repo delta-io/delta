@@ -1597,7 +1597,7 @@ trait DeltaSQLConfBase {
           |If enabled, allow the column mapping to be removed from a table.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTALOG_MINOR_COMPACTION_USE_FOR_READS =
     buildConf("deltaLog.minorCompaction.useForReads")
