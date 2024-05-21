@@ -31,27 +31,28 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import builtins
 import collections.abc
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
-import typing
+import sys
+
+if sys.version_info >= (3, 8):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
-@typing.final
 class DeltaTable(google.protobuf.message.Message):
     """Information required to access a Delta table either by name or by path."""
 
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
-    @typing.final
     class Path(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
-        @typing.final
         class HadoopConfEntry(google.protobuf.message.Message):
             DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
@@ -66,7 +67,7 @@ class DeltaTable(google.protobuf.message.Message):
                 value: builtins.str = ...,
             ) -> None: ...
             def ClearField(
-                self, field_name: typing.Literal["key", b"key", "value", b"value"]
+                self, field_name: typing_extensions.Literal["key", b"key", "value", b"value"]
             ) -> None: ...
 
         PATH_FIELD_NUMBER: builtins.int
@@ -85,14 +86,15 @@ class DeltaTable(google.protobuf.message.Message):
             hadoop_conf: collections.abc.Mapping[builtins.str, builtins.str] | None = ...,
         ) -> None: ...
         def ClearField(
-            self, field_name: typing.Literal["hadoop_conf", b"hadoop_conf", "path", b"path"]
+            self,
+            field_name: typing_extensions.Literal["hadoop_conf", b"hadoop_conf", "path", b"path"],
         ) -> None: ...
 
     PATH_FIELD_NUMBER: builtins.int
     TABLE_OR_VIEW_NAME_FIELD_NUMBER: builtins.int
-    table_or_view_name: builtins.str
     @property
     def path(self) -> global___DeltaTable.Path: ...
+    table_or_view_name: builtins.str
     def __init__(
         self,
         *,
@@ -101,7 +103,7 @@ class DeltaTable(google.protobuf.message.Message):
     ) -> None: ...
     def HasField(
         self,
-        field_name: typing.Literal[
+        field_name: typing_extensions.Literal[
             "access_type",
             b"access_type",
             "path",
@@ -112,7 +114,7 @@ class DeltaTable(google.protobuf.message.Message):
     ) -> builtins.bool: ...
     def ClearField(
         self,
-        field_name: typing.Literal[
+        field_name: typing_extensions.Literal[
             "access_type",
             b"access_type",
             "path",
@@ -122,7 +124,7 @@ class DeltaTable(google.protobuf.message.Message):
         ],
     ) -> None: ...
     def WhichOneof(
-        self, oneof_group: typing.Literal["access_type", b"access_type"]
-    ) -> typing.Literal["path", "table_or_view_name"] | None: ...
+        self, oneof_group: typing_extensions.Literal["access_type", b"access_type"]
+    ) -> typing_extensions.Literal["path", "table_or_view_name"] | None: ...
 
 global___DeltaTable = DeltaTable

@@ -31,18 +31,21 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import builtins
 import collections.abc
 import delta.connect.proto.proto.base_pb2
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
-import typing
+import sys
+
+if sys.version_info >= (3, 8):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
-@typing.final
 class DeltaCommand(google.protobuf.message.Message):
     """Message to hold all command extensions in Delta Connect."""
 
@@ -58,25 +61,27 @@ class DeltaCommand(google.protobuf.message.Message):
     ) -> None: ...
     def HasField(
         self,
-        field_name: typing.Literal["clone_table", b"clone_table", "command_type", b"command_type"],
+        field_name: typing_extensions.Literal[
+            "clone_table", b"clone_table", "command_type", b"command_type"
+        ],
     ) -> builtins.bool: ...
     def ClearField(
         self,
-        field_name: typing.Literal["clone_table", b"clone_table", "command_type", b"command_type"],
+        field_name: typing_extensions.Literal[
+            "clone_table", b"clone_table", "command_type", b"command_type"
+        ],
     ) -> None: ...
     def WhichOneof(
-        self, oneof_group: typing.Literal["command_type", b"command_type"]
-    ) -> typing.Literal["clone_table"] | None: ...
+        self, oneof_group: typing_extensions.Literal["command_type", b"command_type"]
+    ) -> typing_extensions.Literal["clone_table"] | None: ...
 
 global___DeltaCommand = DeltaCommand
 
-@typing.final
 class CloneTable(google.protobuf.message.Message):
     """Command that creates a copy of a DeltaTable in the specified target location."""
 
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
-    @typing.final
     class PropertiesEntry(google.protobuf.message.Message):
         DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
@@ -91,7 +96,7 @@ class CloneTable(google.protobuf.message.Message):
             value: builtins.str = ...,
         ) -> None: ...
         def ClearField(
-            self, field_name: typing.Literal["key", b"key", "value", b"value"]
+            self, field_name: typing_extensions.Literal["key", b"key", "value", b"value"]
         ) -> None: ...
 
     TABLE_FIELD_NUMBER: builtins.int
@@ -101,6 +106,9 @@ class CloneTable(google.protobuf.message.Message):
     IS_SHALLOW_FIELD_NUMBER: builtins.int
     REPLACE_FIELD_NUMBER: builtins.int
     PROPERTIES_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The source Delta table to clone."""
     target: builtins.str
     """(Required) Path to the location where the cloned table should be stored."""
     version: builtins.int
@@ -111,9 +119,6 @@ class CloneTable(google.protobuf.message.Message):
     """(Required) Performs a clone when true, this field should always be set to true."""
     replace: builtins.bool
     """(Required) Overwrites the target location when true."""
-    @property
-    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
-        """(Required) The source Delta table to clone."""
     @property
     def properties(
         self,
@@ -134,7 +139,7 @@ class CloneTable(google.protobuf.message.Message):
     ) -> None: ...
     def HasField(
         self,
-        field_name: typing.Literal[
+        field_name: typing_extensions.Literal[
             "table",
             b"table",
             "timestamp",
@@ -147,7 +152,7 @@ class CloneTable(google.protobuf.message.Message):
     ) -> builtins.bool: ...
     def ClearField(
         self,
-        field_name: typing.Literal[
+        field_name: typing_extensions.Literal[
             "is_shallow",
             b"is_shallow",
             "properties",
@@ -167,7 +172,8 @@ class CloneTable(google.protobuf.message.Message):
         ],
     ) -> None: ...
     def WhichOneof(
-        self, oneof_group: typing.Literal["version_or_timestamp", b"version_or_timestamp"]
-    ) -> typing.Literal["version", "timestamp"] | None: ...
+        self,
+        oneof_group: typing_extensions.Literal["version_or_timestamp", b"version_or_timestamp"],
+    ) -> typing_extensions.Literal["version", "timestamp"] | None: ...
 
 global___CloneTable = CloneTable

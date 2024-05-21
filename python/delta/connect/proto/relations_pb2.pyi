@@ -31,16 +31,19 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 import builtins
 import delta.connect.proto.proto.base_pb2
 import google.protobuf.descriptor
 import google.protobuf.message
-import typing
+import sys
+
+if sys.version_info >= (3, 8):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
-@typing.final
 class Scan(google.protobuf.message.Message):
     """Relation that reads from a Delta table."""
 
@@ -55,7 +58,9 @@ class Scan(google.protobuf.message.Message):
         *,
         table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["table", b"table"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["table", b"table"]) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["table", b"table"]
+    ) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
 
 global___Scan = Scan
