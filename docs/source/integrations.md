@@ -25,6 +25,7 @@ Since Athena [version 3](https://docs.aws.amazon.com/athena/latest/ug/engine-ver
     presto-integration
     redshift-spectrum-integration
     snowflake-integration
+    bigquery-integration
     hive-integration
     flink-integration
     delta-standalone
