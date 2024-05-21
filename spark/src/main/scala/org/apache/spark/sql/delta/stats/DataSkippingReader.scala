@@ -64,12 +64,20 @@ case class NumRecords(numPhysicalRecords: java.lang.Long, numLogicalRecords: jav
  * Represents a stats column (MIN, MAX, etc) for a given (nested) user table column name. Used to
  * keep track of which stats columns a data skipping query depends on.
  *
- * The `statType` is any value accepted by `getStatsColumnOpt()` (see object `DeltaStatistics`);
+ * The `pathToStatType` is path to a stats type accepted by `getStatsColumnOpt()`
+ *  (see object `DeltaStatistics`);
  * `pathToColumn` is the nested name of the user column whose stats are to be accessed.
+ * `columnDataType` is the data type of the column.
  */
-private [stats] case class StatsColumn(
-    statType: String,
-    pathToColumn: Seq[String] = Nil)
+private[stats] case class StatsColumn private(
+    pathToStatType: Seq[String],
+    pathToColumn: Seq[String])
+
+object StatsColumn {
+  def apply(statType: String, pathToColumn: Seq[String], columnDataType: DataType): StatsColumn = {
+    StatsColumn(Seq(statType), pathToColumn)
+  }
+}
 
 /**
  * A data skipping predicate, which includes the expression itself, plus the set of stats columns
@@ -236,8 +244,8 @@ trait DataSkippingReaderBase
    protected def constructNotNullFilter(
       statsProvider: StatsProvider,
       pathToColumn: Seq[String]): Option[DataSkippingPredicate] = {
-    val nullCountCol = StatsColumn(NULL_COUNT, pathToColumn)
-    val numRecordsCol = StatsColumn(NUM_RECORDS)
+    val nullCountCol = StatsColumn(NULL_COUNT, pathToColumn, LongType)
+    val numRecordsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
     statsProvider.getPredicateWithStatsColumns(nullCountCol, numRecordsCol) {
       (nullCount, numRecords) => nullCount < numRecords
     }
@@ -467,8 +475,8 @@ trait DataSkippingReaderBase
       // Match any file whose null count is larger than zero.
       // Note DVs might result in a redundant read of a file.
       // However, they cannot lead to a correctness issue.
-      case IsNull(SkippingEligibleColumn(a, _)) =>
-        statsProvider.getPredicateWithStatType(a, NULL_COUNT) { nullCount =>
+      case IsNull(SkippingEligibleColumn(a, dt)) =>
+        statsProvider.getPredicateWithStatType(a, dt, NULL_COUNT) { nullCount =>
           nullCount > Literal(0L)
         }
       case Not(IsNull(e)) =>
@@ -542,8 +550,8 @@ trait DataSkippingReaderBase
 
       // Similar to an equality test, except comparing against a prefix of the min/max stats, and
       // neither commutative nor invertible.
-      case StartsWith(SkippingEligibleColumn(a, _), v @ Literal(s: UTF8String, StringType)) =>
-        statsProvider.getPredicateWithStatTypes(a, MIN, MAX) { (min, max) =>
+      case StartsWith(SkippingEligibleColumn(a, _), v @ Literal(s: UTF8String, dt: StringType)) =>
+        statsProvider.getPredicateWithStatTypes(a, dt, MIN, MAX) { (min, max) =>
           val sLen = s.numChars()
           substring(min, 0, sLen) <= v && substring(max, 0, sLen) >= v
         }
@@ -603,17 +611,35 @@ trait DataSkippingReaderBase
    * Returns an expression to access the given statistics for a specific column, or None if that
    * stats column does not exist.
    *
-   * @param statType One of the fields declared by object `DeltaStatistics`
-   * @param pathToColumn The components of the nested column name to get stats for.
+   * @param pathToStatType Path components of one of the fields declared by the `DeltaStatistics`
+   *                       object. For statistics of collated strings, this path contains the
+   *                       versioned collation identifier. In all other cases the path only has one
+   *                       element. The path is in reverse order.
+   * @param pathToColumn The components of the nested column name to get stats for. The components
+   *                     are in reverse order.
    */
-  final protected def getStatsColumnOpt(statType: String, pathToColumn: Seq[String] = Nil)
-      : Option[Column] = {
-    // If the requested stats type doesn't even exist, just return None right away. This can
-    // legitimately happen if we have no stats at all, or if column stats are disabled (in which
-    // case only the NUM_RECORDS stat type is available).
-    if (!statsSchema.exists(_.name == statType)) {
-      return None
-    }
+  final protected def getStatsColumnOpt(
+      pathToStatType: Seq[String], pathToColumn: Seq[String]): Option[Column] = {
+
+    require(pathToStatType.nonEmpty, "No path to stats type provided.")
+
+    // First validate that pathToStatType is a valid path in the statsSchema. We start at the root
+    // of the stats schema and then follow the path. Note that the path is stored in reverse order.
+    // If one of the path components does not exist, the foldRight operation returns None.
+    val (initialColumn, initialFieldType) = pathToStatType
+      .foldRight(Option((getBaseStatsColumn, statsSchema.asInstanceOf[DataType]))) {
+        case (statTypePathComponent: String, Some((column: Column, struct: StructType))) =>
+          // Find the field matching the current path component name or return None otherwise.
+          struct.fields.collectFirst {
+            case StructField(name, dataType: DataType, _, _) if name == statTypePathComponent =>
+              (column.getField(statTypePathComponent), dataType)
+          }
+        case _ => None
+      }
+      // If the requested stats type doesn't even exist, just return None right away. This can
+      // legitimately happen if we have no stats at all, or if column stats are disabled (in which
+      // case only the NUM_RECORDS stat type is available).
+      .getOrElse { return None }
 
     // Given a set of path segments in reverse order, e.g. column a.b.c is Seq("c", "b", "a"), we
     // use a foldRight operation to build up the requested stats column, by successively applying
@@ -627,7 +653,7 @@ trait DataSkippingReaderBase
     // step of the traversal emits the updated column, along with the stats schema and table schema
     // elements corresponding to that column.
     val initialState: Option[(Column, DataType, DataType)] =
-      Some((getBaseStatsColumn.getField(statType), statsSchema(statType).dataType, metadata.schema))
+      Some((initialColumn, initialFieldType, metadata.schema))
     pathToColumn
       .foldRight(initialState) {
         // NOTE: Only match on StructType, because we cannot traverse through other DataTypes.
@@ -651,7 +677,7 @@ trait DataSkippingReaderBase
       // Filter out non-leaf columns -- they lack stats so skipping predicates can't use them.
       .filterNot(_._2.isInstanceOf[StructType])
       .map {
-        case (statCol, TimestampType, _) if statType == MAX =>
+        case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
           // SC-22824: For timestamps, JSON serialization will truncate to milliseconds. This means
           // that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
           // records that differ only in microsecond precision. (For example, a file containing only
@@ -661,7 +687,7 @@ trait DataSkippingReaderBase
           // There is a longer term task SC-22825 to fix the serialization problem that caused this.
           // But we need the adjustment in any case to correctly read stats written by old versions.
           new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
-        case (statCol, TimestampNTZType, _) if statType == MAX =>
+        case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
           // We also apply the same adjustment of max stats that was applied to Timestamp
           // for TimestampNTZ because these 2 types have the same precision in terms of time.
           new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
@@ -670,6 +696,11 @@ trait DataSkippingReaderBase
       }
   }
 
+  /** Convenience overload for single element stat type paths. */
+  final protected def getStatsColumnOpt(
+      statType: String, pathToColumn: Seq[String] = Nil): Option[Column] =
+    getStatsColumnOpt(Seq(statType), pathToColumn)
+
   /**
    * Returns an expression to access the given statistics for a specific column, or a NULL
    * literal expression if that column does not exist.
@@ -677,15 +708,15 @@ trait DataSkippingReaderBase
   final protected[delta] def getStatsColumnOrNullLiteral(
       statType: String,
       pathToColumn: Seq[String] = Nil) : Column =
-    getStatsColumnOpt(statType, pathToColumn).getOrElse(lit(null))
+    getStatsColumnOpt(Seq(statType), pathToColumn).getOrElse(lit(null))
 
   /** Overload for convenience working with StatsColumn helpers */
   final protected def getStatsColumnOpt(stat: StatsColumn): Option[Column] =
-    getStatsColumnOpt(stat.statType, stat.pathToColumn)
+    getStatsColumnOpt(stat.pathToStatType, stat.pathToColumn)
 
   /** Overload for convenience working with StatsColumn helpers */
   final protected[delta] def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
-    getStatsColumnOrNullLiteral(stat.statType, stat.pathToColumn)
+    getStatsColumnOpt(stat.pathToStatType, stat.pathToColumn).getOrElse(lit(null))
 
   /**
    * Returns an expression that can be used to check that the required statistics are present for a
@@ -708,8 +739,9 @@ trait DataSkippingReaderBase
       // must return `TRUE`, and without these NULL checks it would instead return
       // `NOT(NULL)` => `NULL`.
       referencedStats.flatMap { stat => stat match {
-        case StatsColumn(MIN, _) | StatsColumn(MAX, _) =>
-          Seq(stat, StatsColumn(NULL_COUNT, stat.pathToColumn), StatsColumn(NUM_RECORDS))
+        case StatsColumn(MIN +: _, _) | StatsColumn(MAX +: _, _) =>
+          Seq(stat, StatsColumn(NULL_COUNT, stat.pathToColumn, LongType),
+            StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType))
         case _ =>
           Seq(stat)
       }}.map{stat => stat match {
@@ -718,7 +750,7 @@ trait DataSkippingReaderBase
         // NOTE: We don't care about NULL/missing NULL_COUNT and NUM_RECORDS here, because the
         // separate NULL checks we emit for those columns will force the overall validation
         // predicate conjunction to FALSE in that case -- AND(FALSE, <anything>) is FALSE.
-        case StatsColumn(MIN, _) | StatsColumn(MAX, _) =>
+        case StatsColumn(MIN +: _, _) | StatsColumn(MAX +: _, _) =>
           getStatsColumnOrNullLiteral(stat).isNotNull ||
             (getStatsColumnOrNullLiteral(NULL_COUNT, stat.pathToColumn) ===
               getStatsColumnOrNullLiteral(NUM_RECORDS))
