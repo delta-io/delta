@@ -358,7 +358,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       checkLike(dummyInput, expression, Seq[BooleanJ](expOutput))
     }
 
-    Seq('!', '@', '#').foreach {
+    // check different escape chars
+    Seq('!', '@', '#', '_', '%').foreach {
       escape => {
         // null/empty
         checkLikeLiteral(null, "a", null, null)
@@ -367,7 +368,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         checkLikeLiteral("", "", null, true)
         checkLikeLiteral("a", "", null, false)
         checkLikeLiteral("", "a", null, false)
+      }
+    }
 
+    Seq('!', '@', '#').foreach {
+      escape => {
         // simple patterns
         checkLikeLiteral("abc", "abc", escape, true)
         checkLikeLiteral("a_%b", s"a${escape}__b", escape, true)
@@ -412,6 +417,22 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           s"""%${escape}${escape}""", escape, false)
       }
     }
+
+    // check '_' for escape char
+    checkLikeLiteral("abc", "abc", '_', true)
+    checkLikeLiteral("a_%b", s"a__%%b", '_', true)
+    checkLikeLiteral("abbc", "a__c", '_', false)
+    checkLikeLiteral("abbc", "a%%c", '_', true)
+    checkLikeLiteral("abbc", s"a___%c", '_', false)
+    checkLikeLiteral("abbc", s"a%_%c", '_', false)
+
+    // check '%' for escape char
+    checkLikeLiteral("abc", "abc", '%', true)
+    checkLikeLiteral("a_%b", s"a__%%b", '%', false)
+    checkLikeLiteral("abbc", "a__c", '%', true)
+    checkLikeLiteral("abbc", "a%%c", '%', false)
+    checkLikeLiteral("abbc", s"a%__c", '%', false)
+    checkLikeLiteral("abbc", s"a%_%_c", '%', false)
 
     def checkUnsupportedTypes(
          col1Type: DataType, col2Type: DataType): Unit = {
