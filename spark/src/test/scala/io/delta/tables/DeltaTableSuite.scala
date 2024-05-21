@@ -537,7 +537,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // create a table with a default Protocol.
       val testSchema = spark.range(1).schema
       val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
         FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata(schemaString = testSchema.json).json, Protocol(0, 0).json),
@@ -563,7 +563,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // create a table with a default Protocol.
       val testSchema = spark.range(1).schema
       val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
         FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata(schemaString = testSchema.json).json, Protocol(1, 2).json),

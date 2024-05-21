@@ -16,120 +16,194 @@
 package io.delta.kernel.internal;
 
 import java.sql.Timestamp;
-import java.util.Optional;
+import java.util.List;
+import static java.lang.String.format;
 
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.exceptions.*;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StructType;
 
+/**
+ * Contains methods to create user-facing Delta exceptions.
+ */
 public final class DeltaErrors {
     private DeltaErrors() {}
 
-    // TODO update to be user-facing exception with future exception framework
-    //  (see delta-io/delta#2231) & document in method docs as needed (Table::getSnapshotAtVersion)
-    public static RuntimeException nonReconstructableStateException(
-            String tablePath, long version) {
+    public static KernelException versionBeforeFirstAvailableCommit(
+            String tablePath, long versionToLoad, long earliestVersion) {
         String message = String.format(
-            "%s: Unable to reconstruct state at version %s as the transaction log has been " +
-                "truncated due to manual deletion or the log retention policy and checkpoint " +
-                "retention policy.",
+            "%s: Cannot load table version %s as the transaction log has been truncated due to " +
+                "manual deletion or the log/checkpoint retention policy. The earliest available " +
+                "version is %s.",
             tablePath,
-            version);
-        return new RuntimeException(message);
+            versionToLoad,
+            earliestVersion);
+        return new KernelException(message);
     }
 
-    // TODO update to be user-facing exception with future exception framework
-    //  (see delta-io/delta#2231) & document in method docs as needed (Table::getSnapshotAtVersion)
-    public static RuntimeException nonExistentVersionException(
+    public static KernelException versionAfterLatestCommit(
             String tablePath, long versionToLoad, long latestVersion) {
         String message = String.format(
-            "%s: Trying to load a non-existent version %s. The latest version available is %s",
+            "%s: Cannot load table version %s as it does not exist. " +
+                "The latest available version is %s.",
             tablePath,
             versionToLoad,
             latestVersion);
-        return new RuntimeException(message);
+        return new KernelException(message);
     }
 
-    // TODO update to be user-facing exception with future exception framework
-    //  (see delta-io/delta#2231) & document in method docs as needed
-    //  (Table::getSnapshotAtTimestamp)
-    public static RuntimeException timestampEarlierThanTableFirstCommitException(
-            String tablePath, long providedTimestamp, long commitTimestamp) {
+    public static KernelException timestampBeforeFirstAvailableCommit(
+            String tablePath,
+            long providedTimestamp,
+            long earliestCommitTimestamp,
+            long earliestCommitVersion) {
         String message = String.format(
-            "%s: The provided timestamp %s ms (%s) is before the earliest version available. " +
-                "Please use a timestamp greater than or equal to %s ms (%s)",
+            "%s: The provided timestamp %s ms (%s) is before the earliest available version %s. " +
+                "Please use a timestamp greater than or equal to %s ms (%s).",
             tablePath,
             providedTimestamp,
             formatTimestamp(providedTimestamp),
-            commitTimestamp,
-            formatTimestamp(commitTimestamp));
-        return new RuntimeException(message);
+            earliestCommitVersion,
+            earliestCommitTimestamp,
+            formatTimestamp(earliestCommitTimestamp));
+        return new KernelException(message);
     }
 
-    // TODO update to be user-facing exception with future exception framework
-    //  (see delta-io/delta#2231) & document in method docs as needed
-    //  (Table::getSnapshotAtTimestamp)
-    public static RuntimeException timestampLaterThanTableLastCommit(
-            String tablePath, long providedTimestamp, long commitTimestamp, long commitVersion) {
-        String commitTimestampStr = formatTimestamp(commitTimestamp);
+    public static KernelException timestampAfterLatestCommit(
+            String tablePath,
+            long providedTimestamp,
+            long latestCommitTimestamp,
+            long latestCommitVersion) {
         String message = String.format(
-            "%s: The provided timestamp %s ms (%s) is after the latest commit with " +
-                "timestamp %s ms (%s). If you wish to query this version of the table please " +
-                "either provide the version %s or use the exact timestamp of the last " +
-                "commit %s ms (%s)",
+            "%s: The provided timestamp %s ms (%s) is after the latest available version %s. " +
+                "Please use a timestamp less than or equal to %s ms (%s).",
             tablePath,
             providedTimestamp,
             formatTimestamp(providedTimestamp),
-            commitTimestamp,
-            commitTimestampStr,
-            commitVersion,
-            commitTimestamp,
-            commitTimestampStr);
-        return new RuntimeException(message);
+            latestCommitVersion,
+            latestCommitTimestamp,
+            formatTimestamp(latestCommitTimestamp));
+        return new KernelException(message);
     }
 
-    // TODO: Change the exception to proper type as part of the exception framework
-    // (see delta-io/delta#2231)
-    /**
-     * Exception thrown when the expression evaluator doesn't support the given expression.
-     * @param expression
-     * @param reason Optional additional reason for why the expression is not supported.
-     * @return
-     */
-    public static UnsupportedOperationException unsupportedExpression(
-            Expression expression,
-            Optional<String> reason) {
+    /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
+
+    public static KernelException unsupportedReaderProtocol(
+            String tablePath, int tableReaderVersion) {
         String message = String.format(
-            "Expression evaluator doesn't support the expression: %s.%s",
-                expression,
-                reason.map(r -> " Reason: " + r).orElse(""));
-        return new UnsupportedOperationException(message);
+            "Unsupported Delta protocol reader version: table `%s` requires reader version %s " +
+                "which is unsupported by this version of Delta Kernel.",
+            tablePath,
+            tableReaderVersion);
+        return new KernelException(message);
     }
 
-    public static UnsupportedOperationException unsupportedReaderProtocol(int readVersion) {
-        throw new UnsupportedOperationException(
-                "Unsupported reader protocol version: " + readVersion);
+    public static KernelException unsupportedReaderFeature(
+            String tablePath, String readerFeature) {
+        String message = String.format(
+            "Unsupported Delta reader feature: table `%s` requires reader table feature \"%s\" " +
+                "which is unsupported by this version of Delta Kernel.",
+            tablePath,
+            readerFeature);
+        return new KernelException(message);
     }
 
-    public static UnsupportedOperationException unsupportedReadFeature(
-            int readProtocolVersion,
-            String readFeature) {
-        throw new UnsupportedOperationException(String.format(
-                "Unsupported reader protocol version: %s with feature: %s",
-                    readProtocolVersion, readFeature));
+    public static KernelException unsupportedWriterProtocol(
+            String tablePath, int tableWriterVersion) {
+        String message = String.format(
+            "Unsupported Delta protocol writer version: table `%s` requires writer version %s " +
+                "which is unsupported by this version of Delta Kernel.",
+            tablePath,
+            tableWriterVersion);
+        return new KernelException(message);
     }
 
-    public static UnsupportedOperationException unsupportedWriterProtocol(int writeVersion) {
-        throw new UnsupportedOperationException(
-                "Unsupported writer protocol version: " + writeVersion);
+    public static KernelException unsupportedWriterFeature(
+            String tablePath, String writerFeature) {
+        String message = String.format(
+            "Unsupported Delta writer feature: table `%s` requires writer table feature \"%s\" " +
+                "which is unsupported by this version of Delta Kernel.",
+            tablePath,
+            writerFeature);
+        return new KernelException(message);
     }
 
-    public static UnsupportedOperationException unsupportedWriteFeature(
-            int writeProtocolVersion,
-            String writeFeature) {
-        throw new UnsupportedOperationException(String.format(
-                "Unsupported writer protocol version: %s with feature: %s",
-                writeProtocolVersion, writeFeature));
+    public static KernelException columnInvariantsNotSupported() {
+        String message = "This version of Delta Kernel does not support writing to tables with " +
+            "column invariants present.";
+        return new KernelException(message);
     }
 
+    public static KernelException unsupportedDataType(DataType dataType) {
+        return new KernelException("Kernel doesn't support writing data of type: " + dataType);
+    }
+
+    public static KernelException unsupportedPartitionDataType(String colName, DataType dataType) {
+        String msgT = "Kernel doesn't support writing data with partition column (%s) of type: %s";
+        return new KernelException(format(msgT, colName, dataType));
+    }
+
+    public static KernelException duplicateColumnsInSchema(
+            StructType schema,
+            List<String> duplicateColumns) {
+        String msg = format(
+            "Schema contains duplicate columns: %s.\nSchema: %s",
+            String.join(", ", duplicateColumns),
+            schema);
+        return new KernelException(msg);
+    }
+
+    public static KernelException invalidColumnName(
+            String columnName,
+            String unsupportedChars) {
+        return new KernelException(format(
+                "Column name '%s' contains one of the unsupported (%s) characters.",
+                columnName,
+                unsupportedChars));
+    }
+
+    public static KernelException requiresSchemaForNewTable(String tablePath) {
+        return new TableNotFoundException(
+                tablePath,
+                "Must provide a new schema to write to a new table.");
+    }
+
+    public static KernelException tableAlreadyExists(String tablePath, String message) {
+        return new TableAlreadyExistsException(tablePath, message);
+    }
+
+    public static KernelException dataSchemaMismatch(
+            String tablePath,
+            StructType tableSchema,
+            StructType dataSchema) {
+        String msgT = "The schema of the data to be written to the table doesn't match " +
+                "the table schema. \nTable: %s\nTable schema: %s, \nData schema: %s";
+        return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
+    }
+
+    public static KernelException partitionColumnMissingInData(
+            String tablePath,
+            String partitionColumn) {
+        String msgT = "Missing partition column '%s' in the data to be written to the table '%s'.";
+        return new KernelException(format(msgT, partitionColumn, tablePath));
+    }
+
+    public static KernelException concurrentTransaction(
+            String appId,
+            long txnVersion,
+            long lastUpdated) {
+        return new ConcurrentTransactionException(appId, txnVersion, lastUpdated);
+    }
+
+    public static KernelException metadataChangedException() {
+        return new MetadataChangedException();
+    }
+
+    public static KernelException protocolChangedException(long attemptVersion) {
+        return new ProtocolChangedException(attemptVersion);
+    }
+
+    /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
     }

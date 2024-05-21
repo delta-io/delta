@@ -234,7 +234,7 @@ class Snapshot(
    */
   val tableCommitOwnerClientOpt: Option[TableCommitOwnerClient] = initializeTableCommitOwner()
   protected def initializeTableCommitOwner(): Option[TableCommitOwnerClient] = {
-    ManagedCommitUtils.getTableCommitOwner(this)
+    ManagedCommitUtils.getTableCommitOwner(spark, this)
   }
 
   /** Number of columns to collect stats on for data skipping */
@@ -488,7 +488,8 @@ class Snapshot(
     if (minUnbackfilledVersion <= version) {
       val hadoopConf = deltaLog.newDeltaHadoopConf()
       tableCommitOwnerClient.backfillToVersion(
-        startVersion = minUnbackfilledVersion, endVersion = Some(version))
+        version,
+        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)
       val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
       if (!fs.exists(expectedBackfilledDeltaFile)) {

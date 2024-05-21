@@ -380,8 +380,11 @@ trait DataSkippingReaderBase
      * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
      * skipping for any file that lacks the needed stats columns).
      */
-    private def constructDataFilters(dataFilter: Expression):
+    private[stats] def constructDataFilters(dataFilter: Expression):
         Option[DataSkippingPredicate] = dataFilter match {
+      // Expressions that contain only literals are not eligible for skipping.
+      case cmp: Expression if cmp.children.forall(areAllLeavesLiteral) => None
+
       // Push skipping predicate generation through the AND:
       //
       // constructDataFilters(AND(a, b))
@@ -570,6 +573,12 @@ trait DataSkippingReaderBase
 
       // Unknown expression type... can't use it for data skipping.
       case _ => None
+    }
+
+    private def areAllLeavesLiteral(e: Expression): Boolean = e match {
+      case _: Literal => true
+      case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
+      case _ => false
     }
 
     /**

@@ -185,6 +185,34 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(Action.fromJson(json1) === expectedCommitInfo)
   }
 
+  test("deserialization of CommitInfo with a very small ICT") {
+    val json1 =
+      """{"commitInfo":{"inCommitTimestamp":123,"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+    assert(Action.fromJson(json1).asInstanceOf[CommitInfo].inCommitTimestamp.get == 123L)
+  }
+
+  test("deserialization of CommitInfo with a very large ICT") {
+    val json1 =
+      """{"commitInfo":{"inCommitTimestamp":123333333,"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+    assert(Action.fromJson(json1).asInstanceOf[CommitInfo].inCommitTimestamp.get == 123333333L)
+  }
+
+  test("deserialization of CommitInfo with missing ICT") {
+    val json1 =
+      """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+    val ictOpt: Option[Long] = Action.fromJson(json1).asInstanceOf[CommitInfo].inCommitTimestamp
+    assert(ictOpt.isEmpty)
+  }
+
   testActionSerDe(
     "Protocol - json serialization/deserialization",
     Protocol(minReaderVersion = 1, minWriterVersion = 2),

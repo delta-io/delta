@@ -28,6 +28,7 @@ This is the documentation site for <Delta>.
     delta-drop-feature
     delta-apidoc
     delta-storage
+    delta-type-widening
     delta-uniform
     delta-sharing
     concurrency-control

@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.util.Utils
 
 /**
  * Helper functions for CDC-specific handling for DeltaSource.
@@ -202,16 +203,22 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         (v, indexFiles.filter(_.hasFileAction).map { _.getFileAction }.toSeq)
       }
 
-    val cdcInfo = CDCReader.changesToDF(
-      readSnapshotDescriptor,
-      startVersion,
-      endOffset.reservoirVersion,
-      groupedFileActions,
-      spark,
-      isStreaming = true
-    )
+    val (result, duration) = Utils.timeTakenMs {
+      val cdcInfo = CDCReader.changesToDF(
+        readSnapshotDescriptor,
+        startVersion,
+        endOffset.reservoirVersion,
+        groupedFileActions,
+        spark,
+        isStreaming = true
+      )
 
-    cdcInfo.fileChangeDf
+      cdcInfo.fileChangeDf
+    }
+    logInfo(s"Getting CDC dataFrame for delta_log_path=${deltaLog.logPath} with " +
+      s"startVersion=$startVersion, startIndex=$startIndex, isInitialSnapshot=$isInitialSnapshot " +
+      s"took timeMs=$duration ms")
+    result
   }
 
   /**
@@ -243,60 +250,68 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
             actions, version, fromVersion, endOffset.map(_.reservoirVersion),
             verifyMetadataAction && !trackingMetadataChange)
         val itr = addBeginAndEndIndexOffsetsForVersion(version,
-              getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
-              fileActions.zipWithIndex.map {
-                case (action: AddFile, index) =>
-                  IndexedFile(
-                    version,
-                    index.toLong,
-                    action,
-                    shouldSkip = skipIndexedFile)
-                case (cdcFile: AddCDCFile, index) =>
-                  IndexedFile(
-                    version,
-                    index.toLong,
-                    add = null,
-                    cdc = cdcFile,
-                    shouldSkip = skipIndexedFile)
-                case (remove: RemoveFile, index) =>
-                  IndexedFile(
-                    version,
-                    index.toLong,
-                    add = null,
-                    remove = remove,
-                    shouldSkip = skipIndexedFile)
+          getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
+            fileActions.zipWithIndex.map {
+              case (action: AddFile, index) =>
+                IndexedFile(
+                  version,
+                  index.toLong,
+                  action,
+                  shouldSkip = skipIndexedFile)
+              case (cdcFile: AddCDCFile, index) =>
+                IndexedFile(
+                  version,
+                  index.toLong,
+                  add = null,
+                  cdc = cdcFile,
+                  shouldSkip = skipIndexedFile)
+              case (remove: RemoveFile, index) =>
+                IndexedFile(
+                  version,
+                  index.toLong,
+                  add = null,
+                  remove = remove,
+                  shouldSkip = skipIndexedFile)
             })
         (version, new IndexedChangeFileSeq(itr, isInitialSnapshot = false))
       }
     }
 
-    val iter: Iterator[(Long, IndexedChangeFileSeq)] = if (isInitialSnapshot) {
-      // If we are reading change data from the start of the table we need to
-      // get the latest snapshot of the table as well.
-      val snapshot: Iterator[IndexedFile] = getSnapshotAt(fromVersion).map { m =>
-        // When we get the snapshot the dataChange is false for the AddFile actions
-        // We need to set it to true for it to be considered by the CDCReader.
-        if (m.add != null) {
-          m.copy(add = m.add.copy(dataChange = true))
-        } else {
-          m
+    val (result, duration) = Utils.timeTakenMs {
+      val iter: Iterator[(Long, IndexedChangeFileSeq)] = if (isInitialSnapshot) {
+        // If we are reading change data from the start of the table we need to
+        // get the latest snapshot of the table as well.
+        val snapshot: Iterator[IndexedFile] = getSnapshotAt(fromVersion).map { m =>
+          // When we get the snapshot the dataChange is false for the AddFile actions
+          // We need to set it to true for it to be considered by the CDCReader.
+          if (m.add != null) {
+            m.copy(add = m.add.copy(dataChange = true))
+          } else {
+            m
+          }
         }
-      }
-      val snapshotItr: Iterator[(Long, IndexedChangeFileSeq)] = Iterator((
-        fromVersion,
-        new IndexedChangeFileSeq(snapshot, isInitialSnapshot = true)
-      ))
+        val snapshotItr: Iterator[(Long, IndexedChangeFileSeq)] = Iterator((
+          fromVersion,
+          new IndexedChangeFileSeq(snapshot, isInitialSnapshot = true)
+        ))
 
-      snapshotItr ++ filterAndIndexDeltaLogs(fromVersion + 1)
-    } else {
-      filterAndIndexDeltaLogs(fromVersion)
+        snapshotItr ++ filterAndIndexDeltaLogs(fromVersion + 1)
+      } else {
+        filterAndIndexDeltaLogs(fromVersion)
+      }
+
+      // In this case, filterFiles will consume the available capacity. We use takeWhile
+      // to stop the iteration when we reach the limit which will save us from reading
+      // unnecessary log files.
+      iter.takeWhile(_ => limits.forall(_.hasCapacity)).map { case (version, indexItr) =>
+        (version, indexItr.filterFiles(fromVersion, fromIndex, limits, endOffset))
+      }
     }
-    // In this case, filterFiles will consume the available capacity. We use takeWhile
-    // to stop the iteration when we reach the limit which will save us from reading
-    // unnecessary log files.
-    iter.takeWhile(_ => limits.forall(_.hasCapacity)).map { case (version, indexItr) =>
-      (version, indexItr.filterFiles(fromVersion, fromIndex, limits, endOffset))
-    }
+
+    logInfo(s"Getting CDC file changes for delta_log_path=${deltaLog.logPath} with " +
+      s"fromVersion=$fromVersion, fromIndex=$fromIndex, isInitialSnapshot=$isInitialSnapshot " +
+      s"took timeMs=$duration ms")
+    result
   }
 
   /////////////////////

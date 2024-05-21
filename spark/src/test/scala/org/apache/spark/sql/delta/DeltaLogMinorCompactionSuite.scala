@@ -43,7 +43,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       endVersion: Long): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     deltaLog.update().tableCommitOwnerClientOpt.foreach { tableCommitOwnerClient =>
-      tableCommitOwnerClient.backfillToVersion(startVersion = 0, Some(endVersion))
+      tableCommitOwnerClient.backfillToVersion(endVersion)
     }
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = 0,
@@ -440,15 +440,15 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   }
 }
 
-class ManagedCommitBatchBackfill1DeltaLogMinorCompactionSuite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithManagedCommitBatch1Suite extends DeltaLogMinorCompactionSuite {
   override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class ManagedCommitBatchBackFill2DeltaLogMinorCompactionSuite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithManagedCommitBatch2Suite extends DeltaLogMinorCompactionSuite {
   override val managedCommitBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class ManagedCommitBatchBackFill20DeltaLogMinorCompactionSuite
+class DeltaLogMinorCompactionWithManagedCommitBatch100Suite
     extends DeltaLogMinorCompactionSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(20)
+  override val managedCommitBackfillBatchSize: Option[Int] = Some(100)
 }

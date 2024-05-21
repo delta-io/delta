@@ -15,6 +15,8 @@
  */
 package example
 
+import io.delta.tables.DeltaTable
+
 import org.apache.spark.sql.SparkSession
 
 object Clustering {
@@ -51,6 +53,29 @@ object Clustering {
       // Optimize the table
       println("Optimize the table")
       deltaSpark.sql(s"OPTIMIZE $tableName")
+
+      // Change the clustering columns
+      println("Change the clustering columns")
+      deltaSpark.sql(
+        s"""ALTER TABLE $tableName CLUSTER BY (col2, col1)""".stripMargin)
+
+
+      // Check the clustering columns
+      println("Check the clustering columns")
+      deltaSpark.sql(s"DESCRIBE DETAIL $tableName").show(false)
+    } finally {
+      // Cleanup
+      deltaSpark.sql(s"DROP TABLE IF EXISTS $tableName")
+    }
+
+    // DeltaTable clusterBy Scala API
+    try {
+      val table = io.delta.tables.DeltaTable.create()
+        .tableName(tableName)
+        .addColumn("col1", "INT")
+        .addColumn("col2", "STRING")
+        .clusterBy("col1", "col2")
+        .execute()
     } finally {
       // Cleanup
       deltaSpark.sql(s"DROP TABLE IF EXISTS $tableName")

@@ -467,8 +467,8 @@ class DeltaLog private(
 
   def isSameLogAs(otherLog: DeltaLog): Boolean = this.compositeId == otherLog.compositeId
 
-  /** Creates the log directory if it does not exist. */
-  def ensureLogDirectoryExist(): Unit = {
+  /** Creates the log directory and commit directory if it does not exist. */
+  def createLogDirectoriesIfNotExists(): Unit = {
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
     def createDirIfNotExists(path: Path): Unit = {
       // Optimistically attempt to create the directory first without checking its existence.
@@ -498,14 +498,6 @@ class DeltaLog private(
       }
     }
     createDirIfNotExists(FileNames.commitDirPath(logPath))
-  }
-
-  /**
-   * Create the log directory. Unlike `ensureLogDirectoryExist`, this method doesn't check whether
-   * the log directory exists and it will ignore the return value of `mkdirs`.
-   */
-  def createLogDirectory(): Unit = {
-    logPath.getFileSystem(newDeltaHadoopConf()).mkdirs(logPath)
   }
 
   /* ------------  *
