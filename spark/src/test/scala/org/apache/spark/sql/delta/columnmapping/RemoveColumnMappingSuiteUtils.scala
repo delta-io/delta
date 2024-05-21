@@ -102,8 +102,11 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
       spark.table(tableName = testTableName).select(logicalColumnName),
       originalData)
     val newSnapshot = deltaLog.update()
-    // Drop feature adds 2 empty commits.
-    val versionsAddedByRewrite = if (droppedFeature) 3 else 1
+    val versionsAddedByRewrite = if (droppedFeature) {
+      2
+    } else {
+      1
+    }
     assert(newSnapshot.version - startingVersion == versionsAddedByRewrite,
       s"Should rewrite the table in $versionsAddedByRewrite commits.")
 
