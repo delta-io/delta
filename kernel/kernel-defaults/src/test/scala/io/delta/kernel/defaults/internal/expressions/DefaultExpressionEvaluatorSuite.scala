@@ -33,6 +33,9 @@ import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
+import scala.collection.JavaConverters._
+
+
 class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
   test("evaluate expression: literal") {
     val testLiterals = Seq(
@@ -319,7 +322,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     def checkBatch(
           input: DefaultColumnarBatch,
-          likeExpression: Like,
+          likeExpression: Predicate,
           expOutputSeq: Seq[BooleanJ]): Unit = {
       val actOutputVector =
         new DefaultExpressionEvaluator(
@@ -351,9 +354,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val dummyInput = new DefaultColumnarBatch(1,
         new StructType().add("dummy", StringType.STRING),
         Array(stringVector(Seq[String](""))))
+
     def checkLiteral(left: String, right: String,
         escape: Character = null, expOutput: BooleanJ): Unit = {
-      val expression = like(Literal.ofString(left), Literal.ofString(right), Some(escape))
+      val expression = like(Literal.ofString(left), Literal.ofString(right), Option(escape))
       checkBatch(dummyInput, expression, Seq[BooleanJ](expOutput))
     }
 
@@ -432,6 +436,22 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
     checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
     checkUnsupportedTypes(StringType.STRING, LongType.LONG)
+    checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
+
+    // additional escape token checks
+    val escapeCharError1 = intercept[UnsupportedOperationException] {
+      val expression = like(Literal.ofString("a"), Literal.ofString("b"), Literal.ofString("~~"))
+      checkBatch(dummyInput, expression, Seq[BooleanJ](null))
+    }
+    assert(escapeCharError1.getMessage.contains(
+      "'like' expects escape token to be a single character"))
+
+    val escapeCharError2 = intercept[UnsupportedOperationException] {
+      val expression = like(Literal.ofString("a"), Literal.ofString("b"), Literal.ofInt(1))
+      checkBatch(dummyInput, expression, Seq[BooleanJ](null))
+    }
+    assert(escapeCharError2.getMessage.contains(
+      "'like' expects escape token expression to be a literal of String type"))
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {

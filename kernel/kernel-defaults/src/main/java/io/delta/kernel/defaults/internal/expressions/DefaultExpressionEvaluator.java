@@ -16,9 +16,7 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -283,15 +281,28 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         }
 
         @Override
-        ExpressionTransformResult visitLike(final Like like) {
-            ExpressionTransformResult leftResult = visit(getLeft(like));
-            ExpressionTransformResult rightResult = visit(getRight(like));
-            if (!(StringType.STRING.equivalent(leftResult.outputType)
-                    && StringType.STRING.equivalent(rightResult.outputType))) {
+        ExpressionTransformResult visitLike(final Predicate like) {
+            List<ExpressionTransformResult> children =
+                    like.getChildren().stream()
+                        .map(this::visit)
+                        .collect(Collectors.toList());
+            int size = children.size();
+            if (size<2 || size>3) {
                 throw unsupportedExpressionException(like,
-                        "'like' is only supported for string type expressions");
+                        "like requires at least two expressions and a maximum of 3 expressions");
             }
-            return new ExpressionTransformResult(like, BooleanType.BOOLEAN);
+
+            Predicate transformedExpression =
+                    LikeExpressionEvaluator.validateAndTransform(
+                        like,
+                        children.get(0).expression,
+                        children.get(0).outputType,
+                        children.get(1).expression,
+                        children.get(1).outputType,
+                        size==3 ? children.get(2).expression : null,
+                        size==3 ? children.get(2).outputType : null);
+
+            return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
         }
 
         private Predicate validateIsPredicate(
@@ -575,64 +586,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         }
 
         @Override
-        ColumnVector visitLike(final Like like) {
-            PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(like);
-            ColumnVector left = argResults.leftResult;
-            ColumnVector right = argResults.rightResult;
-            int numRows = argResults.rowCount;
-            boolean[] result = new boolean[numRows];
-            boolean[] nullability = new boolean[numRows];
-            for (int rowId = 0; rowId < numRows; rowId++) {
-                String leftOp = left.getString(rowId);
-                String rightOp = right.getString(rowId);
-                if (!Objects.isNull(leftOp) && !Objects.isNull(rightOp)) {
-                    nullability[rowId] = false;
-                    String rightOpRegexPattern =
-                            escapeLikeRegex(rightOp, like.getEscape());
-                    result[rowId] = leftOp.matches(rightOpRegexPattern);
-                } else {
-                    nullability[rowId] = true;
-                    result[rowId] = false;
-                }
-            }
-            return new DefaultBooleanVector(numRows,
-                    Optional.of(nullability), result);
-        }
-
-        private String escapeLikeRegex(String pattern, char escape) {
-            final int len = pattern.length();
-            final StringBuilder javaPattern = new StringBuilder(len + len);
-            for (int i = 0; i < len; i++) {
-                char c = pattern.charAt(i);
-
-                if (c == escape) {
-                    if (i == (pattern.length() - 1)) {
-                        throw invalidEscapeSequence(pattern, i);
-                    }
-                    char nextChar = pattern.charAt(i + 1);
-                    if ((nextChar == '_')
-                            || (nextChar == '%')
-                            || (nextChar == escape)) {
-                        javaPattern.append(
-                                Pattern.quote(Character.toString(nextChar)));
-                        i++;
-                    } else {
-                        throw invalidEscapeSequence(pattern, i);
-                    }
-                } else if (c == '_') {
-                    javaPattern.append('.');
-                } else if (c == '%') {
-                    javaPattern.append(".*");
-                } else {
-                    javaPattern.append(Pattern.quote(Character.toString(c)));
-                }
-
-            }
-            return "(?s)" + javaPattern;
-        }
-
-        private RuntimeException invalidEscapeSequence(String s, int i) {
-            return new RuntimeException("Invalid escape sequence '" + s + "', " + i);
+        ColumnVector visitLike(final Predicate like) {
+            List<Expression> children = like.getChildren();
+            int size = children.size();
+            ColumnVector left = visit(children.get(0));
+            ColumnVector right = visit(children.get(1));
+            ColumnVector escapeChar = (size == 3 && children.get(2)!=null) ?
+                                        visit(children.get(2)) :
+                                        null;
+            return LikeExpressionEvaluator.eval(
+                    left,
+                    right,
+                    escapeChar);
         }
 
         /**
