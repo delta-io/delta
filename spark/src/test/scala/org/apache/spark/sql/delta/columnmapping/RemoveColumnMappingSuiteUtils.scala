@@ -70,7 +70,7 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
     val originalSnapshot = deltaLog.update()
 
     assert(originalSnapshot.schema.head.getComment().get == comment,
-      "Renamed column should preserved comment.")
+      "Renamed column should preserve comment.")
     val originalFiles = getFiles(originalSnapshot)
     val startingVersion = deltaLog.update().version
 
@@ -96,22 +96,26 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
       deltaLog: DeltaLog,
       originalFiles: Array[AddFile],
       startingVersion: Long,
-      originalData: Array[Row]): Unit = {
+      originalData: Array[Row],
+      droppedFeature: Boolean = false): Unit = {
     checkAnswer(
       spark.table(tableName = testTableName).select(logicalColumnName),
       originalData)
-
     val newSnapshot = deltaLog.update()
-    assert(newSnapshot.version - startingVersion == 1, "Should rewrite the table in one commit.")
+    // Drop feature adds 2 empty commits.
+    val versionsAddedByRewrite = if (droppedFeature) 3 else 1
+    assert(newSnapshot.version - startingVersion == versionsAddedByRewrite,
+      s"Should rewrite the table in $versionsAddedByRewrite commits.")
 
-    val history = deltaLog.history.getHistory(deltaLog.update().version)
+    val rewriteVersion = deltaLog.update().version - versionsAddedByRewrite + 1
+    val history = deltaLog.history.getHistory(rewriteVersion, Some(rewriteVersion))
     verifyColumnMappingOperationIsRecordedInHistory(history)
 
     assert(newSnapshot.schema.head.name == logicalColumnName, "Should rename the first column.")
 
     verifyColumnMappingSchemaMetadataIsRemoved(newSnapshot)
 
-    verifyColumnMappingTablePropertiesAbsent(newSnapshot, unsetTableProperty)
+    verifyColumnMappingTablePropertiesAbsent(newSnapshot, unsetTableProperty || droppedFeature)
     assert(originalFiles.map(_.numLogicalRecords.get).sum ==
       newSnapshot.allFiles.map(_.numLogicalRecords.get).collect().sum,
       "Should have the same number of records.")
