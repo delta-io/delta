@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -490,6 +491,7 @@ object ColumnMappingTableFeature
     name = "columnMapping",
     minReaderVersion = 2,
     minWriterVersion = 5)
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
@@ -499,6 +501,27 @@ object ColumnMappingTableFeature
       case _ => true
     }
   }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val schemaHasNoColumnMappingMetadata =
+      SchemaMergingUtils.explode(snapshot.schema).forall { case (_, col) =>
+        !DeltaColumnMapping.hasPhysicalName(col) &&
+          !DeltaColumnMapping.hasColumnId(col)
+      }
+    val metadataHasNoMappingMode = snapshot.metadata.columnMappingMode match {
+      case NoMapping => true
+      case _ => false
+    }
+    schemaHasNoColumnMappingMetadata && metadataHasNoMappingMode
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+      case m: Metadata => DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(m) != NoMapping
+      case _ => false
+    }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    ColumnMappingPreDowngradeCommand(table)
 }
 
 object IdentityColumnsTableFeature

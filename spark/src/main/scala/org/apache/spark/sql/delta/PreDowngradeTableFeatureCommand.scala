@@ -22,8 +22,10 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
+import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
@@ -341,6 +343,36 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     txn.commit(
       metadata.copy(schemaString = cleanedSchema.json) :: Nil,
       DeltaOperations.UpdateColumnMetadata("DROP FEATURE", changes))
+    true
+  }
+}
+case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+
+  /**
+   * We first remove the table feature property to prevent any transactions from writting data
+   * files with the physical names. This will cause any concurrent transactions to fail.
+   * Then, we run RemoveColumnMappingCommand to rewrite the files rename columns.
+   * Note, during the protocol downgrade phase we validate whether all invariants still hold.
+   * This should detect if any concurrent txns enabled the table property again.
+   *
+   * @return Returns true if it removed table property and/or has rewritten the data.
+   *         False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val spark = table.spark
+
+    // Latest snapshot looks clean. No action is required. We may proceed
+    // to the protocol downgrade phase.
+    if (ColumnMappingTableFeature.validateRemoval(table.initialSnapshot)) return false
+
+    recordDeltaOperation(
+      table.deltaLog,
+      opType = "delta.columnMappingFeatureRemoval") {
+      RemoveColumnMappingCommand(table.deltaLog, table.catalogTable)
+        .run(spark, removeColumnMappingTableProperty = true)
+    }
     true
   }
 }
