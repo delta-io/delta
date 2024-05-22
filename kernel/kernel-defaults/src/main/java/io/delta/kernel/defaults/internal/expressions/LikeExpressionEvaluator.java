@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -41,7 +42,8 @@ public class LikeExpressionEvaluator {
 
     static Predicate validateAndTransform(
             Predicate like,
-            List<Expression> childrenExpressions, List<DataType> childrenOutputTypes) {
+            List<Expression> childrenExpressions,
+            List<DataType> childrenOutputTypes) {
         int size = childrenExpressions.size();
         if (size < 2 || size > 3) {
             throw unsupportedExpressionException(like,
@@ -53,8 +55,8 @@ public class LikeExpressionEvaluator {
         DataType leftOutputType = childrenOutputTypes.get(0);
         Expression right = childrenExpressions.get(1);
         DataType rightOutputType = childrenOutputTypes.get(1);
-        Expression escapeCharExpr = size==3 ? childrenExpressions.get(2) : null;
-        DataType escapeCharOutputType = size==3 ? childrenOutputTypes.get(2) : null;
+        Expression escapeCharExpr = size == 3 ? childrenExpressions.get(2) : null;
+        DataType escapeCharOutputType = size == 3 ? childrenOutputTypes.get(2) : null;
 
         if (!(StringType.STRING.equivalent(leftOutputType)
                 && StringType.STRING.equivalent(rightOutputType))) {
@@ -70,29 +72,40 @@ public class LikeExpressionEvaluator {
         }
 
         Literal literal = (Literal) escapeCharExpr;
-        if (literal!=null &&
+        if (literal != null &&
                 literal.getValue().toString().length() != 1) {
             throw unsupportedExpressionException(like,
                     "LIKE expects escape token to be a single character");
         }
 
-        return new Predicate(like.getName(), Arrays.asList(left, right, escapeCharExpr));
+        List<Expression> children = new ArrayList<>(Arrays.asList(left, right));
+        if(Objects.nonNull(escapeCharExpr)) {
+            children.add(escapeCharExpr);
+        }
+        return new Predicate(like.getName(), children);
     }
 
     static ColumnVector eval(List<ColumnVector> children) {
         final char DEFAULT_ESCAPE_CHAR = '\\';
 
         return new ColumnVector() {
-            final ColumnVector escapeCharLiteral =
+            final ColumnVector escapeCharVector =
                     children.size() == 3 ?
                     children.get(2) :
                     null;
             final ColumnVector left = children.get(0);
             final ColumnVector right = children.get(1);
 
-            final char escape = escapeCharLiteral!=null ?
-                    escapeCharLiteral.getString(0).charAt(0) : DEFAULT_ESCAPE_CHAR;
+            Character escapeChar = null;
 
+            public void initEscapeCharIfRequired() {
+                if (escapeChar == null) {
+                    escapeChar =
+                            escapeCharVector != null && !escapeCharVector.getString(0).isEmpty() ?
+                                escapeCharVector.getString(0).charAt(0) :
+                                DEFAULT_ESCAPE_CHAR;
+                    }
+            }
 
             @Override
             public DataType getDataType() {
@@ -111,8 +124,8 @@ public class LikeExpressionEvaluator {
 
             @Override
             public boolean getBoolean(int rowId) {
-                return isLike(left.getString(rowId),
-                        right.getString(rowId), escape);
+                initEscapeCharIfRequired();
+                return isLike(left.getString(rowId), right.getString(rowId), escapeChar);
             }
 
             @Override
@@ -122,8 +135,7 @@ public class LikeExpressionEvaluator {
 
             public boolean isLike(String input, String pattern, char escape) {
                 if (!Objects.isNull(input) && !Objects.isNull(pattern)) {
-                    String regex =
-                            escapeLikeRegex(pattern, escape);
+                    String regex = escapeLikeRegex(pattern, escape);
                     return input.matches(regex);
                 }
                 return false;
@@ -151,8 +163,7 @@ public class LikeExpressionEvaluator {
                 if ((nextChar == '_')
                         || (nextChar == '%')
                         || (nextChar == escape)) {
-                    javaPattern.append(
-                            Pattern.quote(Character.toString(nextChar)));
+                    javaPattern.append(Pattern.quote(Character.toString(nextChar)));
                     i++;
                 } else {
                     throw invalidEscapeSequence(pattern, i);

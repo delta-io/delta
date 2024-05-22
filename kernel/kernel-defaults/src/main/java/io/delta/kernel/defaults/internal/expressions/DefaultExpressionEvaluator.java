@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import static java.lang.String.format;
@@ -285,9 +284,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ExpressionTransformResult visitLike(final Predicate like) {
             List<ExpressionTransformResult> children =
                     like.getChildren().stream()
-                            .filter(Objects::nonNull)
                             .map(this::visit)
-                        .collect(Collectors.toList());
+                            .collect(toList());
             Predicate transformedExpression =
                     LikeExpressionEvaluator.validateAndTransform(
                         like,
@@ -582,8 +580,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             List<Expression> children = like.getChildren();
             return LikeExpressionEvaluator.eval(
                         children.stream()
-                        .filter(Objects::nonNull)
-                        .map(this::visit).collect(toList()));
+                        .map(this::visit)
+                        .collect(toList()));
         }
 
         /**

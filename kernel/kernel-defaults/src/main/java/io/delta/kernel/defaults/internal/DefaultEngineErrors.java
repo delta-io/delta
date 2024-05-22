@@ -47,7 +47,7 @@ public class DefaultEngineErrors {
      */
     public static IllegalArgumentException invalidEscapeSequence(String pattern, int index) {
         return new IllegalArgumentException(
-                format("Like expression has invalid escape sequence '%s' at index %d",
+                format("LIKE expression has invalid escape sequence '%s' at index %d",
                         pattern, index));
     }
 }

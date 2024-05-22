@@ -330,23 +330,27 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     // check column expressions on both sides
     checkLike(
-      input, like(new Column("col1"), new Column("col2")),
-        Seq[BooleanJ](true, false, true, true, null, null, null, true))
+      input,
+      like(new Column("col1"), new Column("col2")),
+      Seq[BooleanJ](true, false, true, true, null, null, null, true))
 
     // check column expression against literal
     checkLike(
-      input, like(new Column("col1"), Literal.ofString("t%")),
-        Seq[BooleanJ](false, true, true, false, null, null, false, false))
+      input,
+      like(new Column("col1"), Literal.ofString("t%")),
+      Seq[BooleanJ](false, true, true, false, null, null, false, false))
 
     // ends with checks
     checkLike(
-      input, like(new Column("col1"), Literal.ofString("%t")),
-        Seq[BooleanJ](false, false, false, false, null, null, false, true))
+      input,
+      like(new Column("col1"), Literal.ofString("%t")),
+      Seq[BooleanJ](false, false, false, false, null, null, false, true))
 
     // contains checks
     checkLike(
-      input, like(new Column("col1"), Literal.ofString("%t%")),
-        Seq[BooleanJ](false, true, true, false, null, null, false, true))
+      input,
+      like(new Column("col1"), Literal.ofString("%t%")),
+      Seq[BooleanJ](false, true, true, false, null, null, false, true))
 
     val dummyInput = new DefaultColumnarBatch(1,
         new StructType().add("dummy", StringType.STRING),
@@ -358,18 +362,13 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       checkLike(dummyInput, expression, Seq[BooleanJ](expOutput))
     }
 
-    // check different escape chars
-    Seq('!', '@', '#', '_', '%').foreach {
-      escape => {
-        // null/empty
-        checkLikeLiteral(null, "a", null, null)
-        checkLikeLiteral("a", null, null, null)
-        checkLikeLiteral(null, null, null, null)
-        checkLikeLiteral("", "", null, true)
-        checkLikeLiteral("a", "", null, false)
-        checkLikeLiteral("", "a", null, false)
-      }
-    }
+    // null/empty
+    checkLikeLiteral(null, "a", null, null)
+    checkLikeLiteral("a", null, null, null)
+    checkLikeLiteral(null, null, null, null)
+    checkLikeLiteral("", "", null, true)
+    checkLikeLiteral("a", "", null, false)
+    checkLikeLiteral("", "a", null, false)
 
     Seq('!', '@', '#').foreach {
       escape => {
@@ -388,6 +387,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         checkLikeLiteral("a\nb", "a_b", escape, true)
         checkLikeLiteral("ab", "a%b", escape, true)
         checkLikeLiteral("a\nb", "a%b", escape, true)
+        checkLikeLiteral("a\nb", "ab", escape, false)
+        checkLikeLiteral("a\nb", "a\nb", escape, true)
+        checkLikeLiteral("a\n\nb", "a\nb", escape, false)
+        checkLikeLiteral("a\n\nb", "a\n_b", escape, true)
 
         // case
         checkLikeLiteral("A", "a%", escape, false)
@@ -409,12 +412,12 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
         // double-escaping
         checkLikeLiteral(
-          s"""$escape$escape$escape$escape""", s"""%${escape}${escape}%""", escape, true)
-        checkLikeLiteral("""%%""", """%%""", escape, true)
-        checkLikeLiteral(s"""${escape}__""", s"""${escape}${escape}${escape}__""", escape, true)
-        checkLikeLiteral(s"""${escape}__""", s"""%${escape}${escape}%${escape}%""", escape, false)
-        checkLikeLiteral(s"""_${escape}${escape}${escape}%""",
-          s"""%${escape}${escape}""", escape, false)
+          s"$escape$escape$escape$escape", s"%${escape}${escape}%", escape, true)
+        checkLikeLiteral("%%", "%%", escape, true)
+        checkLikeLiteral(s"${escape}__", s"${escape}${escape}${escape}__", escape, true)
+        checkLikeLiteral(s"${escape}__", s"%${escape}${escape}%${escape}%", escape, false)
+        checkLikeLiteral(s"_${escape}${escape}${escape}%",
+          s"%${escape}${escape}", escape, false)
       }
     }
 
@@ -429,6 +432,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // check '%' for escape char
     checkLikeLiteral("abc", "abc", '%', true)
     checkLikeLiteral("a_%b", s"a__%%b", '%', false)
+    checkLikeLiteral("a_%b", s"a_%%b", '%', true)
     checkLikeLiteral("abbc", "a__c", '%', true)
     checkLikeLiteral("abbc", "a%%c", '%', false)
     checkLikeLiteral("abbc", s"a%__c", '%', false)
@@ -488,6 +492,20 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
     assert(escapeCharError2.getMessage.contains(
       "LIKE expects escape token expression to be a literal of String type"))
+
+    // empty input checks
+    val emptyInput = new DefaultColumnarBatch(0,
+          new StructType().add("dummy", StringType.STRING),
+          Array(stringVector(Seq[String](""))))
+    checkLike(emptyInput,
+      like(Literal.ofString("abc"), Literal.ofString("abc"), Some('_')), Seq[BooleanJ]())
+
+    // invalid pattern check
+    val invalidPatternError = intercept[IllegalArgumentException] {
+      checkLikeLiteral("abbc", "a%%%c", '%', false)
+    }
+    assert(invalidPatternError.getMessage.contains(
+      "LIKE expression has invalid escape sequence"))
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
