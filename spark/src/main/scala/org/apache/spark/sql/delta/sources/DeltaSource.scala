@@ -328,7 +328,7 @@ trait DeltaSourceBase extends Source
         }
         logInfo(s"Getting dataFrame for delta_log_path=${deltaLog.logPath} with " +
           s"startVersion=$startVersion, startIndex=$startIndex, " +
-          s"isInitialSnapshot=$isInitialSnapshot took timeMs=$duration ms")
+          s"isInitialSnapshot=$isInitialSnapshot, endOffset=$endOffset took timeMs=$duration ms")
         result
       } finally {
         fileActionsIter.close()
