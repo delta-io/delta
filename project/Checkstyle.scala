@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2024) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,6 +57,10 @@ object Checkstyle {
     // and during tests (e.g. build/sbt test)
     Seq(
       checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
+      // if we keep the Error severity, `build/sbt` will throw an error and immediately stop at
+      // the `checkstyle` phase (if error) -> never execute the `check-report` phase of
+      // `checkstyle-report.xml` and `checkstyle-test-report.xml`. We need to ignore and throw
+      // error if exists when checking *report.xml.
       checkstyleSeverityLevel := CheckstyleSeverityLevel.Ignore,
 
       compileJavastyle := {
