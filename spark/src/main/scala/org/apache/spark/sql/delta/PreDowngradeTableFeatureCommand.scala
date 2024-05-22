@@ -22,7 +22,10 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
+import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
@@ -203,6 +206,69 @@ case class VacuumProtocolCheckPreDowngradeCommand(table: DeltaTableV2)
   override def removeFeatureTracesIfNeeded(): Boolean = false
 }
 
+case class ManagedCommitPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+
+  /**
+   * We disable the feature by removing the following table properties:
+   *    1. DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key
+   *    2. DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key
+   *    3. DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key
+   * If these properties have been removed but unbackfilled commits are still present, we
+   * backfill them.
+   *
+   * @return true if any change to the metadata (the three properties listed above) was made OR
+   *         if there were any unbackfilled commits that were backfilled.
+   *         false otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val startTimeNs = System.nanoTime()
+
+    var traceRemovalNeeded = false
+    var exceptionOpt = Option.empty[Throwable]
+    val propertyPresenceLogs = ManagedCommitUtils.TABLE_PROPERTY_KEYS.map( key =>
+      key -> table.initialSnapshot.metadata.configuration.contains(key).toString
+    )
+    if (ManagedCommitUtils.tablePropertiesPresent(table.initialSnapshot.metadata)) {
+      traceRemovalNeeded = true
+      try {
+        AlterTableUnsetPropertiesDeltaCommand(
+          table, ManagedCommitUtils.TABLE_PROPERTY_KEYS, ifExists = true).run(table.spark)
+      } catch {
+        case NonFatal(e) =>
+          exceptionOpt = Some(e)
+      }
+    }
+    var postDisablementUnbackfilledCommitsPresent = false
+    if (exceptionOpt.isEmpty) {
+      val snapshotAfterDisabling = table.deltaLog.update()
+      assert(snapshotAfterDisabling.tableCommitOwnerClientOpt.isEmpty)
+      postDisablementUnbackfilledCommitsPresent =
+        ManagedCommitUtils.unbackfilledCommitsPresent(snapshotAfterDisabling)
+      if (postDisablementUnbackfilledCommitsPresent) {
+        traceRemovalNeeded = true
+        // Managed commits have already been disabled but there are unbackfilled commits.
+        ManagedCommitUtils.backfillWhenManagedCommitDisabled(snapshotAfterDisabling)
+      }
+    }
+    recordDeltaEvent(
+      table.deltaLog,
+      opType = "delta.managedCommitFeatureRemovalMetrics",
+      data = Map(
+          "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
+          "traceRemovalNeeded" -> traceRemovalNeeded.toString,
+          "traceRemovalSuccess" -> exceptionOpt.isEmpty.toString,
+          "traceRemovalException" -> exceptionOpt.map(_.getMessage).getOrElse(""),
+          "postDisablementUnbackfilledCommitsPresent" ->
+            postDisablementUnbackfilledCommitsPresent.toString
+      ) ++ propertyPresenceLogs
+    )
+    exceptionOpt.foreach(throw _)
+    traceRemovalNeeded
+  }
+}
+
 case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
@@ -246,22 +312,15 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     val numFilesToRewrite = TypeWidening.numFilesRequiringRewrite(table.initialSnapshot)
     if (numFilesToRewrite == 0L) return 0L
 
-    // Get the table Id and catalog from the delta table to build a ResolvedTable plan for the reorg
-    // command.
+    // Wrap `table` in a ResolvedTable that can be passed to DeltaReorgTableCommand. The catalog &
+    // table ID won't be used by DeltaReorgTableCommand.
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
-    val tableId = table.spark
-      .sessionState
-      .sqlParser
-      .parseTableIdentifier(table.name).nameParts.asIdentifier
     val catalog = table.spark.sessionState.catalogManager.currentCatalog.asTableCatalog
+    val tableId = Seq(table.name()).asIdentifier
 
     val reorg = DeltaReorgTableCommand(
-      ResolvedTable.create(
-        catalog,
-        tableId,
-        table
-      ),
-      DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None)
+      target = ResolvedTable.create(catalog, tableId, table),
+      reorgTableSpec = DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None)
     )(Nil)
 
     reorg.run(table.spark)
@@ -284,6 +343,36 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     txn.commit(
       metadata.copy(schemaString = cleanedSchema.json) :: Nil,
       DeltaOperations.UpdateColumnMetadata("DROP FEATURE", changes))
+    true
+  }
+}
+case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+
+  /**
+   * We first remove the table feature property to prevent any transactions from writting data
+   * files with the physical names. This will cause any concurrent transactions to fail.
+   * Then, we run RemoveColumnMappingCommand to rewrite the files rename columns.
+   * Note, during the protocol downgrade phase we validate whether all invariants still hold.
+   * This should detect if any concurrent txns enabled the table property again.
+   *
+   * @return Returns true if it removed table property and/or has rewritten the data.
+   *         False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val spark = table.spark
+
+    // Latest snapshot looks clean. No action is required. We may proceed
+    // to the protocol downgrade phase.
+    if (ColumnMappingTableFeature.validateRemoval(table.initialSnapshot)) return false
+
+    recordDeltaOperation(
+      table.deltaLog,
+      opType = "delta.columnMappingFeatureRemoval") {
+      RemoveColumnMappingCommand(table.deltaLog, table.catalogTable)
+        .run(spark, removeColumnMappingTableProperty = true)
+    }
     true
   }
 }

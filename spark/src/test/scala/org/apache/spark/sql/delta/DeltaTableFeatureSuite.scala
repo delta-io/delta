@@ -22,6 +22,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
+import org.apache.spark.sql.delta.managedcommit.{CommitOwnerProvider, InMemoryCommitOwnerBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -47,7 +48,7 @@ class DeltaTableFeatureSuite
       path: File,
       schema: StructType = testTableSchema): DeltaLog = {
     val log = DeltaLog.forTable(spark, path)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
       unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = schema.json).json, protocol.json),
@@ -275,12 +276,11 @@ class DeltaTableFeatureSuite
   test("protocol downgrade compatibility") {
     val tableFeatureProtocol =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-    // Cannot downgrade when the original protocol does not support at a minimum writer features.
-    assert(!Protocol(1, 6).canDowngradeTo(Protocol(1, 6), droppedFeatureName = ""))
-    assert(tableFeatureProtocol.withFeature(TestWriterFeature)
-      .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
     assert(Protocol(1, 7).withFeature(TestWriterFeature)
-      .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
+      .canDowngradeTo(Protocol(1, 7), droppedFeatureName = TestWriterFeature.name))
+    // When there are no explicit features the protocol versions need to be downgraded
+    // below table features. The new protocol versions need to match exactly the supported
+    // legacy features.
     for (n <- 1 to 3) {
       assert(
         !Protocol(n, 7)
@@ -291,31 +291,13 @@ class DeltaTableFeatureSuite
           .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, InvariantsTableFeature))
           .canDowngradeTo(Protocol(1, 2), droppedFeatureName = TestWriterFeature.name))
     }
-    // When there are no explicit features the protocol versions need to be downgraded
-    // below table features.
-    assert(!tableFeatureProtocol.withFeature(TestWriterFeature)
-      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
-    assert(!tableFeatureProtocol.withFeature(TestWriterFeature)
-      .canDowngradeTo(Protocol(2, 7), droppedFeatureName = TestWriterFeature.name))
-    // Only one non-legacy writer feature per time.
-    assert(!tableFeatureProtocol.withFeatures(Seq(TestWriterFeature, TestRemovableWriterFeature))
-      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
-    // Remove reader+writer feature.
     assert(tableFeatureProtocol.withFeatures(Seq(TestReaderWriterFeature))
       .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestReaderWriterFeature.name))
-    // Only one non-legacy feature at a time - multiple reader+writer features.
-    assert(
-      !tableFeatureProtocol
-        .withFeatures(Seq(TestReaderWriterFeature, TestReaderWriterMetadataAutoUpdateFeature))
-        .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = ""))
     assert(
       tableFeatureProtocol
         .merge(Protocol(2, 5))
         .withFeatures(Seq(TestReaderWriterFeature, TestRemovableLegacyReaderWriterFeature))
         .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestReaderWriterFeature.name))
-    // Only one feature at a time - mix of reader+writer and writer features.
-    assert(!tableFeatureProtocol.withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature))
-      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
     // Downgraded protocol must be able to support all legacy table features.
     assert(
       !tableFeatureProtocol
@@ -487,6 +469,52 @@ class DeltaTableFeatureSuite
         assert(newProtocol2.readerAndWriterFeatureNames.contains(
           VacuumProtocolCheckTableFeature.name))
       }
+    }
+  }
+
+  test("drop table feature works with managed commits") {
+    val table = "tbl"
+    withTable(table) {
+      spark.range(0).write.format("delta").saveAsTable(table)
+      val log = DeltaLog.forTable(spark, TableIdentifier(table))
+      val featureName = TestRemovableReaderWriterFeature.name
+      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
+
+      // Add managed commit table feature to the table
+      CommitOwnerProvider.registerBuilder(InMemoryCommitOwnerBuilder(batchSize = 100))
+      val tblProperties1 = Seq(s"'${DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key}' = 'in-memory'")
+      sql(buildTablePropertyModifyingCommand(
+        "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
+
+      // Add TestRemovableReaderWriterFeature to the table in unbackfilled delta files
+      val tblProperties2 = Seq(s"'$FEATURE_PROP_PREFIX$featureName' = 'supported', " +
+        s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION, " +
+        s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'true'")
+      sql(buildTablePropertyModifyingCommand(
+        "ALTER", targetTableName = table, sourceTableName = table, tblProperties2))
+      assert(log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
+
+      // Disable feature on the latest snapshot
+      val tblProperties3 = Seq(s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'false'")
+      sql(buildTablePropertyModifyingCommand(
+        "ALTER", targetTableName = table, sourceTableName = table, tblProperties3))
+
+      val tableFeature =
+        TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
+      assert(tableFeature.historyContainsFeature(spark, log.update()))
+
+      // Dropping feature should fail because the feature still has traces in deltas.
+      val e = intercept[DeltaTableFeatureException] {
+        sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+      }
+      assert(e.getMessage.contains("DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST"), e)
+
+      // Add in a checkpoint and cleanUp up older logs containing feature traces
+      log.startTransaction().commitManually()
+      log.checkpoint()
+      log.cleanUpExpiredLogs(log.update(), deltaRetentionMillisOpt = Some(-1000000000000L))
+      sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
     }
   }
 

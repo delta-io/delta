@@ -18,10 +18,11 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import io.delta.kernel.Table
-import io.delta.kernel.client.{ExpressionHandler, FileSystemClient, TableClient}
+import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
 import io.delta.kernel.data.ColumnarBatch
-import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
+import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
 import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.internal.checkpoints.Checkpointer
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -35,6 +36,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
+import java.nio.file.Files
 import java.util.Optional
 import scala.collection.convert.ImplicitConversions._
 import scala.collection.mutable.ArrayBuffer
@@ -47,59 +49,62 @@ class LogReplayMetricsSuite extends QueryTest
   // Test Helper Methods //
   /////////////////////////
 
-  private def withTempDirAndTableClient(f: (File, MetricsTableClient) => Unit): Unit = {
-    val tableClient = new MetricsTableClient(new Configuration() {
+  private def withTempDirAndEngine(f: (File, MetricsEngine) => Unit): Unit = {
+    val engine = new MetricsEngine(new Configuration() {
       {
         // Set the batch sizes to small so that we get to test the multiple batch scenarios.
         set("delta.kernel.default.parquet.reader.batch-size", "2");
         set("delta.kernel.default.json.reader.batch-size", "2");
       }
     })
-    withTempDir { dir => f(dir, tableClient) }
+    withTempDir { dir => f(dir, engine) }
   }
 
   private def loadPandMCheckMetrics(
-      tableClient: MetricsTableClient,
+      engine: MetricsEngine,
       table: Table,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
       expParquetReadSetSizes: Seq[Long] = Nil): Unit = {
-    tableClient.resetMetrics()
-    table.getLatestSnapshot(tableClient).getSchema(tableClient)
+    engine.resetMetrics()
+    table.getLatestSnapshot(engine).getSchema(engine)
 
     assertMetrics(
-      tableClient,
+      engine,
       expJsonVersionsRead,
       expParquetVersionsRead,
       expParquetReadSetSizes)
   }
 
   private def loadScanFilesCheckMetrics(
-      tableClient: MetricsTableClient,
+      engine: MetricsEngine,
       table: Table,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
-      expParquetReadSetSizes: Seq[Long]): Unit = {
-    tableClient.resetMetrics()
-    val scan = table.getLatestSnapshot(tableClient).getScanBuilder(tableClient).build()
+      expParquetReadSetSizes: Seq[Long],
+      expLastCheckpointReadCalls: Option[Int] = None): Unit = {
+    engine.resetMetrics()
+    val scan = table.getLatestSnapshot(engine).getScanBuilder(engine).build()
     // get all scan files and iterate through them to trigger the metrics collection
-    val scanFiles = scan.getScanFiles(tableClient)
+    val scanFiles = scan.getScanFiles(engine)
     while (scanFiles.hasNext) scanFiles.next()
 
     assertMetrics(
-      tableClient,
+      engine,
       expJsonVersionsRead,
       expParquetVersionsRead,
-      expParquetReadSetSizes)
+      expParquetReadSetSizes,
+      expLastCheckpointReadCalls)
   }
 
   def assertMetrics(
-      tableClient: MetricsTableClient,
+      engine: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
-      expParquetReadSetSizes: Seq[Long]): Unit = {
-    val actualJsonVersionsRead = tableClient.getJsonHandler.getVersionsRead
-    val actualParquetVersionsRead = tableClient.getParquetHandler.getVersionsRead
+      expParquetReadSetSizes: Seq[Long],
+      expLastCheckpointReadCalls: Option[Int] = None): Unit = {
+    val actualJsonVersionsRead = engine.getJsonHandler.getVersionsRead
+    val actualParquetVersionsRead = engine.getParquetHandler.getVersionsRead
 
     assert(
       actualJsonVersionsRead === expJsonVersionsRead, s"Expected to read json versions " +
@@ -111,11 +116,17 @@ class LogReplayMetricsSuite extends QueryTest
     )
 
     if (expParquetReadSetSizes.nonEmpty) {
-      val actualParquetReadSetSizes = tableClient.getParquetHandler.checkpointReadRequestSizes
+      val actualParquetReadSetSizes = engine.getParquetHandler.checkpointReadRequestSizes
       assert(
         actualParquetReadSetSizes === expParquetReadSetSizes, s"Expected parquet read set sizes " +
           s"$expParquetReadSetSizes but read $actualParquetReadSetSizes"
       )
+    }
+
+    expLastCheckpointReadCalls.foreach { expCalls =>
+      val actualCalls = engine.getJsonHandler.getLastCheckpointMetadataReadCalls
+      assert(actualCalls === expCalls,
+        s"Expected to read last checkpoint metadata $expCalls times but read $actualCalls times")
     }
   }
 
@@ -133,7 +144,7 @@ class LogReplayMetricsSuite extends QueryTest
   ///////////
 
   test("no hint, no checkpoint, reads all files") {
-    withTempDirAndTableClient { (dir, tc) =>
+    withTempDirAndEngine { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 9) { appendCommit(path) }
@@ -144,7 +155,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   test("no hint, existing checkpoint, reads all files up to that checkpoint") {
-    withTempDirAndTableClient { (dir, tc) =>
+    withTempDirAndEngine { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 14) { appendCommit(path) }
@@ -155,7 +166,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   test("no hint, existing checkpoint, newer P & M update, reads up to P & M commit") {
-    withTempDirAndTableClient { (dir, tc) =>
+    withTempDirAndEngine { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 12) { appendCommit(path) }
@@ -177,7 +188,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   test("hint with no new commits, should read no files") {
-    withTempDirAndTableClient { (dir, tc) =>
+    withTempDirAndEngine { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 14) {
@@ -195,7 +206,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   test("hint with no P or M updates") {
-    withTempDirAndTableClient { (dir, tc) =>
+    withTempDirAndEngine { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 14) { appendCommit(path) }
@@ -226,7 +237,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   test("hint with a P or M update") {
-    withTempDirAndTableClient { (dir, tc) =>
+    withTempDirAndEngine { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 3) { appendCommit(path) }
@@ -264,7 +275,7 @@ class LogReplayMetricsSuite extends QueryTest
   }
 
   test("read a table with multi-part checkpoint") {
-    withTempDirAndTableClient { (dir, tc) =>
+    withTempDirAndEngine { (dir, tc) =>
       val path = dir.getAbsolutePath
 
       for (_ <- 0 to 14) { appendCommit(path) }
@@ -294,15 +305,43 @@ class LogReplayMetricsSuite extends QueryTest
         expParquetReadSetSizes = Seq(15, 15))
     }
   }
+
+  Seq(true, false).foreach { deleteLastCheckpointMetadataFile =>
+    test("ensure `_last_checkpoint` is tried to read only once when " +
+      s"""${if (deleteLastCheckpointMetadataFile) "not exists" else "valid file exists"}""") {
+      withTempDirAndEngine { (dir, tc) =>
+        val path = dir.getAbsolutePath
+
+        for (_ <- 0 to 14) { appendCommit(path) }
+
+        if (deleteLastCheckpointMetadataFile) {
+          assert(Files.deleteIfExists(new File(path, "_delta_log/_last_checkpoint").toPath))
+        }
+
+        // there should be one checkpoint file at version 10
+        loadScanFilesCheckMetrics(
+          tc,
+          Table.forPath(tc, path),
+          expJsonVersionsRead = 14L to 11L by -1L,
+          expParquetVersionsRead = Seq(10),
+          // we read the checkpoint twice: once for the P &M and once for the scan files
+          expParquetReadSetSizes = Seq(1, 1),
+          // We try to read `_last_checkpoint` once. If it doesn't exist, we don't try reading
+          // again. If it exists, we succeed reading in the first time
+          expLastCheckpointReadCalls = Some(1)
+        )
+      }
+    }
+  }
 }
 
 ////////////////////
 // Helper Classes //
 ////////////////////
 
-/** A table client that records the Delta commit (.json) and checkpoint (.parquet) files read */
-class MetricsTableClient(config: Configuration) extends TableClient {
-  private val impl = DefaultTableClient.create(config)
+/** An engine that records the Delta commit (.json) and checkpoint (.parquet) files read */
+class MetricsEngine(config: Configuration) extends Engine {
+  private val impl = DefaultEngine.create(config)
   private val jsonHandler = new MetricsJsonHandler(config)
   private val parquetHandler = new MetricsParquetHandler(config)
 
@@ -325,6 +364,9 @@ class MetricsTableClient(config: Configuration) extends TableClient {
  * 10.checkpoint.parquet) read
  */
 trait FileReadMetrics { self: Object =>
+  // number of times read is requested on `_last_checkpoint`
+  private var lastCheckpointMetadataReadCalls = 0
+
   private val versionsRead = ArrayBuffer[Long]()
 
   // Number of checkpoint files requested read in each readParquetFiles call
@@ -339,12 +381,17 @@ trait FileReadMetrics { self: Object =>
       if (!versionsRead.contains(version)) {
         versionsRead += version
       }
+    } else if (Checkpointer.LAST_CHECKPOINT_FILE_NAME.equals(path.getName)) {
+      lastCheckpointMetadataReadCalls += 1
     }
   }
 
   def getVersionsRead: Seq[Long] = versionsRead
 
+  def getLastCheckpointMetadataReadCalls: Int = lastCheckpointMetadataReadCalls
+
   def resetMetrics(): Unit = {
+    lastCheckpointMetadataReadCalls = 0
     versionsRead.clear()
     checkpointReadRequestSizes.clear()
   }

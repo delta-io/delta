@@ -21,6 +21,7 @@ import java.io.FileNotFoundException
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -33,6 +34,7 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaDetailSuiteBase extends QueryTest
   with SharedSparkSession
+  with ManagedCommitTestUtils
   with DeltaTestUtilsForTempViews {
 
   import testImplicits._
@@ -211,7 +213,8 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
     }
   }
 
-  test("delta table: describe detail always run on the latest snapshot") {
+  testWithDifferentBackfillIntervalOptional(
+      "delta table: describe detail always run on the latest snapshot") { batchSizeOpt =>
     val tableName = "tbl_name_on_latest_snapshot"
     withTable(tableName) {
         val tempDir = Utils.createTempDir().toString
@@ -229,8 +232,14 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
           metadata.configuration ++ Map("foo" -> "bar")
         )
         txn.commit(newMetadata :: Nil, DeltaOperations.ManualUpdate)
+        val managedCommitProperties = batchSizeOpt.map(_ =>
+            Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "tracking-in-memory",
+              DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key -> "{\"randomConf\":\"randomConfValue\"}",
+              DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key -> "{}",
+              DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+          .getOrElse(Map.empty)
         checkResult(sql(s"DESCRIBE DETAIL $tableName"),
-          Seq(Map("foo" -> "bar")),
+          Seq(Map("foo" -> "bar") ++ managedCommitProperties),
           Seq("properties")
         )
       }

@@ -16,14 +16,18 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, ManagedCommitTableFeature, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFile}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-object ManagedCommitUtils {
+import org.apache.spark.sql.SparkSession
+
+object ManagedCommitUtils extends DeltaLogging {
 
   /**
    * Returns an iterator of commit files starting from startVersion.
@@ -108,4 +112,116 @@ object ManagedCommitUtils {
    * Get the table path from the provided log path.
    */
   def getTablePath(logPath: Path): Path = logPath.getParent
+
+  def getCommitOwnerClient(
+      spark: SparkSession, metadata: Metadata, protocol: Protocol): Option[CommitOwnerClient] = {
+    metadata.managedCommitOwnerName.map { commitOwnerStr =>
+      assert(protocol.isFeatureSupported(ManagedCommitTableFeature))
+      CommitOwnerProvider.getCommitOwnerClient(
+        commitOwnerStr, metadata.managedCommitOwnerConf, spark)
+    }
+  }
+
+  def getTableCommitOwner(
+      spark: SparkSession,
+      snapshotDescriptor: SnapshotDescriptor): Option[TableCommitOwnerClient] = {
+    getCommitOwnerClient(spark, snapshotDescriptor.metadata, snapshotDescriptor.protocol).map {
+      commitOwner =>
+        TableCommitOwnerClient(
+          commitOwner,
+          snapshotDescriptor.deltaLog.logPath,
+          snapshotDescriptor.metadata.managedCommitTableConf,
+          snapshotDescriptor.deltaLog.newDeltaHadoopConf(),
+          snapshotDescriptor.deltaLog.store
+        )
+    }
+  }
+
+  def getManagedCommitConfs(metadata: Metadata): (Option[String], Map[String, String]) = {
+    metadata.managedCommitOwnerName match {
+      case Some(name) => (Some(name), metadata.managedCommitOwnerConf)
+      case None => (None, Map.empty)
+    }
+  }
+
+  /**
+   * The main table properties used to instantiate a TableCommitOwnerClient.
+   */
+  val TABLE_PROPERTY_KEYS: Seq[String] = Seq(
+    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key,
+    DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key,
+    DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key)
+
+  /**
+   * Returns true if any ManagedCommit-related table properties is present in the metadata.
+   */
+  def tablePropertiesPresent(metadata: Metadata): Boolean = {
+    val managedCommitProperties = Seq(
+      DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key,
+      DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key,
+      DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key)
+    managedCommitProperties.exists(metadata.configuration.contains)
+  }
+
+  /**
+   * Returns true if the snapshot is backed by unbackfilled commits.
+   */
+  def unbackfilledCommitsPresent(snapshot: Snapshot): Boolean = {
+    snapshot.logSegment.deltas.exists {
+      case FileNames.UnbackfilledDeltaFile(_, _, _) => true
+      case _ => false
+    }
+  }
+
+  /**
+   * This method takes care of backfilling any unbackfilled delta files when managed commit is
+   * not enabled on the table (i.e. commit-owner is not present) but there are still unbackfilled
+   * delta files in the table. This can happen if an error occurred during the MC -> FS commit
+   * where the commit-owner was able to register the downgrade commit but it failed to backfill
+   * it. This method must be invoked before doing the next commit as otherwise there will be a
+   * gap in the backfilled commit sequence.
+   */
+  def backfillWhenManagedCommitDisabled(snapshot: Snapshot): Unit = {
+    if (snapshot.tableCommitOwnerClientOpt.nonEmpty) {
+      // Managed commits is enabled on the table. Don't backfill as backfills are managed by
+      // commit-owners.
+      return
+    }
+    val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
+      case UnbackfilledDeltaFile(unbackfilledDeltaFile, version, _) =>
+        (unbackfilledDeltaFile, version)
+    }
+    if (unbackfilledFilesAndVersions.isEmpty) return
+    // Managed commits are disabled on the table but the table still has un-backfilled files.
+    val deltaLog = snapshot.deltaLog
+    val hadoopConf = deltaLog.newDeltaHadoopConf()
+    val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+    val overwrite = !deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
+    var numAlreadyBackfilledFiles = 0L
+    unbackfilledFilesAndVersions.foreach { case (unbackfilledDeltaFile, version) =>
+      val backfilledFilePath = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+      if (!fs.exists(backfilledFilePath)) {
+        val actionsIter = deltaLog.store.readAsIterator(unbackfilledDeltaFile.getPath, hadoopConf)
+        deltaLog.store.write(
+          backfilledFilePath,
+          actionsIter,
+          overwrite,
+          hadoopConf)
+        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} backfilled to path" +
+          s" ${backfilledFilePath.toString}.")
+      } else {
+        numAlreadyBackfilledFiles += 1
+        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} already backfilled.")
+      }
+    }
+    recordDeltaEvent(
+      deltaLog,
+      opType = "delta.managedCommit.backfillWhenManagedCommitSupportedAndDisabled",
+      data = Map(
+        "numUnbackfilledFiles" -> unbackfilledFilesAndVersions.size,
+        "unbackfilledFiles" -> unbackfilledFilesAndVersions.map(_._1.getPath.toString),
+        "numAlreadyBackfilledFiles" -> numAlreadyBackfilledFiles
+      )
+    )
+  }
 }

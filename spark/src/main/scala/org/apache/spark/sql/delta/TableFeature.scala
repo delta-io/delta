@@ -21,6 +21,8 @@ import java.util.Locale
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
+import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -235,8 +237,9 @@ sealed trait RemovableFeature { self: TableFeature =>
 
     // Check if commits between 0 version and toVersion contain any traces of the feature.
     val allHistoricalDeltaFiles = deltaLog
-      .listFrom(0L)
-      .takeWhile(file => FileNames.getFileVersionOpt(file.getPath).forall(_ <= toVersion))
+      .getChangeLogFiles(0)
+      .takeWhile { case (version, _) => version <= toVersion }
+      .map { case (_, file) => file }
       .filter(FileNames.isDeltaFile)
       .toSeq
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, allHistoricalDeltaFiles)
@@ -488,6 +491,7 @@ object ColumnMappingTableFeature
     name = "columnMapping",
     minReaderVersion = 2,
     minWriterVersion = 5)
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
@@ -497,6 +501,27 @@ object ColumnMappingTableFeature
       case _ => true
     }
   }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val schemaHasNoColumnMappingMetadata =
+      SchemaMergingUtils.explode(snapshot.schema).forall { case (_, col) =>
+        !DeltaColumnMapping.hasPhysicalName(col) &&
+          !DeltaColumnMapping.hasColumnId(col)
+      }
+    val metadataHasNoMappingMode = snapshot.metadata.columnMappingMode match {
+      case NoMapping => true
+      case _ => false
+    }
+    schemaHasNoColumnMappingMetadata && metadataHasNoMappingMode
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+      case m: Metadata => DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(m) != NoMapping
+      case _ => false
+    }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    ColumnMappingPreDowngradeCommand(table)
 }
 
 object IdentityColumnsTableFeature
@@ -517,7 +542,7 @@ object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz
   }
 }
 
-object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-dev")
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-preview")
     with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata, spark: SparkSession): Boolean = {
@@ -650,8 +675,9 @@ object V2CheckpointTableFeature
 
 /** Table feature to represent tables whose commits are managed by separate commit-owner */
 object ManagedCommitTableFeature
-  extends ReaderWriterFeature(name = "managed-commit-dev")
-    with FeatureAutomaticallyEnabledByMetadata {
+  extends WriterFeature(name = "managed-commit-dev")
+    with FeatureAutomaticallyEnabledByMetadata
+    with RemovableFeature {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
@@ -663,6 +689,17 @@ object ManagedCommitTableFeature
 
   override def requiredFeatures: Set[TableFeature] =
     Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2)
+      : PreDowngradeTableFeatureCommand = ManagedCommitPreDowngradeCommand(table)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    !ManagedCommitUtils.tablePropertiesPresent(snapshot.metadata) &&
+      !ManagedCommitUtils.unbackfilledCommitsPresent(snapshot)
+  }
+
+  // This is a writer feature, so it should directly return false.
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening-preview")

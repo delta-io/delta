@@ -50,6 +50,7 @@ object MultiDimClustering {
       curve: String): DataFrame = {
     assert(colNames.nonEmpty, "Cannot cluster by zero columns!")
     val clusteringImpl = curve match {
+      case "hilbert" if colNames.size == 1 => ZOrderClustering
       case "hilbert" => HilbertClustering
       case "zorder" => ZOrderClustering
       case unknownCurve =>

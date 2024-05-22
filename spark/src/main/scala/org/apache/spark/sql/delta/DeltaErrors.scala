@@ -1765,6 +1765,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def generatedColumnsUnsupportedType(dt: DataType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN",
+      messageParameters = Array(s"${dt.sql}")
+    )
+  }
+
   def generatedColumnsExprTypeMismatch(
       column: String,
       columnType: DataType,
@@ -3183,7 +3190,7 @@ trait DeltaErrorsBase
       icebergCompatVersion: Int,
       cause: Throwable): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "",
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.REWRITE_DATA_FAILED",
       messageParameters = Array(
         icebergCompatVersion.toString,
         icebergCompatVersion.toString

@@ -25,6 +25,7 @@ import scala.language.postfixOps
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.managedcommit.{CommitOwnerProvider, ManagedCommitBaseSuite, TrackingCommitOwnerClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -48,6 +49,7 @@ import org.apache.spark.util.Utils
 class DeltaLogSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
+  with ManagedCommitBaseSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLTestUtils {
 
@@ -497,6 +499,19 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
+      if (managedCommitsEnabledInTests) {
+        // For Managed Commit table with a commit that is not backfilled, we can't use
+        // 00000000002.json yet. Contact commit store to get uuid file path to malform json file.
+        val oc = CommitOwnerProvider.getCommitOwnerClient(
+          "tracking-in-memory", Map.empty[String, String], spark)
+        val commitResponse = oc.getCommits(deltaLog.logPath, Map.empty, Some(2))
+        if (!commitResponse.getCommits.isEmpty) {
+          val path = commitResponse.getCommits.last.getFileStatus.getPath
+          fs.delete(path, true)
+        }
+        // Also deletes it from in-memory commit store.
+        oc.asInstanceOf[TrackingCommitOwnerClient].removeCommitTestOnly(deltaLog.logPath, 2)
+      }
 
       // Should show up to 20
       checkAnswer(
@@ -582,7 +597,17 @@ class DeltaLogSuite extends QueryTest
       spark.range(1).write.format("delta").mode("append").save(path)
 
       val log = DeltaLog.forTable(spark, path)
-      val commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
+      var commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
+      if (managedCommitsEnabledInTests) {
+        // For Managed Commit table with a commit that is not backfilled, we can't use
+        // 00000000001.json yet. Contact commit store to get uuid file path to malform json file.
+        val oc = CommitOwnerProvider.getCommitOwnerClient(
+          "tracking-in-memory", Map.empty[String, String], spark)
+        val commitResponse = oc.getCommits(log.logPath, Map.empty, Some(1))
+        if (!commitResponse.getCommits.isEmpty) {
+          commitFilePath = commitResponse.getCommits.head.getFileStatus.getPath
+        }
+      }
       val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
       val stream = fs.open(commitFilePath)
       val reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
@@ -681,17 +706,20 @@ class DeltaLogSuite extends QueryTest
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       val log = DeltaLog.forTable(spark, new Path(path))
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
 
       val logPath = log.logPath
       val fs = logPath.getFileSystem(log.newDeltaHadoopConf())
       assert(fs.exists(logPath), "Log path should exist.")
       assert(fs.getFileStatus(logPath).isDirectory, "Log path should be a directory")
+      val commitPath = FileNames.commitDirPath(logPath)
+      assert(fs.exists(commitPath), "Commit path should exist.")
+      assert(fs.getFileStatus(commitPath).isDirectory, "Commit path should be a directory")
     }
   }
 
   test("DeltaLog should throw exception when unable to create log directory " +
-    "with filesystem IO Exception") {
+      "with filesystem IO Exception") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       val log = DeltaLog.forTable(spark, new Path(path))
@@ -702,7 +730,7 @@ class DeltaLogSuite extends QueryTest
       fs.create(log.logPath)
 
       val e = intercept[DeltaIOException] {
-        log.ensureLogDirectoryExist()
+        log.createLogDirectoriesIfNotExists()
       }
       checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH")
       e.getCause match {
@@ -714,7 +742,6 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  // This test needs to be extended to Managed Commits once DeltaLogSuite gets extended.
   test("DeltaFileProviderUtils.getDeltaFilesInVersionRange") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
@@ -733,8 +760,27 @@ class DeltaLogSuite extends QueryTest
       assert(FileNames.getFileVersion(fileV2) === 2)
       assert(FileNames.getFileVersion(fileV3) === 3)
 
-      assert(filesAreUnbackfilledArray === Seq(false, false, false))
+      val backfillInterval = managedCommitBackfillBatchSize.getOrElse(0L)
+      if (backfillInterval == 0 || backfillInterval == 1) {
+        assert(filesAreUnbackfilledArray === Seq(false, false, false))
+      } else if (backfillInterval == 2) {
+        assert(filesAreUnbackfilledArray === Seq(false, false, true))
+      } else {
+        assert(filesAreUnbackfilledArray === Seq(true, true, true))
+      }
     }
   }
 
+}
+
+class ManagedCommitBatchBackfill1DeltaLogSuite extends DeltaLogSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class ManagedCommitBatchBackfill2DeltaLogSuite extends DeltaLogSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class ManagedCommitBatchBackfill100DeltaLogSuite extends DeltaLogSuite {
+  override def managedCommitBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -189,6 +189,14 @@ trait TableFeatureSupport { this: Protocol =>
     readerAndWriterFeatureNames.toSeq.flatMap(TableFeature.featureNameToFeature)
 
   /**
+   * A sequence of native [[TableFeature]]s. This is derived by filtering out all explicitly
+   * supported legacy features.
+   */
+  @JsonIgnore
+  lazy val nativeReaderAndWriterFeatures: Seq[TableFeature] =
+    readerAndWriterFeatures.filterNot(_.isLegacyFeature)
+
+  /**
    * Get all features that are implicitly supported by this protocol, for example, `Protocol(1,2)`
    * implicitly supports `appendOnly` and `invariants`. When this protocol is capable of requiring
    * writer features, no feature can be implicitly supported.
@@ -242,43 +250,16 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
-   * Determine whether this protocol can be safely downgraded to a new protocol `to`. This
-   * includes the following:
-   *  - The current protocol needs to support at least writer features. This is because protocol
-   *    downgrade is only supported with table features.
-   *  - The protocol version can only be downgraded when there are no non-legacy table features.
-   *  - We can only remove one feature at a time.
-   *  - When downgrading protocol versions, the resulting versions must support exactly the same
-   *    set of legacy features supported by the current protocol.
-   *
-   * Note, this not an exhaustive list of downgrade rules. Rather, we check the most important
-   * downgrade invariants. We also perform checks during feature removal at
-   * [[AlterTableDropFeatureDeltaCommand]].
+   * Determine whether this protocol can be safely downgraded to a new protocol `to`.
+   * All we need is the implicit and explicit features between the two protocols to match,
+   * excluding the dropped feature. Note, this accounts for cases where we downgrade
+   * from table features to legacy protocol versions.
    */
   def canDowngradeTo(to: Protocol, droppedFeatureName: String): Boolean = {
-    if (!supportsWriterFeatures) return false
-
-    // When `to` protocol does not have any features version downgrades are possible. However,
-    // the current protocol needs to contain one non-legacy feature. We also allow downgrade when
-    // there are only legacy features. This is to accommodate the case when the user attempts to
-    // remove a legacy feature in a table that only contains legacy features.
-    if (to.readerAndWriterFeatureNames.isEmpty) {
-      val featureNames = readerAndWriterFeatureNames - droppedFeatureName
-      val sameLegacyFeaturesSupported = featureNames == to.implicitlySupportedFeatures.map(_.name)
-      val minRequiredVersions = TableFeatureProtocolUtils.minimumRequiredVersions(
-        featureNames.flatMap(TableFeature.featureNameToFeature).toSeq)
-
-      return sameLegacyFeaturesSupported &&
-        (to.minReaderVersion, to.minWriterVersion) == minRequiredVersions &&
-        readerAndWriterFeatures.filterNot(_.isLegacyFeature).size <= 1
-    }
-
-    // When `to` protocol contains table features we cannot downgrade the protocol version.
-    if (to.minReaderVersion != this.minReaderVersion) return false
-    if (to.minWriterVersion != this.minWriterVersion) return false
-
-    // Can only remove a maximum of one feature at a time.
-    (this.readerAndWriterFeatureNames -- to.readerAndWriterFeatureNames).size == 1
+    val thisFeatures = this.implicitlyAndExplicitlySupportedFeatures
+    val toFeatures = to.implicitlyAndExplicitlySupportedFeatures
+    val droppedFeature = Seq(droppedFeatureName).flatMap(TableFeature.featureNameToFeature)
+    (thisFeatures -- droppedFeature) == toFeatures
   }
 
   /**
@@ -368,13 +349,25 @@ trait TableFeatureSupport { this: Protocol =>
    * features. After we remove the last native feature we downgrade the protocol to (1, 1).
    */
   def downgradeProtocolVersionsIfNeeded: Protocol = {
-    if (!readerAndWriterFeatures.forall(_.isLegacyFeature)) return this
+    if (nativeReaderAndWriterFeatures.nonEmpty) {
+      val (minReaderVersion, minWriterVersion) =
+        TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
+      // It is guaranteed by the definitions of WriterFeature and ReaderFeature, that we cannot
+      // end up with invalid protocol versions such as (3, 3). Nevertheless,
+      // we double check it here.
+      val newProtocol =
+        Protocol(minReaderVersion, minWriterVersion).withFeatures(readerAndWriterFeatures)
+      assert(
+        newProtocol.supportsWriterFeatures,
+        s"Downgraded protocol should at least support writer features, but got $newProtocol.")
+      return newProtocol
+    }
 
     val (minReaderVersion, minWriterVersion) =
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
     val newProtocol = Protocol(minReaderVersion, minWriterVersion)
 
-    require(
+    assert(
       !newProtocol.supportsReaderFeatures && !newProtocol.supportsWriterFeatures,
       s"Downgraded protocol should not support table features, but got $newProtocol.")
 

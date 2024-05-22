@@ -31,8 +31,7 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.{Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.functions.lit
@@ -297,6 +296,37 @@ class OptimisticTransactionSuite
     }
   }
 
+  test("enabling Managed Commits on an existing table should create commit dir") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
+      val metadata = Metadata()
+      log.startTransaction().commit(Seq(metadata), ManualUpdate)
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+      val commitDir = FileNames.commitDirPath(log.logPath)
+      // Delete commit directory.
+      fs.delete(commitDir)
+      assert(!fs.exists(commitDir))
+      // With no Managed Commits conf, commit directory should not be created.
+      log.startTransaction().commit(Seq(metadata), ManualUpdate)
+      assert(!fs.exists(commitDir))
+      // Enabling Managed Commits on an existing table should create the commit dir.
+      CommitOwnerProvider.registerBuilder(InMemoryCommitOwnerBuilder(3))
+      val newMetadata = metadata.copy(configuration =
+        (metadata.configuration ++
+          Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> "in-memory")).toMap)
+      log.startTransaction().commit(Seq(newMetadata), ManualUpdate)
+      assert(fs.exists(commitDir))
+      log.update().ensureCommitFilesBackfilled()
+      // With no new Managed Commits conf, commit directory should not be created and so the
+      // transaction should fail because of corrupted dir.
+      fs.delete(commitDir)
+      assert(!fs.exists(commitDir))
+      intercept[java.io.FileNotFoundException] {
+        log.startTransaction().commit(Seq(newMetadata), ManualUpdate)
+      }
+    }
+  }
+
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
@@ -463,7 +493,7 @@ class OptimisticTransactionSuite
 
     object RetryableNonConflictCommitOwnerBuilder$ extends CommitOwnerBuilder {
 
-      override def name: String = commitOwnerName
+      override def getName: String = commitOwnerName
 
       val commitOwnerClient: InMemoryCommitOwner = {
         new InMemoryCommitOwner(batchSize = 1000L) {
@@ -489,7 +519,8 @@ class OptimisticTransactionSuite
           }
         }
       }
-      override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
     }
 
     CommitOwnerProvider.registerBuilder(RetryableNonConflictCommitOwnerBuilder$)
@@ -516,7 +547,7 @@ class OptimisticTransactionSuite
 
     object FileAlreadyExistsCommitOwnerBuilder extends CommitOwnerBuilder {
 
-      override def name: String = commitOwnerName
+      override def getName: String = commitOwnerName
 
       lazy val commitOwnerClient: CommitOwnerClient = {
         new InMemoryCommitOwner(batchSize = 1000L) {
@@ -538,7 +569,8 @@ class OptimisticTransactionSuite
           }
         }
       }
-      override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
     }
 
     CommitOwnerProvider.registerBuilder(FileAlreadyExistsCommitOwnerBuilder)
@@ -835,7 +867,8 @@ class OptimisticTransactionSuite
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
-            if (updatedActions.commitInfo.operation == DeltaOperations.OP_RESTORE) {
+            if (updatedActions.getCommitInfo.asInstanceOf[CommitInfo].operation
+                == DeltaOperations.OP_RESTORE) {
               deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
               throw CommitFailedException(retryable = true, conflict, message = "")
             }
@@ -845,8 +878,9 @@ class OptimisticTransactionSuite
         }
         object RetryableConflictCommitOwnerBuilder$ extends CommitOwnerBuilder {
           lazy val commitOwnerClient = new RetryableConflictCommitOwnerClient()
-          override def name: String = commitOwnerName
-          override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+          override def getName: String = commitOwnerName
+          override def build(
+              spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
         }
         CommitOwnerProvider.registerBuilder(RetryableConflictCommitOwnerBuilder$)
         val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitOwnerName)

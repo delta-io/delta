@@ -37,7 +37,7 @@ import org.scalatest.Tag
 
 import org.apache.spark.{DebugFilesystem, SparkException, TaskFailedReason}
 import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
-import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchDatabaseException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
@@ -686,7 +686,7 @@ trait CloneTableSuiteBase extends QueryTest
     val log = DeltaLog.forTable(spark, source)
     // make sure to have a dummy schema because we can't have empty schema table by default
     val newSchema = new StructType().add("id", IntegerType, nullable = true)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
       unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = newSchema.json).json, sourceProtocol.json),
