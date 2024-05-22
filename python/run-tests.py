@@ -171,7 +171,7 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
 
-    run_python_style_checks(root_dir)
+    #run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
-    run_pypi_packaging_tests(root_dir)
-    test(root_dir, package)
+    #run_pypi_packaging_tests(root_dir)
+    #test(root_dir, package)

@@ -600,6 +600,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
     ),
     assemblyPackageScala / assembleArtifact := false,
+    sources in (Compile, doc) := Seq.empty
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
 
@@ -651,7 +652,8 @@ lazy val hudi = (project in file("hudi"))
         MergeStrategy.first
     },
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
-    Compile / packageBin := assembly.value
+    Compile / packageBin := assembly.value,
+    sources in (Compile, doc) := Seq.empty,
   )
 
 lazy val hive = (project in file("connectors/hive"))
