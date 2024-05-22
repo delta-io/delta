@@ -32,12 +32,12 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Cast, EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.ManualClock
@@ -73,6 +73,8 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUti
       .set(TableFeatureProtocolUtils.defaultPropertyKey(TimestampNTZTableFeature), "supported")
       // Ensure we don't silently cast test inputs to null on overflow.
       .set(SQLConf.ANSI_ENABLED.key, "true")
+      // Rebase mode must be set explicitly to allow writing dates before 1582-10-15.
+      .set(SQLConf.PARQUET_REBASE_MODE_IN_WRITE.key, LegacyBehaviorPolicy.CORRECTED.toString)
   }
 
   /** Enable (or disable) type widening for the table under the given path. */
@@ -256,23 +258,40 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
 
       val alterTableSql =
         s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}"
-      checkError(
-        exception = intercept[AnalysisException] {
-          sql(alterTableSql)
-        },
-        errorClass = "NOT_SUPPORTED_CHANGE_COLUMN",
-        sqlState = None,
-        parameters = Map(
-          "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
-          "originName" -> toSQLId("value"),
-          "originType" -> toSQLType(testCase.fromType),
-          "newName" -> toSQLId("value"),
-          "newType" -> toSQLType(testCase.toType)),
-        context = ExpectedContext(
-          fragment = alterTableSql,
-          start = 0,
-          stop = alterTableSql.length - 1)
-      )
+
+      // Type changes that aren't upcast are rejected early during analysis by Spark, while upcasts
+      // are rejected in Delta when the ALTER TABLE command is executed.
+      if (Cast.canUpCast(testCase.fromType, testCase.toType)) {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql(alterTableSql)
+          },
+          errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+          sqlState = None,
+          parameters = Map(
+            "fieldPath" -> "value",
+            "oldField" -> testCase.fromType.sql,
+            "newField" -> testCase.toType.sql)
+        )
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(alterTableSql)
+          },
+          errorClass = "NOT_SUPPORTED_CHANGE_COLUMN",
+          sqlState = None,
+          parameters = Map(
+            "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+            "originName" -> toSQLId("value"),
+            "originType" -> toSQLType(testCase.fromType),
+            "newName" -> toSQLId("value"),
+            "newType" -> toSQLType(testCase.toType)),
+          context = ExpectedContext(
+            fragment = alterTableSql,
+            start = 0,
+            stop = alterTableSql.length - 1)
+        )
+      }
     }
   }
 
