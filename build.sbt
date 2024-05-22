@@ -651,7 +651,7 @@ lazy val hudi = (project in file("hudi"))
         MergeStrategy.first
     },
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
-    Compile / packageBin := assembly.value,
+    Compile / packageBin := assembly.value
   )
 
 lazy val hive = (project in file("connectors/hive"))
