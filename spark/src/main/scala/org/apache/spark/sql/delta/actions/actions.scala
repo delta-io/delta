@@ -596,6 +596,10 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   def estLogicalFileSize: Option[Long]
 
+  /** Returns [[tags]] or an empty Map if null */
+  @JsonIgnore
+  def tagsOrEmpty: Map[String, String] = Option(tags).getOrElse(Map.empty[String, String])
+
   /**
    * Return tag value if tags is not null and the tag present.
    */
@@ -788,8 +792,7 @@ case class AddFile(
 
 
   def copyWithTags(newTags: Map[String, String]): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) ++ newTags)
-
+    copy(tags = tagsOrEmpty ++ newTags)
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] = getTag(tag.name)
 
@@ -797,7 +800,7 @@ case class AddFile(
     tag(tagKey).map(_.toLong)
 
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
+    copy(tags = tagsOrEmpty + (tag.name -> value))
 
   def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile = {
     if (tags == null) {
@@ -916,13 +919,13 @@ case class RemoveFile(
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
    */
   def copyWithTag(tag: String, value: String): RemoveFile = copy(
-    tags = Option(tags).getOrElse(Map.empty) + (tag -> value))
+    tags = tagsOrEmpty + (tag -> value))
 
   /**
    * Create a copy without the tag.
    */
   def copyWithoutTag(tag: String): RemoveFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) - tag)
+    copy(tags = tagsOrEmpty - tag)
 
   @JsonIgnore
   override def getFileSize: Long = size.getOrElse(0L)
