@@ -333,6 +333,7 @@ object TableFeature {
       GeneratedColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
+      ColumnMappingUsageTrackingTableFeature,
       TimestampNTZTableFeature,
       TypeWideningTableFeature,
       IcebergCompatV1TableFeature,
@@ -509,6 +510,21 @@ object IdentityColumnsTableFeature
       spark: SparkSession): Boolean = {
     ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
   }
+}
+
+object ColumnMappingUsageTrackingTableFeature
+  extends WriterFeature(name = "columnMappingUsageTracking")
+  with RemovableFeature {
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    ColumnMappingUsageTrackingPreDowngradeCommand(table)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    !snapshot.metadata.configuration.contains(
+      DeltaConfigs.COLUMN_MAPPING_HAS_DROPPED_OR_RENAMED.key)
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")

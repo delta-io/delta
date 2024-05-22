@@ -420,6 +420,11 @@ trait DeltaColumnMappingBase extends DeltaLogging {
           builder.putLong(COLUMN_MAPPING_METADATA_ID_KEY, columnId)
         }
         if (!hasPhysicalName(field)) {
+          val logicalName = field.name
+          val canUseLogicalColumnNameAsPhysicalColumnName =
+            !SchemaUtils.isInvalidColumnName(logicalName) &&
+              !ColumnMappingUsageTracking.hasDroppedOrRenamedColumnBefore(newMetadata)
+
           val physicalName = if (isChangingModeOnExistingTable) {
             if (existingFieldOpt.isEmpty) {
               if (oldMetadata.schema.isEmpty) {
@@ -439,6 +444,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
           } else if (canReuseColumnMappingMetadataDuringOverwrite) {
             // Copy the physical name metadata over from the existing field if possible
             getPhysicalName(existingFieldOpt.get)
+          } else if (canUseLogicalColumnNameAsPhysicalColumnName) {
+            logicalName
           } else {
             generatePhysicalName
           }

@@ -1162,8 +1162,16 @@ def normalizeColumnNamesInDataType(
   }
 
   private def findInvalidColumnNames(columnNames: Seq[String]): Seq[String] = {
+    columnNames.filter(isInvalidColumnName)
+  }
+
+  /**
+   * Returns true if the column name contains an illegal character that cannot be used in column
+   * names in Parquet files.
+   */
+  def isInvalidColumnName(columnName: String): Boolean = {
     val badChars = Seq(' ', ',', ';', '{', '}', '(', ')', '\n', '\t', '=')
-    columnNames.filter(colName => badChars.map(_.toString).exists(colName.contains))
+    badChars.map(_.toString).exists(columnName.contains)
   }
 
   /**

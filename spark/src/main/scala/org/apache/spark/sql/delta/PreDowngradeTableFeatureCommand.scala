@@ -344,3 +344,16 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
     true
   }
 }
+
+case class ColumnMappingUsageTrackingPreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand {
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    if (ColumnMappingUsageTrackingTableFeature.validateRemoval(table.initialSnapshot)) return false
+    // Drop the internal table property to ensure it's no longer there if the feature ever gets
+    // re-enabled. Otherwise we might incorrectly think that no columns were dropped or removed if
+    // the feature is disabled, a column is dropped, and then the feature is re-enabled again.
+    val propKeys = Seq(DeltaConfigs.COLUMN_MAPPING_HAS_DROPPED_OR_RENAMED.key)
+    AlterTableUnsetPropertiesDeltaCommand(table, propKeys, ifExists = true).run(table.spark)
+    true
+  }
+}

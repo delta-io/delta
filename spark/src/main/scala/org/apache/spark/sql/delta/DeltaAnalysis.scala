@@ -151,7 +151,9 @@ class DeltaAnalysis(session: SparkSession)
           // will then be set in the targetTable's configuration internally after.
           val sourceMetadata = deltaLogSrc.initialSnapshot.metadata
           val config =
-            sourceMetadata.configuration.-("delta.columnMapping.maxColumnId")
+            sourceMetadata.configuration
+              .-(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
+              .-(DeltaConfigs.COLUMN_MAPPING_HAS_DROPPED_OR_RENAMED.key)
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
               .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
 

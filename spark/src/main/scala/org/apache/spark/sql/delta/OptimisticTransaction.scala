@@ -474,6 +474,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     val protocolBeforeUpdate = protocol
+
+    newMetadataTmp =
+      ColumnMappingUsageTracking.updateMetadata(protocol, newMetadataTmp, isCreatingNewTable)
+
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
     newMetadataTmp = DeltaColumnMapping.verifyAndUpdateMetadataChange(
@@ -623,6 +627,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     if (!canAssignAnyNewProtocol) {
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
+
+    newMetadataTmp =
+      ColumnMappingUsageTracking.updateMetadata(protocol, newMetadataTmp, isCreatingNewTable)
 
     newMetadataTmp = MaterializedRowId.updateMaterializedColumnName(
       protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
