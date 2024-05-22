@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 
-import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types._
 
@@ -66,40 +65,14 @@ object TypeWidening {
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
-    (fromType, toType) match {
-      case (from, to) if from == to => true
-      // All supported type changes below are supposed to be widening, but to be safe, reject any
-      // non-widening change upfront.
-      case (from, to) if !Cast.canUpCast(from, to) => false
-      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
-      case (FloatType, DoubleType) => true
-      case (DateType, TimestampNTZType) => true
-      case (ByteType | ShortType | IntegerType, DoubleType) => true
-      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
-      // Byte, Short, Integer are all stored as INT32 in parquet. The parquet readers support
-      // converting INT32 to Decimal(10, 0) and wider.
-      case (ByteType | ShortType | IntegerType, d: DecimalType) => d.isWiderThan(IntegerType)
-      // The parquet readers support converting INT64 to Decimal(20, 0) and wider.
-      case (LongType, d: DecimalType) => d.isWiderThan(LongType)
-      case _ => false
-    }
+    TypeWideningShims.isTypeChangeSupported(fromType, toType)
 
   /**
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.
    */
   def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
-    (fromType, toType) match {
-      case (from, to) if from == to => true
-      case (from, to) if !isTypeChangeSupported(from, to) => false
-      case (ByteType, ShortType) => true
-      case (ByteType | ShortType, IntegerType) => true
-      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
-      case (FloatType, DoubleType) => true
-      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
-      case (DateType, TimestampNTZType) => true
-      case _ => false
-    }
+    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType)
 
   /**
    * Asserts that the given table doesn't contain any unsupported type changes. This should never
