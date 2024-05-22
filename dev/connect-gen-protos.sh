@@ -34,7 +34,7 @@ if [[ $# -eq 1 ]]; then
   OUTPUT_PATH=$1
 fi
 
-pushd ${DELTA_HOME}/connect/delta/common/src/main
+pushd ${DELTA_HOME}/spark-connect/common/src/main
 
 LICENSE=$(cat <<'EOF'
 #
