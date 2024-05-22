@@ -23,6 +23,13 @@ import "delta/connect/base.proto";
 option java_multiple_files = true;
 option java_package = "io.delta.connect.proto";
 
+// Message to hold all relation extensions in Delta Connect.
+message DeltaRelation {
+  oneof relation_type {
+    Scan scan = 1;
+  }
+}
+
 // Relation that reads from a Delta table.
 message Scan {
   // (Required) The Delta table to scan.

@@ -44,6 +44,33 @@ else:
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
+class DeltaRelation(google.protobuf.message.Message):
+    """Message to hold all relation extensions in Delta Connect."""
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    SCAN_FIELD_NUMBER: builtins.int
+    @property
+    def scan(self) -> global___Scan: ...
+    def __init__(
+        self,
+        *,
+        scan: global___Scan | None = ...,
+    ) -> None: ...
+    def HasField(
+        self,
+        field_name: typing_extensions.Literal["relation_type", b"relation_type", "scan", b"scan"],
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal["relation_type", b"relation_type", "scan", b"scan"],
+    ) -> None: ...
+    def WhichOneof(
+        self, oneof_group: typing_extensions.Literal["relation_type", b"relation_type"]
+    ) -> typing_extensions.Literal["scan"] | None: ...
+
+global___DeltaRelation = DeltaRelation
+
 class Scan(google.protobuf.message.Message):
     """Relation that reads from a Delta table."""
 
