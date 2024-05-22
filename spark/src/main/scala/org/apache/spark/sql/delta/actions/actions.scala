@@ -780,8 +780,9 @@ case class AddFile(
     }
   }
 
+  // Don't use lazy val because we want to save memory.
   @JsonIgnore
-  lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME).map(_.toLong)
+  def insertionTime: Long = longTag(AddFile.Tags.INSERTION_TIME)
     // From modification time in milliseconds to microseconds.
     .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS))
 
@@ -791,6 +792,9 @@ case class AddFile(
 
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] = getTag(tag.name)
+
+  def longTag(tagKey: AddFile.Tags.KeyType): Option[Long] =
+    tag(tagKey).map(_.toLong)
 
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
     copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
