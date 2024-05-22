@@ -397,4 +397,40 @@ class DeltaCreateTableLikeSuite extends QueryTest
       checkTableCopyDelta(srcTbl, targetTbl)
     }
   }
+
+  test("CREATE TABLE LIKE where user explicitly provides table properties") {
+    val srcTbl = "srcTbl"
+    val targetTbl = "targetTbl"
+    val expectedTbl = "expectedTbl"
+    withTable(srcTbl, targetTbl, expectedTbl) {
+      createTable(srcTbl, addTblProperties = false)
+      createTable(expectedTbl, addTblProperties = false)
+      spark.sql(s"ALTER TABLE $srcTbl" +
+        " SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false," +
+        "'delta.appendOnly' = 'false')")
+      spark.sql(s"ALTER TABLE $expectedTbl" +
+        " SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false, " +
+        "'this.is.my.key3' = true, 'delta.appendOnly' = 'true')")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl TBLPROPERTIES('this.is.my.key3' = true, " +
+        s"'delta.appendOnly' = 'true')")
+      checkTableCopyDelta(expectedTbl, targetTbl)
+    }
+  }
+
+    test("CREATE TABLE LIKE where sourceTable is a parquet table and " +
+          "user explicitly provides table properties",
+          DeltaDVIncompatible("Don't inject table properties")) {
+    val srcTbl = "srcTbl"
+    val targetTbl = "targetTbl"
+    withTable(srcTbl, targetTbl) {
+      createTable(srcTbl, format = "parquet")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA " +
+        "TBLPROPERTIES('this.is.my.key3' = true)")
+      spark.sql(s"ALTER TABLE $srcTbl SET TBLPROPERTIES('this.is.my.key3' = true)")
+      val msg = intercept[TestFailedException] {
+        checkTableCopy(srcTbl, targetTbl, checkDesc = false)
+      }.getMessage
+      assert(msg.contains("provider does not match"))
+    }
+  }
 }
