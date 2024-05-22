@@ -98,8 +98,7 @@ object ZCubeInfo extends DeltaCommand {
    * Update the given file's metadata to make it part of the given zCubeInfo.
    */
   def setForFile(file: AddFile, zCubeInfo: ZCubeInfo): AddFile = {
-    val oldTags = Option(file.tags).getOrElse(Map.empty)
-    val newTags = oldTags ++ ZCubeInfo.toAddFileTags(zCubeInfo)
+    val newTags = file.tagsOrEmpty ++ ZCubeInfo.toAddFileTags(zCubeInfo)
     file.copy(tags = newTags)
   }
 
