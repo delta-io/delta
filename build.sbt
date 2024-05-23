@@ -40,7 +40,6 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
-connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
 
 // Dependent library versions
@@ -193,7 +192,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   )
 }
 
-lazy val connectCommon = (project in file("connect/common"))
+lazy val connectCommon = (project in file("spark-connect/common"))
   .settings(
     name := "delta-connect-common",
     commonSettings,
@@ -215,24 +214,7 @@ lazy val connectCommon = (project in file("connect/common"))
     ),
   )
 
-lazy val connectClient = (project in file("connect/client"))
-  .dependsOn(connectCommon)
-  .dependsOn(spark % "compile->compile;test->test;provided->provided")
-  .settings(
-    name := "delta-connect-client",
-    commonSettings,
-    releaseSettings,
-    crossSparkSettings(),
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
-
-      // Test deps
-      // "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests",
-    ),
-  )
-
-lazy val connectServer = (project in file("connect/server"))
+lazy val connectServer = (project in file("spark-connect/server"))
   .dependsOn(connectCommon)
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings(
