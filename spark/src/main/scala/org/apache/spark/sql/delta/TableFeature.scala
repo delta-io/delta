@@ -343,7 +343,8 @@ object TableFeature {
       V2CheckpointTableFeature,
       RowTrackingFeature,
       InCommitTimestampTableFeature,
-      VariantTypeTableFeature)
+      VariantTypeTableFeature,
+      ManagedCommitTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -362,9 +363,7 @@ object TableFeature {
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
         // Identity columns are under development and only available in testing.
-        IdentityColumnsTableFeature,
-        // managed-commits are under development and only available in testing.
-        ManagedCommitTableFeature)
+        IdentityColumnsTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -675,7 +674,7 @@ object V2CheckpointTableFeature
 
 /** Table feature to represent tables whose commits are managed by separate commit-owner */
 object ManagedCommitTableFeature
-  extends WriterFeature(name = "managed-commit-dev")
+  extends WriterFeature(name = "managed-commit-preview")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {
 
