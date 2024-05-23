@@ -19,8 +19,8 @@ package io.delta.connect
 import java.io.File
 import java.text.SimpleDateFormat
 
-import com.databricks.sql.transaction.tahoe.DeltaLog
-import com.databricks.sql.transaction.tahoe.util.FileNames
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.util.FileNames
 import com.google.protobuf
 import io.delta.tables.DeltaTable
 
