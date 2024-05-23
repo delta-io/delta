@@ -53,7 +53,7 @@ public class Metadata {
             vector.getChild(5).getArray(rowId),
             Optional.ofNullable(vector.getChild(6).isNullAt(rowId) ? null :
                 vector.getChild(6).getLong(rowId)),
-            vector.getChild(7).getMap(rowId)
+            VectorUtils.toJavaMap(vector.getChild(7).getMap(rowId))
         );
     }
 
@@ -79,8 +79,7 @@ public class Metadata {
     private final StructType schema;
     private final ArrayValue partitionColumns;
     private final Optional<Long> createdTime;
-    private final MapValue configurationMapValue;
-    private final Lazy<Map<String, String>> configuration;
+    private final Map<String, String> configuration;
     // Partition column names in lower case.
     private final Lazy<Set<String>> partitionColNames;
     // Logical data schema excluding partition columns
@@ -95,7 +94,7 @@ public class Metadata {
         StructType schema,
         ArrayValue partitionColumns,
         Optional<Long> createdTime,
-        MapValue configurationMapValue) {
+        Map<String, String> configuration) {
         this.id = requireNonNull(id, "id is null");
         this.name = name;
         this.description = requireNonNull(description, "description is null");
@@ -104,8 +103,7 @@ public class Metadata {
         this.schema = schema;
         this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
         this.createdTime = createdTime;
-        this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
-        this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(configurationMapValue));
+        this.configuration = configuration;
         this.partitionColNames = new Lazy<>(() -> loadPartitionColNames());
         this.dataSchema = new Lazy<>(() ->
             new StructType(schema.fields().stream()
@@ -156,12 +154,12 @@ public class Metadata {
         return createdTime;
     }
 
-    public MapValue getConfigurationMapValue() {
-        return configurationMapValue;
+    public void updateConfiguration(String key, String value) {
+        configuration.put(key, value);
     }
 
     public Map<String, String> getConfiguration() {
-        return Collections.unmodifiableMap(configuration.get());
+        return Collections.unmodifiableMap(configuration);
     }
 
     /**
@@ -178,7 +176,7 @@ public class Metadata {
         metadataMap.put(4, schemaString);
         metadataMap.put(5, partitionColumns);
         metadataMap.put(6, createdTime.orElse(null));
-        metadataMap.put(7, configurationMapValue);
+        metadataMap.put(7, VectorUtils.stringStringMapValue(configuration));
 
         return new GenericRow(Metadata.FULL_SCHEMA, metadataMap);
     }
@@ -199,4 +197,5 @@ public class Metadata {
         }
         return Collections.unmodifiableSet(partitionColumnNames);
     }
+
 }

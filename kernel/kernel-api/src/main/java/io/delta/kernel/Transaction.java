@@ -60,6 +60,17 @@ public interface Transaction {
     List<String> getPartitionColumns(Engine engine);
 
     /**
+     * Update the table configuration.
+     * Available config: {@link io.delta.kernel.internal.TableConfig}
+    */
+    void updateConfiguration(String key, String value);
+
+    /**
+     * Get the table configuration.
+    */
+    Map<String, String> getConfiguration();
+
+    /**
      * Get the state of the transaction. The state helps Kernel do the transformations to logical
      * data according to the Delta protocol and table features enabled on the table. The engine
      * should use this at the data writer task to transform the logical data that the engine wants

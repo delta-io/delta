@@ -112,6 +112,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     var config: Map[String, String] = Map()
     if (withAppendOnly) {
       config = Map("delta.appendOnly" -> "true");
+    } else {
+      config = Map("delta.appendOnly" -> "false");
     }
     new Metadata(
       "id",
@@ -126,14 +128,7 @@ class TableFeaturesSuite extends AnyFunSuite {
         override def getElements: ColumnVector = singletonStringColumnVector("c3")
       },
       Optional.empty(),
-      new MapValue() { // conf
-        override def getSize = 1
-
-        override def getKeys: ColumnVector = singletonStringColumnVector("delta.appendOnly")
-
-        override def getValues: ColumnVector =
-          singletonStringColumnVector(if (withAppendOnly) "false" else "true")
-      }
+      config
     )
   }
 

@@ -105,6 +105,16 @@ public class TransactionImpl
     }
 
     @Override
+    public void updateConfiguration(String key, String value) {
+        metadata.updateConfiguration(key, value);
+    }
+
+    @Override
+    public Map<String, String> getConfiguration() {
+        return metadata.getConfiguration();
+    }
+
+    @Override
     public StructType getSchema(Engine engine) {
         return readSnapshot.getSchema(engine);
     }

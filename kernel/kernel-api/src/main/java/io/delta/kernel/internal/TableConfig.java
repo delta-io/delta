@@ -60,6 +60,31 @@ public class TableConfig<T> {
             "needs to be a positive integer."
     );
 
+    public static final TableConfig<Long> LOG_RETENTION = new TableConfig<>(
+            "delta.logRetentionDuration",
+            "interval 30 days",
+            IntervalParserUtils::safeParseIntervalAsMillis,
+            value -> value >= 0,
+            "needs to be provided as a calendar interval such as '2 weeks'. Months "
+                + "and years are not accepted. You may specify '365 days' for a year instead."
+        );
+
+    public static final TableConfig<Boolean> ENABLE_EXPIRED_LOG_CLEANUP = new TableConfig<>(
+            "delta.enableExpiredLogCleanup",
+            "true",
+        Boolean::valueOf,
+            value -> true,
+            "needs to be a boolean."
+    );
+
+    public static final TableConfig<Boolean> IS_APPEND_ONLY = new TableConfig<>(
+        "delta.appendOnly",
+        "false",
+        Boolean::valueOf,
+        value -> true,
+        "needs to be a boolean."
+    );
+
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;
