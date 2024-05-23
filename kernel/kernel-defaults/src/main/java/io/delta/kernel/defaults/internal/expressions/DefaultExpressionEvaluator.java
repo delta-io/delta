@@ -32,7 +32,6 @@ import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
 import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
@@ -154,7 +153,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 default:
                     // We should never reach this based on the ExpressionVisitor
                     throw new IllegalStateException(
-                        format("%s is not a recognized comparator", predicate.getName()));
+                        String.format("%s is not a recognized comparator", predicate.getName()));
             }
         }
 
