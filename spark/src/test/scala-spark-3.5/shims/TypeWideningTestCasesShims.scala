@@ -103,8 +103,8 @@ trait TypeWideningTestCasesShims {
       Seq(BigDecimal("1.23"), BigDecimal("9" * 10), null.asInstanceOf[BigDecimal])),
     SupportedTypeEvolutionTestCase(LongType, DecimalType(20, 0),
       Seq(1L, -1L, Long.MinValue, Long.MaxValue, null.asInstanceOf[Int]),
-      Seq(BigDecimal("1.23"), BigDecimal("9" * 20), null.asInstanceOf[BigDecimal]))
-    , SupportedTypeEvolutionTestCase(ShortType, LongType,
+      Seq(BigDecimal("1.23"), BigDecimal("9" * 20), null.asInstanceOf[BigDecimal])),
+    SupportedTypeEvolutionTestCase(ShortType, LongType,
       Seq(1, -1, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short]),
       Seq(4L, -4L, Long.MinValue, Long.MaxValue, null.asInstanceOf[Long])),
     SupportedTypeEvolutionTestCase(IntegerType, LongType,

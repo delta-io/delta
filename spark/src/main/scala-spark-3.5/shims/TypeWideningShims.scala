@@ -46,12 +46,8 @@ object TypeWideningShims {
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.
    */
-  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
-    (fromType, toType) match {
-      case (from, to) if from == to => true
-      case (from, to) if !isTypeChangeSupported(from, to) => false
-      case (ByteType, ShortType) => true
-      case (ByteType | ShortType, IntegerType) => true
-      case _ => false
-    }
+  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean = {
+    // All supported type changes are eligible for schema evolution.
+    isTypeChangeSupported(fromType, toType)
+  }
 }
