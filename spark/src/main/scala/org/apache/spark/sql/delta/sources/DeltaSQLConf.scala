@@ -1665,8 +1665,8 @@ trait DeltaSQLConfBase {
   val HUDI_MAX_COMMITS_TO_CONVERT = buildConf("hudi.maxPendingCommits")
     .doc("""
            |The maximum number of pending Delta commits to convert to Hudi incrementally.
-           |If the table hasn't been converted to Iceberg in longer than this number of commits,
-           |we start from scratch, replacing the previously converted Iceberg table contents.
+           |If the table hasn't been converted to Hudi in longer than this number of commits,
+           |we start from scratch, replacing the previously converted Hudi table contents.
            |""".stripMargin)
     .intConf
     .createWithDefault(100)
