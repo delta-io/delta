@@ -419,7 +419,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
 
     test("CREATE TABLE LIKE where sourceTable is a parquet table and " +
       "user explicitly provides table properties"
-      ){
+      ) {
     val srcTbl = "srcTbl"
     val targetTbl = "targetTbl"
     withTable(srcTbl, targetTbl) {
