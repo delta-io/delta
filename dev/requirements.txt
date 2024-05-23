@@ -1,5 +1,5 @@
 # Linter
-mypy==1.8.0
+mypy==0.982
 flake8==3.9.0
 
 # pandas API on Spark Code formatter.
