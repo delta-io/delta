@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, MINUTE, Trun
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, listingPrefix, CheckpointFile, DeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, listingPrefix, CheckpointFile, DeltaFile, UnbackfilledDeltaFile}
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
@@ -84,6 +84,7 @@ trait MetadataCleanup extends DeltaLogging {
         logInfo(s"Compatibility checkpoint creation metrics: $v2CompatCheckpointMetrics")
       }
       var wasCheckpointDeleted = false
+      var maxBackfilledVersionDeleted = -1L
       expiredDeltaLogs.map(_.getPath).foreach { path =>
         // recursive = false
         if (fs.delete(path, false)) {
@@ -91,8 +92,27 @@ trait MetadataCleanup extends DeltaLogging {
           if (FileNames.isCheckpointFile(path)) {
             wasCheckpointDeleted = true
           }
+          if (FileNames.isDeltaFile(path)) {
+            maxBackfilledVersionDeleted =
+              Math.max(maxBackfilledVersionDeleted, FileNames.deltaVersion(path))
+          }
         }
       }
+      val commitDirPath = FileNames.commitDirPath(logPath)
+      // Commit Directory might not exist on tables created in older versions and
+      // never updated since.
+      val expiredUnbackfilledDeltaLogs: Iterator[FileStatus] =
+        if (fs.exists(commitDirPath)) {
+          store
+            .listFrom(listingPrefix(commitDirPath, 0), newDeltaHadoopConf())
+            .takeWhile { case UnbackfilledDeltaFile(_, fileVersion, _) =>
+              fileVersion <= maxBackfilledVersionDeleted
+            }
+        } else {
+          Iterator.empty
+        }
+      val numDeletedUnbackfilled = expiredUnbackfilledDeltaLogs.count(
+        log => fs.delete(log.getPath, false))
       if (wasCheckpointDeleted) {
         // Trigger sidecar deletion only when some checkpoints have been deleted as part of this
         // round of Metadata cleanup.
@@ -103,7 +123,8 @@ trait MetadataCleanup extends DeltaLogging {
           sidecarDeletionMetrics)
         logInfo(s"Sidecar deletion metrics: $sidecarDeletionMetrics")
       }
-      logInfo(s"Deleted $numDeleted log files older than $formattedDate")
+      logInfo(s"Deleted $numDeleted log files and $numDeletedUnbackfilled unbackfilled commit " +
+        s"files older than $formattedDate")
     }
   }
 

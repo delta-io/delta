@@ -27,6 +27,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait ManagedCommitTestUtils
@@ -116,7 +117,7 @@ case class TrackingInMemoryCommitOwnerBuilder(
     }
 
   override def getName: String = "tracking-in-memory"
-  override def build(conf: Map[String, String]): CommitOwnerClient = {
+  override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
     trackingInMemoryCommitOwnerClient
   }
 }

@@ -24,14 +24,20 @@ abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClien
 
   override protected def createTableCommitOwnerClient(
       deltaLog: DeltaLog): TableCommitOwnerClient = {
-    val cs = InMemoryCommitOwnerBuilder(batchSize).build(Map.empty)
-    TableCommitOwnerClient(cs, deltaLog, Map.empty[String, String])
+    val cs = InMemoryCommitOwnerBuilder(batchSize).build(spark, Map.empty)
+    val conf = cs.registerTable(
+      deltaLog.logPath,
+      currentVersion = -1L,
+      initMetadata,
+      Protocol(1, 1))
+    TableCommitOwnerClient(cs, deltaLog, conf)
   }
 
   override protected def registerBackfillOp(
-      commitOwnerClient: CommitOwnerClient,
+      tableCommitOwnerClient: TableCommitOwnerClient,
       deltaLog: DeltaLog,
       version: Long): Unit = {
+    val commitOwnerClient = tableCommitOwnerClient.commitOwnerClient
     val inMemoryCS = commitOwnerClient.asInstanceOf[InMemoryCommitOwner]
     inMemoryCS.registerBackfill(deltaLog.logPath, version)
   }
@@ -65,22 +71,22 @@ abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClien
 
   test("InMemoryCommitOwnerBuilder works as expected") {
     val builder1 = InMemoryCommitOwnerBuilder(5)
-    val cs1 = builder1.build(Map.empty)
+    val cs1 = builder1.build(spark, Map.empty)
     assert(cs1.isInstanceOf[InMemoryCommitOwner])
     assert(cs1.asInstanceOf[InMemoryCommitOwner].batchSize == 5)
 
-    val cs1_again = builder1.build(Map.empty)
+    val cs1_again = builder1.build(spark, Map.empty)
     assert(cs1_again.isInstanceOf[InMemoryCommitOwner])
     assert(cs1 == cs1_again)
 
     val builder2 = InMemoryCommitOwnerBuilder(10)
-    val cs2 = builder2.build(Map.empty)
+    val cs2 = builder2.build(spark, Map.empty)
     assert(cs2.isInstanceOf[InMemoryCommitOwner])
     assert(cs2.asInstanceOf[InMemoryCommitOwner].batchSize == 10)
     assert(cs2 ne cs1)
 
     val builder3 = InMemoryCommitOwnerBuilder(10)
-    val cs3 = builder3.build(Map.empty)
+    val cs3 = builder3.build(spark, Map.empty)
     assert(cs3.isInstanceOf[InMemoryCommitOwner])
     assert(cs3.asInstanceOf[InMemoryCommitOwner].batchSize == 10)
     assert(cs3 ne cs2)
@@ -91,8 +97,6 @@ abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClien
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
       val tcs = createTableCommitOwnerClient(log)
-      tcs.commitOwnerClient.registerTable(
-        logPath, currentVersion = -1L, initMetadata, Protocol(1, 1))
 
       // Anything other than version-0 or version-1 should be rejected as the first commit
       // version-0 will be directly backfilled and won't be recorded in InMemoryCommitOwner.

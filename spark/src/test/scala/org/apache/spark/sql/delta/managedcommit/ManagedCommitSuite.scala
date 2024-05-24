@@ -23,7 +23,7 @@ import scala.collection.mutable.ArrayBuffer
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.{DeltaOperations, ManagedCommitTableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CommitOwnerGetCommitsFailedException
-import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME, ROW_TRACKING_ENABLED}
+import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME, MANAGED_COMMIT_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.InitialSnapshot
@@ -40,7 +40,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{QueryTest, Row}
+import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
 
@@ -71,7 +71,7 @@ class ManagedCommitSuite
 
       override def getName: String = commitOwnerName
 
-      override def build(conf: Map[String, String]): CommitOwnerClient =
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient =
         new InMemoryCommitOwner(batchSize = 5) {
           override def commit(
               logStore: LogStore,
@@ -125,7 +125,7 @@ class ManagedCommitSuite
 
   test("cold snapshot initialization") {
     val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
-    val commitOwnerClient = builder.build(Map.empty).asInstanceOf[TrackingCommitOwnerClient]
+    val commitOwnerClient = builder.build(spark, Map.empty).asInstanceOf[TrackingCommitOwnerClient]
     CommitOwnerProvider.registerBuilder(builder)
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
@@ -221,7 +221,7 @@ class ManagedCommitSuite
         name: String,
         commitOwnerClient: CommitOwnerClient) extends CommitOwnerBuilder {
       var numBuildCalled = 0
-      override def build(conf: Map[String, String]): CommitOwnerClient = {
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
         numBuildCalled += 1
         commitOwnerClient
       }
@@ -361,7 +361,8 @@ class ManagedCommitSuite
     case class TrackingInMemoryCommitOwnerClientBuilder(
         name: String,
         commitOwnerClient: CommitOwnerClient) extends CommitOwnerBuilder {
-      override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
       override def getName: String = name
     }
     val builder1 = TrackingInMemoryCommitOwnerClientBuilder(name = "in-memory-1", cs1)
@@ -773,7 +774,14 @@ class ManagedCommitSuite
         // Downgrade the table
         // [upgradeExistingTable = false] Commit-3
         // [upgradeExistingTable = true] Commit-5
-        val newMetadata2 = Metadata().copy(configuration = Map("downgraded_at" -> "v2"))
+        val commitOwnerConfKeys = Seq(
+          MANAGED_COMMIT_OWNER_NAME.key,
+          MANAGED_COMMIT_OWNER_CONF.key,
+          MANAGED_COMMIT_TABLE_CONF.key
+        )
+        val newConfig = log.snapshot.metadata.configuration
+          .filterKeys(!commitOwnerConfKeys.contains(_)) ++ Map("downgraded_at" -> "v2")
+        val newMetadata2 = log.snapshot.metadata.copy(configuration = newConfig.toMap)
         log.startTransaction().commitManually(newMetadata2)
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 3)
         assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
