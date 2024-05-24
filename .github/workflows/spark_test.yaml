@@ -55,6 +55,7 @@ jobs:
           pipenv run pip install importlib_metadata==3.10.0
           pipenv run pip install mypy==0.982
           pipenv run pip install mypy-protobuf==3.3.0
+          pipenv run pip install buf
           pipenv run pip install cryptography==37.0.4
           pipenv run pip install twine==4.0.1
           pipenv run pip install wheel==0.33.4
