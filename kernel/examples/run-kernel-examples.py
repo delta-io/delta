@@ -180,7 +180,15 @@ if __name__ == "__main__":
 
     clear_artifact_cache()
 
-    if args.use_local:
+    use_local = args.use_local
+
+    if (args.maven_repo == None and not use_local):
+       # If no maven_repo is given default to working with the locally built Kernel jars
+       print("Building the Kernel libraries locally and using them")
+       use_local = True
+
+
+    if use_local:
         with WorkingDirectory(project_root_dir):
             run_cmd(["build/sbt", "kernelGroup/publishM2", "storage/publishM2"], stream_output=True)
 
