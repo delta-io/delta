@@ -23,9 +23,9 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
@@ -309,8 +309,9 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
    * @return Return the number of files rewritten.
    */
   private def rewriteFilesIfNeeded(): Long = {
-    val numFilesToRewrite = TypeWidening.numFilesRequiringRewrite(table.initialSnapshot)
-    if (numFilesToRewrite == 0L) return 0L
+    if (!TypeWideningMetadata.containsTypeWideningMetadata(table.initialSnapshot.schema)) {
+      return 0L
+    }
 
     // Wrap `table` in a ResolvedTable that can be passed to DeltaReorgTableCommand. The catalog &
     // table ID won't be used by DeltaReorgTableCommand.
@@ -323,8 +324,9 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
       reorgTableSpec = DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None)
     )(Nil)
 
-    reorg.run(table.spark)
-    numFilesToRewrite
+    val rows = reorg.run(table.spark)
+    val metrics = rows.head.getAs[OptimizeMetrics](1)
+    metrics.numFilesRemoved
   }
 
   /**

@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.RemoveFile
+import org.apache.spark.sql.delta.actions.{RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -72,6 +72,7 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUti
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
+      .set(TableFeatureProtocolUtils.defaultPropertyKey(TimestampNTZTableFeature), "supported")
       // Ensure we don't silently cast test inputs to null on overflow.
       .set(SQLConf.ANSI_ENABLED.key, "true")
   }
@@ -1012,7 +1013,7 @@ trait DeltaTypeWideningStatsTests {
  * Tests covering adding and removing the type widening table feature. Dropping the table feature
  * also includes rewriting data files with the old type and removing type widening metadata.
  */
-trait DeltaTypeWideningTableFeatureTests {
+trait DeltaTypeWideningTableFeatureTests extends DeltaTypeWideningTestCases {
   self: QueryTest
     with ParquetTest
     with RowTrackingTestUtils
@@ -1346,6 +1347,21 @@ trait DeltaTypeWideningTableFeatureTests {
     }
   }
 
+  for {
+    testCase <- supportedTestCases
+  }
+  test(s"drop feature after type change ${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+    append(testCase.initialValuesDF.repartition(2))
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}")
+    append(testCase.additionalValuesDF.repartition(3))
+    dropTableFeature(
+      expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+      expectedNumFilesRewritten = 2,
+      expectedColumnTypes = Map("value" -> testCase.toType)
+    )
+    checkAnswer(readDeltaTable(tempPath), testCase.expectedResult)
+  }
+
   test("drop feature after a type change with schema evolution") {
     setupManualClock()
     sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
@@ -1448,7 +1464,7 @@ trait DeltaTypeWideningTableFeatureTests {
 
       dropTableFeature(
         expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
-        expectedNumFilesRewritten = 3,
+        expectedNumFilesRewritten = 2,
         expectedColumnTypes = Map("a" -> IntegerType)
       )
       checkAnswer(readDeltaTable(tempPath),
