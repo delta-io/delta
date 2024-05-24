@@ -1,5 +1,5 @@
 > [!IMPORTANT]
-Delta Standalone is no longer actively maintained. A new initiative called [Delta Kernel](https://github.com/delta-io/delta/blob/master/kernel) has been developed to support higher Delta protocol versions with a much simpler APIs. Connector developers are advised to use the [Delta Kernel](https://github.com/delta-io/delta/blob/master/kernel). 
+Delta Standalone is no longer actively maintained. As Delta added more features (such as deletion vectors, column mapping) in latest versions of the Delta protocol, the current Standalone APIs no longer work and require significant effort on the connector developer to support higher versions of Delta protocol features. A new initiative called [Delta Kernel](https://github.com/delta-io/delta/blob/master/kernel) has been developed to support higher Delta protocol versions with a much simpler APIs and to keep the work required to upgrade to newer protocol versions to very minimal to nothing. Connector developers are advised to use the [Delta Kernel](https://github.com/delta-io/delta/blob/master/kernel). 
 
 Soon all connectors in this repo (e.g. Flink-Delta connector) will be updated to use [Delta Kernel](https://github.com/delta-io/delta/blob/master/kernel).
 
