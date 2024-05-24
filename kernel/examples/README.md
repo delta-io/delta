@@ -17,6 +17,10 @@ This directory contains a set of example programs that show how to read a Delta 
 * [Idempotently inserting data to a Delta table](https://github.com/delta-io/delta/blob/master/kernel/examples/kernel-examples/src/main/java/io/delta/kernel/examples/CreateTableAndInsertData.java). Check `idempotentInserts` method.
 * [Inserting and optionally checkpointing a Delta table](https://github.com/delta-io/delta/blob/master/kernel/examples/kernel-examples/src/main/java/io/delta/kernel/examples/CreateTableAndInsertData.java). Check `insertWithOptionalCheckpoint` method.
 
+### More information
+- [User guide](https://github.com/delta-io/delta/blob/master/kernel/USER_GUIDE.md) on the step-by-step process of using Kernel in a standalone Java program or in a distributed processing connector for reading and writing to Delta tables.
+- Table and default Engine API Java [documentation](https://docs.delta.io/latest/api/java/kernel/index.html)
+
 
 ### Running integration tests
 To run examples by building the artifacts from code and using them:
