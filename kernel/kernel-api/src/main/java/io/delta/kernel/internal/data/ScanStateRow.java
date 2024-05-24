@@ -56,7 +56,8 @@ public class ScanStateRow extends GenericRow {
         String readPhysicalDataSchemaJson,
         String tablePath) {
         HashMap<Integer, Object> valueMap = new HashMap<>();
-        valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"),
+            VectorUtils.stringStringMapValue(metadata.getConfiguration()));
         valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), readSchemaLogicalJson);
         valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), readSchemaPhysicalJson);
         valueMap.put(
