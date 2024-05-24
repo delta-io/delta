@@ -546,6 +546,53 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
 
+  //////////////////////////////////////////////
+  // DynamoDB Commit Owner-specific configs
+  /////////////////////////////////////////////
+
+  val MANAGED_COMMIT_DDB_AWS_CREDENTIALS_PROVIDER_NAME =
+    buildConf("managedCommits.commitOwner.ddb.awsCredentialsProviderName")
+      .internal()
+      .doc("The fully qualified class name of the AWS credentials provider to use for " +
+        "interacting with DynamoDB in the DynamoDB Commit Owner Client. e.g. " +
+        "com.amazonaws.auth.DefaultAWSCredentialsProviderChain.")
+      .stringConf
+      .createWithDefault("com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+
+  val MANAGED_COMMIT_DDB_SKIP_PATH_CHECK =
+    buildConf("managedCommits.commitOwner.ddb.skipPathCheck.enabled")
+      .internal()
+      .doc("When enabled, the DynamoDB Commit Owner will not enforce that the table path of the " +
+        "current Delta table matches the stored in the corresponding DynamoDB table. This " +
+        "should only be used when the observed table path for the same physical table varies " +
+        "depending on how it is accessed (e.g. abfs://path1 vs abfss://path1). Leaving this " +
+        "enabled can be dangerous as every physical copy of a Delta table with try to write to" +
+        " the same DynamoDB table.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val MANAGED_COMMIT_DDB_READ_CAPACITY_UNITS =
+    buildConf("managedCommits.commitOwner.ddb.readCapacityUnits")
+      .internal()
+      .doc("Controls the provisioned read capacity units for the DynamoDB table backing the " +
+        "DynamoDB Commit Owner. This configuration is only used when the DynamoDB table is first " +
+        "provisioned and cannot be used configure an existing table.")
+      .intConf
+      .createWithDefault(5)
+
+  val MANAGED_COMMIT_DDB_WRITE_CAPACITY_UNITS =
+    buildConf("managedCommits.commitOwner.ddb.writeCapacityUnits")
+      .internal()
+      .doc("Controls the provisioned write capacity units for the DynamoDB table backing the " +
+        "DynamoDB Commit Owner. This configuration is only used when the DynamoDB table is first " +
+        "provisioned and cannot be used configure an existing table.")
+      .intConf
+      .createWithDefault(5)
+
+  //////////////////////////////////////////////
+  // DynamoDB Commit Owner-specific configs end
+  /////////////////////////////////////////////
+
   val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =
     buildConf("catalog.update.longFieldTruncationThreshold")
       .internal()

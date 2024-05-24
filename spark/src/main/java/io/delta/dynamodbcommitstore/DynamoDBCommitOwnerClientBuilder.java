@@ -17,13 +17,16 @@
 package io.delta.dynamodbcommitstore;
 
 import com.amazonaws.auth.AWSCredentialsProvider;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import org.apache.spark.sql.delta.managedcommit.CommitOwnerBuilder;
 import org.apache.spark.sql.delta.managedcommit.CommitOwnerClient;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import scala.collection.immutable.Map;
 
-import java.lang.reflect.InvocationTargetException;
+import java.io.IOException;
 
 public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
 
@@ -41,19 +44,11 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
      */
     private static final String MANAGED_COMMITS_TABLE_NAME_KEY = "managedCommitsTableName";
     /**
-     * Key for the endpoint of the DynamoDB service. The value of this key is stored in the
+     * The endpoint of the DynamoDB service. The value of this key is stored in the
      * `conf` which is passed to the `build` method.
      */
     private static final String DYNAMO_DB_ENDPOINT_KEY = "dynamoDBEndpoint";
 
-    /**
-     * The AWS credentials provider chain to use when creating the DynamoDB client.
-     * This has temporarily been hardcoded until we have a way to read from sparkSession.
-     */
-    private static final String AWS_CREDENTIALS_PROVIDER =
-            "com.amazonaws.auth.DefaultAWSCredentialsProviderChain";
-
-    // TODO: update this interface so that it can take a sparkSession.
     @Override
     public CommitOwnerClient build(SparkSession spark, Map<String, String> conf) {
         String managedCommitsTableName = conf.get(MANAGED_COMMITS_TABLE_NAME_KEY).getOrElse(() -> {
@@ -62,27 +57,61 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
         String dynamoDBEndpoint = conf.get(DYNAMO_DB_ENDPOINT_KEY).getOrElse(() -> {
             throw new RuntimeException(DYNAMO_DB_ENDPOINT_KEY + " not found");
         });
+        String awsCredentialsProviderName =
+                spark.conf().get(DeltaSQLConf.MANAGED_COMMIT_DDB_AWS_CREDENTIALS_PROVIDER_NAME());
+        int readCapacityUnits = Integer.parseInt(
+                spark.conf().get(DeltaSQLConf.MANAGED_COMMIT_DDB_READ_CAPACITY_UNITS().key()));
+        int writeCapacityUnits = Integer.parseInt(
+                spark.conf().get(DeltaSQLConf.MANAGED_COMMIT_DDB_WRITE_CAPACITY_UNITS().key()));
+        boolean skipPathCheck = Boolean.parseBoolean(
+                spark.conf().get(DeltaSQLConf.MANAGED_COMMIT_DDB_SKIP_PATH_CHECK().key()));
         try {
-            AmazonDynamoDBClient client =
-                    createAmazonDDBClient(dynamoDBEndpoint, AWS_CREDENTIALS_PROVIDER);
-            return new DynamoDBCommitOwnerClient(
-                    managedCommitsTableName, dynamoDBEndpoint, client, BACKFILL_BATCH_SIZE);
+            AmazonDynamoDB ddbClient = createAmazonDDBClient(
+                    dynamoDBEndpoint,
+                    awsCredentialsProviderName,
+                    spark.sessionState().newHadoopConf()
+            );
+            return getDynamoDBCommitOwnerClient(
+                    managedCommitsTableName,
+                    dynamoDBEndpoint,
+                    ddbClient,
+                    BACKFILL_BATCH_SIZE,
+                    readCapacityUnits,
+                    writeCapacityUnits,
+                    skipPathCheck
+            );
         } catch (Exception e) {
             throw new RuntimeException("Failed to create DynamoDB client", e);
         }
     }
 
-    private AmazonDynamoDBClient createAmazonDDBClient(
+    protected DynamoDBCommitOwnerClient getDynamoDBCommitOwnerClient(
+            String managedCommitsTableName,
+            String dynamoDBEndpoint,
+            AmazonDynamoDB ddbClient,
+            long backfillBatchSize,
+            int readCapacityUnits,
+            int writeCapacityUnits,
+            boolean skipPathCheck
+    ) throws IOException {
+        return new DynamoDBCommitOwnerClient(
+                managedCommitsTableName,
+                dynamoDBEndpoint,
+                ddbClient,
+                backfillBatchSize,
+                readCapacityUnits,
+                writeCapacityUnits,
+                skipPathCheck
+        );
+    }
+
+    protected AmazonDynamoDB createAmazonDDBClient(
             String endpoint,
-            String credentialProviderName
-    ) throws NoSuchMethodException,
-            ClassNotFoundException,
-            InvocationTargetException,
-            InstantiationException,
-            IllegalAccessException {
-        Class<?> awsCredentialsProviderClass = Class.forName(credentialProviderName);
+            String credentialProviderName,
+            Configuration hadoopConf
+    ) throws ReflectiveOperationException {
         AWSCredentialsProvider awsCredentialsProvider =
-                (AWSCredentialsProvider) awsCredentialsProviderClass.getConstructor().newInstance();
+                ReflectionUtils.createAwsCredentialsProvider(credentialProviderName, hadoopConf);
         AmazonDynamoDBClient client = new AmazonDynamoDBClient(awsCredentialsProvider);
         client.setEndpoint(endpoint);
         return client;
