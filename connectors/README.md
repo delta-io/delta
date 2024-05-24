@@ -1,3 +1,9 @@
+> [!IMPORTANT]
+Delta Standalone is no longer actively maintained. A new initiative called [Delta Kernel](https://github.com/delta-io/delta/blob/master/kernel) has been developed to support higher Delta protocol versions with a much simpler APIs. Connector developers are advised to use the [Delta Kernel](https://github.com/delta-io/delta/blob/master/kernel). 
+
+Soon all connectors in this repo (e.g. Flink-Delta connector) will be updated to use [Delta Kernel](https://github.com/delta-io/delta/blob/master/kernel).
+
+
 ## Delta Standalone
 
 Delta Standalone, formerly known as the Delta Standalone Reader (DSR), is a JVM library to read **and write** Delta tables. Unlike https://github.com/delta-io/delta, this project doesn't use Spark to read or write tables and it has only a few transitive dependencies. It can be used by any application that cannot use a Spark cluster.
