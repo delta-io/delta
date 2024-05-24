@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.RemoveFile
+import org.apache.spark.sql.delta.actions.{RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -28,17 +28,18 @@ import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
+import com.google.common.math.DoubleMath
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Cast, EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.ManualClock
@@ -67,13 +68,18 @@ class DeltaTypeWideningSuite
  * Test mixin that enables type widening by default for all tests in the suite.
  */
 trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUtils {
+  self: QueryTest =>
+
   import testImplicits._
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
+      .set(TableFeatureProtocolUtils.defaultPropertyKey(TimestampNTZTableFeature), "supported")
       // Ensure we don't silently cast test inputs to null on overflow.
       .set(SQLConf.ANSI_ENABLED.key, "true")
+      // Rebase mode must be set explicitly to allow writing dates before 1582-10-15.
+      .set(SQLConf.PARQUET_REBASE_MODE_IN_WRITE.key, LegacyBehaviorPolicy.CORRECTED.toString)
   }
 
   /** Enable (or disable) type widening for the table under the given path. */
@@ -105,6 +111,41 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUti
 
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
       append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
+
+  /**
+   * Similar to `QueryTest.checkAnswer` but using fuzzy equality for double values. This is needed
+   * because double partition values are serialized as string leading to loss of precision. Also
+   * `checkAnswer` treats -0f and 0f as different values without tolerance.
+   */
+  def checkAnswerWithTolerance(
+      actualDf: DataFrame,
+      expectedDf: DataFrame,
+      toType: DataType,
+      tolerance: Double = 0.001)
+    : Unit = {
+    // Widening to float isn't supported so only handle double here.
+    if (toType == DoubleType) {
+      val actual = actualDf.sort("value").collect()
+      val expected = expectedDf.sort("value").collect()
+      assert(actual.length === expected.length, s"Wrong result: $actual did not equal $expected")
+
+      actual.zip(expected).foreach { case (a, e) =>
+        val expectedValue = e.getAs[Double]("value")
+        val actualValue = a.getAs[Double]("value")
+        val absTolerance = if (expectedValue.isNaN || expectedValue.isInfinity) {
+          0
+        } else {
+          tolerance * Math.abs(expectedValue)
+        }
+        assert(
+          DoubleMath.fuzzyEquals(actualValue, expectedValue, absTolerance),
+          s"$actualValue did not equal $expectedValue"
+        )
+      }
+    } else {
+      checkAnswer(actualDf, expectedDf)
+    }
+  }
 }
 
 /**
@@ -198,7 +239,7 @@ trait DeltaTypeWideningDropFeatureTestMixin
 /**
  * Trait collecting supported and unsupported type change test cases.
  */
-trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
+trait DeltaTypeWideningTestCases extends TypeWideningTestCasesShims { self: SharedSparkSession =>
   import testImplicits._
 
   /**
@@ -240,20 +281,6 @@ trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
       initialValuesDF.union(additionalValuesDF).select($"value".cast(toType))
   }
 
-  // Type changes that are supported by all Parquet readers. Byte, Short, Int are all stored as
-  // INT32 in parquet so these changes are guaranteed to be supported.
-  protected val supportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
-    SupportedTypeEvolutionTestCase(ByteType, ShortType,
-      Seq(1, -1, Byte.MinValue, Byte.MaxValue, null.asInstanceOf[Byte]),
-      Seq(4, -4, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short])),
-    SupportedTypeEvolutionTestCase(ByteType, IntegerType,
-      Seq(1, -1, Byte.MinValue, Byte.MaxValue, null.asInstanceOf[Byte]),
-      Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int])),
-    SupportedTypeEvolutionTestCase(ShortType, IntegerType,
-      Seq(1, -1, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short]),
-      Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]))
-  )
-
   /**
    * Represents the input of an unsupported type change test. Handles converting the test values
    * from scala types to a dataframe. Additional values to insert are always empty since the type
@@ -275,48 +302,6 @@ trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
     override def expectedResult: DataFrame =
       initialValuesDF.select($"value".cast(toType))
   }
-
-  // Test type changes that aren't supported.
-  protected val unsupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
-    UnsupportedTypeEvolutionTestCase(IntegerType, ByteType,
-      Seq(1, 2, Int.MinValue)),
-    UnsupportedTypeEvolutionTestCase(LongType, IntegerType,
-      Seq(4, 5, Long.MaxValue)),
-    UnsupportedTypeEvolutionTestCase(DoubleType, FloatType,
-      Seq(987654321.987654321d, Double.NaN, Double.NegativeInfinity,
-        Double.PositiveInfinity, Double.MinPositiveValue,
-        Double.MinValue, Double.MaxValue)),
-    UnsupportedTypeEvolutionTestCase(ByteType, DecimalType(2, 0),
-      Seq(1, -1, Byte.MinValue)),
-    UnsupportedTypeEvolutionTestCase(ShortType, DecimalType(4, 0),
-      Seq(1, -1, Short.MinValue)),
-    UnsupportedTypeEvolutionTestCase(IntegerType, DecimalType(9, 0),
-      Seq(1, -1, Int.MinValue)),
-    UnsupportedTypeEvolutionTestCase(LongType, DecimalType(19, 0),
-      Seq(1, -1, Long.MinValue)),
-    UnsupportedTypeEvolutionTestCase(TimestampNTZType, DateType,
-      Seq("2020-03-17 15:23:15", "2023-12-31 23:59:59", "0001-01-01 00:00:00")),
-    // Reduce scale
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS, 3),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Reduce precision
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS - 1, 2),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Reduce precision & scale
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS - 1, 1),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"))),
-    // Increase scale more than precision
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS + 1, 4),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Smaller scale and larger precision.
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS + 3, 1),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99")))
-  )
 }
 
 /**
@@ -329,7 +314,7 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
   import testImplicits._
 
   for {
-    testCase <- supportedTestCases
+    testCase <- supportedTestCases ++ alterTableOnlySupportedTestCases
     partitioned <- BOOLEAN_DOMAIN
   } {
     test(s"type widening ${testCase.fromType.sql} -> ${testCase.toType.sql}, " +
@@ -345,14 +330,19 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}")
       withAllParquetReaders {
         assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-        checkAnswer(readDeltaTable(tempPath).select("value").sort("value"),
-          testCase.initialValuesDF.select($"value".cast(testCase.toType)).sort("value"))
+        checkAnswerWithTolerance(
+          actualDf = readDeltaTable(tempPath).select("value"),
+          expectedDf = testCase.initialValuesDF.select($"value".cast(testCase.toType)),
+          toType = testCase.toType
+        )
       }
       writeData(testCase.additionalValuesDF)
       withAllParquetReaders {
-        checkAnswer(
-          readDeltaTable(tempPath).select("value").sort("value"),
-          testCase.expectedResult.sort("value"))
+        checkAnswerWithTolerance(
+          actualDf = readDeltaTable(tempPath).select("value"),
+          expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+          toType = testCase.toType
+        )
       }
     }
   }
@@ -369,28 +359,43 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
       } else {
         append(testCase.initialValuesDF)
       }
-      sql(s"ALTER TABLE delta.`$tempPath` " +
-        s"SET TBLPROPERTIES('delta.feature.timestampNtz' = 'supported')")
 
       val alterTableSql =
         s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}"
-      checkError(
-        exception = intercept[AnalysisException] {
-          sql(alterTableSql)
-        },
-        errorClass = "NOT_SUPPORTED_CHANGE_COLUMN",
-        sqlState = None,
-        parameters = Map(
-          "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
-          "originName" -> toSQLId("value"),
-          "originType" -> toSQLType(testCase.fromType),
-          "newName" -> toSQLId("value"),
-          "newType" -> toSQLType(testCase.toType)),
-        context = ExpectedContext(
-          fragment = alterTableSql,
-          start = 0,
-          stop = alterTableSql.length - 1)
-      )
+
+      // Type changes that aren't upcast are rejected early during analysis by Spark, while upcasts
+      // are rejected in Delta when the ALTER TABLE command is executed.
+      if (Cast.canUpCast(testCase.fromType, testCase.toType)) {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql(alterTableSql)
+          },
+          errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+          sqlState = None,
+          parameters = Map(
+            "fieldPath" -> "value",
+            "oldField" -> testCase.fromType.sql,
+            "newField" -> testCase.toType.sql)
+        )
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(alterTableSql)
+          },
+          errorClass = "NOT_SUPPORTED_CHANGE_COLUMN",
+          sqlState = None,
+          parameters = Map(
+            "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+            "originName" -> toSQLId("value"),
+            "originType" -> toSQLType(testCase.fromType),
+            "newName" -> toSQLId("value"),
+            "newType" -> toSQLType(testCase.toType)),
+          context = ExpectedContext(
+            fragment = alterTableSql,
+            start = 0,
+            stop = alterTableSql.length - 1)
+        )
+      }
     }
   }
 
