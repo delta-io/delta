@@ -54,6 +54,7 @@ jobs:
           pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
           pipenv run pip install importlib_metadata==3.10.0
           pipenv run pip install mypy==0.982
+          pipenv run pip install mypy-protobuf==3.3.0
           pipenv run pip install cryptography==37.0.4
           pipenv run pip install twine==4.0.1
           pipenv run pip install wheel==0.33.4
@@ -62,7 +63,6 @@ jobs:
           pipenv run pip install pandas==1.1.3
           pipenv run pip install pyarrow==8.0.0
           pipenv run pip install numpy==1.20.3
-          pipenv run pip install mypy-protobuf==3.3.0
         if: steps.git-diff.outputs.diff
       - name: Run Scala/Java and Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
