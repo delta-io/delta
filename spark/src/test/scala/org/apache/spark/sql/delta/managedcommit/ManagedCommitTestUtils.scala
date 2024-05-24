@@ -72,6 +72,26 @@ trait ManagedCommitTestUtils
     }
   }
 
+  /**
+   * Run the test against a [[TrackingCommitOwnerClient]] with backfill batch size =
+   * `batchBackfillSize`
+   */
+  def testWithTrackingInMemoryCommitOwner(
+      backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
+    test(s"$testName [Backfill batch size: $backfillBatchSize]") {
+      CommitOwnerProvider.clearNonDefaultBuilders()
+      CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(backfillBatchSize))
+      val managedCommitOwnerConf = Map("randomConf" -> "randomConfValue")
+      val managedCommitOwnerJson = JsonUtils.toJson(managedCommitOwnerConf)
+      withSQLConf(
+          DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "tracking-in-memory",
+          DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey ->
+            managedCommitOwnerJson) {
+        f
+      }
+    }
+  }
+
   /** Run the test with:
    * 1. Without managed-commits
    * 2. With managed-commits with different backfill batch sizes
