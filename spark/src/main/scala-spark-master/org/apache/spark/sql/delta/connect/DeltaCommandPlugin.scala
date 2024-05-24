@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.connect
+package org.apache.spark.sql.delta.connect
 
 import scala.collection.JavaConverters._
 
