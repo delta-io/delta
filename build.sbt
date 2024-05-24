@@ -40,6 +40,7 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+connectCommon / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
 
 // Dependent library versions
@@ -196,7 +197,6 @@ lazy val connectCommon = (project in file("spark-connect/common"))
   .settings(
     name := "delta-connect-common",
     commonSettings,
-    // It needs this to compile for some reason. Even though it does not depend on Spark.
     crossSparkSettings(),
     releaseSettings,
     libraryDependencies ++= Seq(
@@ -204,8 +204,9 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       "io.grpc" % "grpc-protobuf" % grpcVersion,
       "io.grpc" % "grpc-stub" % grpcVersion,
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
-      "com.google.protobuf" % "protobuf-java" % protoVersion,
       "javax.annotation" % "javax.annotation-api" % "1.3.2",
+
+      "org.apache.spark" %% "spark-connect-common" % sparkVersion.value % "provided",
     ),
     PB.protocVersion := protoVersion,
     Compile / PB.targets := Seq(
@@ -215,7 +216,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
-  .dependsOn(connectCommon)
+  .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings(
     name := "delta-connect-server",
@@ -223,7 +224,19 @@ lazy val connectServer = (project in file("spark-connect/server"))
     releaseSettings,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
+      "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
+
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
+
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
   )
 
