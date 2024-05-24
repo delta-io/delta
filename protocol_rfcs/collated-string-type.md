@@ -1,7 +1,7 @@
 # Collated String Type
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2894**
 
-This protocol change adds support for collated strings. It consists of three changes to the protocol
+This protocol change adds support for collated strings. It consists of three changes to the protocol:
 
 * Collations in the table schema
 * Per-column statistics are annotated with the collation that was used to collect them
@@ -17,9 +17,9 @@ Collations are a set of rules for how strings are compared. They are supported b
 
 Each string field can have a collation, which is specified in the table schema. It is also possible to store statistics per collation version. This is required because the min and max values of a column can differ based on the used collation or collation version.
 
-By default, all strings are collated using binary collation. That means that strings compare equal if their binary representations are equal. The binary representation is also used to sort them.
+By default, all strings are collated using binary collation. That means that strings compare equal if their binary UTF8 encoded representations are equal. The binary UTF8 encoded representation is also used to sort them. Note that in Delta all strings are encoded in UTF8.
 
-The `collations` table feature is a writer only feature and allows clients that do not support collations to read the table using binary collation.
+The `collations` table feature is a writer only feature and allows clients that do not support collations to read the table using UTF8 binary collation. To support the table feature clients must preserve collations when they change the schema. Collecting collated statistics is optional and it is valid to store UTF8 binary collated statistics for fields with a collation other than UTF8 binary.
 
 #### Collation identifiers
 
@@ -31,7 +31,7 @@ Part | Description
 -|-
 Provider | Name of the provider. Must not contain dots
 Name | Name of the collation as provided by the provider. Must not contain dots
-Version | Version string. Is allowed to contain dots. This part is optional.
+Version | Version string. Is allowed to contain dots. This part is optional. Collations without a version are used in the schema because readers are not forced to use a specific version of the collation. Statistics are annotated with versioned collations to guarantee correctness.
 
 #### Specifying collations in the table schema
 
@@ -140,8 +140,9 @@ __COLLATIONS | Collations for strings stored in the field or combinations of map
 
 > ***Edit the [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics) section and change it from the "Per-column statistics" section onwards.***
 
-Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data.
+Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data. Statistic are optional and it is allowed to provide UTF8 binary statistics for strings when the field has a different collation.
 For example, given the following data schema:
+
 ```
 |-- a: struct
 |    |-- b: struct
