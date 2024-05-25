@@ -237,20 +237,18 @@ public class ScanImpl implements Scan {
                         () -> engine.getExpressionHandler().getPredicateEvaluator(
                             next.getData().getSchema(),
                             predicateOnScanFileBatch),
-                        String.format(
-                            "Get the predicate evaluator for partition pruning with schema=%s and" +
-                                " filter=%s",
-                            next.getData().getSchema(),
-                            predicateOnScanFileBatch
-                        )
+                        "Get the predicate evaluator for partition pruning with schema=%s and" +
+                            " filter=%s",
+                        next.getData().getSchema(),
+                        predicateOnScanFileBatch
                     );
                 }
                 ColumnVector newSelectionVector = wrapWithEngineException(
                     () -> predicateEvaluator.eval(
                         next.getData(),
                         next.getSelectionVector()),
-                    String.format(
-                        "Evaluating the partition expression %s", predicateOnScanFileBatch)
+                    "Evaluating the partition expression %s",
+                    predicateOnScanFileBatch
                 );
                 return new FilteredColumnarBatch(
                     next.getData(),
@@ -293,18 +291,25 @@ public class ScanImpl implements Scan {
                 Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
-        PredicateEvaluator predicateEvaluator = engine
-            .getExpressionHandler()
-            .getPredicateEvaluator(prunedStatsSchema, filterToEval);
+        PredicateEvaluator predicateEvaluator = wrapWithEngineException(
+            () -> engine
+                .getExpressionHandler()
+                .getPredicateEvaluator(prunedStatsSchema, filterToEval),
+            "Get the predicate evaluator for data skipping with schema=%s and filter=%s",
+            prunedStatsSchema,
+            filterToEval
+        );
 
         return scanFileIter.map(filteredScanFileBatch -> {
 
-            ColumnVector newSelectionVector = predicateEvaluator.eval(
-                DataSkippingUtils.parseJsonStats(engine,
-                    filteredScanFileBatch,
-                    prunedStatsSchema
-                ),
-                filteredScanFileBatch.getSelectionVector());
+            ColumnVector newSelectionVector = wrapWithEngineException(
+                () -> predicateEvaluator.eval(
+                    DataSkippingUtils.parseJsonStats(
+                        engine, filteredScanFileBatch, prunedStatsSchema),
+                    filteredScanFileBatch.getSelectionVector()),
+                "Evaluating the data skipping filter %s",
+                filterToEval
+            );
 
             return new FilteredColumnarBatch(
                 filteredScanFileBatch.getData(),

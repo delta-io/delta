@@ -26,6 +26,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.actions.SingleAction.CHECKPOINT_SCHEMA;
 import static io.delta.kernel.internal.replay.LogReplayUtils.*;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -367,7 +368,10 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
     }
 
     private ColumnVector createSelectionVector(boolean[] selectionVectorBuffer, int size) {
-        return engine.getExpressionHandler()
-                .createSelectionVector(selectionVectorBuffer, 0, size);
+        return wrapWithEngineException(
+            () -> engine.getExpressionHandler()
+                .createSelectionVector(selectionVectorBuffer, 0, size),
+            "Create selection vector for writing actions to checkpoints"
+        );
     }
 }

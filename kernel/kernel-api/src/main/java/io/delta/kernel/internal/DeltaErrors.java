@@ -223,12 +223,12 @@ public final class DeltaErrors {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
     }
 
-    // TODO add string formatting with args to avoid string formatting unless needed
-    public static <T> T wrapWithEngineException(Callable<T> s, String operation) {
+    public static <T> T wrapWithEngineException(
+            Callable<T> s, String msgString, Object... args) {
         try {
             return s.call();
         } catch (Exception e) {
-            throw new KernelEngineException(operation, e);
+            throw new KernelEngineException(String.format(msgString, args), e);
         }
     }
 }

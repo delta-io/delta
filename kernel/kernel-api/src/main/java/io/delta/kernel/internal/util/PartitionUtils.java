@@ -26,6 +26,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.util.Arrays.asList;
 
 import io.delta.kernel.data.*;
@@ -97,15 +99,29 @@ public class PartitionUtils {
             if (partitionValues.containsKey(structField.getName())) {
                 // Create a partition vector
 
-                ExpressionEvaluator evaluator = expressionHandler.getEvaluator(
-                    dataBatch.getSchema(),
-                    literalForPartitionValue(
-                        structField.getDataType(),
-                        partitionValues.get(structField.getName())),
-                    structField.getDataType()
+                ColumnarBatch finalDataBatch = dataBatch;
+                ExpressionEvaluator evaluator = wrapWithEngineException(
+                    () -> expressionHandler.getEvaluator(
+                        finalDataBatch.getSchema(),
+                        literalForPartitionValue(
+                            structField.getDataType(),
+                            partitionValues.get(structField.getName())),
+                        structField.getDataType()
+                    ),
+                    "Get the expression evaluator for partition column %s with datatype=%s and " +
+                        "value=%s",
+                    structField.getName(),
+                    structField.getDataType(),
+                    partitionValues.get(structField.getName())
                 );
 
-                ColumnVector partitionVector = evaluator.eval(dataBatch);
+                ColumnVector partitionVector = wrapWithEngineException(
+                    () -> evaluator.eval(finalDataBatch),
+                    "Evaluating the partition value expression %s",
+                    literalForPartitionValue(
+                        structField.getDataType(),
+                        partitionValues.get(structField.getName()))
+                );
                 dataBatch = dataBatch.withNewColumn(colIdx, structField, partitionVector);
             }
         }

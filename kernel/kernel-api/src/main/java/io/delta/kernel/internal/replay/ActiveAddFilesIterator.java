@@ -242,8 +242,8 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
 
         // Step 4: TODO: remove this step. This is a temporary requirement until the path
         //         in `add` is converted to absolute path.
+        final ColumnarBatch finalScanAddFiles = scanAddFiles;
         if (tableRootVectorGenerator == null) {
-            final ColumnarBatch finalScanAddFiles = scanAddFiles;
             tableRootVectorGenerator = wrapWithEngineException(
                 () -> engine.getExpressionHandler()
                     .getEvaluator(
@@ -254,16 +254,24 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
             );
 
         }
-        ColumnVector tableRootVector = tableRootVectorGenerator.eval(scanAddFiles);
+        ColumnVector tableRootVector = wrapWithEngineException(
+            () -> tableRootVectorGenerator.eval(finalScanAddFiles),
+            "Evaluating the table root expression"
+        );
         scanAddFiles = scanAddFiles.withNewColumn(
             1,
             InternalScanFileUtils.TABLE_ROOT_STRUCT_FIELD,
             tableRootVector);
 
-        Optional<ColumnVector> selectionColumnVector = atLeastOneUnselected ?
-            Optional.of(engine.getExpressionHandler()
-                .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize())) :
-            Optional.empty();
+        Optional<ColumnVector> selectionColumnVector = Optional.empty();
+        if (atLeastOneUnselected) {
+            selectionColumnVector = Optional.of(
+                wrapWithEngineException(
+                    () -> engine.getExpressionHandler()
+                        .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize()),
+                    "Create selection vector for selected scan files")
+            );
+        }
         next = Optional.of(new FilteredColumnarBatch(scanAddFiles, selectionColumnVector));
     }
 
