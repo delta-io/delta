@@ -149,7 +149,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         }
 
         setTxnOpt.ifPresent(txnId -> {
-            Optional<Long> lastTxnVersion = snapshot.getLatestTransactionVersion(txnId.getAppId());
+            Optional<Long> lastTxnVersion = snapshot.getLatestTransactionVersion(
+                    txnId.getAppId(), engine);
             if (lastTxnVersion.isPresent() && lastTxnVersion.get() >= txnId.getVersion()) {
                 throw DeltaErrors.concurrentTransaction(
                         txnId.getAppId(),
@@ -176,12 +177,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
             @Override
             protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-                    Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
+                    Optional<SnapshotHint> snapshotHint, long snapshotVersion, Engine engine) {
                 return new Tuple2<>(protocol, metadata);
             }
 
             @Override
-            public Optional<Long> getLatestTransactionIdentifier(String applicationId) {
+            public Optional<Long> getLatestTransactionIdentifier(
+                    String applicationId, Engine engine) {
                 return Optional.empty();
             }
         };
