@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -79,15 +78,17 @@ trait DeltaMergeIntoTypeWideningSchemaEvolutionTests
           clauses = insert("*"))
 
         assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-        checkAnswer(
-          readDeltaTable(tempPath).select("value").sort("value"),
-          testCase.expectedResult.select($"value".cast(testCase.toType)).sort("value"))
+        checkAnswerWithTolerance(
+          actualDf = readDeltaTable(tempPath).select("value"),
+          expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+          toType = testCase.toType
+        )
       }
     }
   }
 
   for {
-    testCase <- unsupportedTestCases
+    testCase <- unsupportedTestCases ++ alterTableOnlySupportedTestCases
   } {
     test(s"MERGE - unsupported automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
@@ -386,13 +387,16 @@ trait DeltaInsertTypeWideningSchemaEvolutionTeststs extends DeltaTypeWideningTes
         .insertInto(s"delta.`$tempPath`")
 
       assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-      checkAnswer(readDeltaTable(tempPath).select("value").sort("value"),
-        testCase.expectedResult.select($"value".cast(testCase.toType)).sort("value"))
+      checkAnswerWithTolerance(
+        actualDf = readDeltaTable(tempPath).select("value"),
+        expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+        toType = testCase.toType
+      )
     }
   }
 
   for {
-    testCase <- unsupportedTestCases
+    testCase <- unsupportedTestCases ++ alterTableOnlySupportedTestCases
   } {
     test(s"INSERT - unsupported automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
