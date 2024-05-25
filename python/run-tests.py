@@ -168,9 +168,9 @@ def run_pypi_packaging_tests(root_dir):
 
 def run_delta_connect_codegen_python(root_dir):
     print("##### Running generated Delta Connect Python protobuf codes syncing tests #####")
-    run_cmd(
-        [os.path.join(root_dir, "dev", "check-delta-connect-codegen-python.py")],
-        stream_output=True)
+    test_file = os.path.join(root_dir, "dev", "check-delta-connect-codegen-python.py")
+    test_cmd = ["python3", test_file]
+    run_cmd(test_cmd, stream_output=True)
 
 
 if __name__ == "__main__":
