@@ -17,6 +17,8 @@ package io.delta.kernel.internal.actions;
 
 import java.util.*;
 import java.util.stream.Collectors;
+
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.*;
@@ -39,7 +41,11 @@ public class Metadata {
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = engine.getJsonHandler().deserializeStructType(schemaJson);
+        StructType schema = wrapWithEngineException(
+            () -> engine.getJsonHandler().deserializeStructType(schemaJson),
+            "Parsing the schema from the metadata. Schema JSON:\n%s",
+            schemaJson
+        );
 
         return new Metadata(
             requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),

@@ -17,6 +17,8 @@ package io.delta.kernel.internal.data;
 
 import java.util.*;
 import java.util.stream.IntStream;
+
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
@@ -83,7 +85,7 @@ public class ScanStateRow extends GenericRow {
     public static StructType getLogicalSchema(Engine engine, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
-        return engine.getJsonHandler().deserializeStructType(serializedSchema);
+        return parseSchema(engine, serializedSchema);
     }
 
     /**
@@ -97,7 +99,7 @@ public class ScanStateRow extends GenericRow {
     public static StructType getPhysicalSchema(Engine engine, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
-        return engine.getJsonHandler().deserializeStructType(serializedSchema);
+        return parseSchema(engine, serializedSchema);
     }
 
     /**
@@ -112,7 +114,7 @@ public class ScanStateRow extends GenericRow {
     public static StructType getPhysicalDataReadSchema(Engine engine, Row scanState) {
         String serializedSchema =
             scanState.getString(COL_NAME_TO_ORDINAL.get("physicalDataReadSchemaString"));
-        return engine.getJsonHandler().deserializeStructType(serializedSchema);
+        return parseSchema(engine, serializedSchema);
     }
 
     /**
@@ -146,5 +148,13 @@ public class ScanStateRow extends GenericRow {
      */
     public static String getTableRoot(Row scanState) {
         return scanState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
+    }
+
+    private static StructType parseSchema(Engine engine, String serializedSchema) {
+       return wrapWithEngineException(
+            () -> engine.getJsonHandler().deserializeStructType(serializedSchema),
+            "Parsing the schema from the scan state. Schema JSON:\n%s",
+            serializedSchema
+        );
     }
 }

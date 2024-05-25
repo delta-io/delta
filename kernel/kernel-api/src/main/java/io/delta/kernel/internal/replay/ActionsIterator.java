@@ -32,6 +32,7 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.MULTIPART_CHECKPOINT;
 import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.SIDECAR;
 import static io.delta.kernel.internal.util.FileNames.*;
@@ -187,16 +188,22 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         long checkpointVersion = checkpointVersion(file.getPath());
 
         final CloseableIterator<ColumnarBatch> topLevelIter;
+        StructType finalModifiedReadSchema = modifiedReadSchema;
         if (fileName.endsWith(".parquet")) {
             topLevelIter = engine.getParquetHandler().readParquetFiles(
                     singletonCloseableIterator(file),
                     modifiedReadSchema,
                     checkpointPredicate);
         } else if (fileName.endsWith(".json")) {
-            topLevelIter = engine.getJsonHandler().readJsonFiles(
-                    singletonCloseableIterator(file),
-                    modifiedReadSchema,
-                    checkpointPredicate);
+            topLevelIter = wrapWithEngineException(
+                () -> engine.getJsonHandler().readJsonFiles(
+                    singletonCloseableIterator(file), finalModifiedReadSchema,
+                    checkpointPredicate),
+                "Reading JSON log file `%s` with readSchema=%s and predicate=%s",
+                file,
+                modifiedReadSchema,
+                checkpointPredicate
+            );
         } else {
             throw new IOException("Unrecognized top level v2 checkpoint file format: " + fileName);
         }
@@ -278,11 +285,15 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     // version with actions read from the JSON file for further optimizations later
                     // on (faster metadata & protocol loading in subsequent runs by remembering
                     // the version of the last version where the metadata and protocol are found).
-                    final CloseableIterator<ColumnarBatch> dataIter =
-                            engine.getJsonHandler().readJsonFiles(
-                                    singletonCloseableIterator(nextFile),
-                                    readSchema,
-                                    Optional.empty());
+                    final CloseableIterator<ColumnarBatch> dataIter = wrapWithEngineException(
+                        () -> engine.getJsonHandler().readJsonFiles(
+                            singletonCloseableIterator(nextFile),
+                            readSchema,
+                            Optional.empty()),
+                        "Reading JSON log file `%s` with readSchema=%s",
+                        nextFile,
+                        readSchema
+                    );
 
                     return combine(dataIter, false /* isFromCheckpoint */, fileVersion);
                 }

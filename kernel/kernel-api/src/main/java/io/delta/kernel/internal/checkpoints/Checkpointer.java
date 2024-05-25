@@ -31,6 +31,7 @@ import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
@@ -194,11 +195,18 @@ public class Checkpointer {
     public void writeLastCheckpointFile(
             Engine engine,
             CheckpointMetaData checkpointMetaData) throws IOException {
-        engine.getJsonHandler()
-                .writeJsonFileAtomically(
+        wrapWithEngineException(
+            () -> {
+                engine.getJsonHandler()
+                    .writeJsonFileAtomically(
                         lastCheckpointFilePath.toString(),
                         singletonCloseableIterator(checkpointMetaData.toRow()),
                         true /* overwrite */);
+                return null;
+            },
+            "Writing last checkpoint file at `%s`",
+            lastCheckpointFilePath
+        );
     }
 
     /**
@@ -222,10 +230,13 @@ public class Checkpointer {
                     lastCheckpointFilePath.toString(), 0 /* size */, 0 /* modTime */);
 
             try (CloseableIterator<ColumnarBatch> jsonIter =
-                         engine.getJsonHandler().readJsonFiles(
-                                 singletonCloseableIterator(lastCheckpointFile),
-                                 CheckpointMetaData.READ_SCHEMA,
-                                 Optional.empty())) {
+                wrapWithEngineException(
+                    () -> engine.getJsonHandler().readJsonFiles(
+                        singletonCloseableIterator(lastCheckpointFile),
+                        CheckpointMetaData.READ_SCHEMA,
+                        Optional.empty()),
+                    "Reading the last checkpoint file as JSON"
+                )) {
                 Optional<Row> checkpointRow = InternalUtils.getSingularRow(jsonIter);
                 if (checkpointRow.isPresent()) {
                     return Optional.of(CheckpointMetaData.fromRow(checkpointRow.get()));

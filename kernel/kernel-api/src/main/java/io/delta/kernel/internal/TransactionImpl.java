@@ -39,6 +39,7 @@ import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -178,10 +179,17 @@ public class TransactionImpl
             }
 
             // Write the staged data to a delta file
-            engine.getJsonHandler().writeJsonFileAtomically(
-                    FileNames.deltaFile(logPath, commitAsVersion),
-                    dataAndMetadataActions,
-                    false /* overwrite */);
+            wrapWithEngineException(
+                () -> {
+                    engine.getJsonHandler().writeJsonFileAtomically(
+                        FileNames.deltaFile(logPath, commitAsVersion),
+                        dataAndMetadataActions,
+                        false /* overwrite */);
+                    return null;
+                },
+                "Write file actions to JSON log file `%s`",
+                FileNames.deltaFile(logPath, commitAsVersion)
+            );
 
             return new TransactionCommitResult(
                     commitAsVersion,

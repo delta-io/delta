@@ -224,9 +224,9 @@ public final class DeltaErrors {
     }
 
     public static <T> T wrapWithEngineException(
-            Callable<T> s, String msgString, Object... args) {
+            Callable<T> f, String msgString, Object... args) {
         try {
-            return s.call();
+            return f.call();
         } catch (Exception e) {
             throw new KernelEngineException(String.format(msgString, args), e);
         }
