@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-# Utility for checking whether generated the Delta Connect Python protobuf codes are out of sync.
+# Utility for checking whether generated the Delta Connect Python protobuf codes are in sync.
 #   usage: ./dev/check-delta-connect-codegen-python.py
 
 import os
@@ -25,8 +25,8 @@ import filecmp
 import tempfile
 import subprocess
 
-# Location of your Spark git development area
-DELTA_HOME = os.environ.get("DELTA_HOME", os.getcwd())
+# Location of your Delta git development area
+DELTA_HOME = os.environ.get("DELTA_HOME", os.path.abspath(os.path.join(__file__, os.pardir, os.pardir)))
 
 
 def fail(msg):
@@ -43,11 +43,13 @@ def run_cmd(cmd):
 
 
 def check_connect_protos():
-    print(f"Start checking the generated codes in {DELTA_HOME}/python/delta/connect/proto/.")
+    generated_python_proto_codes_path = os.path.join(DELTA_HOME, "python", "delta", "connect", "proto")
+    print(f"Start checking the generated codes in {generated_python_proto_codes_path}")
+    generate_python_proto_codes_file = os.path.join(DELTA_HOME, "dev", "delta-connect-gen-protos.sh")
     with tempfile.TemporaryDirectory() as tmp:
-        run_cmd(f"{DELTA_HOME}/dev/delta-connect-gen-protos.sh {tmp}")
+        run_cmd([generate_python_proto_codes_file, tmp])
         result = filecmp.dircmp(
-            f"{DELTA_HOME}/python/delta/connect/proto/",
+            generated_python_proto_codes_path,
             tmp,
             ignore=["__init__.py", "__pycache__"],
         )
@@ -70,11 +72,11 @@ def check_connect_protos():
             success = False
 
         if success:
-            print(f"Finish checking the generated codes in {DELTA_HOME}/python/delta/connect/proto/: SUCCESS")
+            print(f"Finish checking the generated codes in {generated_python_proto_codes_path}: SUCCESS")
         else:
             fail(
-                f"Generated files for {DELTA_HOME}/python/delta/connect/proto/ are out of sync! "
-                "Please run ./dev/delta-connect-gen-protos.sh"
+                f"Generated files for {generated_python_proto_codes_path} are out of sync! " +
+                f"Please run {generate_python_proto_codes_file}."
             )
 
 
