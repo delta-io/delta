@@ -18,9 +18,9 @@
 
 package io.delta.standalone.internal
 
+import io.delta.kernel.engine.Engine
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel}
 import io.delta.standalone.DeltaScan
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
@@ -59,7 +59,8 @@ class KernelSnapshotDelegator(
     path: Path,
     override val version: Long,
     kernelDeltaLog: KernelDeltaLogDelegator,
-    standaloneDeltaLog: DeltaLogImpl)
+    standaloneDeltaLog: DeltaLogImpl,
+    engine: Engine)
   extends SnapshotImpl(hadoopConf, path, -1, LogSegment.empty(path), -1, standaloneDeltaLog, -1) {
 
   lazy val standaloneSnapshot: SnapshotImpl = standaloneDeltaLog.getSnapshotForVersionAsOf(getVersion())
@@ -79,7 +80,7 @@ class KernelSnapshotDelegator(
 
   // provide a path to use the faster txn lookup in kernel
   def getLatestTransactionVersion(id: String): Option[Long] = {
-    val versionJOpt = kernelSnapshot.getLatestTransactionVersion(id)
+    val versionJOpt = kernelSnapshot.getLatestTransactionVersion(id, engine)
     if (versionJOpt.isPresent) {
       Some(versionJOpt.get)
     } else {

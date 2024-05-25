@@ -295,7 +295,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     assert(snapshot.isInstanceOf[SnapshotImpl])
     val snapshotImpl = snapshot.asInstanceOf[SnapshotImpl]
 
-    assert(snapshotImpl.getLatestTransactionVersion("fakeAppId") === Optional.of(3L))
-    assert(snapshotImpl.getLatestTransactionVersion("nonExistentAppId") === Optional.empty())
+    assert(snapshotImpl.getLatestTransactionVersion("fakeAppId", defaultEngine) === Optional.of(3L))
+    assert(snapshotImpl.getLatestTransactionVersion(
+      "nonExistentAppId", defaultEngine) === Optional.empty())
   }
 }

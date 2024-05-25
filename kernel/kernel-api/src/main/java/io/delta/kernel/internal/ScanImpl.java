@@ -131,7 +131,8 @@ public class ScanImpl implements Scan {
                         getPartitionsFilters().map(predicate ->
                                 rewritePartitionPredicateOnCheckpointFileSchema(
                                         predicate,
-                                        partitionColToStructFieldMap.get())));
+                                        partitionColToStructFieldMap.get())),
+                                        engine);
 
         // Apply partition pruning
         scanFileIter = applyPartitionPruning(engine, scanFileIter);

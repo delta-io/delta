@@ -84,7 +84,8 @@ class KernelDeltaLogDelegator(
       logPath,
       kernelSnapshot.getVersion(engine), // note: engine isn't used
       this,
-      standaloneDeltaLog
+      standaloneDeltaLog,
+      engine
     ))
     currKernelSnapshot.get
   }
