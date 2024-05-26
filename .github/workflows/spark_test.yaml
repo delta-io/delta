@@ -41,6 +41,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
           sudo apt install libedit-dev
+          curl -LO https://github.com/bufbuild/buf/releases/download/v1.28.1/buf-Linux-x86_64.tar.gz
+          mkdir -p $HOME/buf
+          tar -xvzf buf-Linux-x86_64.tar.gz -C $HOME/buf --strip-components 1
+          rm buf-Linux-x86_64.tar.gz
+          export PATH="$HOME/buf/bin:$PATH"
           sudo apt install python3-pip --fix-missing
           sudo pip3 install pipenv==2021.5.29
           curl https://pyenv.run | bash
@@ -55,7 +60,6 @@ jobs:
           pipenv run pip install importlib_metadata==3.10.0
           pipenv run pip install mypy==0.982
           pipenv run pip install mypy-protobuf==3.3.0
-          pipenv run pip install buf
           pipenv run pip install cryptography==37.0.4
           pipenv run pip install twine==4.0.1
           pipenv run pip install wheel==0.33.4
