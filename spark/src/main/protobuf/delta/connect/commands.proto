@@ -21,7 +21,7 @@ package delta.connect;
 import "delta/connect/base.proto";
 
 option java_multiple_files = true;
-option java_package = "io.delta.connect.proto";
+option java_package = "org.apache.spark.sql.delta.connect.proto";
 
 // Message to hold all command extensions in Delta Connect.
 message DeltaCommand {

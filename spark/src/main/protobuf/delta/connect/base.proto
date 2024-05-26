@@ -18,20 +18,22 @@ syntax = 'proto3';
 
 package delta.connect;
 
-import "delta/connect/base.proto";
-
 option java_multiple_files = true;
-option java_package = "io.delta.connect.proto";
+option java_package = "org.apache.spark.sql.delta.connect.proto";
 
-// Message to hold all relation extensions in Delta Connect.
-message DeltaRelation {
-  oneof relation_type {
-    Scan scan = 1;
+// Information required to access a Delta table either by name or by path.
+message DeltaTable {
+  // (Required)
+  oneof access_type {
+    Path path = 1;
+    string table_or_view_name = 2;
   }
-}
 
-// Relation that reads from a Delta table.
-message Scan {
-  // (Required) The Delta table to scan.
-  DeltaTable table = 1;
+  message Path {
+    // (Required) Path to the Delta table.
+    string path = 1;
+
+    // (Optional) Hadoop configuration used to access the file system.
+    map<string, string> hadoop_conf = 2;
+  }
 }

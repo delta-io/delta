@@ -28,14 +28,14 @@ _sym_db = _symbol_database.Default()
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x18\x64\x65lta/connect/base.proto\x12\rdelta.connect"\xad\x02\n\nDeltaTable\x12\x34\n\x04path\x18\x01 \x01(\x0b\x32\x1e.delta.connect.DeltaTable.PathH\x00R\x04path\x12-\n\x12table_or_view_name\x18\x02 \x01(\tH\x00R\x0ftableOrViewName\x1a\xaa\x01\n\x04Path\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path\x12O\n\x0bhadoop_conf\x18\x02 \x03(\x0b\x32..delta.connect.DeltaTable.Path.HadoopConfEntryR\nhadoopConf\x1a=\n\x0fHadoopConfEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\x42\r\n\x0b\x61\x63\x63\x65ss_typeB\x1a\n\x16io.delta.connect.protoP\x01\x62\x06proto3'
+    b'\n\x18\x64\x65lta/connect/base.proto\x12\rdelta.connect"\xad\x02\n\nDeltaTable\x12\x34\n\x04path\x18\x01 \x01(\x0b\x32\x1e.delta.connect.DeltaTable.PathH\x00R\x04path\x12-\n\x12table_or_view_name\x18\x02 \x01(\tH\x00R\x0ftableOrViewName\x1a\xaa\x01\n\x04Path\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path\x12O\n\x0bhadoop_conf\x18\x02 \x03(\x0b\x32..delta.connect.DeltaTable.Path.HadoopConfEntryR\nhadoopConf\x1a=\n\x0fHadoopConfEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\x42\r\n\x0b\x61\x63\x63\x65ss_typeB,\n(org.apache.spark.sql.delta.connect.protoP\x01\x62\x06proto3'
 )
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "delta.connect.proto.base_pb2", globals())
 if _descriptor._USE_C_DESCRIPTORS == False:
     DESCRIPTOR._options = None
-    DESCRIPTOR._serialized_options = b"\n\026io.delta.connect.protoP\001"
+    DESCRIPTOR._serialized_options = b"\n(org.apache.spark.sql.delta.connect.protoP\001"
     _DELTATABLE_PATH_HADOOPCONFENTRY._options = None
     _DELTATABLE_PATH_HADOOPCONFENTRY._serialized_options = b"8\001"
     _DELTATABLE._serialized_start = 44
