@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.connect
+package org.apache.spark.sql.delta.connect.server
 
 import java.io.File
 import java.text.SimpleDateFormat

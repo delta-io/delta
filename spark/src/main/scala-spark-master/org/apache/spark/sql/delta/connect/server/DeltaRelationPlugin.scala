@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.connect
+package org.apache.spark.sql.delta.connect.server
 
 import java.util.Optional
 
@@ -29,7 +29,7 @@ import org.apache.spark.sql.connect.common.InvalidPlanInput
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.RelationPlugin
-import org.apache.spark.sql.delta.connect.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
+import org.apache.spark.sql.delta.connect.server.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
 
 /**
  * Planner plugin for relation extensions using [[proto.DeltaRelation]].

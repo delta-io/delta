@@ -215,7 +215,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     ),
   )
 
-lazy val connectServer = (project in file("spark-connect/server"))
+lazy val connectServer = (project in file("spark/src/main/scala-spark-master/org/apache/spark/sql/delta/connect/server"))
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings(
@@ -241,6 +241,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
   )
 
 lazy val spark = (project in file("spark"))
+  .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
   .settings (
@@ -256,6 +257,7 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
@@ -268,6 +270,7 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
