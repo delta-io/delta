@@ -16,7 +16,7 @@
 
 syntax = 'proto3';
 
-package delta.connect;
+package org.apache.spark.sql.delta.connect;
 
 import "delta/connect/base.proto";
 

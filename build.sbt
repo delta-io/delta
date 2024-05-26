@@ -232,9 +232,10 @@ lazy val spark = (project in file("spark"))
 
       // "org.apache.spark" %% "spark-connect-common" % sparkVersion.value % "provided",
     ),
+    unmanagedClasspath in Compile += baseDirectory.value / "spark" / "src" / "main" / "scala-spark-master" / "org" / "apache" / "spark" / "sql" / "delta" / "connect" / "server",
     Compile / PB.protoSources := Seq(sourceDirectory.value / "spark/src/main/protobuf/delta/connect"),
     PB.protocVersion := protoVersion,
-    Compile / PB.protocOptions := Seq("--java_out"),
+    Compile / PB.protocOptions := Seq("--python_out"),
     Compile / PB.targets := Seq(
       PB.gens.java -> file("spark/src/main/scala-spark-master/org/apache/spark/sql/delta/connect/server"),
       PB.gens.java -> file("spark/src/test/scala-spark-master/org/apache/spark/sql/delta/connect/server"),

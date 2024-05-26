@@ -16,7 +16,7 @@
 
 syntax = 'proto3';
 
-package delta.connect;
+package org.apache.spark.sql.delta.connect;
 
 option java_multiple_files = true;
 option java_package = "io.delta.connect.proto";
