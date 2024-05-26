@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.service.SessionHolder
+import org.apache.spark.sql.delta.connect.proto
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 

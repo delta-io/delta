@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.connect.server
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.connect.proto
 
 /**
  * Base trait for the planner plugins of Delta Connect.

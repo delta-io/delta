@@ -20,7 +20,6 @@ import java.util.Optional
 
 import com.google.protobuf
 import com.google.protobuf.{ByteString, InvalidProtocolBufferException}
-import io.delta.connect.proto
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.SparkSession
@@ -30,6 +29,7 @@ import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.RelationPlugin
 import org.apache.spark.sql.delta.connect.server.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
+import org.apache.spark.sql.delta.connect.proto
 
 /**
  * Planner plugin for relation extensions using [[proto.DeltaRelation]].

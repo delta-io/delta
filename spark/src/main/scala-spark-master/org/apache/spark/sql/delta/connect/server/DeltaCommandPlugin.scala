@@ -25,6 +25,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connect.common.InvalidPlanInput
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.CommandPlugin
+import org.apache.spark.sql.delta.connect.proto
 
 /**
  * Planner plugin for command extensions using [[proto.DeltaCommand]].
