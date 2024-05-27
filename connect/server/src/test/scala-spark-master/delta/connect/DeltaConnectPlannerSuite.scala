@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.connect.server
+package delta.connect
 
 import java.io.File
 import java.text.SimpleDateFormat
@@ -22,6 +22,7 @@ import java.text.SimpleDateFormat
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.util.FileNames
 import com.google.protobuf
+import io.delta.connect.proto
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
@@ -31,7 +32,6 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.service.SessionHolder
-import org.apache.spark.sql.delta.connect.proto
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 

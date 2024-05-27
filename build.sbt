@@ -41,6 +41,8 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+connectCommon / sparkVersion := getSparkVersion()
+connectServer / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -194,6 +196,53 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   )
 }
 
+lazy val connectCommon = (project in file("spark-connect/common"))
+  .settings(
+    name := "delta-connect-common",
+    commonSettings,
+    crossSparkSettings(),
+    releaseSettings,
+    libraryDependencies ++= Seq(
+      "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
+      "javax.annotation" % "javax.annotation-api" % "1.3.2",
+
+      "org.apache.spark" %% "spark-connect-common" % sparkVersion.value % "provided",
+    ),
+    PB.protocVersion := protoVersion,
+    Compile / PB.targets := Seq(
+      PB.gens.java -> (Compile / sourceManaged).value,
+      PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
+    ),
+  )
+
+lazy val connectServer = (project in file("spark-connect/server"))
+  .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .settings(
+    name := "delta-connect-server",
+    commonSettings,
+    releaseSettings,
+    crossSparkSettings(),
+    libraryDependencies ++= Seq(
+      "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
+
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
+
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
+    ),
+  )
+
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
@@ -223,23 +272,6 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
-      "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
-      "io.grpc" % "grpc-protobuf" % grpcVersion,
-      "io.grpc" % "grpc-stub" % grpcVersion,
-      "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
-      "javax.annotation" % "javax.annotation-api" % "1.3.2",
-
-      // "org.apache.spark" %% "spark-connect-common" % sparkVersion.value % "provided",
-    ),
-    unmanagedClasspath in Compile += baseDirectory.value / "spark" / "src" / "main" / "scala-spark-master" / "org" / "apache" / "spark" / "sql" / "delta" / "connect" / "server",
-    Compile / PB.protoSources := Seq(sourceDirectory.value / "spark/src/main/protobuf/delta/connect"),
-    PB.protocVersion := protoVersion,
-    Compile / PB.protocOptions := Seq("--python_out"),
-    Compile / PB.targets := Seq(
-      PB.gens.java -> file("spark/src/main/scala-spark-master/org/apache/spark/sql/delta/connect/server"),
-      PB.gens.java -> file("spark/src/test/scala-spark-master/org/apache/spark/sql/delta/connect/server"),
-      PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),

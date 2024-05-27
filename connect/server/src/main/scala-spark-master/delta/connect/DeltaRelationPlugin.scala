@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.connect.server
+package delta.connect
 
 import java.util.Optional
 
+import io.delta.connect.proto
 import com.google.protobuf
 import com.google.protobuf.{ByteString, InvalidProtocolBufferException}
+import delta.connect.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.SparkSession
@@ -28,8 +30,6 @@ import org.apache.spark.sql.connect.common.InvalidPlanInput
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.RelationPlugin
-import org.apache.spark.sql.delta.connect.server.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
-import org.apache.spark.sql.delta.connect.proto
 
 /**
  * Planner plugin for relation extensions using [[proto.DeltaRelation]].

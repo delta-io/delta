@@ -14,18 +14,18 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.connect.server
+package delta.connect
 
 import scala.collection.JavaConverters._
 
 import com.google.protobuf
+import io.delta.connect.proto
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connect.common.InvalidPlanInput
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.CommandPlugin
-import org.apache.spark.sql.delta.connect.proto
 
 /**
  * Planner plugin for command extensions using [[proto.DeltaCommand]].
