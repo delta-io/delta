@@ -45,7 +45,6 @@ jobs:
           mkdir -p ~/buf
           tar -xvzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
           rm buf-Linux-x86_64.tar.gz
-          export PATH="$PATH:~/buf/bin"
           sudo apt install python3-pip --fix-missing
           sudo pip3 install pipenv==2021.5.29
           curl https://pyenv.run | bash
