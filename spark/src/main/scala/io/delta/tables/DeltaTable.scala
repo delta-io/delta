@@ -562,6 +562,122 @@ class DeltaTable private[tables](
           TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
     toDataset(sparkSession, alterTableCmd)
   }
+
+
+  /**
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
+   *
+   * Shallow cloned tables contain only a delta transaction log in the cloned directory when
+   * initially cloned. Data files in the transaction log point to the original cloned table. Any
+   * data added to shallow clone only affects the shallow clone.
+   *
+   * Note: Since shallow clones point to files in the original table, deleting files in the
+   * original table can break shallow clones.
+   *
+   * By setting the replace argument to true, if the target directory is non-empty, we will still
+   * continue with the clone. Otherwise throw an error.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties
+   *
+   * An example would be
+   * {{{
+   *  io.delta.tables.DeltaTable.clone(
+   *   "/some/path",
+   *   true,
+   *   true,
+   *   Map("foo" -> "bar"))
+   * }}}
+   */
+  def clone(
+             target: String,
+             isShallow: Boolean,
+             replace: Boolean,
+             properties: Map[String, String]): DeltaTable = {
+    executeClone(table, target, isShallow, None, None, replace, properties)
+  }
+
+  /**
+   * Clone a DeltaTable at the given version to a destination which mirrors the existing
+   * table's data and metadata at that version.
+   *
+   * Shallow cloned tables contain only a delta transaction log in the cloned directory when
+   * initially cloned. Data files in the transaction log point to the original cloned table. Any
+   * data added to shallow clone only affects the shallow clone.
+   *
+   * Note: Since shallow clones point to files in the original table, deleting files in the
+   * original table can break shallow clones.
+   *
+   * By setting the replace argument to true, if the target directory is non-empty, we will still
+   * continue with the clone. Otherwise throw an error.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/path/to/table",
+   *     true,
+   *     true,
+   *     Map("foo" -> "bar"))
+   * }}}
+   */
+  def cloneAtVersion(
+                      version: Int,
+                      target: String,
+                      isShallow: Boolean,
+                      replace: Boolean,
+                      properties: Map[String, String]): DeltaTable = {
+    executeClone(
+      table,
+      target,
+      isShallow,
+      Some(version.toLong),
+      None,
+      replace,
+      properties)
+  }
+
+  /**
+   * Clone a DeltaTable at the given timestamp to a destination which mirrors the existing
+   * table's data and metadata at that timestamp.
+   *
+   * Shallow cloned tables contain only a delta transaction log in the cloned directory when
+   * initially cloned. Data files in the transaction log point to the original cloned table. Any
+   * data added to shallow clone only affects the shallow clone.
+   *
+   * Note: Since shallow clones point to files in the original table, deleting files in the
+   * original table can break shallow clones.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss
+   *
+   * By setting the replace argument to true, if the target directory is non-empty, we will still
+   * continue with the clone. Otherwise throw an error.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties
+   *
+   * An example would be
+   * {{{
+   *
+   * io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *     "2019-01-01",
+   *     "/path/to/table",
+   *     true,
+   *     true,
+   *     Map("foo" -> "bar"))
+   * }}}
+   */
+  def cloneAtTimestamp(
+                        timestamp: String,
+                        target: String,
+                        isShallow: Boolean,
+                        replace: Boolean,
+                        properties: Map[String, String]): DeltaTable = {
+    executeClone(table, target, isShallow, None, Some(timestamp), replace, properties)
+  }
 }
 
 /**

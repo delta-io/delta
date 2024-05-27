@@ -22,6 +22,7 @@ import io.delta.connect.proto
 import com.google.protobuf
 import com.google.protobuf.{ByteString, InvalidProtocolBufferException}
 import delta.connect.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
+import delta.connect.ImplicitProtoConversions._
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.SparkSession
@@ -37,12 +38,12 @@ import org.apache.spark.sql.connect.plugin.RelationPlugin
 class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   override def transform(raw: Array[Byte], planner: SparkConnectPlanner): Optional[LogicalPlan] = {
     val relation = parseAnyFrom(raw,
-      SparkEnv.get.conf.get(Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT))
+      SparkEnv.get.conf.getOption(Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT.key).getOrElse("1024").toInt)
     if (relation.is(classOf[proto.DeltaRelation])) {
       Optional.of(
         transform(
           parseRelationFrom(relation.getValue,
-            SparkEnv.get.conf.get(Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT)),
+            SparkEnv.get.conf.getOption(Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT.key).getOrElse("1024").toInt),
           planner
         ))
     } else {

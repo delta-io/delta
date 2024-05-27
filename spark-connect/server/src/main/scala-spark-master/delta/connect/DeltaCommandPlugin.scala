@@ -19,6 +19,7 @@ package delta.connect
 import scala.collection.JavaConverters._
 
 import com.google.protobuf
+import delta.connect.ImplicitProtoConversions._
 import io.delta.connect.proto
 import io.delta.tables.DeltaTable
 
