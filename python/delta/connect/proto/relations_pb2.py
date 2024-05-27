@@ -31,14 +31,14 @@ from delta.connect import base_pb2 as delta_dot_connect_dot_base__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x1d\x64\x65lta/connect/relations.proto\x12\rdelta.connect\x1a\x18\x64\x65lta/connect/base.proto"K\n\rDeltaRelation\x12)\n\x04scan\x18\x01 \x01(\x0b\x32\x13.delta.connect.ScanH\x00R\x04scanB\x0f\n\rrelation_type"7\n\x04Scan\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05tableB,\n(org.apache.spark.sql.delta.connect.protoP\x01\x62\x06proto3'
+    b'\n\x1d\x64\x65lta/connect/relations.proto\x12\rdelta.connect\x1a\x18\x64\x65lta/connect/base.proto"K\n\rDeltaRelation\x12)\n\x04scan\x18\x01 \x01(\x0b\x32\x13.delta.connect.ScanH\x00R\x04scanB\x0f\n\rrelation_type"7\n\x04Scan\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05tableB\x1a\n\x16io.delta.connect.protoP\x01\x62\x06proto3'
 )
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "delta.connect.proto.relations_pb2", globals())
 if _descriptor._USE_C_DESCRIPTORS == False:
     DESCRIPTOR._options = None
-    DESCRIPTOR._serialized_options = b"\n(org.apache.spark.sql.delta.connect.protoP\001"
+    DESCRIPTOR._serialized_options = b"\n\026io.delta.connect.protoP\001"
     _DELTARELATION._serialized_start = 74
     _DELTARELATION._serialized_end = 149
     _SCAN._serialized_start = 151
