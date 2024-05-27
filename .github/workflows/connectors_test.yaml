@@ -7,14 +7,14 @@ jobs:
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
-        scala: [2.13.13, 2.12.18]
+        scala: [2.13.13]
     steps:
       - uses: actions/checkout@v2
       - name: install java
         uses: actions/setup-java@v2
         with:
           distribution: 'zulu'
-          java-version: '8'
+          java-version: '17'
       - name: Cache Scala, SBT
         uses: actions/cache@v2
         with:
@@ -24,12 +24,10 @@ jobs:
             ~/.cache/coursier
             ~/.m2
           key: build-cache-3-with-scala_${{ matrix.scala }}
-      - name: Run Scala Style tests on test sources (Scala 2.12 only)
+      - name: Run Scala Style tests on test sources
         run: build/sbt "++ ${{ matrix.scala }}" testScalastyle
-        if: startsWith(matrix.scala, '2.12.')
-      - name: Run sqlDeltaImport tests (Scala 2.12 and 2.13 only)
+      - name: Run sqlDeltaImport tests
         run: build/sbt "++ ${{ matrix.scala }}" sqlDeltaImport/test
-        if: ${{ !startsWith(matrix.scala, '2.11.') }}
         # These tests are not working yet
         # - name: Run Delta Standalone Compatibility tests (Scala 2.12 only)
         #  run: build/sbt "++ ${{ matrix.scala }}" compatibility/test
@@ -40,6 +38,3 @@ jobs:
         run: build/sbt "++ ${{ matrix.scala }}" hiveMR/test hiveTez/test
       - name: Run Hive 2 tests
         run: build/sbt "++ ${{ matrix.scala }}" hive2MR/test hive2Tez/test
-      - name: Run Flink tests (Scala 2.12 only)
-        run: build/sbt -mem 3000 "++ ${{ matrix.scala }}" flink/test
-        if: ${{ startsWith(matrix.scala, '2.12.') }}

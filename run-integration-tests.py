@@ -402,7 +402,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--scala-version",
         required=False,
-        default="2.12",
+        default="2.13",
         help="Specify scala version for scala tests only, valid values are '2.12' and '2.13'")
     parser.add_argument(
         "--pip-only",
