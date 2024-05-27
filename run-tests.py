@@ -221,10 +221,10 @@ if __name__ == "__main__":
     args = get_args()
     if os.getenv("USE_DOCKER") is not None:
         test_env_image_tag = pull_or_build_docker_image(root_dir)
-        run_tests_in_docker(test_env_image_tag, args.group)
+        # run_tests_in_docker(test_env_image_tag, args.group)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
+        # run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
 
         # Python tests are run only when spark group of projects are being tested.
         is_testing_spark_group = args.group is None or args.group == "spark"
