@@ -160,7 +160,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     targetJvm := "17",
     resolvers ++= Seq(
         "Spark master staging" at "https://repository.apache.org/content/groups/snapshots/",
-        "Apache Spark 4.0 Preview (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1454/",
+        "Apache Spark 4.0 Preview (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1456/",
     ),
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
