@@ -44,38 +44,8 @@ class DeltaCommandPlugin extends CommandPlugin with DeltaPlannerBase {
 
   private def process(command: proto.DeltaCommand, planner: SparkConnectPlanner): Unit = {
     command.getCommandTypeCase match {
-      case proto.DeltaCommand.CommandTypeCase.CLONE_TABLE =>
-        processCloneTable(planner.session, command.getCloneTable)
       case _ =>
         throw InvalidPlanInput(s"${command.getCommandTypeCase}")
-    }
-  }
-
-  private def processCloneTable(spark: SparkSession, cloneTable: proto.CloneTable): Unit = {
-    val deltaTable = transformDeltaTable(spark, cloneTable.getTable)
-    if (cloneTable.hasVersion) {
-      deltaTable.cloneAtVersion(
-        cloneTable.getVersion,
-        cloneTable.getTarget,
-        cloneTable.getIsShallow,
-        cloneTable.getReplace,
-        cloneTable.getPropertiesMap.asScala.toMap
-      )
-    } else if (cloneTable.hasTimestamp) {
-      deltaTable.cloneAtTimestamp(
-        cloneTable.getTimestamp,
-        cloneTable.getTarget,
-        cloneTable.getIsShallow,
-        cloneTable.getReplace,
-        cloneTable.getPropertiesMap.asScala.toMap
-      )
-    } else {
-      deltaTable.clone(
-        cloneTable.getTarget,
-        cloneTable.getIsShallow,
-        cloneTable.getReplace,
-        cloneTable.getPropertiesMap.asScala.toMap
-      )
     }
   }
 }

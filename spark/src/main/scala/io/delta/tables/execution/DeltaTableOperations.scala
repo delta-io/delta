@@ -25,11 +25,10 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connector.catalog.Identifier
@@ -112,51 +111,6 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       )
     toDataset(sparkSession, restore)
   }
-
-  protected def executeClone(
-      table: DeltaTableV2,
-      target: String,
-      isShallow: Boolean,
-      versionAsOf: Option[Long],
-      timestampAsOf: Option[String],
-      replace: Boolean,
-      properties: Map[String, String]): DeltaTable = withActiveSession(sparkSession) {
-      val identifier = table.getTableIdentifierIfExists.map(id =>
-        Identifier.of(id.database.toArray, id.table))
-      val sourceRelation = DataSourceV2Relation.create(table, None, identifier)
-
-      val timeTraveledSourceRelation = if (versionAsOf.isDefined || timestampAsOf.isDefined) {
-        TimeTravel(
-          sourceRelation,
-          timestampAsOf.map(Literal(_)),
-          versionAsOf,
-          Some("deltaTable"))
-      } else {
-        sourceRelation
-      }
-
-      val assumePath = new Path(target).isAbsolute
-      val targetIdent = if (assumePath) {
-        s"delta.`$target`"
-      } else {
-        target
-      }
-
-      val clone = CloneTableStatement(
-        timeTraveledSourceRelation,
-        UnresolvedRelation(sparkSession.sessionState.sqlParser.parseTableIdentifier(targetIdent)),
-        ifNotExists = false,
-        isReplaceCommand = replace,
-        isCreateCommand = true,
-        tablePropertyOverrides = properties.toMap,
-        targetLocation = None)
-      toDataset(sparkSession, clone)
-      if (assumePath) {
-        io.delta.tables.DeltaTable.forPath(sparkSession, target)
-      } else {
-        io.delta.tables.DeltaTable.forName(sparkSession, target)
-      }
-    }
 
   protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
     map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
