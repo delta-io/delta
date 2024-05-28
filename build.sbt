@@ -408,11 +408,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
-
-      "org.apache.spark" %% "spark-hive" % LATEST_RELEASED_SPARK_VERSION % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % LATEST_RELEASED_SPARK_VERSION % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % LATEST_RELEASED_SPARK_VERSION % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % LATEST_RELEASED_SPARK_VERSION % "test" classifier "tests",
     ),
     Test / javaOptions ++= Seq(
       // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
