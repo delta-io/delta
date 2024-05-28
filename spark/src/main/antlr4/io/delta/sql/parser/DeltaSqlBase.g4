@@ -102,6 +102,9 @@ statement
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
        (TBLPROPERTIES tableProps=propertyList)?
        (LOCATION location=stringLit)?                                   #clone
+    | cloneTableHeader
+        UNIFORM format=qualifiedName
+        METADATA_PATH metadataPath=stringLit                            #createUniformTable
     | .*? clusterBySpec+ .*?                                            #clusterBy
     | .*?                                                               #passThrough
     ;
@@ -237,6 +240,7 @@ nonReserved
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
     | REORG | APPLY | PURGE | UPGRADE | UNIFORM | ICEBERG_COMPAT_VERSION
+    | METADATA_PATH
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
     | NO | STATISTICS
@@ -279,6 +283,7 @@ INVENTORY: 'INVENTORY';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
 LOCATION: 'LOCATION';
+METADATA_PATH: 'METADATA_PATH';
 MINUS: '-';
 NO: 'NO';
 NONE: 'NONE';

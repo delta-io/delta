@@ -406,6 +406,26 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     DeltaReorgTable(targetTable, reorgTableSpec)(Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)
   }
 
+  override def visitCreateUniformTable(
+        ctx: CreateUniformTableContext): LogicalPlan = withOrigin(ctx) {
+     val (target, isCreate, isReplace, ifNotExists) = visitCloneTableHeader(ctx.cloneTableHeader())
+     if (isReplace && ifNotExists) {
+        // replace a non-existent table should be blocked
+        throw new ParseException(
+          s"Invalid Syntax: REPLACE must be called on an existing table, ${target.table} is invalid.",
+          ctx)
+        }
+     val targetTable = new UnresolvedRelation(target.nameParts)
+     CreateUniformTableCommand(
+       table = targetTable,
+       ifNotExists = ifNotExists,
+       isReplace = isReplace,
+       isCreate = isCreate,
+       fileFormat = ctx.format.getText,
+       metadataPath = string(visitStringLit(ctx.metadataPath))
+     )
+  }
+
   override def visitDescribeDeltaDetail(
       ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaDetailCommand(
