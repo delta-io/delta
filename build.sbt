@@ -21,7 +21,6 @@ import Mima._
 import Unidoc._
 
 import sbtprotoc.ProtocPlugin.autoImport._
-import sbtprotoc.ProtocPlugin.ProtobufConfig
 
 // Scala versions
 val scala212 = "2.12.18"
@@ -64,8 +63,6 @@ val tezVersionForHive2 = "0.8.4"
 
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-
-ProtobufConfig / version := protoVersion
 
 scalaVersion := default_scala_version.value
 
@@ -259,7 +256,6 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 

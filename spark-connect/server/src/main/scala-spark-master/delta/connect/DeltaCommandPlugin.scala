@@ -14,16 +14,11 @@
  * limitations under the License.
  */
 
-package delta.connect
-
-import scala.collection.JavaConverters._
+package org.apache.spark.sql.connect.delta
 
 import com.google.protobuf
-import delta.connect.ImplicitProtoConversions._
 import io.delta.connect.proto
-import io.delta.tables.DeltaTable
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connect.common.InvalidPlanInput
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.CommandPlugin
@@ -44,6 +39,8 @@ class DeltaCommandPlugin extends CommandPlugin with DeltaPlannerBase {
 
   private def process(command: proto.DeltaCommand, planner: SparkConnectPlanner): Unit = {
     command.getCommandTypeCase match {
+      // TODO(long.vu): Add support for Clone once we fix shading of
+      // StreamObserver in SparkConnectPlanner.
       case _ =>
         throw InvalidPlanInput(s"${command.getCommandTypeCase}")
     }

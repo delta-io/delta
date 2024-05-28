@@ -14,45 +14,31 @@
  * limitations under the License.
  */
 
-package delta.connect
+package org.apache.spark.sql.connect.delta
 
-import java.io.File
-import java.text.SimpleDateFormat
-
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog}
-import org.apache.spark.sql.delta.util.FileNames
-import org.apache.hadoop.fs.Path
 import com.google.protobuf
-import delta.connect.ImplicitProtoConversions._
+import io.delta.connect.ImplicitProtoConversions._
 import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
-import org.apache.spark.sql.connect.service.{ExecuteHolder, SessionHolder}
+import org.apache.spark.sql.connect.service.SessionHolder
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.functions._
-import org.apache.spark.sql.test.SharedSparkSession
 
 class DeltaConnectPlannerSuite
-    extends QueryTest with DeltaSQLCommandTest with SparkConnectPlanTest {
+  extends QueryTest with DeltaSQLCommandTest with SparkConnectPlanTest {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(Connect.CONNECT_EXTENSIONS_RELATION_CLASSES.key, classOf[DeltaRelationPlugin].getName)
-      .set(Connect.CONNECT_EXTENSIONS_COMMAND_CLASSES.key, classOf[DeltaCommandPlugin].getName)
   }
 
   private def createSparkRelation(relation: proto.DeltaRelation.Builder): spark_proto.Relation = {
     spark_proto.Relation.newBuilder().setExtension(protobuf.Any.pack(relation.build())).build()
-  }
-
-  private def createSparkCommand(command: proto.DeltaCommand.Builder): spark_proto.Command = {
-    spark_proto.Command.newBuilder().setExtension(protobuf.Any.pack(command.build())).build()
   }
 
   test("scan table by name") {

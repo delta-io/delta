@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package delta.connect
+package io.delta.connect
 
 import io.delta.connect.spark.{proto => delta_spark_proto}
 import org.apache.spark.connect.{proto => spark_proto}
@@ -30,14 +30,5 @@ object ImplicitProtoConversions {
       relation: spark_proto.Relation): delta_spark_proto.Relation = {
     // TODO: Recursion limits
     delta_spark_proto.Relation.parseFrom(relation.toByteArray)
-  }
-
-  implicit def convertCommandToSpark(command: delta_spark_proto.Command): spark_proto.Command = {
-    ConnectProtoUtils.parseCommandWithRecursionLimit(command.toByteArray, recursionLimit = 1024)
-  }
-
-  implicit def convertCommandToDelta(command: spark_proto.Command): delta_spark_proto.Command = {
-    // TODO: Recursion limits
-    delta_spark_proto.Command.parseFrom(command.toByteArray)
   }
 }

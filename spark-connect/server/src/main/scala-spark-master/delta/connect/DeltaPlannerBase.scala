@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package delta.connect
+package org.apache.spark.sql.connect.delta
 
 import io.delta.connect.proto
 import io.delta.tables.DeltaTable
