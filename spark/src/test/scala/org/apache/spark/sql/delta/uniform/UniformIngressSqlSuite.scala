@@ -62,10 +62,10 @@ class UniformIngressSqlSuite extends QueryTest
   }
 
   test("create uniform table command") {
-    val sql1 = "CREATE TABLE uniform_table_1 UNIFORM iceberg METADATA_PATH 'metadata_path_1'"
+    val sql1 = "CREATE TABLE ufi_table_1 UNIFORM iceberg METADATA_PATH 'metadata_path_1'"
     parseAndValidate(
       sql = sql1,
-      targetTable = "uniform_table_1",
+      targetTable = "ufi_table_1",
       ifNotExists = false,
       isReplace = false,
       isCreate = true,
@@ -74,15 +74,39 @@ class UniformIngressSqlSuite extends QueryTest
     )
 
     val sql2 =
-      "CREATE TABLE IF NOT EXISTS uniform_table_2 UNIFORM iceberg METADATA_PATH 'metadata_path_2'"
+      "CREATE TABLE IF NOT EXISTS ufi_table_2 UNIFORM iceberg METADATA_PATH 'metadata_path_2'"
     parseAndValidate(
       sql = sql2,
-      targetTable = "uniform_table_2",
+      targetTable = "ufi_table_2",
       ifNotExists = true,
       isReplace = false,
       isCreate = true,
       fileFormat = "iceberg",
       metadataPath = "metadata_path_2"
+    )
+
+    val sql3 =
+      "CREATE OR REPLACE TABLE ufi_table_3 UNIFORM iceberg METADATA_PATH 'metadata_path_3'"
+    parseAndValidate(
+      sql = sql3,
+      targetTable = "ufi_table_3",
+      ifNotExists = false,
+      isReplace = true,
+      isCreate = true,
+      fileFormat = "iceberg",
+      metadataPath = "metadata_path_3"
+    )
+
+    val sql4 =
+      "REPLACE TABLE ufi_table_4 UNIFORM iceberg METADATA_PATH 'metadata_path_4'"
+    parseAndValidate(
+      sql = sql4,
+      targetTable = "ufi_table_4",
+      ifNotExists = false,
+      isReplace = true,
+      isCreate = false,
+      fileFormat = "iceberg",
+      metadataPath = "metadata_path_4"
     )
   }
 }
