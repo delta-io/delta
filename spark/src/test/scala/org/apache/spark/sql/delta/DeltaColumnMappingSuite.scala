@@ -1324,26 +1324,33 @@ class DeltaColumnMappingSuite extends QueryTest
     val oldModes = Seq("none") ++ supportedModes
     val newModes = Seq("none") ++ supportedModes
     val upgrade = Seq(true, false)
-    oldModes.foreach { oldMode =>
-      newModes.foreach { newMode =>
-        upgrade.foreach { ug =>
-          val oldProps = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> oldMode)
-          val newProps = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMode) ++
-            (if (!ug) Map.empty else Map(
-              DeltaConfigs.MIN_READER_VERSION.key -> "2",
-              DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
-
-          if (oldMode != newMode && !(oldMode == "none" && newMode == "name")) {
-            Given(s"old mode: $oldMode, new mode: $newMode, upgrade: $ug")
-            val e = intercept[UnsupportedOperationException] {
-              withTable("t1") {
-                createTableWithSQLAPI("t1", props = oldProps)
-                alterTableWithProps("t1", props = newProps)
-              }
+    val removalAllowed = Seq(true, false)
+    for(oldMode <- oldModes; newMode <- newModes; ug <- upgrade; ra <- removalAllowed) {
+      val oldProps = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> oldMode)
+      val newProps = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMode) ++
+        (if (!ug) Map.empty else Map(
+          DeltaConfigs.MIN_READER_VERSION.key -> "2",
+          DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+      val isSupportedChange = {
+        // No change.
+        (oldMode == newMode) ||
+          // Downgrade allowed with a flag.
+          (ra && oldMode != NoMapping.name && newMode == NoMapping.name) ||
+          // Upgrade always allowed.
+          (oldMode == NoMapping.name && newMode == NameMapping.name)
+      }
+      if (!isSupportedChange) {
+        Given(s"old mode: $oldMode, new mode: $newMode, upgrade: $ug, removalAllowed: $ra")
+        val e = intercept[UnsupportedOperationException] {
+          withTable("t1") {
+            createTableWithSQLAPI("t1", props = oldProps)
+            withSQLConf(DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL.key ->
+              ra.toString) {
+              alterTableWithProps("t1", props = newProps)
             }
-            assert(e.getMessage.contains("Changing column mapping mode from"))
           }
         }
+        assert(e.getMessage.contains("Changing column mapping mode from"))
       }
     }
   }

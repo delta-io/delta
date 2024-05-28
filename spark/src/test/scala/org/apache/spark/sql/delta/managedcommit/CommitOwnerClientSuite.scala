@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 
 class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
@@ -72,15 +72,15 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
 
   test("registering multiple commit-owner builders with same name") {
     object Builder1 extends CommitOwnerBuilder {
-      override def build(conf: Map[String, String]): CommitOwnerClient = null
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = null
       override def getName: String = "builder-1"
     }
     object BuilderWithSameName extends CommitOwnerBuilder {
-      override def build(conf: Map[String, String]): CommitOwnerClient = null
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = null
       override def getName: String = "builder-1"
     }
     object Builder3 extends CommitOwnerBuilder {
-      override def build(conf: Map[String, String]): CommitOwnerClient = null
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = null
       override def getName: String = "builder-3"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
@@ -94,7 +94,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
     object Builder1 extends CommitOwnerBuilder {
       val cs1 = new TestCommitOwnerClient1()
       val cs2 = new TestCommitOwnerClient2()
-      override def build(conf: Map[String, String]): CommitOwnerClient = {
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
         conf.getOrElse("url", "") match {
           case "url1" => cs1
           case "url2" => cs2
@@ -104,21 +104,22 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
       override def getName: String = "cs-x"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
-    val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url1"))
+    val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url1"), spark)
     assert(cs1.isInstanceOf[TestCommitOwnerClient1])
-    val cs1_again = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url1"))
+    val cs1_again = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url1"), spark)
     assert(cs1 eq cs1_again)
-    val cs2 = CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url2", "a" -> "b"))
+    val cs2 =
+      CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url2", "a" -> "b"), spark)
     assert(cs2.isInstanceOf[TestCommitOwnerClient2])
     // If builder receives a config which doesn't have expected params, then it can throw exception.
     intercept[IllegalArgumentException] {
-      CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url3"))
+      CommitOwnerProvider.getCommitOwnerClient("cs-x", Map("url" -> "url3"), spark)
     }
   }
 
   test("getCommitOwnerClient - builder returns new object each time") {
     object Builder1 extends CommitOwnerBuilder {
-      override def build(conf: Map[String, String]): CommitOwnerClient = {
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
         conf.getOrElse("url", "") match {
           case "url1" => new TestCommitOwnerClient1()
           case _ => throw new IllegalArgumentException("Invalid url")
@@ -127,9 +128,9 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
       override def getName: String = "cs-name"
     }
     CommitOwnerProvider.registerBuilder(Builder1)
-    val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("url" -> "url1"))
+    val cs1 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("url" -> "url1"), spark)
     assert(cs1.isInstanceOf[TestCommitOwnerClient1])
-    val cs1_again = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("url" -> "url1"))
+    val cs1_again = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("url" -> "url1"), spark)
     assert(cs1 ne cs1_again)
   }
 
@@ -202,7 +203,7 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
           other.asInstanceOf[TestCommitOwnerClient].key == key
     }
     object Builder1 extends CommitOwnerBuilder {
-      override def build(conf: Map[String, String]): CommitOwnerClient = {
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
         new TestCommitOwnerClient(conf("key"))
       }
       override def getName: String = "cs-name"
@@ -210,13 +211,13 @@ class CommitOwnerClientSuite extends QueryTest with DeltaSQLTestUtils with Share
     CommitOwnerProvider.registerBuilder(Builder1)
 
     // Different CommitOwner with same keys should be semantically equal.
-    val obj1 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url1"))
-    val obj2 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url1"))
+    val obj1 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url1"), spark)
+    val obj2 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url1"), spark)
     assert(obj1 != obj2)
     assert(obj1.semanticEquals(obj2))
 
     // Different CommitOwner with different keys should be semantically unequal.
-    val obj3 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url2"))
+    val obj3 = CommitOwnerProvider.getCommitOwnerClient("cs-name", Map("key" -> "url2"), spark)
     assert(obj1 != obj3)
     assert(!obj1.semanticEquals(obj3))
   }

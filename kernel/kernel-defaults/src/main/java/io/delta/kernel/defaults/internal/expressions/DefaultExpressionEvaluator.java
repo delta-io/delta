@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -31,8 +32,6 @@ import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
 import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
 import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-
-
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
@@ -277,6 +276,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                         .collect(Collectors.toList())),
                 children.get(0).outputType
             );
+        }
+
+        @Override
+        ExpressionTransformResult visitLike(final Predicate like) {
+            List<ExpressionTransformResult> children =
+                    like.getChildren().stream()
+                            .map(this::visit)
+                            .collect(toList());
+            Predicate transformedExpression =
+                    LikeExpressionEvaluator.validateAndTransform(
+                        like,
+                        children.stream().map(e -> e.expression).collect(toList()),
+                        children.stream().map(e -> e.outputType).collect(toList()));
+
+            return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
         }
 
         private Predicate validateIsPredicate(
@@ -550,6 +564,15 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                     return 0; // If all are null then any idx suffices
                 }
             );
+        }
+
+        @Override
+        ColumnVector visitLike(final Predicate like) {
+            List<Expression> children = like.getChildren();
+            return LikeExpressionEvaluator.eval(
+                        children.stream()
+                        .map(this::visit)
+                        .collect(toList()));
         }
 
         /**

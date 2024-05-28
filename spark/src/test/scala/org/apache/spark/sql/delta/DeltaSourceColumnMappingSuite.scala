@@ -500,8 +500,11 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
         val dfStartAtZero = dropCDCFields(dsr
           .option(DeltaOptions.STARTING_VERSION_OPTION, "0")
           .load(inputDir.getCanonicalPath))
-        checkStreamStartBlocked(
-          dfStartAtZero, checkpointDir2, ExpectGenericSchemaIncompatibleFailure)
+        testStream(dfStartAtZero)(
+          StartStream(checkpointLocation = checkpointDir2.getCanonicalPath),
+          ProcessAllAvailableIgnoreError,
+          ExpectGenericSchemaIncompatibleFailure
+        )
       } else {
         // In the trickier case when we rename a column and rename back, we could not
         // immediately detect the schema incompatibility at stream start, so we will move on.
