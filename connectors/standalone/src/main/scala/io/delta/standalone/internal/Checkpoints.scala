@@ -230,8 +230,6 @@ private[internal] object Checkpoints extends Logging {
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
 
-    logInfo(s"Starting to write checkpoint at $path using rename=$useRename")
-
     // Exclude commitInfo, CDC
     val actions: Seq[SingleAction] = (
         Seq(snapshot.metadataScala, snapshot.protocolScala) ++
@@ -239,6 +237,9 @@ private[internal] object Checkpoints extends Logging {
         snapshot.allFilesScala ++
         snapshot.tombstonesScala
       ).map(_.wrap)
+
+    logInfo(s"Starting to write checkpoint at path=$path using rename=$useRename and " +
+        s"snapshot=$snapshot")
 
     val writtenPath =
       if (useRename) {
@@ -269,17 +270,15 @@ private[internal] object Checkpoints extends Logging {
         }
       }
 
-      // Before calling close (or rename if applicable) to make sure we have written
+      // Before calling close (or rename if applicable) make sure we have written
       // all `addFiles` actions from the snapshot. By writing the `addFiles` actions,
       // we ensure the table state is captured in the checkpoint.
       if (numOfFiles != snapshot.numOfFiles) {
-        val msg = s"""Number of actions written to checkpoint file doesn't match that of
-                     |the snapshot. Skipping creating the checkpoint.
-                     |Snapshot has ${snapshot.numOfFiles} `add` files, but
-                     |written $numOfFiles `add` files.
-                     |Checkpoint file: `$path`,
-                     |Temporary file: `$writtenPath`
-                     |""".stripMargin
+        val msg = s"Number of `add` files written to checkpoint file ($numOfFiles) doesn't match " +
+          s"the number of `add` files contained in the snapshot (${snapshot.numOfFiles}). " +
+          s"Skipping creating the checkpoint.\nCheckpoint file: `$path`." +
+          (if (writtenPath != path) s"\nTemporary file: `$writtenPath`" else "")
+
         // The error message will be logged in the catch block below.
         throw new IllegalStateException(msg)
       }
