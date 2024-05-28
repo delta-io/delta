@@ -442,4 +442,21 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  test("constraint induced by varchar") {
+    withTable("table") {
+      sql("CREATE TABLE table (id INT, value VARCHAR(12)) USING DELTA")
+      sql("INSERT INTO table VALUES (1, 'short string')")
+      val exception = intercept[DeltaInvariantViolationException] {
+        sql("INSERT INTO table VALUES (2, 'a very long string')")
+      }
+      checkError(
+        exception,
+        errorClass = "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
+        parameters = Map(
+          "value" -> "a very long string",
+          "expr" -> "(isnull('value) OR (length('value) <= 12))"
+        )
+      )
+    }
+  }
 }
