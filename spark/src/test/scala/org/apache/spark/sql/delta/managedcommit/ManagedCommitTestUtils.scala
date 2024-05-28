@@ -76,8 +76,7 @@ trait ManagedCommitTestUtils
    * Run the test against a [[TrackingCommitOwnerClient]] with backfill batch size =
    * `batchBackfillSize`
    */
-  def testWithTrackingInMemoryCommitOwner(
-      backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
+  def testWithManagedCommits(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
     test(s"$testName [Backfill batch size: $backfillBatchSize]") {
       CommitOwnerProvider.clearNonDefaultBuilders()
       CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(backfillBatchSize))
