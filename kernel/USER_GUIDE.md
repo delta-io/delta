@@ -116,7 +116,7 @@ This [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta
 * `myScan.getScanFiles(Engine)`:  Returns scan files as columnar batches (represented as an iterator of `FilteredColumnarBatch`es, more on that later) where each selected row in the batch has information about a single file containing the table data.
 * `myScan.getScanState(Engine)`: Returns the snapshot-level information needed for reading any file. Note that this is a single row and common to all scan files.
 
-For each scan file the physical data must be read from the file. Which columns to read are specified in the scan file state. Once the physical data is read, you have to call [`ScanFile.transformPhysicalData(...)`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#transformPhysicalData-io.delta.kernel.engine.Engine-io.delta.kernel.data.Row-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-) with the scan state and the physical data read from scan file. This API takes care of transforming (e.g. adding partition columns) the physical data into logical data of the table. Here is an example of reading all the table data in a single thread.
+For each scan file the physical data must be read from the file. The columns to read are specified in the scan file state. Once the physical data is read, you have to call [`ScanFile.transformPhysicalData(...)`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html#transformPhysicalData-io.delta.kernel.engine.Engine-io.delta.kernel.data.Row-io.delta.kernel.data.Row-io.delta.kernel.utils.CloseableIterator-) with the scan state and the physical data read from scan file. This API takes care of transforming (e.g. adding partition columns) the physical data into logical data of the table. Here is an example of reading all the table data in a single thread.
 
 ```java
 CloserableIterator<FilteredColumnarBatch> fileIter = scanObject.getScanFiles(myEngine);
@@ -171,7 +171,7 @@ while(fileIter.hasNext()) {
           ColumnVector column0 = dataBatch.getColumnVector(0);
           for (int rowIndex = 0; rowIndex < column0.getSize(); rowIndex++) {
             // check if the row is selected or not
-            if (selectionVector.isEmpty() || selectionVector.get().getBoolean(rowIndex)) {
+            if (selectionVector.isPresent() && selectionVector.get().getBoolean(rowIndex)) {
               // Assuming the column type is String.
               // If it is a different type, call the relevant function on the `ColumnVector`
               System.out.println(column0.getString(rowIndex));
@@ -182,7 +182,7 @@ while(fileIter.hasNext()) {
 	  ColumnVector column1 = dataBatch.getColumnVector(1);
 	  for (int rowIndex = 0; rowIndex < column1.getSize(); rowIndex++) {
             // check if the row is selected or not
-            if (selectionVector.isEmpty() || selectionVector.get().getBoolean(rowIndex)) {
+            if (selectionVector.isPresent() && selectionVector.get().getBoolean(rowIndex)) {
               // Assuming the column type is Long.
               // If it is a different type, call the relevant function on the `ColumnVector`
               System.out.println(column1.getLong(rowIndex));
@@ -231,7 +231,7 @@ Optional<Predicate> remainingFilter = myFilteredScan.getRemainingFilter();
 
 The scan files returned by  `myFilteredScan.getScanFiles(myEngine)` will have rows representing files only of the required partition. Similarly, you can provide filters for non-partition columns, and if the data in the table is well clustered by those columns, then Delta Kernel will be able to skip files as much as possible.
 
-## Create to Delta table
+## Create Delta table
 In this section, we will walk through how to build a Delta connector that can create a Delta table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
 
 You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
