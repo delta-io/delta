@@ -18,9 +18,11 @@
 
 package io.delta.standalone.internal
 
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+
 import io.delta.kernel.internal.{SnapshotImpl => SnapshotImplKernel}
 import io.delta.standalone.DeltaScan
 import io.delta.standalone.actions.{AddFile => AddFileJ, Metadata => MetadataJ}
@@ -62,6 +64,18 @@ class KernelSnapshotDelegator(
     standaloneDeltaLog: DeltaLogImpl,
     engine: Engine)
   extends SnapshotImpl(hadoopConf, path, -1, LogSegment.empty(path), -1, standaloneDeltaLog, -1) {
+
+  // For backward compatibility
+  def this(
+    kernelSnapshot: SnapshotImplKernel,
+    kernelSnapshotWrapper: KernelSnapshotWrapper,
+    hadoopConf: Configuration,
+    path: Path,
+    version: Long,
+    kernelDeltaLog: KernelDeltaLogDelegator,
+    standaloneDeltaLog: DeltaLogImpl) =
+    this(kernelSnapshot, kernelSnapshotWrapper, hadoopConf, path, version, kernelDeltaLog,
+      standaloneDeltaLog, DefaultEngine.create(hadoopConf))
 
   lazy val standaloneSnapshot: SnapshotImpl = standaloneDeltaLog.getSnapshotForVersionAsOf(getVersion())
 
