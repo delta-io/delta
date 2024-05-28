@@ -39,4 +39,15 @@ public class DefaultEngineErrors {
             reason);
         return new UnsupportedOperationException(message);
     }
+
+    /**
+     * Exception class for invalid escape sequence used in input for LIKE expressions
+     * @param pattern the invalid pattern
+     * @param index character index of occurrence of the offending escape in the pattern
+     */
+    public static IllegalArgumentException invalidEscapeSequence(String pattern, int index) {
+        return new IllegalArgumentException(
+                format("LIKE expression has invalid escape sequence '%s' at index %d",
+                        pattern, index));
+    }
 }

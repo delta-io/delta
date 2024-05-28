@@ -21,12 +21,14 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import com.amazonaws.services.dynamodbv2.AbstractAmazonDynamoDB
+import com.amazonaws.services.dynamodbv2.{AbstractAmazonDynamoDB, AmazonDynamoDB, AmazonDynamoDBClient}
 import com.amazonaws.services.dynamodbv2.model.{AttributeValue, ConditionalCheckFailedException, CreateTableRequest, CreateTableResult, DescribeTableResult, GetItemRequest, GetItemResult, PutItemRequest, PutItemResult, ResourceInUseException, ResourceNotFoundException, TableDescription, UpdateItemRequest, UpdateItemResult}
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
-import org.apache.spark.sql.delta.util.FileNames
-import io.delta.dynamodbcommitstore.DynamoDBCommitOwnerClient
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import io.delta.dynamodbcommitstore.{DynamoDBCommitOwnerClient, DynamoDBCommitOwnerClientBuilder}
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -233,6 +235,67 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
           commit(1L, 1L, wrongTablePathTableCommitOwner)
         }
         assert(e.getMessage.contains("while the table is registered at"))
+      }
+    }
+  }
+
+  test("builder should read dynamic configs from sparkSession") {
+    class TestDynamoDBCommitOwnerBuilder extends DynamoDBCommitOwnerClientBuilder {
+      override def getName: String = "dynamodb-test"
+      override def createAmazonDDBClient(
+          endpoint: String,
+          credentialProviderName: String,
+          hadoopConf: Configuration): AmazonDynamoDB = {
+        assert(endpoint == "endpoint-1224")
+        assert(credentialProviderName == "creds-1225")
+        new InMemoryDynamoDBClient()
+      }
+
+      override def getDynamoDBCommitOwnerClient(
+          managedCommitsTableName: String,
+          dynamoDBEndpoint: String,
+          ddbClient: AmazonDynamoDB,
+          backfillBatchSize: Long,
+          readCapacityUnits: Int,
+          writeCapacityUnits: Int,
+          skipPathCheck: Boolean): DynamoDBCommitOwnerClient = {
+        assert(managedCommitsTableName == "tableName-1223")
+        assert(dynamoDBEndpoint == "endpoint-1224")
+        assert(backfillBatchSize == 1)
+        assert(readCapacityUnits == 1226)
+        assert(writeCapacityUnits == 1227)
+        assert(skipPathCheck)
+        new DynamoDBCommitOwnerClient(
+          managedCommitsTableName,
+          dynamoDBEndpoint,
+          ddbClient,
+          backfillBatchSize,
+          readCapacityUnits,
+          writeCapacityUnits,
+          skipPathCheck)
+      }
+    }
+    val commitOwnerConf = JsonUtils.toJson(Map(
+      "managedCommitsTableName" -> "tableName-1223",
+      "dynamoDBEndpoint" -> "endpoint-1224"
+    ))
+    withSQLConf(
+        DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "dynamodb-test",
+        DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey -> commitOwnerConf,
+        DeltaSQLConf.MANAGED_COMMIT_DDB_AWS_CREDENTIALS_PROVIDER_NAME.key -> "creds-1225",
+        DeltaSQLConf.MANAGED_COMMIT_DDB_SKIP_PATH_CHECK.key -> "true",
+        DeltaSQLConf.MANAGED_COMMIT_DDB_READ_CAPACITY_UNITS.key -> "1226",
+        DeltaSQLConf.MANAGED_COMMIT_DDB_WRITE_CAPACITY_UNITS.key -> "1227") {
+      // clear default builders
+      CommitOwnerProvider.clearNonDefaultBuilders()
+      CommitOwnerProvider.registerBuilder(new TestDynamoDBCommitOwnerBuilder())
+      withTempTableDir { tempDir =>
+        val tablePath = tempDir.getAbsolutePath
+        spark.range(1).write.format("delta").mode("overwrite").save(tablePath)
+        val log = DeltaLog.forTable(spark, tempDir.toString)
+        val tableCommitOwnerClient = log.snapshot.tableCommitOwnerClientOpt.get
+        assert(tableCommitOwnerClient.commitOwnerClient.isInstanceOf[DynamoDBCommitOwnerClient])
+        assert(tableCommitOwnerClient.tableConf.contains("tableId"))
       }
     }
   }

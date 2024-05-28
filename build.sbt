@@ -17,6 +17,7 @@
 // scalastyle:off line.size.limit
 
 import java.nio.file.Files
+import Checkstyle._
 import Mima._
 import Unidoc._
 
@@ -1310,44 +1311,6 @@ lazy val kernelGroup = project
       (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
     }
   ).configureUnidoc(docTitle = "Delta Kernel")
-
-/*
- ***********************
- * ScalaStyle settings *
- ***********************
- */
-ThisBuild / scalastyleConfig := baseDirectory.value / "scalastyle-config.xml"
-
-lazy val compileScalastyle = taskKey[Unit]("compileScalastyle")
-lazy val testScalastyle = taskKey[Unit]("testScalastyle")
-
-lazy val scalaStyleSettings = Seq(
-  compileScalastyle := (Compile / scalastyle).toTask("").value,
-
-  Compile / compile := ((Compile / compile) dependsOn compileScalastyle).value,
-
-  testScalastyle := (Test / scalastyle).toTask("").value,
-
-  Test / test := ((Test / test) dependsOn testScalastyle).value
-)
-
-/*
- ****************************
- * Java checkstyle settings *
- ****************************
- */
-
-def javaCheckstyleSettings(checkstyleFile: String): Def.SettingsDefinition = {
-  // Can be run explicitly via: build/sbt $module/checkstyle
-  // Will automatically be run during compilation (e.g. build/sbt compile)
-  // and during tests (e.g. build/sbt test)
-  Seq(
-    checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
-    checkstyleSeverityLevel := CheckstyleSeverityLevel.Error,
-    (Compile / compile) := ((Compile / compile) dependsOn (Compile / checkstyle)).value,
-    (Test / test) := ((Test / test) dependsOn (Test / checkstyle)).value
-  )
-}
 
 /*
  ********************

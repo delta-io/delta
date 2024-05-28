@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.managedcommit
 import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.TransactionExecutionObserver
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.actions.Metadata
@@ -87,7 +88,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       logStore, hadoopConf, logPath, commitVersion, actions, generateUUID())
 
     // Do the actual commit
-    val commitTimestamp = updatedActions.getCommitInfo.asInstanceOf[CommitInfo].getTimestamp
+    val commitTimestamp = updatedActions.getCommitInfo.getCommitTimestamp
     var commitResponse =
       commitImpl(
         logStore,

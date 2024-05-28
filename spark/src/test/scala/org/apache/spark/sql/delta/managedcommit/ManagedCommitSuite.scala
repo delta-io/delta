@@ -23,7 +23,7 @@ import scala.collection.mutable.ArrayBuffer
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.{DeltaOperations, ManagedCommitTableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CommitOwnerGetCommitsFailedException
-import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME, ROW_TRACKING_ENABLED}
+import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME, MANAGED_COMMIT_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.InitialSnapshot
@@ -774,7 +774,14 @@ class ManagedCommitSuite
         // Downgrade the table
         // [upgradeExistingTable = false] Commit-3
         // [upgradeExistingTable = true] Commit-5
-        val newMetadata2 = Metadata().copy(configuration = Map("downgraded_at" -> "v2"))
+        val commitOwnerConfKeys = Seq(
+          MANAGED_COMMIT_OWNER_NAME.key,
+          MANAGED_COMMIT_OWNER_CONF.key,
+          MANAGED_COMMIT_TABLE_CONF.key
+        )
+        val newConfig = log.snapshot.metadata.configuration
+          .filterKeys(!commitOwnerConfKeys.contains(_)) ++ Map("downgraded_at" -> "v2")
+        val newMetadata2 = log.snapshot.metadata.copy(configuration = newConfig.toMap)
         log.startTransaction().commitManually(newMetadata2)
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 3)
         assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
