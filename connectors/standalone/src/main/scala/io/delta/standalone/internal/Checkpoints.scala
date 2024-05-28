@@ -269,25 +269,6 @@ private[internal] object Checkpoints extends Logging {
           numOfFiles += 1
         }
       }
-
-      // Before calling close (or rename if applicable) make sure we have written
-      // all `addFiles` actions from the snapshot. By writing the `addFiles` actions,
-      // we ensure the table state is captured in the checkpoint.
-      if (numOfFiles != snapshot.numOfFiles) {
-        val msg = s"Number of `add` files written to checkpoint file ($numOfFiles) doesn't match " +
-          s"the number of `add` files contained in the snapshot (${snapshot.numOfFiles}). " +
-          s"Skipping creating the checkpoint.\nCheckpoint file: `$path`." +
-          (if (writtenPath != path) s"\nTemporary file: `$writtenPath`" else "")
-
-        // The error message will be logged in the catch block below.
-        throw new IllegalStateException(msg)
-      }
-
-      // Close the writer only after writing all the actions. Calling close before writing
-      // all the records could result in leaving a Parquet file with partial content as the
-      // `close` flushes the already buffered data to storage.
-      // This would leak resources but we don't have a way to abort the storage request here.
-      writer.close()
     } catch {
       case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
         val p = new Path(writtenPath)
@@ -302,6 +283,8 @@ private[internal] object Checkpoints extends Logging {
         // write failed.
         logError(s"Error writing checkpoint at $writtenPath", other)
         throw other
+    } finally {
+      writer.close()
     }
 
     if (useRename) {
@@ -329,6 +312,15 @@ private[internal] object Checkpoints extends Logging {
           }
         }
       }
+    }
+
+    if (numOfFiles != snapshot.numOfFiles) {
+      val msg = s"Number of `add` files written to checkpoint file ($numOfFiles) doesn't match " +
+          s"the number of `add` files contained in the snapshot (${snapshot.numOfFiles}). " +
+          s"Skipping creating the checkpoint.\nCheckpoint file: `$path`." +
+          (if (writtenPath != path) s"\nTemporary file: `$writtenPath`" else "")
+      logError(msg)
+      throw new IllegalStateException(msg)
     }
 
     // Attempting to write empty checkpoint
