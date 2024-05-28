@@ -29,20 +29,60 @@ class UniformIngressSqlSuite extends QueryTest
 
   override protected def sparkConf: SparkConf = super.sparkConf
 
-  test("create uniform table command") {
-    val target = new UnresolvedRelation(Seq("uniform_table_1"))
+  /**
+   * Helper function to test the sql parsing for create uniform table command.
+   *
+   * @param sql the original sql string.
+   * @param targetTable the uniform table name to create.
+   * @param ifNotExists whether this command includes `IF NOT EXISTS`.
+   * @param isReplace whether this command is a `REPLACE` command.
+   * @param isCreate whether this command is a `CREATE ` command.
+   * @param fileFormat the file format for the uniform table, e.g., iceberg.
+   * @param metadataPath the path for the metadata, e.g., the s3 bucket path.
+   */
+  private def parseAndValidate(
+      sql: String,
+      targetTable: String,
+      ifNotExists: Boolean,
+      isReplace: Boolean,
+      isCreate: Boolean,
+      fileFormat: String,
+      metadataPath: String): Unit = {
+    val target = new UnresolvedRelation(Seq(targetTable))
+    // TODO(Zihao): add support for refresh command.
     val result = CreateUniformTableCommand(
       table = target,
+      ifNotExists = ifNotExists,
+      isReplace = isReplace,
+      isCreate = isCreate,
+      fileFormat = fileFormat,
+      metadataPath = metadataPath
+      )
+    assert(spark.sessionState.sqlParser.parsePlan(sql) == result)
+  }
+
+  test("create uniform table command") {
+    val sql1 = "CREATE TABLE uniform_table_1 UNIFORM iceberg METADATA_PATH 'metadata_path_1'"
+    parseAndValidate(
+      sql = sql1,
+      targetTable = "uniform_table_1",
       ifNotExists = false,
       isReplace = false,
       isCreate = true,
       fileFormat = "iceberg",
       metadataPath = "metadata_path_1"
     )
-    assert(
-      spark.sessionState.sqlParser.parsePlan(
-        "CREATE TABLE uniform_table_1 UNIFORM iceberg METADATA_PATH 'metadata_path_1'"
-       ) == result
+
+    val sql2 =
+      "CREATE TABLE IF NOT EXISTS uniform_table_2 UNIFORM iceberg METADATA_PATH 'metadata_path_2'"
+    parseAndValidate(
+      sql = sql2,
+      targetTable = "uniform_table_2",
+      ifNotExists = true,
+      isReplace = false,
+      isCreate = true,
+      fileFormat = "iceberg",
+      metadataPath = "metadata_path_2"
     )
   }
 }
