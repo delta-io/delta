@@ -462,11 +462,10 @@ case class DeltaParquetFileFormat(
    */
   private def translateFilterForColumnMapping(
       filter: Filter,
-      physicalNameMap: Map[Seq[String], Seq[String]]): Option[Filter] = {
+      physicalNameMap: Map[String, String]): Option[Filter] = {
     object PhysicalAttribute {
       def unapply(attribute: String): Option[String] = {
-        import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
-        physicalNameMap.get(parseColumnPath(attribute)).map(_.quoted)
+        physicalNameMap.get(attribute)
       }
     }
 
@@ -514,7 +513,9 @@ case class DeltaParquetFileFormat(
         Some(StringContains(physicalAttribute, value))
       case AlwaysTrue() => Some(AlwaysTrue())
       case AlwaysFalse() => Some(AlwaysFalse())
-      case _ => None
+      case _ =>
+        logError(s"Failed to translate filter $filter")
+        None
     }
   }
 }
