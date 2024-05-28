@@ -104,7 +104,7 @@ public class TableConfig<T> {
         this.helpMessage = helpMessage;
     }
 
-    public String getKey() {
+    public String key() {
         return key;
     }
 
