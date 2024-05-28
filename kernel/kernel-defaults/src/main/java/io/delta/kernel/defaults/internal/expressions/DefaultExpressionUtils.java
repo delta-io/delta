@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
+import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 
 import io.delta.kernel.data.ArrayValue;
@@ -28,13 +29,24 @@ import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.*;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import io.delta.kernel.defaults.internal.data.ValueComparator;
-import io.delta.kernel.defaults.internal.data.vector.*;
 
 /**
  * Utility methods used by the default expression evaluator.
  */
 class DefaultExpressionUtils {
+
+    static final Comparator<BigDecimal> BIGDECIMAL_COMPARATOR = Comparator.naturalOrder();
+    static final Comparator<String> STRING_COMPARATOR = Comparator.naturalOrder();
+    static final Comparator<byte[]> BINARY_COMPARTOR = (leftOp, rightOp) -> {
+        int i = 0;
+        while (i < leftOp.length && i < rightOp.length) {
+            if (leftOp[i] != rightOp[i]) {
+                return Byte.compare(leftOp[i], rightOp[i]);
+            }
+            i++;
+        }
+        return Integer.compare(leftOp.length, rightOp.length);
+    };
 
     private DefaultExpressionUtils() {}
 
@@ -99,35 +111,48 @@ class DefaultExpressionUtils {
     static ColumnVector comparatorVector(
             ColumnVector left,
             ColumnVector right,
-            VectorComparator vectorComparator) {
+            IntPredicate booleanComparator) {
         checkArgument(
                 left.getSize() == right.getSize(),
                 "Left and right operand have different vector sizes.");
 
         DataType dataType = left.getDataType();
-        ValueComparator valueComparator;
+        IntPredicate vectorValueComparator;
         if (dataType instanceof BooleanType) {
-            valueComparator = new BooleanValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    Boolean.compare(left.getBoolean(rowId), right.getBoolean(rowId)));
         } else if (dataType instanceof ByteType) {
-            valueComparator = new ByteValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    Byte.compare(left.getByte(rowId), right.getByte(rowId)));
         } else if (dataType instanceof ShortType) {
-            valueComparator = new ShortValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    Short.compare(left.getShort(rowId), right.getShort(rowId)));
         } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
-            valueComparator = new IntegerValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    Integer.compare(left.getInt(rowId), right.getInt(rowId)));
         } else if (dataType instanceof LongType ||
                 dataType instanceof TimestampType ||
                 dataType instanceof TimestampNTZType) {
-            valueComparator = new LongValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    Long.compare(left.getLong(rowId), right.getLong(rowId)));
         } else if (dataType instanceof FloatType) {
-            valueComparator = new FloatValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    Float.compare(left.getFloat(rowId), right.getFloat(rowId)));
         } else if (dataType instanceof DoubleType) {
-            valueComparator = new DoubleValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    Double.compare(left.getDouble(rowId), right.getDouble(rowId)));
         } else if (dataType instanceof DecimalType) {
-            valueComparator = new DecimalValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    BIGDECIMAL_COMPARATOR.compare(
+                            left.getDecimal(rowId), right.getDecimal(rowId)));
         } else if (dataType instanceof StringType) {
-            valueComparator = new StringValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    STRING_COMPARATOR.compare(
+                            left.getString(rowId), right.getString(rowId)));
         } else if (dataType instanceof BinaryType) {
-            valueComparator = new BinaryValueComparator(left, right, vectorComparator);
+            vectorValueComparator = rowId -> booleanComparator.test(
+                    BINARY_COMPARTOR.compare(
+                            left.getBinary(rowId), right.getBinary(rowId)));
         } else {
             throw new UnsupportedOperationException(dataType + " can not be compared.");
         }
@@ -159,7 +184,7 @@ class DefaultExpressionUtils {
                 if (isNullAt(rowId)) {
                     return false;
                 }
-                return valueComparator.getCompareResult(rowId);
+                return vectorValueComparator.test(rowId);
             }
         };
     }
