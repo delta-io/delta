@@ -56,6 +56,7 @@ case class ProtocolMetadataLoadMetrics(fileVersions: Seq[Long])
 /**
  * Scala implementation of Java interface [[Snapshot]].
  *
+ * @param path _delta_log path of this snapshot
  * @param timestamp The timestamp of the latest commit in milliseconds. Can also be set to -1 if the
  *                  timestamp of the commit is unknown or the table has not been initialized, i.e.
  *                  `version = -1`.
@@ -82,12 +83,24 @@ private[internal] class SnapshotImpl(
 
   import SnapshotImpl._
 
+  private var loadedState = false
+
   private val memoryOptimizedLogReplay =
     new MemoryOptimizedLogReplay(files, deltaLog.store, hadoopConf, deltaLog.timezone)
 
   ///////////////////////////////////////////////////////////////////////////
   // Public API Methods
   ///////////////////////////////////////////////////////////////////////////
+
+  override def toString: String = {
+    if (loadedState) {
+      s"SnapshotImpl(path=$path, version=$version, timestamp=$timestamp, " +
+        s"sizeInBytes=${state.sizeInBytes}, numAddFiles=${state.numOfFiles}, " +
+        s"numRemoveFiles=${state.numOfRemoves}, numSetTransactions=${state.numOfSetTransactions})"
+    } else {
+      s"SnapshotImpl(path=$path, version=$version, timestamp=$timestamp)"
+    }
+  }
 
   override def scan(): DeltaScan = new DeltaScanImpl(memoryOptimizedLogReplay)
 
@@ -324,6 +337,8 @@ private[internal] class SnapshotImpl(
     if (null == replay.currentMetaData) {
       throw DeltaErrors.actionNotFoundException("metadata", version)
     }
+
+    loadedState = true
 
     State(
       replay.getSetTransactions,
