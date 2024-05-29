@@ -151,11 +151,9 @@ public class TransactionImpl
             throws FileAlreadyExistsException {
         List<Row> metadataActions = new ArrayList<>();
         metadataActions.add(createCommitInfoSingleAction(generateCommitAction()));
-        if (isNewTable) {
-            // In the future, we need to add metadata and action when there are any changes to them.
-            metadataActions.add(createMetadataSingleAction(metadata.toRow()));
-            metadataActions.add(createProtocolSingleAction(protocol.toRow()));
-        }
+        // In the future, we need to add metadata and action when there are any changes to them.
+        metadataActions.add(createMetadataSingleAction(metadata.toRow()));
+        metadataActions.add(createProtocolSingleAction(protocol.toRow()));
         setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
         try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
@@ -215,14 +213,11 @@ public class TransactionImpl
     }
 
     private Map<String, String> getOperationParameters() {
-        if (isNewTable) {
-            List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
-            String partitionBy = partitionCols.stream()
-                    .map(col -> "\"" + col + "\"")
-                    .collect(Collectors.joining(",", "[", "]"));
-            return Collections.singletonMap("partitionBy", partitionBy);
-        }
-        return Collections.emptyMap();
+        List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
+        String partitionBy = partitionCols.stream()
+            .map(col -> "\"" + col + "\"")
+            .collect(Collectors.joining(",", "[", "]"));
+        return Collections.singletonMap("partitionBy", partitionBy);
     }
 
     /**
