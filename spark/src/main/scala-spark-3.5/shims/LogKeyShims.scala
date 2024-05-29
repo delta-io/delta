@@ -40,9 +40,7 @@ package org.apache.spark.internal
 
 import java.util.Locale
 
-/**
- * All structured logging `keys` used in `MDC` must extends `LogKeyShims`
- */
+// LogKey is part of Spark's Structured Logging API and is not available in Spark 3.5.
 trait LogKeyShims {
-  val name: String = this.toString.toLowerCase(Locale.ROOT)
+  def name: String = ""
 }

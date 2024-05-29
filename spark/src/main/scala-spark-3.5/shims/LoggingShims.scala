@@ -40,11 +40,7 @@ package org.apache.spark.internal
 
 import org.apache.logging.log4j.CloseableThreadContext
 
-/**
- * Mapped Diagnostic Context (MDC) that will be used in log messages.
- * The values of the MDC will be inline in the log message, while the key-value pairs will be
- * part of the ThreadContext.
- */
+// MDC is part of Spark's Structured Logging API and is not available in Spark 3.5.
 case class MDC(key: LogKeyShims, value: Any) {
   require(!value.isInstanceOf[MessageWithContext],
     "the class of value cannot be MessageWithContext")
@@ -54,32 +50,22 @@ object MDC {
   def of(key: LogKeyShims, value: Any): MDC = MDC(key, value)
 }
 
-/**
- * Wrapper class for log messages that include a logging context.
- * This is used as the return type of the string interpolator `LogStringContext`.
- */
+// MessageWithContext is part of Spark's Structured Logging API and is not available in Spark 3.5.
 case class MessageWithContext(message: String, context: java.util.HashMap[String, String]) {
   def +(mdc: MessageWithContext): MessageWithContext = {
-    val resultMap = new java.util.HashMap[String, String](context)
-    resultMap.putAll(mdc.context)
-    MessageWithContext(message + mdc.message, resultMap)
+    MessageWithContext(message + mdc.message, new java.util.HashMap[String, String]())
   }
 
   def stripMargin: MessageWithContext = copy(message = message.stripMargin)
 }
 
-/**
- * Companion class for lazy evaluation of the MessageWithContext instance.
- */
+// LogEntry is part of Spark's Structured Logging API and is not available in Spark 3.5.
 class LogEntry(messageWithContext: => MessageWithContext) {
   def message: String = messageWithContext.message
 
   def context: java.util.HashMap[String, String] = messageWithContext.context
 }
 
-/**
- * Companion object for the wrapper to enable implicit conversions
- */
 object LogEntry {
   import scala.language.implicitConversions
 
@@ -92,108 +78,77 @@ trait LoggingShims extends Logging {
     def log(args: MDC*): MessageWithContext = {
       val processedParts = sc.parts.iterator
       val sb = new StringBuilder(processedParts.next())
-      val context = new java.util.HashMap[String, String]()
 
       args.foreach { mdc =>
         val value = if (mdc.value != null) mdc.value.toString else null
         sb.append(value)
-        context.put(mdc.key.name, value)
 
         if (processedParts.hasNext) {
           sb.append(processedParts.next())
         }
       }
 
-      MessageWithContext(sb.toString(), context)
-    }
-  }
-
-  protected def withLogContext(context: java.util.HashMap[String, String])(body: => Unit): Unit = {
-    val threadContext = CloseableThreadContext.putAll(context)
-    try {
-      body
-    } finally {
-      threadContext.close()
+      MessageWithContext(sb.toString(), new java.util.HashMap[String, String]())
     }
   }
 
   protected def logInfo(entry: LogEntry): Unit = {
     if (log.isInfoEnabled) {
-      withLogContext(entry.context) {
-        log.info(entry.message)
-      }
+      log.info(entry.message)
     }
   }
 
   protected def logInfo(entry: LogEntry, throwable: Throwable): Unit = {
     if (log.isInfoEnabled) {
-      withLogContext(entry.context) {
-        log.info(entry.message, throwable)
-      }
+      log.info(entry.message, throwable)
     }
   }
 
   protected def logDebug(entry: LogEntry): Unit = {
     if (log.isDebugEnabled) {
-      withLogContext(entry.context) {
-        log.debug(entry.message)
-      }
+      log.debug(entry.message)
     }
   }
 
   protected def logDebug(entry: LogEntry, throwable: Throwable): Unit = {
     if (log.isDebugEnabled) {
-      withLogContext(entry.context) {
-        log.debug(entry.message, throwable)
-      }
+      log.debug(entry.message, throwable)
     }
   }
 
   protected def logTrace(entry: LogEntry): Unit = {
     if (log.isTraceEnabled) {
-      withLogContext(entry.context) {
-        log.trace(entry.message)
-      }
+      log.trace(entry.message)
     }
   }
 
   protected def logTrace(entry: LogEntry, throwable: Throwable): Unit = {
     if (log.isTraceEnabled) {
-      withLogContext(entry.context) {
-        log.trace(entry.message, throwable)
-      }
+      log.trace(entry.message, throwable)
     }
   }
 
   protected def logWarning(entry: LogEntry): Unit = {
     if (log.isWarnEnabled) {
-      withLogContext(entry.context) {
-        log.warn(entry.message)
-      }
+      log.warn(entry.message)
     }
   }
 
   protected def logWarning(entry: LogEntry, throwable: Throwable): Unit = {
     if (log.isWarnEnabled) {
-      withLogContext(entry.context) {
-        log.warn(entry.message, throwable)
-      }
+      log.warn(entry.message, throwable)
     }
   }
 
   protected def logError(entry: LogEntry): Unit = {
     if (log.isErrorEnabled) {
-      withLogContext(entry.context) {
-        log.error(entry.message)
-      }
+      log.error(entry.message)
     }
   }
 
   protected def logError(entry: LogEntry, throwable: Throwable): Unit = {
     if (log.isErrorEnabled) {
-      withLogContext(entry.context) {
-        log.error(entry.message, throwable)
-      }
+      log.error(entry.message, throwable)
     }
   }
 }

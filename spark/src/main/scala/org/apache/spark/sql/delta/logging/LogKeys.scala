@@ -87,6 +87,7 @@ object LogKeys {
   case object CACHE_UNTIL_LAST_PRODUCED_SIZE extends LogKeyShims
   case object CALL_SITE_LONG_FORM extends LogKeyShims
   case object CALL_SITE_SHORT_FORM extends LogKeyShims
+  case object CANCEL_FUTURE_JOBS extends LogKeyShims
   case object CATALOG_NAME extends LogKeyShims
   case object CATEGORICAL_FEATURES extends LogKeyShims
   case object CHECKPOINT_FILE extends LogKeyShims
@@ -133,10 +134,10 @@ object LogKeys {
   case object CONTAINER_ID extends LogKeyShims
   case object CONTAINER_STATE extends LogKeyShims
   case object CONTEXT extends LogKeyShims
-  case object CONTEXT_CREATION_SITE extends LogKeyShims
   case object COST extends LogKeyShims
   case object COUNT extends LogKeyShims
   case object CREATED_POOL_NAME extends LogKeyShims
+  case object CREATION_SITE extends LogKeyShims
   case object CREDENTIALS_RENEWAL_INTERVAL_RATIO extends LogKeyShims
   case object CROSS_VALIDATION_METRIC extends LogKeyShims
   case object CROSS_VALIDATION_METRICS extends LogKeyShims
@@ -147,8 +148,9 @@ object LogKeys {
   case object CSV_SCHEMA_FIELD_NAMES extends LogKeyShims
   case object CSV_SOURCE extends LogKeyShims
   case object CURRENT_BATCH_ID extends LogKeyShims
+  case object CURRENT_DISK_SIZE extends LogKeyShims
   case object CURRENT_FILE extends LogKeyShims
-  case object CURRENT_MEMORY_BYTES extends LogKeyShims
+  case object CURRENT_MEMORY_SIZE extends LogKeyShims
   case object CURRENT_PATH extends LogKeyShims
   case object CURRENT_TIME extends LogKeyShims
   case object DATA extends LogKeyShims
@@ -161,7 +163,6 @@ object LogKeys {
   case object DEFAULT_COMPACT_INTERVAL extends LogKeyShims
   case object DEFAULT_ISOLATION_LEVEL extends LogKeyShims
   case object DEFAULT_NAME extends LogKeyShims
-  case object DEFAULT_SCHEDULING_MODE extends LogKeyShims
   case object DEFAULT_VALUE extends LogKeyShims
   case object DELAY extends LogKeyShims
   case object DELEGATE extends LogKeyShims
@@ -222,6 +223,8 @@ object LogKeys {
   case object EXPR extends LogKeyShims
   case object EXPR_TERMS extends LogKeyShims
   case object EXTENDED_EXPLAIN_GENERATOR extends LogKeyShims
+  case object FAILED_STAGE extends LogKeyShims
+  case object FAILED_STAGE_NAME extends LogKeyShims
   case object FAILURES extends LogKeyShims
   case object FALLBACK_VERSION extends LogKeyShims
   case object FEATURE_COLUMN extends LogKeyShims
@@ -246,6 +249,7 @@ object LogKeys {
   case object FINAL_OUTPUT_PATH extends LogKeyShims
   case object FINAL_PATH extends LogKeyShims
   case object FINISH_TRIGGER_DURATION extends LogKeyShims
+  case object FREE_MEMORY_SIZE extends LogKeyShims
   case object FROM_OFFSET extends LogKeyShims
   case object FROM_TIME extends LogKeyShims
   case object FUNCTION_NAME extends LogKeyShims
@@ -265,6 +269,7 @@ object LogKeys {
   case object HIVE_OPERATION_STATE extends LogKeyShims
   case object HIVE_OPERATION_TYPE extends LogKeyShims
   case object HOST extends LogKeyShims
+  case object HOST_LOCAL_BLOCKS_SIZE extends LogKeyShims
   case object HOST_NAMES extends LogKeyShims
   case object HOST_PORT extends LogKeyShims
   case object HOST_PORT2 extends LogKeyShims
@@ -280,6 +285,7 @@ object LogKeys {
   case object INITIAL_HEARTBEAT_INTERVAL extends LogKeyShims
   case object INIT_MODE extends LogKeyShims
   case object INPUT extends LogKeyShims
+  case object INPUT_SPLIT extends LogKeyShims
   case object INTERVAL extends LogKeyShims
   case object ISOLATION_LEVEL extends LogKeyShims
   case object ISSUE_DATE extends LogKeyShims
@@ -314,11 +320,14 @@ object LogKeys {
   case object LOAD_FACTOR extends LogKeyShims
   case object LOAD_TIME extends LogKeyShims
   case object LOCALE extends LogKeyShims
+  case object LOCAL_BLOCKS_SIZE extends LogKeyShims
   case object LOCAL_SCRATCH_DIR extends LogKeyShims
   case object LOCATION extends LogKeyShims
   case object LOGICAL_PLAN_COLUMNS extends LogKeyShims
   case object LOGICAL_PLAN_LEAVES extends LogKeyShims
   case object LOG_ID extends LogKeyShims
+  case object LOG_KEY_FILE extends LogKeyShims
+  case object LOG_LEVEL extends LogKeyShims
   case object LOG_OFFSET extends LogKeyShims
   case object LOG_TYPE extends LogKeyShims
   case object LOWER_BOUND extends LogKeyShims
@@ -366,6 +375,7 @@ object LogKeys {
   case object MIN_SIZE extends LogKeyShims
   case object MIN_TIME extends LogKeyShims
   case object MIN_VERSION_NUM extends LogKeyShims
+  case object MISSING_PARENT_STAGES extends LogKeyShims
   case object MODEL_WEIGHTS extends LogKeyShims
   case object MODULE_NAME extends LogKeyShims
   case object NAMESPACE extends LogKeyShims
@@ -383,8 +393,9 @@ object LogKeys {
   case object NORM extends LogKeyShims
   case object NUM_ADDED_PARTITIONS extends LogKeyShims
   case object NUM_APPS extends LogKeyShims
+  case object NUM_ATTEMPT extends LogKeyShims
   case object NUM_BIN extends LogKeyShims
-  case object NUM_BLOCK_IDS extends LogKeyShims
+  case object NUM_BLOCKS extends LogKeyShims
   case object NUM_BROADCAST_BLOCK extends LogKeyShims
   case object NUM_BYTES extends LogKeyShims
   case object NUM_BYTES_CURRENT extends LogKeyShims
@@ -403,12 +414,16 @@ object LogKeys {
   case object NUM_CORES extends LogKeyShims
   case object NUM_DATA_FILE extends LogKeyShims
   case object NUM_DATA_FILES extends LogKeyShims
+  case object NUM_DECOMMISSIONED extends LogKeyShims
   case object NUM_DRIVERS extends LogKeyShims
   case object NUM_DROPPED_PARTITIONS extends LogKeyShims
   case object NUM_EFFECTIVE_RULE_OF_RUNS extends LogKeyShims
   case object NUM_ELEMENTS_SPILL_THRESHOLD extends LogKeyShims
   case object NUM_EVENTS extends LogKeyShims
   case object NUM_EXAMPLES extends LogKeyShims
+  case object NUM_EXECUTORS extends LogKeyShims
+  case object NUM_EXECUTORS_EXITED extends LogKeyShims
+  case object NUM_EXECUTORS_KILLED extends LogKeyShims
   case object NUM_EXECUTOR_CORES extends LogKeyShims
   case object NUM_EXECUTOR_CORES_REMAINING extends LogKeyShims
   case object NUM_EXECUTOR_CORES_TOTAL extends LogKeyShims
@@ -422,6 +437,7 @@ object LogKeys {
   case object NUM_FILES_FAILED_TO_DELETE extends LogKeyShims
   case object NUM_FILES_REUSED extends LogKeyShims
   case object NUM_FREQUENT_ITEMS extends LogKeyShims
+  case object NUM_HOST_LOCAL_BLOCKS extends LogKeyShims
   case object NUM_INDEX_FILE extends LogKeyShims
   case object NUM_INDEX_FILES extends LogKeyShims
   case object NUM_ITERATIONS extends LogKeyShims
@@ -430,8 +446,10 @@ object LogKeys {
   case object NUM_LEADING_SINGULAR_VALUES extends LogKeyShims
   case object NUM_LEFT_PARTITION_VALUES extends LogKeyShims
   case object NUM_LOADED_ENTRIES extends LogKeyShims
+  case object NUM_LOCAL_BLOCKS extends LogKeyShims
   case object NUM_LOCAL_DIRS extends LogKeyShims
   case object NUM_LOCAL_FREQUENT_PATTERN extends LogKeyShims
+  case object NUM_MERGERS extends LogKeyShims
   case object NUM_MERGER_LOCATIONS extends LogKeyShims
   case object NUM_META_FILES extends LogKeyShims
   case object NUM_NODES extends LogKeyShims
@@ -448,7 +466,10 @@ object LogKeys {
   case object NUM_POINT extends LogKeyShims
   case object NUM_PREFIXES extends LogKeyShims
   case object NUM_PRUNED extends LogKeyShims
+  case object NUM_PUSH_MERGED_LOCAL_BLOCKS extends LogKeyShims
   case object NUM_RECORDS_READ extends LogKeyShims
+  case object NUM_REMAINED extends LogKeyShims
+  case object NUM_REMOTE_BLOCKS extends LogKeyShims
   case object NUM_REMOVED_WORKERS extends LogKeyShims
   case object NUM_REPLICAS extends LogKeyShims
   case object NUM_REQUESTS extends LogKeyShims
@@ -464,11 +485,14 @@ object LogKeys {
   case object NUM_SPILL_INFOS extends LogKeyShims
   case object NUM_SPILL_WRITERS extends LogKeyShims
   case object NUM_SUB_DIRS extends LogKeyShims
+  case object NUM_SUCCESSFUL_TASKS extends LogKeyShims
   case object NUM_TASKS extends LogKeyShims
   case object NUM_TASK_CPUS extends LogKeyShims
   case object NUM_TRAIN_WORD extends LogKeyShims
+  case object NUM_UNFINISHED_DECOMMISSIONED extends LogKeyShims
   case object NUM_VERSIONS_RETAIN extends LogKeyShims
   case object NUM_WEIGHTED_EXAMPLES extends LogKeyShims
+  case object NUM_WORKERS extends LogKeyShims
   case object OBJECT_AGG_SORT_BASED_FALLBACK_THRESHOLD extends LogKeyShims
   case object OBJECT_ID extends LogKeyShims
   case object OFFSET extends LogKeyShims
@@ -485,16 +509,20 @@ object LogKeys {
   case object OPTIONS extends LogKeyShims
   case object OP_ID extends LogKeyShims
   case object OP_TYPE extends LogKeyShims
+  case object ORIGINAL_DISK_SIZE extends LogKeyShims
+  case object ORIGINAL_MEMORY_SIZE extends LogKeyShims
   case object OS_ARCH extends LogKeyShims
   case object OS_NAME extends LogKeyShims
   case object OS_VERSION extends LogKeyShims
   case object OUTPUT extends LogKeyShims
   case object OVERHEAD_MEMORY_SIZE extends LogKeyShims
   case object PAGE_SIZE extends LogKeyShims
+  case object PARENT_STAGES extends LogKeyShims
   case object PARSE_MODE extends LogKeyShims
   case object PARTITIONED_FILE_READER extends LogKeyShims
   case object PARTITIONER extends LogKeyShims
   case object PARTITION_ID extends LogKeyShims
+  case object PARTITION_IDS extends LogKeyShims
   case object PARTITION_SPECIFICATION extends LogKeyShims
   case object PARTITION_SPECS extends LogKeyShims
   case object PATH extends LogKeyShims
@@ -526,12 +554,14 @@ object LogKeys {
   case object PROTOCOL_VERSION extends LogKeyShims
   case object PROVIDER extends LogKeyShims
   case object PUSHED_FILTERS extends LogKeyShims
+  case object PUSH_MERGED_LOCAL_BLOCKS_SIZE extends LogKeyShims
   case object PVC_METADATA_NAME extends LogKeyShims
   case object PYTHON_EXEC extends LogKeyShims
   case object PYTHON_PACKAGES extends LogKeyShims
   case object PYTHON_VERSION extends LogKeyShims
   case object PYTHON_WORKER_MODULE extends LogKeyShims
   case object PYTHON_WORKER_RESPONSE extends LogKeyShims
+  case object QUANTILES extends LogKeyShims
   case object QUERY_CACHE_VALUE extends LogKeyShims
   case object QUERY_HINT extends LogKeyShims
   case object QUERY_ID extends LogKeyShims
@@ -557,11 +587,13 @@ object LogKeys {
   case object REDACTED_STATEMENT extends LogKeyShims
   case object REDUCE_ID extends LogKeyShims
   case object REGISTERED_EXECUTOR_FILE extends LogKeyShims
+  case object REGISTER_MERGE_RESULTS extends LogKeyShims
   case object RELATION_NAME extends LogKeyShims
   case object RELATION_OUTPUT extends LogKeyShims
   case object RELATIVE_TOLERANCE extends LogKeyShims
   case object REMAINING_PARTITIONS extends LogKeyShims
   case object REMOTE_ADDRESS extends LogKeyShims
+  case object REMOTE_BLOCKS_SIZE extends LogKeyShims
   case object REMOVE_FROM_MASTER extends LogKeyShims
   case object REPORT_DETAILS extends LogKeyShims
   case object REQUESTER_SIZE extends LogKeyShims
@@ -589,6 +621,7 @@ object LogKeys {
   case object RUN_ID extends LogKeyShims
   case object SCALA_VERSION extends LogKeyShims
   case object SCHEDULER_POOL_NAME extends LogKeyShims
+  case object SCHEDULING_MODE extends LogKeyShims
   case object SCHEMA extends LogKeyShims
   case object SCHEMA2 extends LogKeyShims
   case object SERVER_NAME extends LogKeyShims
@@ -600,7 +633,6 @@ object LogKeys {
   case object SESSION_KEY extends LogKeyShims
   case object SET_CLIENT_INFO_REQUEST extends LogKeyShims
   case object SHARD_ID extends LogKeyShims
-  case object SHELL_OPTIONS extends LogKeyShims
   case object SHORT_USER_NAME extends LogKeyShims
   case object SHUFFLE_BLOCK_INFO extends LogKeyShims
   case object SHUFFLE_DB_BACKEND_KEY extends LogKeyShims
@@ -631,13 +663,17 @@ object LogKeys {
   case object SPILL_TIMES extends LogKeyShims
   case object SQL_TEXT extends LogKeyShims
   case object SRC_PATH extends LogKeyShims
+  case object STAGE extends LogKeyShims
+  case object STAGES extends LogKeyShims
   case object STAGE_ATTEMPT extends LogKeyShims
   case object STAGE_ID extends LogKeyShims
+  case object STAGE_NAME extends LogKeyShims
   case object START_INDEX extends LogKeyShims
   case object STATEMENT_ID extends LogKeyShims
   case object STATE_STORE_ID extends LogKeyShims
   case object STATE_STORE_PROVIDER extends LogKeyShims
   case object STATE_STORE_VERSION extends LogKeyShims
+  case object STATS extends LogKeyShims
   case object STATUS extends LogKeyShims
   case object STDERR extends LogKeyShims
   case object STOP_SITE_SHORT_FORM extends LogKeyShims
@@ -663,13 +699,18 @@ object LogKeys {
   case object TABLE_NAME extends LogKeyShims
   case object TABLE_TYPE extends LogKeyShims
   case object TABLE_TYPES extends LogKeyShims
+  case object TAG extends LogKeyShims
   case object TARGET_NUM_EXECUTOR extends LogKeyShims
   case object TARGET_NUM_EXECUTOR_DELTA extends LogKeyShims
   case object TARGET_PATH extends LogKeyShims
   case object TASK_ATTEMPT_ID extends LogKeyShims
   case object TASK_ID extends LogKeyShims
+  case object TASK_LOCALITY extends LogKeyShims
   case object TASK_NAME extends LogKeyShims
   case object TASK_REQUIREMENTS extends LogKeyShims
+  case object TASK_RESOURCE_ASSIGNMENTS extends LogKeyShims
+  case object TASK_SET_ID extends LogKeyShims
+  case object TASK_SET_MANAGER extends LogKeyShims
   case object TASK_SET_NAME extends LogKeyShims
   case object TASK_STATE extends LogKeyShims
   case object TEMP_FILE extends LogKeyShims
@@ -701,6 +742,7 @@ object LogKeys {
   case object TOPIC_PARTITION_OFFSET_RANGE extends LogKeyShims
   case object TOTAL extends LogKeyShims
   case object TOTAL_EFFECTIVE_TIME extends LogKeyShims
+  case object TOTAL_SIZE extends LogKeyShims
   case object TOTAL_TIME extends LogKeyShims
   case object TOTAL_TIME_READ extends LogKeyShims
   case object TO_TIME extends LogKeyShims

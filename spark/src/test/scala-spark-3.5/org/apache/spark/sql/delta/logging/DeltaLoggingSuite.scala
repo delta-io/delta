@@ -108,8 +108,8 @@ trait LoggingSuiteBase
   // test for message and exception
   def expectedPatternForMsgWithMDCAndException(level: Level): String
 
-  // test for external system custom LogKey
-  def expectedPatternForExternalSystemCustomLogKey(level: Level): String
+  // test for custom LogKey
+  def expectedPatternForCustomLogKey(level: Level): String
 
   def verifyMsgWithConcat(level: Level, logOutput: String): Unit
 
@@ -175,20 +175,17 @@ trait LoggingSuiteBase
         }
     }
 
-    private val externalSystemCustomLog =
-      log"${MDC(CustomLogKeys.CUSTOM_LOG_KEY, "External system custom log message.")}"
-    test("Logging with external system custom LogKey") {
-      Seq(
-        (Level.ERROR, () => logError(externalSystemCustomLog)),
-        (Level.WARN, () => logWarning(externalSystemCustomLog)),
-        (Level.INFO, () => logInfo(externalSystemCustomLog))).foreach {
-        case (level, logFunc) =>
-          val logOutput = captureLogOutput(logFunc)
-          assert(
-            Pattern.compile(expectedPatternForExternalSystemCustomLogKey(level)).matcher(logOutput)
-            .matches())
-      }
+  private val customLog = log"${MDC(CustomLogKeys.CUSTOM_LOG_KEY, "Custom log message.")}"
+  test("Logging with custom LogKey") {
+    Seq(
+      (Level.ERROR, () => logError(customLog)),
+      (Level.WARN, () => logWarning(customLog)),
+      (Level.INFO, () => logInfo(customLog))).foreach {
+      case (level, logFunc) =>
+        val logOutput = captureLogOutput(logFunc)
+        assert(Pattern.compile(expectedPatternForCustomLogKey(level)).matcher(logOutput).matches())
     }
+  }
 
     test("Logging with concat") {
       Seq(
@@ -226,8 +223,8 @@ class DeltaLoggingSuite extends LoggingSuiteBase {
     commonPattern(level, className, "Error in executor 1.") + exceptionPattern
   }
 
-  override def expectedPatternForExternalSystemCustomLogKey(level: Level): String = {
-    commonPattern(level, className, "External system custom log message.")
+  override def expectedPatternForCustomLogKey(level: Level): String = {
+    commonPattern(level, className, "Custom log message.")
   }
 
   override def verifyMsgWithConcat(level: Level, logOutput: String): Unit = {
@@ -238,6 +235,6 @@ class DeltaLoggingSuite extends LoggingSuiteBase {
 }
 
 object CustomLogKeys {
-  // External system custom LogKey must be `extends LogKey`
+  // Custom `LogKey` must be `extends LogKey`
   case object CUSTOM_LOG_KEY extends LogKeyShims
 }
