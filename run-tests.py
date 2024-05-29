@@ -232,3 +232,5 @@ if __name__ == "__main__":
         is_testing_scala_212 = scala_version is None or scala_version.startswith("2.12")
         if is_testing_spark_group and is_testing_scala_212:
             run_python_tests(root_dir)
+        elif (args.group == "connectServer")
+            run_python_tests(root_dir)
