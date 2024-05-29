@@ -1173,7 +1173,7 @@ trait DeltaSQLConfBase {
         .internal()
         .doc(
           """
-            |The size of a batch within an OPTIMIZE JOB. After a batch is complete, it's
+            |The size of a batch within an OPTIMIZE JOB. After a batch is complete, its
             | progress will be committed to the transaction log, allowing for incremental
             | progress.
             |""".stripMargin)
