@@ -171,7 +171,8 @@ while(fileIter.hasNext()) {
           ColumnVector column0 = dataBatch.getColumnVector(0);
           for (int rowIndex = 0; rowIndex < column0.getSize(); rowIndex++) {
             // check if the row is selected or not
-            if (selectionVector.isPresent() && selectionVector.get().getBoolean(rowIndex)) {
+            if (!selectionVector.isPresent() || // there is no selection vector, all records are selected
+               (!selectionVector.get().isNullAt(rowId) && selectionVector.get().getBoolean(rowId)))  {
               // Assuming the column type is String.
               // If it is a different type, call the relevant function on the `ColumnVector`
               System.out.println(column0.getString(rowIndex));
@@ -182,7 +183,8 @@ while(fileIter.hasNext()) {
 	  ColumnVector column1 = dataBatch.getColumnVector(1);
 	  for (int rowIndex = 0; rowIndex < column1.getSize(); rowIndex++) {
             // check if the row is selected or not
-            if (selectionVector.isPresent() && selectionVector.get().getBoolean(rowIndex)) {
+            if (!selectionVector.isPresent() || // there is no selection vector, all records are selected
+               (!selectionVector.get().isNullAt(rowId) && selectionVector.get().getBoolean(rowId)))  {
               // Assuming the column type is Long.
               // If it is a different type, call the relevant function on the `ColumnVector`
               System.out.println(column1.getLong(rowIndex));
@@ -231,7 +233,7 @@ Optional<Predicate> remainingFilter = myFilteredScan.getRemainingFilter();
 
 The scan files returned by  `myFilteredScan.getScanFiles(myEngine)` will have rows representing files only of the required partition. Similarly, you can provide filters for non-partition columns, and if the data in the table is well clustered by those columns, then Delta Kernel will be able to skip files as much as possible.
 
-## Create Delta table
+## Create a Delta table
 In this section, we will walk through how to build a Delta connector that can create a Delta table using the default [`Engine`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/engine/Engine.html) implementation provided by Delta Kernel.
 
 You can either write this code yourself in your project, or you can use the [examples](https://github.com/delta-io/delta/tree/master/kernel/examples) present in the Delta code repository.
