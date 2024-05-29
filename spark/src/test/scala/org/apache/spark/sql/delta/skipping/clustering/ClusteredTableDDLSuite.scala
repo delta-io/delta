@@ -18,11 +18,13 @@ package org.apache.spark.sql.delta.skipping.clustering
 
 import java.io.File
 
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -30,8 +32,9 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructType}
 
-trait ClusteredTableCreateOrReplaceDDLSuiteBase
-  extends QueryTest with SharedSparkSession with ClusteredTableTestUtils {
+trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
+  with SharedSparkSession
+  with ClusteredTableTestUtils {
 
   protected val testTable: String = "test_ddl_table"
   protected val sourceTable: String = "test_ddl_source"
@@ -718,6 +721,32 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(TableIdentifier(dstTable3), "")
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot3, Seq.empty)
 
+    }
+  }
+
+  test("alter table cluster by none is a no-op on non-clustered tables") {
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT, b STRING) USING delta")
+      val tableIdentifier = TableIdentifier(testTable)
+      val (_, initialSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+
+      // Verify that ALTER TABLE CLUSTER BY NONE does not enable clustering and is a no-op.
+      val clusterByLogs = Log4jUsageLogger.track {
+        sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+      }.filter { e =>
+        e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          e.tags.get("opType").contains("delta.ddl.alter.clusterBy")
+      }
+      assert(clusterByLogs.nonEmpty)
+      val clusterByLogJson = JsonUtils.fromJson[Map[String, Any]](clusterByLogs.head.blob)
+      assert(clusterByLogJson("isClusterByNoneSkipped").asInstanceOf[Boolean])
+      val (_, finalSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(finalSnapshot.protocol))
+
+      // Snapshot equality shows that no table features can be changed.
+      assert(initialSnapshot.version == finalSnapshot.version)
+      assert(initialSnapshot.protocol.readerAndWriterFeatureNames ==
+        finalSnapshot.protocol.readerAndWriterFeatureNames)
     }
   }
 
