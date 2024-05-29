@@ -128,8 +128,8 @@ public class LogReplay {
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.protocolAndMetadata = loadTableProtocolAndMetadata(
-                snapshotHint, snapshotVersion, engine);
+        this.protocolAndMetadata =
+                loadTableProtocolAndMetadata(snapshotHint, snapshotVersion, engine);
     }
 
     /////////////////
