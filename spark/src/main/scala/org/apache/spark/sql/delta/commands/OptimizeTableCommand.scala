@@ -208,12 +208,16 @@ case class DeltaOptimizeContext(
   }
 }
 
+case class Bin(partitionValues: Map[String, String], files: Seq[AddFile])
+
+case class Batch(bins: Seq[Bin])
+
 /**
  * Optimize job which compacts small files into larger files to reduce
  * the number of files and potentially allow more efficient reads.
  *
  * @param sparkSession Spark environment reference.
- * @param txn The transaction used to optimize this table
+ * @param snapshot The snapshot of the table to optimize
  * @param partitionPredicate List of partition predicates to select subset of files to optimize.
  */
 class OptimizeExecutor(
@@ -278,13 +282,11 @@ class OptimizeExecutor(
 
       val jobs = groupFilesIntoBins(partitionsToCompact)
 
-      val maxThreads =
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)
       val batchResults = batchSize match {
         case Some(size) =>
           groupBinsIntoBatches(jobs, size).map(runOptimizeBatch(_, maxFileSize))
         case None =>
-          Seq(runOptimizeBatch(jobs, maxFileSize))
+          Seq(runOptimizeBatch(Batch(jobs), maxFileSize))
       }
 
       val addedFiles = batchResults.map(_._1).flatten
@@ -294,8 +296,9 @@ class OptimizeExecutor(
       val optimizeStats = OptimizeStats()
       optimizeStats.addedFilesSizeStats.merge(addedFiles)
       optimizeStats.removedFilesSizeStats.merge(removedFiles)
-      optimizeStats.numPartitionsOptimized = jobs.map(j => j._1).distinct.size
-      optimizeStats.numBatches = jobs.size
+      optimizeStats.numPartitionsOptimized = jobs.map(j => j.partitionValues).distinct.size
+      optimizeStats.numBins = jobs.size
+      optimizeStats.numBatches = batchResults.size
       optimizeStats.totalConsideredFiles = candidateFiles.size
       optimizeStats.totalFilesSkipped = optimizeStats.totalConsideredFiles - removedFiles.size
       optimizeStats.totalClusterParallelism = sparkSession.sparkContext.defaultParallelism
@@ -349,7 +352,7 @@ class OptimizeExecutor(
    */
   private def groupFilesIntoBins(
       partitionsToCompact: Seq[(Map[String, String], Seq[AddFile])])
-  : Seq[(Map[String, String], Seq[AddFile])] = {
+  : Seq[Bin] = {
     val maxBinSize = optimizeStrategy.maxBinSize
     partitionsToCompact.flatMap {
       case (partition, files) =>
@@ -387,7 +390,7 @@ class OptimizeExecutor(
           bin.size > 1 || // bin has more than one file or
           bin.size == 1 && optimizeContext.reorg.nonEmpty || // always rewrite files during reorg
           isMultiDimClustering // multi-clustering
-        }.map(b => (partition, b))
+        }.map(b => Bin(partition, b))
     }
   }
 
@@ -398,48 +401,49 @@ class OptimizeExecutor(
    * @return Sequence of batches. Each batch contains one or more bins.
    */
   private def groupBinsIntoBatches(
-      bins: Seq[(Map[String, String], Seq[AddFile])],
+      bins: Seq[Bin],
       batchSize: Long)
-  : Seq[Seq[(Map[String, String], Seq[AddFile])]] = {
-    val batches = new ArrayBuffer[Seq[(Map[String, String], Seq[AddFile])]]()
+  : Seq[Batch] = {
+    val batches = new ArrayBuffer[Batch]()
 
-    val currentBatch = new ArrayBuffer[(Map[String, String], Seq[AddFile])]()
+    val currentBatch = new ArrayBuffer[Bin]()
     var currentBatchSize = 0L
 
     bins.foreach { bin =>
-      val binSize = bin._2.map(_.size).sum
+      val binSize = bin.files.map(_.size).sum
       currentBatch += bin
       currentBatchSize += binSize
 
       if (currentBatchSize > batchSize) {
-        batches += currentBatch.toVector
+        batches += Batch(currentBatch.toVector)
         currentBatch.clear()
         currentBatchSize = 0
       }
     }
 
     if (currentBatch.nonEmpty) {
-      batches += currentBatch.toVector
+      batches += Batch(currentBatch.toVector)
     }
 
     batches.toSeq
   }
 
   private def runOptimizeBatch(
-    bins: Seq[(Map[String, String], Seq[AddFile])],
+    batch: Batch,
     maxFileSize: Long
   ): (Seq[AddFile], Seq[RemoveFile], Seq[DeletionVectorDescriptor]) = {
     val txn = snapshot.deltaLog.startTransaction(catalogTable, Some(snapshot))
 
-    val filesToProcess = bins.flatMap(_._2)
+    val filesToProcess = batch.bins.flatMap(_.files)
 
     txn.trackFilesRead(filesToProcess)
     txn.trackReadPredicates(partitionPredicate)
 
     val maxThreads =
       sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MAX_THREADS)
-    val updates = ThreadUtils.parmap(bins, "OptimizeJob", maxThreads) { partitionBinGroup =>
-      runOptimizeBinJob(txn, partitionBinGroup._1, partitionBinGroup._2, maxFileSize)
+    val updates = ThreadUtils.parmap(batch.bins, "OptimizeJob", maxThreads) { partitionBinGroup =>
+      runOptimizeBinJob(txn, partitionBinGroup.partitionValues, partitionBinGroup.files,
+        maxFileSize)
     }.flatten
 
     val addedFiles = updates.collect { case a: AddFile => a }

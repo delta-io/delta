@@ -30,6 +30,7 @@ case class OptimizeStats(
     var numPartitionsOptimized: Long = 0,
     var zOrderStats: Option[ZOrderStats] = None,
     var clusteringStats: Option[ClusteringStats] = None,
+    var numBins: Long = 0,
     var numBatches: Long = 0,
     var totalConsideredFiles: Long = 0,
     var totalFilesSkipped: Long = 0,
