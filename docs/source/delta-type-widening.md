@@ -4,15 +4,35 @@ description: Learn about type widening in Delta.
 
 # Delta type widening
 
-.. note:: This feature is available in preview in <Delta> 3.2.
+.. note:: This feature is available in preview in <Delta> 3.2 and above.
 
 The type widening feature allows changing the type of columns in a Delta table to a wider type. This enables manual type changes using the `ALTER TABLE ALTER COLUMN` command and automatic type migration with schema evolution in `INSERT` and `MERGE INTO` commands.
 
 ## Supported type changes
 
-The feature preview in <Delta> 3.2 supports a limited set of type changes:
-- `BYTE` to `SHORT` and `INT`.
-- `SHORT` to `INT`
+The feature introduces a limited set of supported type changes in <Delta> 3.2 and expandes it in <Delta> 4.0 and above.
+
+.. csv-table::
+  :header: "Source type", "Supported wider types - Delta 3.2", "Supported wider types - Delta 4.0"
+
+  "`byte`","`short`, `int`","`short`,`int`,`long`, `decimal`, `double`"
+  "`short`","`int`", "`int`,`long`, `decimal`, `double`"
+  "`int`"," ","`long`, `decimal`, `double`"
+  "`long`", ,"`decimal`"
+  "`float`", ,"`double`"
+  "`decimal`", ,"`decimal` with greater precision and scale"
+  "`date`", ,"`timestampNTZ`"
+
+To avoid accidental promotion of integer values to decimals, type changes from `byte`, `short`, `int`, or `long` to `decimal` or `double` are not eligible to be applied automatically during schema evolution. You must manually alter the type in that case.
+
+.. note::
+
+  When changing an integer or decimal type to decimal, the total precision must be equal to or greater than the starting precision. If you also increase the scale, the total precision must increase by a corresponding amount.
+  That is, `decimal(p, s)` can be changed to `decimal(p + k1, s + k2)` iff `k1 >= k2 >= 0`.
+
+  For example, if you want to add two decimal places to a field with `decimal(10,1)`, the minimum target is `decimal(12,3)`.
+
+  The minimum target for `byte`, `short`, and `int` types is `decimal(10,0)`. The minimum target for `long` is `decimal(20,0)`.
 
 Type changes are supported for top-level columns as well as fields nested inside structs, maps and arrays.
 
@@ -31,7 +51,7 @@ You can enable type widening on an existing table by setting the `delta.enableTy
 Alternatively, you can enable type widening during table creation:
 
   ```sql
-  CREATE TABLE T(c1 INT) USING DELTA TBLPROPERTIES('delta.enableTypeWidening' = 'true')
+  CREATE TABLE <table_name> USING DELTA TBLPROPERTIES('delta.enableTypeWidening' = 'true')
   ```
 
 To disable type widening:
@@ -60,6 +80,7 @@ Type changes are applied automatically during ingestion with `INSERT` and `MERGE
 - The command runs with [automatic schema evolution](delta-update.md#merge-schema-evolution) enabled.
 - The source column type is wider than the target column type.
 - Changing the target column type to the source type is a [supported type change](#supported-type-changes)
+- The type change is not a promotion from integers to decimal/double: `byte`, `short`, `int`, or `long` to `decimal` or `double`.
 
 When all conditions are satisfied, the target table schema is updated automatically to change the target column type to the source column type.
 
