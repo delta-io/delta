@@ -308,7 +308,8 @@ private[internal] trait SnapshotManagement { self: DeltaLogImpl =>
  * @param logPath The path to the _delta_log directory
  * @param version The Snapshot version to generate
  * @param deltas The delta files to read
- * @param checkpoints The checkpoint files to read
+ * @param checkpoints The checkpoint files to read. If more than one, then it's a multi-part
+ *                    checkpoint, and all checkpoint files are for the same version.
  * @param checkpointVersion The checkpoint version used to start replay
  * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment. By
  *                            unadjusted, we mean that the commit timestamps may not necessarily be
@@ -325,7 +326,8 @@ private[internal] case class LogSegment(
   def getFileInfoString: String = {
     s"numDeltas=${deltas.size}, minDeltaVersion=$minDeltaVersion, " +
       s"maxDeltaVersion=$maxDeltaVersion, numCheckpointFiles=${checkpoints.size}, " +
-      s"minCheckpointVersion=$minCheckpointVersion, maxCheckpointVersion=$maxCheckpointVersion, " +
+      s"minMultiPartCheckpointPart=$minMultiPartCheckpointPart, " +
+      s"maxMultiPartCheckpointPart=$maxMultiPartCheckpointPart, " +
       s"startingCheckpointVersion=$checkpointVersion"
   }
 
@@ -341,16 +343,18 @@ private[internal] case class LogSegment(
     Some(deltas.map(_.getPath).map(FileNames.deltaVersion).max)
   }
 
-  private lazy val minCheckpointVersion = if (checkpoints.isEmpty) {
-    None
-  } else {
-    Some(checkpoints.map(_.getPath).map(FileNames.checkpointVersion).min)
+  private lazy val multiPartCheckpointsParts = checkpoints
+      .map(_.getPath)
+      .flatMap(FileNames.multiPartCheckpointPart)
+
+  private lazy val minMultiPartCheckpointPart = multiPartCheckpointsParts match {
+    case Nil => None
+    case list => Some(list.min)
   }
 
-  private lazy val maxCheckpointVersion = if (checkpoints.isEmpty) {
-    None
-  } else {
-    Some(checkpoints.map(_.getPath).map(FileNames.checkpointVersion).max)
+  private lazy val maxMultiPartCheckpointPart = multiPartCheckpointsParts match {
+    case Nil => None
+    case list => Some(list.max)
   }
 }
 

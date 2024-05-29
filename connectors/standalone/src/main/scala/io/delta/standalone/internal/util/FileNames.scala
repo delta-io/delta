@@ -63,10 +63,18 @@ private[internal] object FileNames {
       .map(i => new Path(path, f"$version%020d.checkpoint.$i%010d.$numParts%010d.parquet"))
   }
 
+  /** e.g. in 00000000000000004915.checkpoint.0000000020.0000000060.parquet returns 60 */
   def numCheckpointParts(path: Path): Option[Int] = {
     val segments = path.getName.split("\\.")
 
     if (segments.size != 5) None else Some(segments(3).toInt)
+  }
+
+  /** e.g. in 00000000000000004915.checkpoint.0000000020.0000000060.parquet returns 20 */
+  def multiPartCheckpointPart(path: Path): Option[Int] = {
+    val segments = path.getName.split("\\.")
+
+    if (segments.size != 5) None else Some(segments(2).toInt)
   }
 
   def isCheckpointFile(path: Path): Boolean = checkpointFilePattern.matcher(path.getName).matches()
