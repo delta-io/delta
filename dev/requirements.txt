@@ -5,5 +5,9 @@ flake8==3.9.0
 # Code Formatter
 black==23.9.1
 
+# Spark Connect (required)
+grpcio>=1.62.0
+grpcio-status>=1.62.0
+
 # Spark and Delta Connect python proto generation plugin (optional)
 mypy-protobuf==3.3.0
