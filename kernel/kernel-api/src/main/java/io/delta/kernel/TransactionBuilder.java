@@ -16,6 +16,7 @@
 package io.delta.kernel;
 
 import java.util.List;
+import java.util.Map;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
@@ -47,6 +48,8 @@ public interface TransactionBuilder {
      * @return updated {@link TransactionBuilder} instance.
      */
     TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns);
+
+    TransactionBuilder withConfiguration(Engine engine, Map<String, String> configuration);
 
     /**
      * Set the transaction identifier for idempotent writes. Incremental processing systems (e.g.,

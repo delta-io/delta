@@ -32,7 +32,7 @@ import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.set
  * list or map.
  */
 abstract class RepeatedValueConverter extends GroupConverter implements BaseColumnReader {
-    private final Collector collector;
+    protected final Collector collector;
 
     // working state
     private int currentRowIndex;
@@ -123,7 +123,7 @@ abstract class RepeatedValueConverter extends GroupConverter implements BaseColu
      * pattern from the Parquet reader: start(), followed by value read for each element converter
      * and end().
      */
-    private static class Collector extends GroupConverter {
+    protected static class Collector extends GroupConverter {
         private final Converter[] elementConverters;
 
         // working state

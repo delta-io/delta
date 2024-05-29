@@ -34,6 +34,15 @@ public class SchemaUtils {
     private SchemaUtils() {
     }
 
+    public static void validateSchemaEvolution(StructType oldSchema, StructType newSchema) {
+        List<String> fieldNames = oldSchema.fieldNames();
+        for (String fieldName : fieldNames) {
+            if (newSchema.indexOf(fieldName) == -1) {
+                throw unsupportedSchemaColumnDrop();
+            }
+        }
+    }
+
     /**
      * Validate the schema. This method checks if the schema has no duplicate columns, the names
      * contain only valid characters and the data types are supported.

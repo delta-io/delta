@@ -55,6 +55,11 @@ class ArrayColumnReader extends RepeatedValueConverter {
         return arrayVector;
     }
 
+    @Override
+    public Converter getConverter(int fieldIndex) {
+        return collector.getConverter(fieldIndex);
+    }
+
     /**
      * Currently, support for 3-level nested arrays only.
      * <p>
@@ -79,14 +84,17 @@ class ArrayColumnReader extends RepeatedValueConverter {
 
         checkArgument(typeFromFile.getFieldCount() == 1,
                 "Expected exactly one field in the array type, but got: " + typeFromFile);
-        GroupType repeatedGroup = typeFromFile.getType(0).asGroupType();
-
-        // TODO: handle the legacy 2-level list physical format
-        checkArgument(repeatedGroup.getFieldCount() == 1,
+        Type type = typeFromFile.getType(0);
+        Type targetType;
+        if (type.isPrimitive()) {
+            targetType = type;
+        } else {
+            GroupType repeatedGroup = typeFromFile.getType(0).asGroupType();
+            // TODO: handle the legacy 2-level list physical format
+            checkArgument(repeatedGroup.getFieldCount() == 1,
                 "Expected exactly one field in the repeated group");
-
-        Type elmentType = repeatedGroup.getType(0);
-
-        return createConverter(initialBatchSize, typeFromClient.getElementType(), elmentType);
+            targetType = repeatedGroup.getType(0);
+        }
+        return createConverter(initialBatchSize, typeFromClient.getElementType(), targetType);
     }
 }

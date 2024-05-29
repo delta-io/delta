@@ -39,7 +39,7 @@ public class Metadata {
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = engine.getJsonHandler().deserializeStructType(schemaJson);
+        StructType  schema = engine.getJsonHandler().deserializeStructType(schemaJson);
 
         return new Metadata(
             requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
@@ -53,7 +53,7 @@ public class Metadata {
             vector.getChild(5).getArray(rowId),
             Optional.ofNullable(vector.getChild(6).isNullAt(rowId) ? null :
                 vector.getChild(6).getLong(rowId)),
-            vector.getChild(7).getMap(rowId)
+            VectorUtils.toJavaMap(vector.getChild(7).getMap(rowId))
         );
     }
 
@@ -75,12 +75,11 @@ public class Metadata {
     private final Optional<String> name;
     private final Optional<String> description;
     private final Format format;
-    private final String schemaString;
-    private final StructType schema;
+    private String schemaString;
+    private StructType schema;
     private final ArrayValue partitionColumns;
     private final Optional<Long> createdTime;
-    private final MapValue configurationMapValue;
-    private final Lazy<Map<String, String>> configuration;
+    private final Map<String, String> configuration;
     // Partition column names in lower case.
     private final Lazy<Set<String>> partitionColNames;
     // Logical data schema excluding partition columns
@@ -95,7 +94,7 @@ public class Metadata {
         StructType schema,
         ArrayValue partitionColumns,
         Optional<Long> createdTime,
-        MapValue configurationMapValue) {
+        Map<String, String> configuration) {
         this.id = requireNonNull(id, "id is null");
         this.name = name;
         this.description = requireNonNull(description, "description is null");
@@ -104,8 +103,7 @@ public class Metadata {
         this.schema = schema;
         this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
         this.createdTime = createdTime;
-        this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
-        this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(configurationMapValue));
+        this.configuration = requireNonNull(configuration, "configuration is null");
         this.partitionColNames = new Lazy<>(() -> loadPartitionColNames());
         this.dataSchema = new Lazy<>(() ->
             new StructType(schema.fields().stream()
@@ -120,6 +118,14 @@ public class Metadata {
 
     public StructType getSchema() {
         return schema;
+    }
+
+    public void updateSchemaString(String schemaString) {
+        this.schemaString = schemaString;
+    }
+
+    public void updateSchema(StructType schema) {
+        this.schema = schema;
     }
 
     public ArrayValue getPartitionColumns() {
@@ -157,11 +163,15 @@ public class Metadata {
     }
 
     public MapValue getConfigurationMapValue() {
-        return configurationMapValue;
+        return VectorUtils.stringStringMapValue(configuration);
     }
 
     public Map<String, String> getConfiguration() {
-        return Collections.unmodifiableMap(configuration.get());
+        return Collections.unmodifiableMap(configuration);
+    }
+
+    public void updateConfiguration(Map<String, String> configuration) {
+        this.configuration.putAll(configuration);
     }
 
     /**
@@ -178,7 +188,7 @@ public class Metadata {
         metadataMap.put(4, schemaString);
         metadataMap.put(5, partitionColumns);
         metadataMap.put(6, createdTime.orElse(null));
-        metadataMap.put(7, configurationMapValue);
+        metadataMap.put(7, getConfigurationMapValue());
 
         return new GenericRow(Metadata.FULL_SCHEMA, metadataMap);
     }

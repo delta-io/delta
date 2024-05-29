@@ -23,6 +23,7 @@ import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.util
 import java.util.{Collections, Optional}
 import scala.collection.JavaConverters._
 
@@ -109,10 +110,16 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   def createTestMetadata(withAppendOnly: Boolean = false): Metadata = {
-    var config: Map[String, String] = Map()
-    if (withAppendOnly) {
-      config = Map("delta.appendOnly" -> "true");
+    val config = new util.HashMap[String, String]() {
+      {
+        if (withAppendOnly) {
+          put("delta.appendOnly", "true")
+        } else {
+          put("delta.appendOnly", "false")
+        }
+      }
     }
+
     new Metadata(
       "id",
       Optional.of("name"),
@@ -126,14 +133,7 @@ class TableFeaturesSuite extends AnyFunSuite {
         override def getElements: ColumnVector = singletonStringColumnVector("c3")
       },
       Optional.empty(),
-      new MapValue() { // conf
-        override def getSize = 1
-
-        override def getKeys: ColumnVector = singletonStringColumnVector("delta.appendOnly")
-
-        override def getValues: ColumnVector =
-          singletonStringColumnVector(if (withAppendOnly) "false" else "true")
-      }
+      config
     )
   }
 

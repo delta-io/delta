@@ -138,6 +138,16 @@ public final class DeltaErrors {
         return new KernelException("Kernel doesn't support writing data of type: " + dataType);
     }
 
+    public static KernelException unsupportedPartitionColumnsChange() {
+        String message = "Kernel doesn't support partition columns change.";
+        return new KernelException(message);
+    }
+
+    public static KernelException unsupportedSchemaColumnDrop() {
+        String message = "Kernel doesn't support schema columns drop.";
+        return new KernelException(message);
+    }
+
     public static KernelException unsupportedPartitionDataType(String colName, DataType dataType) {
         String msgT = "Kernel doesn't support writing data with partition column (%s) of type: %s";
         return new KernelException(format(msgT, colName, dataType));
