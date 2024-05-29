@@ -160,7 +160,7 @@ class DeltaAnalysis(session: SparkSession)
             tableType = tblType,
             storage = newStorage,
             schema = sourceMetadata.schema,
-            properties = config,
+            properties = config ++ ctl.properties,
             partitionColumnNames = sourceMetadata.partitionColumns,
             provider = Some("delta"),
             comment = Option(sourceMetadata.description)
@@ -171,7 +171,7 @@ class DeltaAnalysis(session: SparkSession)
               tableType = tblType,
               storage = newStorage,
               schema = src.schema,
-              properties = src.properties,
+              properties = src.properties ++ ctl.properties,
               partitionColumnNames = src.partitionColumnNames,
               provider = Some("delta"),
               comment = src.comment

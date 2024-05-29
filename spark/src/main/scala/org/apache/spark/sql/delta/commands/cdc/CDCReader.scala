@@ -26,12 +26,12 @@ import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBi
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
@@ -147,6 +147,8 @@ object CDCReader extends CDCReaderImpl
 
     override val schema: StructType = cdcReadSchema(snapshotForBatchSchema.metadata.schema)
 
+    override def unhandledFilters(filters: Array[Filter]): Array[Filter] = Array.empty
+
     override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
       val df = changesToBatchDF(
         deltaLog,
@@ -158,7 +160,9 @@ object CDCReader extends CDCReaderImpl
         sqlContext.sparkSession,
         readSchemaSnapshot = Some(snapshotForBatchSchema))
 
-      df.select(requiredColumns.map(SchemaUtils.fieldNameToColumn): _*).rdd
+      val filter = new Column(DeltaSourceUtils.translateFilters(filters))
+      val projections = requiredColumns.map(SchemaUtils.fieldNameToColumn)
+      df.filter(filter).select(projections: _*).rdd
     }
   }
 
