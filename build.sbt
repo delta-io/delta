@@ -194,12 +194,35 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   )
 }
 
+def runTaskOnlyOnSparkMaster[T](
+    task: sbt.TaskKey[T],
+    taskName: String,
+    emptyValue: => T): Def.Initialize[Task[T]] = {
+  if (getSparkVersion() == SPARK_MASTER_VERSION) {
+    Def.task(task.value)
+  } else {
+    Def.task {
+      // scalastyle:off println
+      println(s"Skipping `$taskName` as Spark version ${getSparkVersion()} does not equal $SPARK_MASTER_VERSION")
+      // scalastyle:on println
+      emptyValue
+    }
+  }
+}
+
 lazy val connectCommon = (project in file("spark-connect/common"))
   .settings(
     name := "delta-connect-common",
     commonSettings,
     crossSparkSettings(),
     releaseSettings,
+    Compile / compile := runTaskOnlyOnSparkMaster(
+      Compile / compile,
+      "compile",
+      sbt.internal.inc.Analysis.empty.asInstanceOf[xsbti.compile.CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkMaster(Test / test, "test", ()).value,
+    publish := runTaskOnlyOnSparkMaster(publish, "publish", ()).value,
     publishArtifact := getSparkVersion() == SPARK_MASTER_VERSION,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
@@ -224,6 +247,13 @@ lazy val connectServer = (project in file("spark-connect/server"))
     name := "delta-connect-server",
     commonSettings,
     releaseSettings,
+    Compile / compile := runTaskOnlyOnSparkMaster(
+      Compile / compile,
+      "compile",
+      sbt.internal.inc.Analysis.empty.asInstanceOf[xsbti.compile.CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkMaster(Test / test, "test", ()).value,
+    publish := runTaskOnlyOnSparkMaster(publish, "publish", ()).value,
     publishArtifact := getSparkVersion() == SPARK_MASTER_VERSION,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
