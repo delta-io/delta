@@ -149,8 +149,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         }
 
         setTxnOpt.ifPresent(txnId -> {
-            Optional<Long> lastTxnVersion = snapshot.getLatestTransactionVersion(
-                    txnId.getAppId(), engine);
+            Optional<Long> lastTxnVersion =
+                    snapshot.getLatestTransactionVersion(txnId.getAppId(), engine);
             if (lastTxnVersion.isPresent() && lastTxnVersion.get() >= txnId.getVersion()) {
                 throw DeltaErrors.concurrentTransaction(
                         txnId.getAppId(),
