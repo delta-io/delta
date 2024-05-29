@@ -28,6 +28,7 @@ def test(root_dir, package):
     # framework.
     python_root_dir = path.join(root_dir, "python")
     test_dir = path.join(python_root_dir, path.join("delta", "tests"))
+    spark_version = os.environ.get('SPARK_VERSION')
     test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
