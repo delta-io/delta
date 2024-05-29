@@ -17,6 +17,7 @@
 package io.delta.connect
 
 import io.delta.connect.spark.{proto => delta_spark_proto}
+
 import org.apache.spark.connect.{proto => spark_proto}
 import org.apache.spark.sql.connect.ConnectProtoUtils
 

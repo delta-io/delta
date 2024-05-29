@@ -30,7 +30,9 @@ import org.apache.spark.sql.connect.service.SessionHolder
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class DeltaConnectPlannerSuite
-  extends QueryTest with DeltaSQLCommandTest with SparkConnectPlanTest {
+  extends QueryTest
+  with DeltaSQLCommandTest
+  with SparkConnectPlanTest {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf

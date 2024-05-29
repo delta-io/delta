@@ -18,10 +18,10 @@ package org.apache.spark.sql.connect.delta
 
 import java.util.Optional
 
-import io.delta.connect.proto
 import com.google.protobuf
 import com.google.protobuf.{ByteString, InvalidProtocolBufferException}
 import io.delta.connect.ImplicitProtoConversions._
+import io.delta.connect.proto
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.SparkSession
