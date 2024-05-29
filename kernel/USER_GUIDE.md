@@ -12,7 +12,7 @@ Delta Kernel is a library for operating on Delta tables. Specifically, it provid
    * [Read a Delta table in a single process](#read-a-delta-table-in-a-single-process)
       * [Step 1: Full scan on a Delta table](#step-1-full-scan-on-a-delta-table)
       * [Step 2: Improve scan performance with file skipping](#step-2-improve-scan-performance-with-file-skipping)
-   * [Create to Delta table](#create-to-delta-table)
+   * [Create a Delta table](#create-a-delta-table)
    * [Create a table and insert data into it](#create-a-table-and-insert-data-into-it)
    * [Blind append into an existing Delta table](#blind-append-into-an-existing-delta-table)
    * [Idempotent Blind Appends to a Delta Table](#idempotent-blind-appends-to-a-delta-table)
