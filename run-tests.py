@@ -43,6 +43,19 @@ def get_args():
         default=False,
         action="store_true",
         help="Enables test coverage and generates an aggregate report for all subprojects")
+    parser.add_argument(
+        "--run-python-tests",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run the python tests for the Spark group"
+    )
+    parser.add_argument(
+        "--spark-version",
+        required=False,
+        default=None,
+        help="Spark version for the sbt scala tests "
+    )
     return parser.parse_args()
 
 
@@ -58,6 +71,9 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
     if test_group:
         # if test group is specified, then run tests only on that test group
         test_cmd = "{}Group/test".format(test_group)
+
+    if spark_version:
+        cmd += ["-DsparkVersion={}".format(spark_version)]
 
     if coverage:
         cmd += ["coverage"]
@@ -223,12 +239,10 @@ if __name__ == "__main__":
         test_env_image_tag = pull_or_build_docker_image(root_dir)
         run_tests_in_docker(test_env_image_tag, args.group)
     else:
-        scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
-
         # Python tests are run only when spark group of projects are being tested.
         is_testing_spark_group = args.group is None or args.group == "spark"
-        # Python tests are skipped when using Scala 2.13 as PySpark doesn't support it.
-        is_testing_scala_212 = scala_version is None or scala_version.startswith("2.12")
-        if is_testing_spark_group and is_testing_scala_212:
+        if is_testing_spark_group and args.run_python_tests:
             run_python_tests(root_dir)
+
+        scala_version = os.getenv("SCALA_VERSION")
+        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, spark_version)
