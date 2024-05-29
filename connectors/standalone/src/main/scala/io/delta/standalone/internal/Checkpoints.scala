@@ -238,8 +238,10 @@ private[internal] object Checkpoints extends Logging {
         snapshot.tombstonesScala
       ).map(_.wrap)
 
-    logInfo(s"Starting to write checkpoint at path=$path using rename=$useRename and " +
-        s"snapshot=$snapshot")
+    logInfo(s"Starting to write checkpoint at path=$path using rename=$useRename. " +
+        s"snapshot=$snapshot, numAddFiles=${snapshot.numOfFiles}, " +
+        s"numRemoveFiles=${snapshot.numRemoveFiles}, " +
+        s"numSetTransactions=${snapshot.numSetTransactions}")
 
     val writtenPath =
       if (useRename) {

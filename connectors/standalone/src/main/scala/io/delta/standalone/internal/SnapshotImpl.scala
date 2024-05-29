@@ -83,8 +83,6 @@ private[internal] class SnapshotImpl(
 
   import SnapshotImpl._
 
-  private var loadedState = false
-
   private val memoryOptimizedLogReplay =
     new MemoryOptimizedLogReplay(files, deltaLog.store, hadoopConf, deltaLog.timezone)
 
@@ -93,13 +91,8 @@ private[internal] class SnapshotImpl(
   ///////////////////////////////////////////////////////////////////////////
 
   override def toString: String = {
-    if (loadedState) {
-      s"SnapshotImpl(path=$path, version=$version, timestamp=$timestamp, " +
-        s"sizeInBytes=${state.sizeInBytes}, numAddFiles=${state.numOfFiles}, " +
-        s"numRemoveFiles=${state.numOfRemoves}, numSetTransactions=${state.numOfSetTransactions})"
-    } else {
-      s"SnapshotImpl(path=$path, version=$version, timestamp=$timestamp)"
-    }
+    s"SnapshotImpl(path=$path, version=$version, timestamp=$timestamp, " +
+      s"logSegmentInfo=(${logSegment.getFileInfoString}))"
   }
 
   override def scan(): DeltaScan = new DeltaScanImpl(memoryOptimizedLogReplay)
@@ -156,6 +149,8 @@ private[internal] class SnapshotImpl(
   def tombstonesScala: Seq[RemoveFile] = state.tombstones.toSeq
   def setTransactionsScala: Seq[SetTransaction] = state.setTransactions
   def numOfFiles: Long = state.numOfFiles
+  def numRemoveFiles: Long = state.numOfRemoves
+  def numSetTransactions: Long = state.numOfSetTransactions
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] =
@@ -337,8 +332,6 @@ private[internal] class SnapshotImpl(
     if (null == replay.currentMetaData) {
       throw DeltaErrors.actionNotFoundException("metadata", version)
     }
-
-    loadedState = true
 
     State(
       replay.getSetTransactions,

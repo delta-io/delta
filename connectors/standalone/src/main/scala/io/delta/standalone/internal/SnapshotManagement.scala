@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import io.delta.standalone.internal.exception.DeltaErrors
+import io.delta.standalone.internal.util.FileNames
 import io.delta.standalone.internal.util.FileNames._
 
 /**
@@ -319,7 +320,39 @@ private[internal] case class LogSegment(
     deltas: Seq[FileStatus],
     checkpoints: Seq[FileStatus],
     checkpointVersion: Option[Long],
-    lastCommitTimestamp: Long)
+    lastCommitTimestamp: Long) {
+
+  def getFileInfoString: String = {
+    s"numDeltas=${deltas.size}, minDeltaVersion=$minDeltaVersion, " +
+      s"maxDeltaVersion=$maxDeltaVersion, numCheckpointFiles=${checkpoints.size}, " +
+      s"minCheckpointVersion=$minCheckpointVersion, maxCheckpointVersion=$maxCheckpointVersion, " +
+      s"startingCheckpointVersion=$checkpointVersion"
+  }
+
+  private lazy val minDeltaVersion = if (deltas.isEmpty) {
+    None
+  } else {
+    Some(deltas.map(_.getPath).map(FileNames.deltaVersion).min)
+  }
+
+  private lazy val maxDeltaVersion = if (deltas.isEmpty) {
+    None
+  } else {
+    Some(deltas.map(_.getPath).map(FileNames.deltaVersion).max)
+  }
+
+  private lazy val minCheckpointVersion = if (checkpoints.isEmpty) {
+    None
+  } else {
+    Some(checkpoints.map(_.getPath).map(FileNames.checkpointVersion).min)
+  }
+
+  private lazy val maxCheckpointVersion = if (checkpoints.isEmpty) {
+    None
+  } else {
+    Some(checkpoints.map(_.getPath).map(FileNames.checkpointVersion).max)
+  }
+}
 
 private[internal] object LogSegment {
 
