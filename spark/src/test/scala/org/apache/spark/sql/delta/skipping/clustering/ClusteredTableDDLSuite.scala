@@ -398,6 +398,40 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
     }
   }
 
+  test("Replace clustered table with non-clustered table") {
+    import testImplicits._
+    withTable(sourceTable) {
+      sql(s"CREATE TABLE $sourceTable(i int, s string) USING delta")
+      spark.range(1000)
+        .map(i => (i.intValue(), "string col"))
+        .toDF("i", "s")
+        .write
+        .format("delta")
+        .mode("append")
+        .saveAsTable(sourceTable)
+
+      // Validate REPLACE TABLE (AS SELECT).
+      Seq("REPLACE", "CREATE OR REPLACE").foreach { clause =>
+        withClusteredTable(testTable, "a int", "a") {
+          verifyClusteringColumns(TableIdentifier(testTable), "a")
+
+          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(sourceTable))
+          Seq(true, false).foreach { isRTAS =>
+            val testQuery = if (isRTAS) {
+              s"$clause TABLE $testTable USING delta AS SELECT * FROM $sourceTable"
+            } else {
+              sql(s"$clause TABLE $testTable (i int, s string) USING delta")
+              s"INSERT INTO $testTable SELECT * FROM $sourceTable"
+            }
+            sql(testQuery)
+            // Note that clustering table feature are still retained after REPLACE TABLE.
+            verifyClusteringColumns(TableIdentifier(testTable), "")
+          }
+        }
+      }
+    }
+  }
+
   protected def withTempDirIfNecessary(f: Option[String] => Unit): Unit = {
     if (isPathBased) {
       withTempDir { dir =>
