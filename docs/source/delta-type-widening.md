@@ -23,15 +23,16 @@ The feature introduces a limited set of supported type changes in <Delta> 3.2 an
   "`decimal`", ,"`decimal` with greater precision and scale"
   "`date`", ,"`timestampNTZ`"
 
-To avoid accidental promotion of integer values to decimals, you must manually commit type changes from `byte`, `short`, `int`, or `long` to `decimal` or `double`.
+To avoid accidental promotion of integer values to decimals, type changes from `byte`, `short`, `int`, or `long` to `decimal` or `double` are not eligible to be applied automatically during schema evolution. You must manually alter the type in that case.
 
 .. note::
 
-  When changing any numeric type to `decimal`, the total precision must be equal to or greater than the starting precision. If you also increase the scale, the total precision must increase by a corresponding amount.
+  When changing an integer or decimal type to decimal, the total precision must be equal to or greater than the starting precision. If you also increase the scale, the total precision must increase by a corresponding amount.
+  That is, `decimal(p, s)` can be changed to `decimal(p + k1, s + k2)` iff `k1 >= k2 >= 0`.
+
+  For example, if you want to add two decimal places to a field with `decimal(10,1)`, the minimum target is `decimal(12,3)`.
 
   The minimum target for `byte`, `short`, and `int` types is `decimal(10,0)`. The minimum target for `long` is `decimal(20,0)`.
-
-  If you want to add two decimal places to a field with `decimal(10,1)`, the minimum target is `decimal(12,3)`.
 
 Type changes are supported for top-level columns as well as fields nested inside structs, maps and arrays.
 
