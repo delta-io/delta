@@ -62,13 +62,13 @@ trait LoggingSuiteBase
   // Return the newly added log contents in the log file after executing the function `f`
   private def captureLogOutput(f: () => Unit): String = {
     val content = if (logFile.exists()) {
-      Files.readAllLines(logFile.toPath, StandardCharsets.UTF_8).toArray.mkString
+      new String(Files.readAllBytes(logFile.toPath), StandardCharsets.UTF_8)
     } else {
       ""
     }
     f()
     val newContent =
-      Files.readAllLines(logFile.toPath, StandardCharsets.UTF_8).toArray.mkString
+      new String(Files.readAllBytes(logFile.toPath), StandardCharsets.UTF_8)
     newContent.substring(content.length)
   }
 
@@ -83,15 +83,6 @@ trait LoggingSuiteBase
   def msgWithConcat: LogEntry = log"Min Size: ${MDC(LogKeys.MIN_SIZE, "2")}, " +
     log"Max Size: ${MDC(LogKeys.MAX_SIZE, "4")}. " +
     log"Please double check."
-
-  protected def commonPattern(level: Level, className: String, message: String): String = {
-    s"""\\d{2}/\\d{2}/\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3} \\S+ ${level.name()} $className: """ +
-      s"$message"
-  }
-
-  protected def exceptionPattern: String = {
-    """java\.lang\.RuntimeException: OOM(\tat \S+.*)*"""
-  }
 
   // test for basic message (without any mdc)
   def expectedPatternForBasicMsg(level: Level): String
@@ -132,48 +123,48 @@ trait LoggingSuiteBase
       val logOutput = captureLogOutput(logFunc)
       assert(
         Pattern.compile(expectedPatternForBasicMsgWithException(level)).matcher(logOutput)
-        .matches())
+          .matches())
     }
   }
 
-    test("Logging with MDC") {
-      Seq(
-        (Level.ERROR, () => logError(msgWithMDC)),
-        (Level.WARN, () => logWarning(msgWithMDC)),
-        (Level.INFO, () => logInfo(msgWithMDC))).foreach {
-          case (level, logFunc) =>
-            val logOutput = captureLogOutput(logFunc)
-            assert(
-              Pattern.compile(expectedPatternForMsgWithMDC(level)).matcher(logOutput).matches())
-        }
+  test("Logging with MDC") {
+    Seq(
+      (Level.ERROR, () => logError(msgWithMDC)),
+      (Level.WARN, () => logWarning(msgWithMDC)),
+      (Level.INFO, () => logInfo(msgWithMDC))).foreach {
+      case (level, logFunc) =>
+        val logOutput = captureLogOutput(logFunc)
+        assert(
+          Pattern.compile(expectedPatternForMsgWithMDC(level)).matcher(logOutput).matches())
     }
+  }
 
-    test("Logging with MDC(the value is null)") {
-      Seq(
-        (Level.ERROR, () => logError(msgWithMDCValueIsNull)),
-        (Level.WARN, () => logWarning(msgWithMDCValueIsNull)),
-        (Level.INFO, () => logInfo(msgWithMDCValueIsNull))).foreach {
-        case (level, logFunc) =>
-          val logOutput = captureLogOutput(logFunc)
-          assert(
-            Pattern.compile(expectedPatternForMsgWithMDCValueIsNull(level)).matcher(logOutput)
+  test("Logging with MDC(the value is null)") {
+    Seq(
+      (Level.ERROR, () => logError(msgWithMDCValueIsNull)),
+      (Level.WARN, () => logWarning(msgWithMDCValueIsNull)),
+      (Level.INFO, () => logInfo(msgWithMDCValueIsNull))).foreach {
+      case (level, logFunc) =>
+        val logOutput = captureLogOutput(logFunc)
+        assert(
+          Pattern.compile(expectedPatternForMsgWithMDCValueIsNull(level)).matcher(logOutput)
             .matches())
-      }
     }
+  }
 
-    test("Logging with MDC and Exception") {
-      val exception = new RuntimeException("OOM")
-      Seq(
-        (Level.ERROR, () => logError(msgWithMDCAndException, exception)),
-        (Level.WARN, () => logWarning(msgWithMDCAndException, exception)),
-        (Level.INFO, () => logInfo(msgWithMDCAndException, exception))).foreach {
-          case (level, logFunc) =>
-            val logOutput = captureLogOutput(logFunc)
-            assert(
-              Pattern.compile(expectedPatternForMsgWithMDCAndException(level)).matcher(logOutput)
-              .matches())
-        }
+  test("Logging with MDC and Exception") {
+    val exception = new RuntimeException("OOM")
+    Seq(
+      (Level.ERROR, () => logError(msgWithMDCAndException, exception)),
+      (Level.WARN, () => logWarning(msgWithMDCAndException, exception)),
+      (Level.INFO, () => logInfo(msgWithMDCAndException, exception))).foreach {
+      case (level, logFunc) =>
+        val logOutput = captureLogOutput(logFunc)
+        assert(
+          Pattern.compile(expectedPatternForMsgWithMDCAndException(level)).matcher(logOutput)
+            .matches())
     }
+  }
 
   private val customLog = log"${MDC(CustomLogKeys.CUSTOM_LOG_KEY, "Custom log message.")}"
   test("Logging with custom LogKey") {
@@ -187,54 +178,19 @@ trait LoggingSuiteBase
     }
   }
 
-    test("Logging with concat") {
-      Seq(
-        (Level.ERROR, () => logError(msgWithConcat)),
-        (Level.WARN, () => logWarning(msgWithConcat)),
-        (Level.INFO, () => logInfo(msgWithConcat))).foreach {
-          case (level, logFunc) =>
-            val logOutput = captureLogOutput(logFunc)
-            verifyMsgWithConcat(level, logOutput)
-        }
+  test("Logging with concat") {
+    Seq(
+      (Level.ERROR, () => logError(msgWithConcat)),
+      (Level.WARN, () => logWarning(msgWithConcat)),
+      (Level.INFO, () => logInfo(msgWithConcat))).foreach {
+      case (level, logFunc) =>
+        val logOutput = captureLogOutput(logFunc)
+        verifyMsgWithConcat(level, logOutput)
     }
-}
-
-class DeltaLoggingSuite extends LoggingSuiteBase {
-  override def className: String = classOf[DeltaLoggingSuite].getSimpleName
-  override def logFilePath: String = "target/unit-tests.log"
-
-  override def expectedPatternForBasicMsg(level: Level): String = {
-    commonPattern(level, className, "This is a log message")
-  }
-
-  override def expectedPatternForBasicMsgWithException(level: Level): String = {
-    commonPattern(level, className, "This is a log message") + exceptionPattern
-  }
-
-  override def expectedPatternForMsgWithMDC(level: Level): String = {
-    commonPattern(level, className, "Lost executor 1.")
-  }
-
-  def expectedPatternForMsgWithMDCValueIsNull(level: Level): String = {
-    commonPattern(level, className, "Lost executor null.")
-  }
-
-  override def expectedPatternForMsgWithMDCAndException(level: Level): String = {
-    commonPattern(level, className, "Error in executor 1.") + exceptionPattern
-  }
-
-  override def expectedPatternForCustomLogKey(level: Level): String = {
-    commonPattern(level, className, "Custom log message.")
-  }
-
-  override def verifyMsgWithConcat(level: Level, logOutput: String): Unit = {
-    assert(
-      Pattern.compile(commonPattern(level, className,
-        "Min Size: 2, Max Size: 4. Please double check.")).matcher(logOutput).matches())
   }
 }
 
 object CustomLogKeys {
-  // Custom `LogKey` must be `extends LogKey`
+  // Custom `LogKey` must be `extends LogKeyShims`
   case object CUSTOM_LOG_KEY extends LogKeyShims
 }
