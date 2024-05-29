@@ -200,6 +200,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     commonSettings,
     crossSparkSettings(),
     releaseSettings,
+    publishArtifact := getSparkVersion() == SPARK_MASTER_VERSION,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
       "io.grpc" % "grpc-protobuf" % grpcVersion,
@@ -223,6 +224,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
     name := "delta-connect-server",
     commonSettings,
     releaseSettings,
+    publishArtifact := getSparkVersion() == SPARK_MASTER_VERSION,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
