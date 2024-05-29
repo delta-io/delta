@@ -140,40 +140,42 @@ case class CreateDeltaTableCommand(
 
     val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
 
-    val result = query match {
-      // CLONE handled separately from other CREATE TABLE syntax
-      case Some(cmd: CloneTableCommand) =>
-        checkPathEmpty(txn)
-        cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
-      case Some(deltaWriter: WriteIntoDeltaLike) =>
-        checkPathEmpty(txn)
-        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
-        Nil
-      case Some(query) =>
-        checkPathEmpty(txn)
-        require(!query.isInstanceOf[RunnableCommand])
-        // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
-        // to once again go through analysis
-        val data = Dataset.ofRows(sparkSession, query)
-        val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
-        val deltaWriter = WriteIntoDelta(
-          deltaLog = deltaLog,
-          mode = mode,
-          options,
-          partitionColumns = table.partitionColumnNames,
-          configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
-          data = data,
-          Some(tableWithLocation))
-        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
-        Nil
-      case _ =>
-        handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
-        Nil
+    OptimisticTransaction.withActive(txn) {
+      val result = query match {
+        // CLONE handled separately from other CREATE TABLE syntax
+        case Some(cmd: CloneTableCommand) =>
+          checkPathEmpty(txn)
+          cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
+        case Some(deltaWriter: WriteIntoDeltaLike) =>
+          checkPathEmpty(txn)
+          handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          Nil
+        case Some(query) =>
+          checkPathEmpty(txn)
+          require(!query.isInstanceOf[RunnableCommand])
+          // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
+          // to once again go through analysis
+          val data = Dataset.ofRows(sparkSession, query)
+          val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+          val deltaWriter = WriteIntoDelta(
+            deltaLog = deltaLog,
+            mode = mode,
+            options,
+            partitionColumns = table.partitionColumnNames,
+            configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
+            data = data,
+            Some(tableWithLocation))
+          handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          Nil
+        case _ =>
+          handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
+          Nil
+      }
+
+      runPostCommitUpdates(sparkSession, txn, deltaLog, tableWithLocation)
+
+      result
     }
-
-    runPostCommitUpdates(sparkSession, txn, deltaLog, tableWithLocation)
-
-    result
   }
 
   /**
