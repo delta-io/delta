@@ -1585,6 +1585,24 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       Row(0, 0) :: Nil,
       schema)
   }
+  
+  generateGoldenTable("multi-part-checkpoint-2") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.checkpoint.partSize", "10"),
+      ("spark.databricks.delta.properties.defaults.checkpointInterval", "10")
+    ) {
+      spark.range(0, 10).repartition(1).write.format("delta").save(tablePath)
+
+      for (i <- 1 to 14) {
+        spark.range(i * 10, i * 10 + 9)
+            .repartition(10)
+            .write
+            .format("delta")
+            .mode("append")
+            .save(tablePath)
+      }
+    }
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
