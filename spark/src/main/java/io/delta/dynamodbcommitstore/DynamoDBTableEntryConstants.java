@@ -34,6 +34,10 @@ final class DynamoDBTableEntryConstants {
     public static final String TABLE_PATH = "path";
     /** The schema version of this DynamoDB table entry. */
     public static final String SCHEMA_VERSION = "schemaVersion";
+    /**
+     * Whether this commit owner has accepted any commits after `registerTable`.
+     */
+    public static final String HAS_ACCEPTED_COMMITS = "hasAcceptedCommits";
     /** The name of the field used to store unbackfilled commits. */
     public static final String COMMITS = "commits";
     /** The unbackfilled commit version. */

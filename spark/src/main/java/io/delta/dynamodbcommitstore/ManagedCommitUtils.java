@@ -31,7 +31,7 @@ public class ManagedCommitUtils {
 
     /** The configuration key for the managed commit owner. */
     private static final String MANAGED_COMMIT_OWNER_CONF_KEY =
-            "delta.managedCommits.commitOwner-dev";
+            "delta.managedCommits.commitOwner-preview";
 
     /**
      * Creates a new unbackfilled delta file path for the given commit version.

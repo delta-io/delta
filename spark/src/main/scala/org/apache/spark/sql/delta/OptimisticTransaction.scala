@@ -2102,11 +2102,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
       executionObserver.beginBackfill()
-      // TODO(managed-commits): Integrate with ICT and pass the correct commitTimestamp
+      val ictEnabled = updatedActions.getNewMetadata.getConfiguration.getOrElse(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, "false") == "true"
+      val commitTimestamp = if (ictEnabled) {
+        // CommitInfo.getCommitTimestamp will return the inCommitTimestamp.
+        updatedActions.getCommitInfo.getCommitTimestamp
+      } else {
+        commitFileStatus.getModificationTime
+      }
       CommitResponse(Commit(
         commitVersion,
         fileStatus = commitFileStatus,
-        commitTimestamp = commitFileStatus.getModificationTime
+        commitTimestamp = commitTimestamp
       ))
     }
 
@@ -2182,10 +2189,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
       tableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
     }
-    // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
-    //  merged.
-    val commitTimestamp = commitResponse.getCommit.getFileStatus.getModificationTime
-    val commitFile = commitResponse.getCommit.copy(commitTimestamp = commitTimestamp)
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
       val actualCommitPath = commitResponse.getCommit.getFileStatus.getPath.toUri
@@ -2194,7 +2197,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           s"$expectedPathForCommitZero but was written to $actualCommitPath")
       }
     }
-    commitFile
+    commitResponse.getCommit
   }
 
   /**

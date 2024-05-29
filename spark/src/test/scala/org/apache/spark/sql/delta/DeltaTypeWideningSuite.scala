@@ -20,24 +20,26 @@ import java.util.concurrent.TimeUnit
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
+import com.google.common.math.DoubleMath
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Encoder, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Cast, EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.ManualClock
@@ -51,10 +53,13 @@ class DeltaTypeWideningSuite
     with RowTrackingTestUtils
     with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
+    with DeltaTypeWideningDropFeatureTestMixin
     with DeltaTypeWideningAlterTableTests
     with DeltaTypeWideningNestedFieldsTests
+    with DeltaTypeWideningCompatibilityTests
     with DeltaTypeWideningMetadataTests
     with DeltaTypeWideningTableFeatureTests
+    with DeltaTypeWideningColumnMappingTests
     with DeltaTypeWideningStatsTests
     with DeltaTypeWideningConstraintsTests
     with DeltaTypeWideningGeneratedColumnTests
@@ -63,19 +68,35 @@ class DeltaTypeWideningSuite
  * Test mixin that enables type widening by default for all tests in the suite.
  */
 trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUtils {
+  self: QueryTest =>
+
   import testImplicits._
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey, "true")
+      .set(TableFeatureProtocolUtils.defaultPropertyKey(TimestampNTZTableFeature), "supported")
       // Ensure we don't silently cast test inputs to null on overflow.
       .set(SQLConf.ANSI_ENABLED.key, "true")
+      // Rebase mode must be set explicitly to allow writing dates before 1582-10-15.
+      .set(SQLConf.PARQUET_REBASE_MODE_IN_WRITE.key, LegacyBehaviorPolicy.CORRECTED.toString)
   }
 
   /** Enable (or disable) type widening for the table under the given path. */
   protected def enableTypeWidening(tablePath: String, enabled: Boolean = true): Unit =
     sql(s"ALTER TABLE delta.`$tablePath` " +
           s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = '${enabled.toString}')")
+
+  /** Whether the test table supports the type widening table feature. */
+  def isTypeWideningSupported: Boolean = {
+    TypeWidening.isSupported(deltaLog.update().protocol)
+  }
+
+  /** Whether the type widening table property is enabled on the test table. */
+  def isTypeWideningEnabled: Boolean = {
+    val snapshot = deltaLog.update()
+    TypeWidening.isEnabled(snapshot.protocol, snapshot.metadata)
+  }
 
   /** Short-hand to create type widening metadata for struct fields. */
   protected def typeWideningMetadata(
@@ -90,12 +111,135 @@ trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUti
 
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
       append(values.toDF("a").select(col("a").cast(dataType)).repartition(1))
+
+  /**
+   * Similar to `QueryTest.checkAnswer` but using fuzzy equality for double values. This is needed
+   * because double partition values are serialized as string leading to loss of precision. Also
+   * `checkAnswer` treats -0f and 0f as different values without tolerance.
+   */
+  def checkAnswerWithTolerance(
+      actualDf: DataFrame,
+      expectedDf: DataFrame,
+      toType: DataType,
+      tolerance: Double = 0.001)
+    : Unit = {
+    // Widening to float isn't supported so only handle double here.
+    if (toType == DoubleType) {
+      val actual = actualDf.sort("value").collect()
+      val expected = expectedDf.sort("value").collect()
+      assert(actual.length === expected.length, s"Wrong result: $actual did not equal $expected")
+
+      actual.zip(expected).foreach { case (a, e) =>
+        val expectedValue = e.getAs[Double]("value")
+        val actualValue = a.getAs[Double]("value")
+        val absTolerance = if (expectedValue.isNaN || expectedValue.isInfinity) {
+          0
+        } else {
+          tolerance * Math.abs(expectedValue)
+        }
+        assert(
+          DoubleMath.fuzzyEquals(actualValue, expectedValue, absTolerance),
+          s"$actualValue did not equal $expectedValue"
+        )
+      }
+    } else {
+      checkAnswer(actualDf, expectedDf)
+    }
+  }
+}
+
+/**
+ * Mixin trait containing helpers to test dropping the type widening table feature.
+ */
+trait DeltaTypeWideningDropFeatureTestMixin
+    extends QueryTest
+    with SharedSparkSession
+    with DeltaDMLTestUtils {
+
+  /** Expected outcome of dropping the type widening table feature. */
+  object ExpectedOutcome extends Enumeration {
+    val SUCCESS, FAIL_CURRENT_VERSION_USES_FEATURE, FAIL_HISTORICAL_VERSION_USES_FEATURE = Value
+  }
+
+  /**
+   * Helper method to drop the type widening table feature and check for an expected outcome.
+   * Validates in particular that the right number of files were rewritten and that the rewritten
+   * files all contain the expected type for specified columns.
+   */
+  def dropTableFeature(
+      expectedOutcome: ExpectedOutcome.Value,
+      expectedNumFilesRewritten: Long,
+      expectedColumnTypes: Map[String, DataType]): Unit = {
+    val snapshot = deltaLog.update()
+    // Need to directly call ALTER TABLE command to pass our deltaLog with manual clock.
+    val dropFeature = AlterTableDropFeatureDeltaCommand(
+      DeltaTableV2(spark, deltaLog.dataPath),
+      TypeWideningTableFeature.name)
+
+    expectedOutcome match {
+      case ExpectedOutcome.SUCCESS =>
+        dropFeature.run(spark)
+      case ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE =>
+        checkError(
+          exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
+          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          parameters = Map(
+            "feature" -> TypeWideningTableFeature.name,
+            "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
+            "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
+              .fromMetaData(snapshot.metadata).toString,
+            "truncateHistoryLogRetentionPeriod" ->
+              DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+                .fromMetaData(snapshot.metadata).toString)
+        )
+      case ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE =>
+        checkError(
+          exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
+          errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+          parameters = Map(
+            "feature" -> TypeWideningTableFeature.name,
+            "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
+            "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
+              .fromMetaData(snapshot.metadata).toString,
+            "truncateHistoryLogRetentionPeriod" ->
+              DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+                .fromMetaData(snapshot.metadata).toString)
+        )
+    }
+
+    // Check the number of files rewritten.
+    assert(getNumRemoveFilesSinceVersion(snapshot.version + 1) === expectedNumFilesRewritten,
+      s"Expected $expectedNumFilesRewritten file(s) to be rewritten but found " +
+        s"${getNumRemoveFilesSinceVersion(snapshot.version + 1)} rewritten file(s).")
+    assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+
+    // Check that all files now contain the expected data types.
+    expectedColumnTypes.foreach { case (colName, expectedType) =>
+      withSQLConf("spark.databricks.delta.formatCheck.enabled" -> "false") {
+        deltaLog.update().filesForScan(Seq.empty, keepNumRecords = false).files.foreach { file =>
+          val filePath = DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, file.path)
+          val data = spark.read.parquet(filePath.toString)
+          val physicalColName = DeltaColumnMapping.getPhysicalName(snapshot.schema(colName))
+          assert(data.schema(physicalColName).dataType === expectedType,
+            s"File with values ${data.collect().mkString(", ")} wasn't rewritten.")
+        }
+      }
+    }
+  }
+
+  /** Get the number of remove actions committed since the given table version (included). */
+  def getNumRemoveFilesSinceVersion(version: Long): Long =
+    deltaLog
+      .getChanges(startVersion = version)
+      .flatMap { case (_, actions) => actions }
+      .collect { case r: RemoveFile => r }
+      .size
 }
 
 /**
  * Trait collecting supported and unsupported type change test cases.
  */
-trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
+trait DeltaTypeWideningTestCases extends TypeWideningTestCasesShims { self: SharedSparkSession =>
   import testImplicits._
 
   /**
@@ -137,20 +281,6 @@ trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
       initialValuesDF.union(additionalValuesDF).select($"value".cast(toType))
   }
 
-  // Type changes that are supported by all Parquet readers. Byte, Short, Int are all stored as
-  // INT32 in parquet so these changes are guaranteed to be supported.
-  protected val supportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
-    SupportedTypeEvolutionTestCase(ByteType, ShortType,
-      Seq(1, -1, Byte.MinValue, Byte.MaxValue, null.asInstanceOf[Byte]),
-      Seq(4, -4, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short])),
-    SupportedTypeEvolutionTestCase(ByteType, IntegerType,
-      Seq(1, -1, Byte.MinValue, Byte.MaxValue, null.asInstanceOf[Byte]),
-      Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int])),
-    SupportedTypeEvolutionTestCase(ShortType, IntegerType,
-      Seq(1, -1, Short.MinValue, Short.MaxValue, null.asInstanceOf[Short]),
-      Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]))
-  )
-
   /**
    * Represents the input of an unsupported type change test. Handles converting the test values
    * from scala types to a dataframe. Additional values to insert are always empty since the type
@@ -172,48 +302,6 @@ trait DeltaTypeWideningTestCases { self: SharedSparkSession =>
     override def expectedResult: DataFrame =
       initialValuesDF.select($"value".cast(toType))
   }
-
-  // Test type changes that aren't supported.
-  protected val unsupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
-    UnsupportedTypeEvolutionTestCase(IntegerType, ByteType,
-      Seq(1, 2, Int.MinValue)),
-    UnsupportedTypeEvolutionTestCase(LongType, IntegerType,
-      Seq(4, 5, Long.MaxValue)),
-    UnsupportedTypeEvolutionTestCase(DoubleType, FloatType,
-      Seq(987654321.987654321d, Double.NaN, Double.NegativeInfinity,
-        Double.PositiveInfinity, Double.MinPositiveValue,
-        Double.MinValue, Double.MaxValue)),
-    UnsupportedTypeEvolutionTestCase(ByteType, DecimalType(2, 0),
-      Seq(1, -1, Byte.MinValue)),
-    UnsupportedTypeEvolutionTestCase(ShortType, DecimalType(4, 0),
-      Seq(1, -1, Short.MinValue)),
-    UnsupportedTypeEvolutionTestCase(IntegerType, DecimalType(9, 0),
-      Seq(1, -1, Int.MinValue)),
-    UnsupportedTypeEvolutionTestCase(LongType, DecimalType(19, 0),
-      Seq(1, -1, Long.MinValue)),
-    UnsupportedTypeEvolutionTestCase(TimestampNTZType, DateType,
-      Seq("2020-03-17 15:23:15", "2023-12-31 23:59:59", "0001-01-01 00:00:00")),
-    // Reduce scale
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS, 3),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Reduce precision
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS - 1, 2),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Reduce precision & scale
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS - 1, 1),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"))),
-    // Increase scale more than precision
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS + 1, 4),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"))),
-    // Smaller scale and larger precision.
-    UnsupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_LONG_DIGITS, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS + 3, 1),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99")))
-  )
 }
 
 /**
@@ -226,7 +314,7 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
   import testImplicits._
 
   for {
-    testCase <- supportedTestCases
+    testCase <- supportedTestCases ++ alterTableOnlySupportedTestCases
     partitioned <- BOOLEAN_DOMAIN
   } {
     test(s"type widening ${testCase.fromType.sql} -> ${testCase.toType.sql}, " +
@@ -242,14 +330,19 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}")
       withAllParquetReaders {
         assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-        checkAnswer(readDeltaTable(tempPath).select("value").sort("value"),
-          testCase.initialValuesDF.select($"value".cast(testCase.toType)).sort("value"))
+        checkAnswerWithTolerance(
+          actualDf = readDeltaTable(tempPath).select("value"),
+          expectedDf = testCase.initialValuesDF.select($"value".cast(testCase.toType)),
+          toType = testCase.toType
+        )
       }
       writeData(testCase.additionalValuesDF)
       withAllParquetReaders {
-        checkAnswer(
-          readDeltaTable(tempPath).select("value").sort("value"),
-          testCase.expectedResult.sort("value"))
+        checkAnswerWithTolerance(
+          actualDf = readDeltaTable(tempPath).select("value"),
+          expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+          toType = testCase.toType
+        )
       }
     }
   }
@@ -266,28 +359,43 @@ trait DeltaTypeWideningAlterTableTests extends QueryErrorsBase with DeltaTypeWid
       } else {
         append(testCase.initialValuesDF)
       }
-      sql(s"ALTER TABLE delta.`$tempPath` " +
-        s"SET TBLPROPERTIES('delta.feature.timestampNtz' = 'supported')")
 
       val alterTableSql =
         s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}"
-      checkError(
-        exception = intercept[AnalysisException] {
-          sql(alterTableSql)
-        },
-        errorClass = "NOT_SUPPORTED_CHANGE_COLUMN",
-        sqlState = None,
-        parameters = Map(
-          "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
-          "originName" -> toSQLId("value"),
-          "originType" -> toSQLType(testCase.fromType),
-          "newName" -> toSQLId("value"),
-          "newType" -> toSQLType(testCase.toType)),
-        context = ExpectedContext(
-          fragment = alterTableSql,
-          start = 0,
-          stop = alterTableSql.length - 1)
-      )
+
+      // Type changes that aren't upcast are rejected early during analysis by Spark, while upcasts
+      // are rejected in Delta when the ALTER TABLE command is executed.
+      if (Cast.canUpCast(testCase.fromType, testCase.toType)) {
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            sql(alterTableSql)
+          },
+          errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+          sqlState = None,
+          parameters = Map(
+            "fieldPath" -> "value",
+            "oldField" -> testCase.fromType.sql,
+            "newField" -> testCase.toType.sql)
+        )
+      } else {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(alterTableSql)
+          },
+          errorClass = "NOT_SUPPORTED_CHANGE_COLUMN",
+          sqlState = None,
+          parameters = Map(
+            "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
+            "originName" -> toSQLId("value"),
+            "originType" -> toSQLType(testCase.fromType),
+            "newName" -> toSQLId("value"),
+            "newType" -> toSQLType(testCase.toType)),
+          context = ExpectedContext(
+            fragment = alterTableSql,
+            start = 0,
+            stop = alterTableSql.length - 1)
+        )
+      }
     }
   }
 
@@ -502,6 +610,96 @@ trait DeltaTypeWideningNestedFieldsTests {
       Seq((1, 2, 3, 4), (5, 6, 7, 8))
         .toDF("a", "b", "c", "d")
         .selectExpr("named_struct('a', cast(a as short)) as s", "map(b, c) as m", "array(d) as a"))
+  }
+}
+
+/** Tests covering type widening compatibility with other delta features. */
+trait DeltaTypeWideningCompatibilityTests {
+  self: DeltaTypeWideningTestMixin with QueryTest with DeltaDMLTestUtils =>
+
+  import testImplicits._
+
+  test("reading CDF with a type change") {
+    withSQLConf((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
+      sql(s"CREATE TABLE delta.`$tempPath` (a smallint) USING DELTA")
+    }
+    append(Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
+    append(Seq(3, 4).toDF("a"))
+
+    def readCDF(start: Long, end: Long): DataFrame =
+      CDCReader
+        .changesToBatchDF(deltaLog, start, end, spark)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+        .drop(CDCReader.CDC_COMMIT_VERSION)
+
+    checkErrorMatchPVals(
+      exception = intercept[DeltaUnsupportedOperationException] {
+        readCDF(start = 1, end = 1).collect()
+      },
+      errorClass = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA",
+      parameters = Map(
+        "start" -> "1",
+        "end" -> "1",
+        "readSchema" -> ".*",
+        "readVersion" -> "3",
+        "incompatibleVersion" -> "1",
+        "config" -> ".*defaultSchemaModeForColumnMappingTable"
+      )
+    )
+    checkAnswer(readCDF(start = 3, end = 3), Seq(Row(3, "insert"), Row(4, "insert")))
+  }
+
+  test("reading CDF with a type change using read schema from before the change") {
+    withSQLConf((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
+      sql(s"CREATE TABLE delta.`$tempPath` (a smallint) USING DELTA")
+    }
+    append(Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
+    val readSchemaSnapshot = deltaLog.update()
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
+    append(Seq(3, 4).toDF("a"))
+
+    def readCDF(start: Long, end: Long): DataFrame =
+      CDCReader
+        .changesToBatchDF(
+          deltaLog,
+          start,
+          end,
+          spark,
+          readSchemaSnapshot = Some(readSchemaSnapshot)
+        )
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+        .drop(CDCReader.CDC_COMMIT_VERSION)
+
+    checkAnswer(readCDF(start = 1, end = 1), Seq(Row(1, "insert"), Row(2, "insert")))
+    checkErrorMatchPVals(
+      exception = intercept[DeltaUnsupportedOperationException] {
+        readCDF(start = 1, end = 3)
+      },
+      errorClass = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+      parameters = Map(
+        "start" -> "1",
+        "end" -> "3",
+        "readSchema" -> ".*",
+        "readVersion" -> "1",
+        "incompatibleVersion" -> "2"
+      )
+    )
+  }
+
+  test("time travel read before type change") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
+    append(Seq(1).toDF("a").select($"a".cast(ByteType)))
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE smallint")
+    append(Seq(2).toDF("a").select($"a".cast(ShortType)))
+
+    val previousVersion = sql(s"SELECT a FROM delta.`$tempPath` VERSION AS OF 1")
+    assert(previousVersion.schema("a").dataType === ByteType)
+    checkAnswer(previousVersion, Seq(Row(1)))
+
+    val latestVersion = sql(s"SELECT a FROM delta.`$tempPath`")
+    assert(latestVersion.schema("a").dataType === ShortType)
+    checkAnswer(latestVersion, Seq(Row(1), Row(2)))
   }
 }
 
@@ -823,7 +1021,8 @@ trait DeltaTypeWideningTableFeatureTests {
   self: QueryTest
     with ParquetTest
     with RowTrackingTestUtils
-    with DeltaTypeWideningTestMixin =>
+    with DeltaTypeWideningTestMixin
+    with DeltaTypeWideningDropFeatureTestMixin =>
 
   import testImplicits._
 
@@ -837,59 +1036,6 @@ trait DeltaTypeWideningTableFeatureTests {
     deltaLog = DeltaLog.forTable(spark, new Path(tempPath), clock)
   }
 
-  def isTypeWideningSupported: Boolean = {
-    TypeWidening.isSupported(deltaLog.update().protocol)
-  }
-
-  def isTypeWideningEnabled: Boolean = {
-    val snapshot = deltaLog.update()
-    TypeWidening.isEnabled(snapshot.protocol, snapshot.metadata)
-  }
-
-  /** Expected outcome of dropping the type widening table feature. */
-  object ExpectedOutcome extends Enumeration {
-    val SUCCESS, FAIL_CURRENT_VERSION_USES_FEATURE, FAIL_HISTORICAL_VERSION_USES_FEATURE = Value
-  }
-
-  /** Helper method to drop the type widening table feature and check for an expected outcome. */
-  def dropTableFeature(expectedOutcome: ExpectedOutcome.Value): Unit = {
-    // Need to directly call ALTER TABLE command to pass our deltaLog with manual clock.
-    val dropFeature = AlterTableDropFeatureDeltaCommand(
-      DeltaTableV2(spark, deltaLog.dataPath),
-      TypeWideningTableFeature.name)
-
-    expectedOutcome match {
-      case ExpectedOutcome.SUCCESS =>
-        dropFeature.run(spark)
-      case ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE =>
-        checkError(
-          exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
-          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
-          parameters = Map(
-            "feature" -> TypeWideningTableFeature.name,
-            "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
-            "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
-              .fromMetaData(deltaLog.unsafeVolatileMetadata).toString,
-            "truncateHistoryLogRetentionPeriod" ->
-              DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
-                .fromMetaData(deltaLog.unsafeVolatileMetadata).toString)
-        )
-      case ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE =>
-        checkError(
-          exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
-          errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
-          parameters = Map(
-            "feature" -> TypeWideningTableFeature.name,
-            "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
-            "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
-              .fromMetaData(deltaLog.unsafeVolatileMetadata).toString,
-            "truncateHistoryLogRetentionPeriod" ->
-              DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
-                .fromMetaData(deltaLog.unsafeVolatileMetadata).toString)
-        )
-    }
-  }
-
   /**
    * Use this after dropping the table feature to artificially move the current time to after
    * the table retention period.
@@ -900,14 +1046,6 @@ trait DeltaTypeWideningTableFeatureTests {
       deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
         TimeUnit.MINUTES.toMillis(5))
   }
-
-  /** Get the number of AddFile actions committed since the given table version (included). */
-  def getNumAddFilesSinceVersion(version: Long): Long =
-    deltaLog
-      .getChanges(startVersion = version)
-      .flatMap { case (_, actions) => actions }
-      .collect { case a: AddFile => a }
-      .size
 
   test("enable type widening at table creation then disable it") {
     sql(s"CREATE TABLE delta.`$tempPath` (a int) USING DELTA " +
@@ -1007,8 +1145,11 @@ trait DeltaTypeWideningTableFeatureTests {
 
   test("drop unused table feature on empty table") {
     sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
-    dropTableFeature(ExpectedOutcome.SUCCESS)
-    assert(getNumAddFilesSinceVersion(version = 0) === 0)
+    dropTableFeature(
+      expectedOutcome = ExpectedOutcome.SUCCESS,
+      expectedNumFilesRewritten = 0,
+      expectedColumnTypes = Map("a" -> ByteType)
+    )
     checkAnswer(readDeltaTable(tempPath), Seq.empty)
   }
 
@@ -1050,11 +1191,11 @@ trait DeltaTypeWideningTableFeatureTests {
     test(s"drop unused table feature on table with data, rowTrackingEnabled=$rowTrackingEnabled") {
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
       addSingleFile(Seq(1, 2, 3), ByteType)
-      assert(getNumAddFilesSinceVersion(version = 0) === 1)
-
-      val version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.SUCCESS)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.SUCCESS,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> ByteType)
+      )
       checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3)))
     }
 
@@ -1066,22 +1207,24 @@ trait DeltaTypeWideningTableFeatureTests {
       addSingleFile(Seq(1, 2, 3), ByteType)
       enableTypeWidening(tempPath)
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
-      assert(getNumAddFilesSinceVersion(version = 0) === 1)
 
-      var version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
-      assert(getNumAddFilesSinceVersion(version + 1) === 1)
-      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 1,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
 
-      version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
-
-      version = deltaLog.update().version
       advancePastRetentionPeriod()
-      dropTableFeature(ExpectedOutcome.SUCCESS)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
-      checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3)))
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.SUCCESS,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
     }
 
     test(s"drop table feature on table with data added only after type change, " +
@@ -1090,24 +1233,27 @@ trait DeltaTypeWideningTableFeatureTests {
       sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
       sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
       addSingleFile(Seq(1, 2, 3), IntegerType)
-      assert(getNumAddFilesSinceVersion(version = 0) === 1)
 
       // We could actually drop the table feature directly here instead of failing by checking that
       // there were no files added before the type change. This may be an expensive check for a rare
       // scenario so we don't do it.
-      var version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
-      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
-
-      version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
 
       advancePastRetentionPeriod()
-      version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.SUCCESS)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.SUCCESS,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
       checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3)))
     }
 
@@ -1117,21 +1263,25 @@ trait DeltaTypeWideningTableFeatureTests {
       sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
       addSingleFile(Seq(1, 2, 3), ByteType)
       sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
-      assert(getNumAddFilesSinceVersion(version = 0) === 1)
 
-      var version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
-      assert(getNumAddFilesSinceVersion(version + 1) === 1)
-      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 1,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
 
-      version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
 
-      version = deltaLog.update().version
       advancePastRetentionPeriod()
-      dropTableFeature(ExpectedOutcome.SUCCESS)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.SUCCESS,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
       checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3)))
     }
 
@@ -1142,22 +1292,26 @@ trait DeltaTypeWideningTableFeatureTests {
       addSingleFile(Seq(1, 2, 3), ByteType)
       sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
       sql(s"UPDATE delta.`$tempDir` SET a = a + 10")
-      assert(getNumAddFilesSinceVersion(version = 0) === 2)
 
-      var version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
-      // The file was already rewritten in UPDATE.
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
-      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+        // The file was already rewritten in UPDATE.
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
 
-      version = deltaLog.update().version
-      dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
 
-      version = deltaLog.update().version
       advancePastRetentionPeriod()
-      dropTableFeature(ExpectedOutcome.SUCCESS)
-      assert(getNumAddFilesSinceVersion(version + 1) === 0)
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.SUCCESS,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
       checkAnswer(readDeltaTable(tempPath), Seq(Row(11), Row(12), Row(13)))
     }
 
@@ -1169,29 +1323,58 @@ trait DeltaTypeWideningTableFeatureTests {
         addSingleFile(Seq(1, 2, 3), ByteType)
         addSingleFile(Seq(4, 5, 6), ByteType)
         sql(s"ALTER TABLE delta.`$tempDir` CHANGE COLUMN a TYPE int")
-        assert(getNumAddFilesSinceVersion(version = 0) === 2)
         sql(s"UPDATE delta.`$tempDir` SET a = a + 10 WHERE a < 4")
-        assert(getNumAddFilesSinceVersion(version = 0) === 3)
 
-        var version = deltaLog.update().version
-        dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
-        // One file was already rewritten in UPDATE, leaving 1 file to rewrite.
-        assert(getNumAddFilesSinceVersion(version + 1) === 1)
-        assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
+        dropTableFeature(
+          expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+          // One file was already rewritten in UPDATE, leaving 1 file to rewrite.
+          expectedNumFilesRewritten = 1,
+          expectedColumnTypes = Map("a" -> IntegerType)
+        )
 
-        version = deltaLog.update().version
-        dropTableFeature(ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE)
-        assert(getNumAddFilesSinceVersion(version + 1) === 0)
+        dropTableFeature(
+          expectedOutcome = ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE,
+          expectedNumFilesRewritten = 0,
+          expectedColumnTypes = Map("a" -> IntegerType)
+        )
 
-        version = deltaLog.update().version
         advancePastRetentionPeriod()
-        dropTableFeature(ExpectedOutcome.SUCCESS)
-        assert(getNumAddFilesSinceVersion(version + 1) === 0)
+        dropTableFeature(
+          expectedOutcome = ExpectedOutcome.SUCCESS,
+          expectedNumFilesRewritten = 0,
+          expectedColumnTypes = Map("a" -> IntegerType)
+        )
         checkAnswer(
           readDeltaTable(tempPath),
           Seq(Row(11), Row(12), Row(13), Row(4), Row(5), Row(6)))
       }
     }
+  }
+
+  test("drop feature after a type change with schema evolution") {
+    setupManualClock()
+    sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
+    addSingleFile(Seq(1), ByteType)
+
+    withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+      addSingleFile(Seq(1024), IntegerType)
+    }
+    assert(readDeltaTable(tempPath).schema("a").dataType === IntegerType)
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(1024)))
+
+    dropTableFeature(
+      expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+      expectedNumFilesRewritten = 1,
+      expectedColumnTypes = Map("a" -> IntegerType)
+    )
+
+    advancePastRetentionPeriod()
+    dropTableFeature(
+      expectedOutcome = ExpectedOutcome.SUCCESS,
+      expectedNumFilesRewritten = 0,
+      expectedColumnTypes = Map("a" -> IntegerType)
+    )
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(1024)))
   }
 
   test("unsupported type changes applied to the table") {
@@ -1239,7 +1422,11 @@ trait DeltaTypeWideningTableFeatureTests {
     // data type after this.
     sql(s"UPDATE delta.`$tempDir` SET a = a + 10 WHERE a < 4")
     val usageLogs = Log4jUsageLogger.track {
-      dropTableFeature(ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE)
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 1,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
     }
 
     val metrics = filterUsageRecords(usageLogs, "delta.typeWidening.featureRemoval")
@@ -1251,6 +1438,153 @@ trait DeltaTypeWideningTableFeatureTests {
     // during the UPDATE.
     assert(metrics("numFilesRewritten").toLong === 1L)
     assert(metrics("metadataRemoved").toBoolean)
+  }
+
+  test("dropping feature after CLONE correctly rewrite files with old type") {
+    withTable("source") {
+      sql("CREATE TABLE source (a byte) USING delta")
+      sql("INSERT INTO source VALUES (1)")
+      sql("INSERT INTO source VALUES (2)")
+      sql(s"ALTER TABLE source CHANGE COLUMN a TYPE INT")
+      sql("INSERT INTO source VALUES (200)")
+      sql(s"CREATE OR REPLACE TABLE delta.`$tempPath` SHALLOW CLONE source")
+      checkAnswer(readDeltaTable(tempPath),
+        Seq(Row(1), Row(2), Row(200)))
+
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 3,
+        expectedColumnTypes = Map("a" -> IntegerType)
+      )
+      checkAnswer(readDeltaTable(tempPath),
+        Seq(Row(1), Row(2), Row(200)))
+    }
+  }
+  test("RESTORE to before type change") {
+    addSingleFile(Seq(1), ShortType)
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+    sql(s"UPDATE delta.`$tempPath` SET a = ${Int.MinValue} WHERE a = 1")
+
+    // RESTORE to version 0, before the type change was applied.
+    sql(s"RESTORE TABLE delta.`$tempPath` VERSION AS OF 0")
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1)))
+    dropTableFeature(
+      // There should be no files to rewrite but versions before RESTORE still use the feature.
+      expectedOutcome = ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE,
+      expectedNumFilesRewritten = 0,
+      expectedColumnTypes = Map("a" -> ShortType)
+    )
+  }
+
+  test("dropping feature after RESTORE correctly rewrite files with old type") {
+    addSingleFile(Seq(1), ShortType)
+    addSingleFile(Seq(2), ShortType)
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+    // Delete the first file which will be added back again with RESTORE.
+    sql(s"DELETE FROM delta.`$tempPath` WHERE a = 1")
+    addSingleFile(Seq(Int.MinValue), IntegerType)
+
+    // RESTORE to version 2 -> ALTER TABLE CHANGE COLUMN TYPE.
+    // The type change is then still present and the first file initially added at version 0 is
+    // added back during RESTORE (version 5). That file contains the old type and must be rewritten
+    // when the feature is dropped.
+    sql(s"RESTORE TABLE delta.`$tempPath` VERSION AS OF 2")
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
+    dropTableFeature(
+      expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+      // Both files added before the type change must be rewritten.
+      expectedNumFilesRewritten = 2,
+      expectedColumnTypes = Map("a" -> IntegerType)
+    )
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
+  }
+}
+
+/** Trait collecting tests covering type widening + column mapping. */
+trait DeltaTypeWideningColumnMappingTests {
+    self: QueryTest
+    with DeltaTypeWideningTestMixin
+    with DeltaTypeWideningDropFeatureTestMixin =>
+
+  import testImplicits._
+
+  for (mappingMode <- Seq(IdMapping.name, NameMapping.name)) {
+    test(s"change column type and rename it, mappingMode=$mappingMode") {
+      withSQLConf((DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, mappingMode)) {
+        sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
+      }
+      // Add some data and change type of column `a`.
+      addSingleFile(Seq(1), ByteType)
+      sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE smallint")
+      addSingleFile(Seq(2), ShortType)
+      assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
+      checkAnswer(sql(s"SELECT a FROM delta.`$tempPath`"), Seq(Row(1), Row(2)))
+
+      // Rename column `a` to `a (with reserved characters)`, add more data.
+      val newColumnName = "a (with reserved characters)"
+      sql(s"ALTER TABLE delta.`$tempPath` RENAME COLUMN a TO `$newColumnName`")
+      assert(readDeltaTable(tempPath).schema(newColumnName).dataType === ShortType)
+      checkAnswer(
+        sql(s"SELECT `$newColumnName` FROM delta.`$tempPath`"), Seq(Row(1), Row(2))
+      )
+      append(Seq(3).toDF(newColumnName).select(col(newColumnName).cast(ShortType)))
+      checkAnswer(
+        sql(s"SELECT `$newColumnName` FROM delta.`$tempPath`"), Seq(Row(1), Row(2), Row(3))
+      )
+
+      // Change column type again, add more data.
+      sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN `$newColumnName` TYPE int")
+      assert(
+        readDeltaTable(tempPath).schema(newColumnName).dataType === IntegerType)
+      append(Seq(4).toDF(newColumnName).select(col(newColumnName).cast(IntegerType)))
+      checkAnswer(
+        sql(s"SELECT `$newColumnName` FROM delta.`$tempPath`"),
+        Seq(Row(1), Row(2), Row(3), Row(4))
+      )
+
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+        // All files except the last one should be rewritten.
+        expectedNumFilesRewritten = 3,
+        expectedColumnTypes = Map(newColumnName -> IntegerType)
+      )
+    }
+
+    test(s"dropped column shouldn't cause files to be rewritten, mappingMode=$mappingMode") {
+      withSQLConf((DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, mappingMode)) {
+        sql(s"CREATE TABLE delta.`$tempPath` (a byte, b byte) USING DELTA")
+      }
+      sql(s"INSERT INTO delta.`$tempPath` VALUES (1, 1)")
+      sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN b TYPE int")
+      sql(s"INSERT INTO delta.`$tempPath` VALUES (2, 2)")
+      sql(s"ALTER TABLE delta.`$tempPath` DROP COLUMN b")
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 0,
+        expectedColumnTypes = Map("a" -> ByteType)
+      )
+    }
+
+    test(s"swap column names and change type, mappingMode=$mappingMode") {
+      withSQLConf((DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey, mappingMode)) {
+        sql(s"CREATE TABLE delta.`$tempPath` (a byte, b byte) USING DELTA")
+      }
+      sql(s"INSERT INTO delta.`$tempPath` VALUES (1, 1)")
+      sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN b TYPE int")
+      sql(s"INSERT INTO delta.`$tempPath` VALUES (2, 2)")
+      sql(s"ALTER TABLE delta.`$tempPath` RENAME COLUMN b TO c")
+      sql(s"ALTER TABLE delta.`$tempPath` RENAME COLUMN a TO b")
+      sql(s"ALTER TABLE delta.`$tempPath` RENAME COLUMN c TO a")
+      sql(s"INSERT INTO delta.`$tempPath` VALUES (3, 3)")
+      dropTableFeature(
+        expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+        expectedNumFilesRewritten = 1,
+        expectedColumnTypes = Map(
+          "a" -> IntegerType,
+          "b" -> ByteType
+        )
+      )
+    }
   }
 }
 
@@ -1377,6 +1711,22 @@ trait DeltaTypeWideningConstraintsTests {
             "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
         ))
       }
+    }
+  }
+
+  test("add constraint after type change then RESTORE") {
+    withTable("t") {
+      sql("CREATE TABLE t (a byte) USING DELTA")
+      sql("INSERT INTO t VALUES (2)")
+      sql("ALTER TABLE t CHANGE COLUMN a TYPE INT")
+      sql("INSERT INTO t VALUES (5)")
+      checkAnswer(sql("SELECT a, hash(a) FROM t"), Seq(Row(2, 1765031574), Row(5, 1023896466)))
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a) > 0)")
+      // Constraints are stored in the table metadata, RESTORE removes the constraint so the type
+      // change can't get in the way.
+      sql(s"RESTORE TABLE t VERSION AS OF 1")
+      sql("INSERT INTO t VALUES (1)")
+      checkAnswer(sql("SELECT a, hash(a) FROM t"), Seq(Row(2, 1765031574), Row(1, -559580957)))
     }
   }
 }
