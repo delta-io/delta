@@ -76,11 +76,31 @@ class CheckConstraintsSuite extends QueryTest
 
   test("constraint must be boolean") {
     withTestTable { table =>
-      val e = intercept[AnalysisException] {
-        sql(s"ALTER TABLE $table ADD CONSTRAINT integerVal CHECK (3)")
-      }
-      errorContains(e.getMessage,
-        "CHECK constraint 'integerVal' (3) should be a boolean expression.")
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $table ADD CONSTRAINT integerVal CHECK (3)")
+        },
+        errorClass = "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
+        parameters = Map(
+          "name" -> "integerVal",
+          "expr" -> "3"
+        )
+      )
+    }
+  }
+
+  test("can't add constraint referencing non-existent columns") {
+    withTestTable { table =>
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $table ADD CONSTRAINT c CHECK (does_not_exist)")
+        },
+        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        parameters = Map(
+          "objectName" -> "`does_not_exist`",
+          "proposal" -> "`text`, `num`"
+        )
+      )
     }
   }
 
