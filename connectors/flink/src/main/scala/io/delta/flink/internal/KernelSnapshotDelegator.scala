@@ -65,18 +65,6 @@ class KernelSnapshotDelegator(
     standaloneDeltaLog: DeltaLogImpl)
   extends SnapshotImpl(hadoopConf, path, -1, LogSegment.empty(path), -1, standaloneDeltaLog, -1) {
 
-  // For backward compatibility
-  def this(
-    kernelSnapshot: SnapshotImplKernel,
-    kernelSnapshotWrapper: KernelSnapshotWrapper,
-    hadoopConf: Configuration,
-    path: Path,
-    version: Long,
-    kernelDeltaLog: KernelDeltaLogDelegator,
-    standaloneDeltaLog: DeltaLogImpl) =
-    this(DefaultEngine.create(hadoopConf), kernelSnapshot, kernelSnapshotWrapper, hadoopConf, path,
-      version, kernelDeltaLog, standaloneDeltaLog)
-
   lazy val standaloneSnapshot: SnapshotImpl = standaloneDeltaLog.getSnapshotForVersionAsOf(getVersion())
 
   /**
