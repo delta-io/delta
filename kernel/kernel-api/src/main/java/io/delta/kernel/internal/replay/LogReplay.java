@@ -129,7 +129,7 @@ public class LogReplay {
         this.dataPath = dataPath;
         this.logSegment = logSegment;
         this.protocolAndMetadata =
-                loadTableProtocolAndMetadata(snapshotHint, snapshotVersion, engine);
+                loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
     }
 
     /////////////////
@@ -144,8 +144,8 @@ public class LogReplay {
         return this.protocolAndMetadata._2;
     }
 
-    public Optional<Long> getLatestTransactionIdentifier(String applicationId, Engine engine) {
-        return loadLatestTransactionVersion(applicationId, engine);
+    public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
+        return loadLatestTransactionVersion(engine, applicationId);
     }
 
     /**
@@ -164,9 +164,9 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
+            Engine engine,
             boolean shouldReadStats,
-            Optional<Predicate> checkpointPredicate,
-            Engine engine) {
+            Optional<Predicate> checkpointPredicate) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
                 new ActionsIterator(engine,
                         logSegment.allLogFilesReversed(),
@@ -188,9 +188,9 @@ public class LogReplay {
      * just use the P and/or M from the hint.
      */
     protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+            Engine engine,
             Optional<SnapshotHint> snapshotHint,
-            long snapshotVersion,
-            Engine engine) {
+            long snapshotVersion) {
 
         // Exit early if the hint already has the info we need
         if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
@@ -286,7 +286,7 @@ public class LogReplay {
         );
     }
 
-    private Optional<Long> loadLatestTransactionVersion(String applicationId, Engine engine) {
+    private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
                      new ActionsIterator(engine,
                              logSegment.allLogFilesReversed(),

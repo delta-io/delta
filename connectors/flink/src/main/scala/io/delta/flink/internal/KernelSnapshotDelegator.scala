@@ -53,6 +53,7 @@ import io.delta.standalone.internal.util.ConversionUtils
  *  - allFilesScala (only used in verifySchemaCompatibility)
  */
 class KernelSnapshotDelegator(
+    engine: Engine,
     kernelSnapshot: SnapshotImplKernel,
     // This needs to be an argument to the constructor since the constructor of SnapshotImpl might call back
     // into things like `metadataScala`, and this needs to be already initalized for that
@@ -61,8 +62,7 @@ class KernelSnapshotDelegator(
     path: Path,
     override val version: Long,
     kernelDeltaLog: KernelDeltaLogDelegator,
-    standaloneDeltaLog: DeltaLogImpl,
-    engine: Engine)
+    standaloneDeltaLog: DeltaLogImpl)
   extends SnapshotImpl(hadoopConf, path, -1, LogSegment.empty(path), -1, standaloneDeltaLog, -1) {
 
   // For backward compatibility
@@ -74,8 +74,8 @@ class KernelSnapshotDelegator(
     version: Long,
     kernelDeltaLog: KernelDeltaLogDelegator,
     standaloneDeltaLog: DeltaLogImpl) =
-    this(kernelSnapshot, kernelSnapshotWrapper, hadoopConf, path, version, kernelDeltaLog,
-      standaloneDeltaLog, DefaultEngine.create(hadoopConf))
+    this(DefaultEngine.create(hadoopConf), kernelSnapshot, kernelSnapshotWrapper, hadoopConf, path,
+      version, kernelDeltaLog, standaloneDeltaLog)
 
   lazy val standaloneSnapshot: SnapshotImpl = standaloneDeltaLog.getSnapshotForVersionAsOf(getVersion())
 
@@ -94,7 +94,7 @@ class KernelSnapshotDelegator(
 
   // provide a path to use the faster txn lookup in kernel
   def getLatestTransactionVersion(id: String): Option[Long] = {
-    val versionJOpt = kernelSnapshot.getLatestTransactionVersion(id, engine)
+    val versionJOpt = kernelSnapshot.getLatestTransactionVersion(engine, id)
     if (versionJOpt.isPresent) {
       Some(versionJOpt.get)
     } else {

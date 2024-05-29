@@ -127,12 +127,12 @@ public class ScanImpl implements Scan {
         // while constructing the table state.
         CloseableIterator<FilteredColumnarBatch> scanFileIter =
                 logReplay.getAddFilesAsColumnarBatches(
+                        engine,
                         shouldReadStats,
                         getPartitionsFilters().map(predicate ->
                                 rewritePartitionPredicateOnCheckpointFileSchema(
                                         predicate,
-                                        partitionColToStructFieldMap.get())),
-                                        engine);
+                                        partitionColToStructFieldMap.get())));
 
         // Apply partition pruning
         scanFileIter = applyPartitionPruning(engine, scanFileIter);

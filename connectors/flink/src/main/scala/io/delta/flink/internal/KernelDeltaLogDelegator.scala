@@ -78,14 +78,14 @@ class KernelDeltaLogDelegator(
     // called on a standard standalone snapshot.
     val kernelSnapshotWrapper = new KernelSnapshotWrapper(kernelSnapshot)
     currKernelSnapshot = Some(new KernelSnapshotDelegator(
+      engine,
       kernelSnapshot,
       kernelSnapshotWrapper,
       hadoopConf,
       logPath,
       kernelSnapshot.getVersion(engine), // note: engine isn't used
       this,
-      standaloneDeltaLog,
-      engine
+      standaloneDeltaLog
     ))
     currKernelSnapshot.get
   }
