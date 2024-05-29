@@ -278,12 +278,13 @@ private[internal] object Checkpoints extends Logging {
           // The file has been written by a zombie task. We can just use this checkpoint file
           // rather than failing a Delta commit.
         } else {
+          logError(s"[CHECKPOINT_WRITE_ERROR] path=$writtenPath", e)
           throw e
         }
       case other: Throwable =>
         // Make sure the log the exception before throwing it, so that we know why the checkpoint
         // write failed.
-        logError(s"Error writing checkpoint at $writtenPath", other)
+        logError(s"[CHECKPOINT_WRITE_ERROR] path=$writtenPath", other)
         throw other
     } finally {
       writer.close()
@@ -298,7 +299,7 @@ private[internal] object Checkpoints extends Logging {
         if (fs.rename(src, dest)) {
           renameDone = true
         } else {
-          val msg = s"Cannot rename $src to $dest"
+          val msg = s"[CHECKPOINT_WRITE_ERROR] Cannot rename $src to $dest"
           // There should be only one writer writing the checkpoint file, so there must be
           // something wrong here.
           logError(msg)
@@ -317,10 +318,9 @@ private[internal] object Checkpoints extends Logging {
     }
 
     if (numOfFiles != snapshot.numOfFiles) {
-      val msg = s"Number of `add` files written to checkpoint file ($numOfFiles) doesn't match " +
-          s"the number of `add` files contained in the snapshot (${snapshot.numOfFiles}). " +
-          s"Skipping creating the checkpoint.\nCheckpoint file: `$path`." +
-          (if (writtenPath != path) s"\nTemporary file: `$writtenPath`" else "")
+      val msg = s"[CHECKPOINT_WRITE_ERROR] path=$path. Number of `add` files written to " +
+          s"checkpoint file ($numOfFiles) doesn't match the number of `add` files contained in " +
+          s"the snapshot (${snapshot.numOfFiles}). Skipping creating the checkpoint."
       logError(msg)
       throw new IllegalStateException(msg)
     }
