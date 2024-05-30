@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.clustering
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog}
+import org.apache.spark.sql.delta.{ClusteringTableFeature, DeltaAnalysisException, DeltaLog, TableFeature}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 
@@ -81,10 +81,12 @@ class ClusteringTableFeatureSuite extends SparkFunSuite
     }
   }
 
-   test("alter table cluster by unpartitioned non-clustered tables is supported.") {
+   test("alter table cluster by unpartitioned tables is supported.") {
     val table = "tbl"
     withTable(table) {
       sql(s"CREATE TABLE $table (a INT, b STRING) USING DELTA")
+      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
+      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
       val clusterByLogs = Log4jUsageLogger.track {
         sql(s"ALTER TABLE $table CLUSTER BY (a)")
       }.filter { e =>
@@ -96,6 +98,10 @@ class ClusteringTableFeatureSuite extends SparkFunSuite
       assert(!clusterByLogJson("isClusterByNoneSkipped").asInstanceOf[Boolean])
       val (_, finalSnapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
       assert(ClusteredTableUtils.isSupported(finalSnapshot.protocol))
+      val dependentFeatures = TableFeature.getDependentFeatures(ClusteringTableFeature)
+      dependentFeatures.foreach { feature =>
+        assert(finalSnapshot.protocol.isFeatureSupported(feature))
+      }
 
       withSQLConf(SQLConf.MAX_RECORDS_PER_FILE.key -> "2") {
         val df = (1 to 4).map(i => (i, i.toString)).toDF("a", "b")
