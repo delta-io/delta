@@ -750,6 +750,21 @@ trait ClusteredTableDDLSuiteBase
     }
   }
 
+  test("alter table set tbl properties not allowed for clusteringColumns") {
+    withClusteredTable(testTable, "a INT, b STRING", "a") {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        sql(s"""
+           |ALTER TABLE $testTable SET TBLPROPERTIES
+           |('${ClusteredTableUtils.PROP_CLUSTERING_COLUMNS}' = '[[\"b\"]]')
+           |""".stripMargin)
+      }
+      checkError(
+        e,
+        errorClass = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        parameters = Map("prop" -> "clusteringColumns"))
+    }
+  }
+
   testSparkMasterOnly("Variant is not supported") {
     val e = intercept[DeltaAnalysisException] {
       createOrReplaceClusteredTable("CREATE", testTable, "id long, v variant", "v")

@@ -148,6 +148,8 @@ case class AlterTableSetPropertiesDeltaCommand(
         case k if k == TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature) =>
           throw DeltaErrors.alterTableSetClusteringTableFeatureException(
             ClusteringTableFeature.name)
+        case k if k == ClusteredTableUtils.PROP_CLUSTERING_COLUMNS =>
+          throw DeltaErrors.cannotModifyTableProperty(k)
         case _ =>
           true
       }.toMap
