@@ -154,9 +154,7 @@ lazy val commonSettings = Seq(
   testOptions += Tests.Argument("-oF"),
 
   // Unidoc settings: by default dont document any source file
-  unidocSourceFilePatterns := Nil,
-  unidoc in Compile := {},
-  unidoc in Test := {}
+  unidocSourceFilePatterns := Nil
 )
 
 /**
@@ -268,8 +266,8 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
   ).configureUnidoc(
-    generatedJavaDoc = getSparkVersion() == SPARK_MASTER_VERSION,
-    generateScalaDoc = getSparkVersion() == SPARK_MASTER_VERSION
+    generatedJavaDoc = false,
+    generateScalaDoc = false
   )
 
 lazy val connectClient = (project in file("spark-connect/client"))
@@ -355,8 +353,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
       }
     }.taskValue
   ).configureUnidoc(
-    generatedJavaDoc = getSparkVersion() == SPARK_MASTER_VERSION,
-    generateScalaDoc = getSparkVersion() == SPARK_MASTER_VERSION
+    generatedJavaDoc = false,
+    generateScalaDoc = false
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
