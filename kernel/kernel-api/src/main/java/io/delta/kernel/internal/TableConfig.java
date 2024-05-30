@@ -64,7 +64,7 @@ public class TableConfig<T> {
             "delta.logRetentionDuration",
             "interval 30 days",
             IntervalParserUtils::safeParseIntervalAsMillis,
-            value -> value >= 0,
+            value -> true,
             "needs to be provided as a calendar interval such as '2 weeks'. Months "
                 + "and years are not accepted. You may specify '365 days' for a year instead."
         );

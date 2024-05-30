@@ -114,7 +114,7 @@ public final class FileNames {
     }
 
     public static Path checkpointPrefix(Path path, long version) {
-        return new Path(path, String.format("%20d.checkpoint", version));
+        return new Path(path, String.format("%020d.checkpoint", version));
     }
 
     /**

@@ -209,14 +209,16 @@ public class SnapshotManager {
             logger.info("{}: Starting the deletion of log files older than {}",
                 tablePath, fileCutOffTime);
             int numDeleted = 0;
-            CloseableIterator<FileStatus> files =
-                listExpiredDeltaLogs(engine, checkpointMetaData, fileCutOffTime);
-            while (files.hasNext()) {
-                if(engine.getFileSystemClient().delete(files.next().getPath())) {
-                    numDeleted++;
+            try(CloseableIterator<FileStatus> files =
+                listExpiredDeltaLogs(engine, checkpointMetaData, fileCutOffTime)) {
+                while (files.hasNext()) {
+                    if(engine.getFileSystemClient().delete(files.next().getPath())) {
+                        numDeleted++;
+                    }
                 }
             }
-            logger.info("Deleted {} log files older than {}", numDeleted, fileCutOffTime);
+            logger.info("{}: Deleted {} log files older than {}",
+                tablePath, numDeleted, fileCutOffTime);
         }
     }
 
@@ -224,12 +226,11 @@ public class SnapshotManager {
         CheckpointMetaData checkpointMetaData, Long fileCutOffTime) throws IOException {
         long threshold = checkpointMetaData.version - 1;
         return engine.getFileSystemClient()
-            .listFrom(FileNames.checkpointPrefix(tablePath, 0).getName()).filter(f -> {
-                return (FileNames.isCheckpointFile(f.getPath()) ||
-                 FileNames.isCommitFile(f.getPath()))
-                    && FileNames.getFileVersion(new Path(f.getPath())) <= threshold
-                        && f.getModificationTime() <= fileCutOffTime;
-            });
+            .listFrom(FileNames.checkpointPrefix(logPath, 0).toUri().getPath())
+            .filter(f -> (FileNames.isCheckpointFile(f.getPath()) ||
+                FileNames.isCommitFile(f.getPath()))
+                && FileNames.getFileVersion(new Path(f.getPath())) <= threshold
+                && f.getModificationTime() <= fileCutOffTime);
     }
 
     ////////////////////
