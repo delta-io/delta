@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.internal
 
-import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
+import io.delta.kernel.data.{ArrayValue, ColumnVector}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
@@ -23,7 +23,7 @@ import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
-import java.util
+import java.util.{HashMap => JavaHashMap}
 import java.util.{Collections, Optional}
 import scala.collection.JavaConverters._
 
@@ -110,14 +110,12 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   def createTestMetadata(withAppendOnly: Boolean = false): Metadata = {
-    val config = new util.HashMap[String, String]() {
-      {
-        if (withAppendOnly) {
-          put("delta.appendOnly", "true")
-        } else {
-          put("delta.appendOnly", "false")
-        }
-      }
+    val config = new JavaHashMap[String, String]()
+    if (withAppendOnly) {
+      config.put("delta.appendOnly", "true")
+
+    } else {
+      config.put("delta.appendOnly", "false")
     }
 
     new Metadata(
