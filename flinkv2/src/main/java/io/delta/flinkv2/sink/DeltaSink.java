@@ -6,10 +6,10 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.types.StructType;
 import org.apache.flink.api.connector.sink2.*;
-import org.apache.flink.core.fs.Path;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.streaming.api.connector.sink2.CommittableMessage;
 import org.apache.flink.streaming.api.connector.sink2.SupportsPreCommitTopology;
@@ -36,13 +36,9 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
     // Member fields //
     ///////////////////
 
-    private final Engine engine;
-    private final Table table;
-
-    private final StructType writeOperatorSchema;
+    private final String tablePath;
+    private final RowType writeOperatorFlinkSchema;
     private final List<String> userProvidedPartitionColumns;
-    private boolean isCreateNewTable;
-    private final Transaction mockTxn;
 
     private DeltaSink(final String tablePath, final RowType rowType, final List<String> userProvidedPartitionColumns) {
         System.out.println(
@@ -53,47 +49,32 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
                 userProvidedPartitionColumns)
         );
 
-        this.engine = DefaultEngine.create(new Configuration());
-        this.table = Table.forPath(engine, tablePath);
-        this.writeOperatorSchema = SchemaUtils.toDeltaDataType(rowType);
+        this.tablePath = tablePath;
+        this.writeOperatorFlinkSchema = rowType;
         this.userProvidedPartitionColumns = userProvidedPartitionColumns;
 
         System.out.println(
-            String.format("Scott > DeltaSink > constructor :: writeOperatorSchema=%s", writeOperatorSchema)
+            String.format("Equivalent Delta schema is: %s", SchemaUtils.toDeltaDataType(rowType))
         );
 
         try {
+            final Engine engine = DefaultEngine.create(new Configuration());
+            final Table table = Table.forPath(engine, tablePath);
             final Snapshot latestSnapshot = table.getLatestSnapshot(engine);
             final StructType tableSchema = latestSnapshot.getSchema(engine);
-            if (!tableSchema.equivalent(writeOperatorSchema)) {
+            final StructType writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(rowType);
+            if (!tableSchema.equivalent(writeOperatorDeltaSchema)) {
                 throw new RuntimeException(
                     String.format(
-                        "Table Schema does not match Write Operator Schema.\nTable schema: %s\nWrite Operator schema: %s",
+                        "Table Schema does not match Write Operator Delta Schema.\nTable schema: %s\nWrite Operator Delta schema: %s",
                         tableSchema,
-                        writeOperatorSchema
+                        writeOperatorDeltaSchema
                     )
                 );
             }
-            this.isCreateNewTable = false;
-        } catch (Exception e) {
-           this.isCreateNewTable = true;
+        } catch (TableNotFoundException ex) {
+            // table doesn't exist
         }
-
-        TransactionBuilder txnBuilder =
-            table.createTransactionBuilder(
-                engine,
-                "FlinkV2",
-                this.isCreateNewTable ? Operation.CREATE_TABLE : Operation.WRITE
-            );
-
-        if (isCreateNewTable) {
-            // For a new table set the table schema in the transaction builder
-            txnBuilder = txnBuilder
-                .withSchema(engine, writeOperatorSchema)
-                .withPartitionColumns(engine, userProvidedPartitionColumns);
-        }
-
-        this.mockTxn = txnBuilder.build(engine);
     }
 
     /////////////////
@@ -103,16 +84,13 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
     @Override
     public SinkWriter<RowData> createWriter(InitContext context) throws IOException {
         System.out.println("Scott > DeltaSink > createWriter");
-        return new DeltaSinkWriter(
-            mockTxn.getTransactionState(engine),
-            mockTxn.getPartitionColumns(engine)
-        );
+        return new DeltaSinkWriter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
     }
 
     @Override
     public Committer<Row> createCommitter(CommitterInitContext context) throws IOException {
         System.out.println("Scott > DeltaSink > createCommitter");
-        return new DeltaCommitter(table.getPath(engine), writeOperatorSchema, userProvidedPartitionColumns);
+        return new DeltaCommitter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
     }
 
     @Override

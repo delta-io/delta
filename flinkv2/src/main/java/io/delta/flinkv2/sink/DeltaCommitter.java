@@ -1,5 +1,6 @@
 package io.delta.flinkv2.sink;
 
+import io.delta.flinkv2.utils.SchemaUtils;
 import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
@@ -8,6 +9,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import org.apache.flink.api.connector.sink2.Committer;
+import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
@@ -31,10 +33,10 @@ public class DeltaCommitter implements Committer<Row> {
     private final StructType writeOperatorSchema;
     private final List<String> partitionColumns;
 
-    public DeltaCommitter(String tablePath, StructType writeOperatorSchema, List<String> partitionColumns) {
+    public DeltaCommitter(String tablePath, RowType writeOperatorSchema, List<String> partitionColumns) {
         this.committerId = java.util.UUID.randomUUID().toString();
         this.tablePath = tablePath;
-        this.writeOperatorSchema = writeOperatorSchema;
+        this.writeOperatorSchema = SchemaUtils.toDeltaDataType(writeOperatorSchema);
         this.partitionColumns = partitionColumns;
 
         System.out.println(
