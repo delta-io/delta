@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.functions.{max, min}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -119,6 +120,26 @@ class ClusteringTableFeatureSuite extends SparkFunSuite
         val files1 = deltaLog.update().allFiles.collect().toSet
         assert(files1.size == 2)
         assert(files1.forall(_.clusteringProvider.contains(ClusteredTableUtils.clusteringProvider)))
+
+        val tableLocation = deltaLog.dataPath.toString
+        // Check if min-max intervals of 'a' are sorted
+        val minMaxIntervals = files1.map { file =>
+          val df = spark.read.format("parquet").load(s"$tableLocation/${file.path}")
+          val minMax = df.agg(min("a").as("min_a"), max("a").as("max_a")).collect().head
+          (minMax.getAs[Int]("min_a"), minMax.getAs[Int]("max_a"))
+        }
+
+        val sortedAsc = minMaxIntervals.sliding(2).forall {
+          case Seq((_, maxA1), (minA2, _)) => maxA1.asInstanceOf[Int] < minA2.asInstanceOf[Int]
+          case _ => true
+        }
+
+        val sortedDesc = minMaxIntervals.sliding(2).forall {
+          case Seq((minA1, _), (_, maxA2)) => minA1.asInstanceOf[Int] > maxA2.asInstanceOf[Int]
+          case _ => true
+        }
+
+        assert(sortedAsc || sortedDesc, "Min-max intervals for column 'a' are not sorted.")
       }
     }
   }
