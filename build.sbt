@@ -106,7 +106,7 @@ def getSparkVersion(): String = {
       SPARK_MASTER_VERSION
     case _ =>
       throw new IllegalArgumentException(s"Invalid sparkVersion: $input. Must be one of " +
-          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}.")
+          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
   }
 }
 
@@ -207,7 +207,7 @@ def runTaskOnlyOnSparkMaster[T](
     Def.task {
       // scalastyle:off println
       println(s"Project $projectName: Skipping `$taskName` as Spark version " +
-        s"${getSparkVersion()} does not equal $SPARK_MASTER_VERSION")
+        s"${getSparkVersion()} does not equal $SPARK_MASTER_VERSION.")
       // scalastyle:on println
       emptyValue
     }
