@@ -45,6 +45,7 @@ jobs:
         if: steps.git-diff.outputs.diff
       - name: Run Spark Master tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
+        # NOTE: in this branch, the default sparkVersion is the SPARK_MASTER_VERSION
         run: |
-          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
+          TEST_PARALLELISM_COUNT=2 build/sbt "++ ${{ matrix.scala }}" clean spark/test
         if: steps.git-diff.outputs.diff

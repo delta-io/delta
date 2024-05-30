@@ -309,7 +309,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     checkTable(
       path = path,
       expectedAnswer = expectedAnswer,
-      readCols = readCols
+      readCols = readCols.toSeq
     )
   }
 
