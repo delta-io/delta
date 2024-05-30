@@ -35,11 +35,13 @@ import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.cre
  */
 class ArrayColumnReader extends RepeatedValueConverter {
     private final ArrayType typeFromClient;
+    private final boolean primitiveTypeFromFile;
 
     ArrayColumnReader(int initialBatchSize, ArrayType typeFromClient, GroupType typeFromFile) {
         super(
             initialBatchSize,
             createElementConverter(initialBatchSize, typeFromClient, typeFromFile));
+        this.primitiveTypeFromFile = typeFromFile.getType(0).isPrimitive();
         this.typeFromClient = typeFromClient;
     }
 
@@ -57,7 +59,10 @@ class ArrayColumnReader extends RepeatedValueConverter {
 
     @Override
     public Converter getConverter(int fieldIndex) {
-        return collector.getConverter(fieldIndex);
+        if (primitiveTypeFromFile) {
+            return collector.getConverter(fieldIndex);
+        }
+        return super.getConverter(fieldIndex);
     }
 
     /**
@@ -85,16 +90,15 @@ class ArrayColumnReader extends RepeatedValueConverter {
         checkArgument(typeFromFile.getFieldCount() == 1,
                 "Expected exactly one field in the array type, but got: " + typeFromFile);
         Type type = typeFromFile.getType(0);
-        Type targetType;
         if (type.isPrimitive()) {
-            targetType = type;
+            return createConverter(initialBatchSize, typeFromClient.getElementType(), type);
         } else {
-            GroupType repeatedGroup = typeFromFile.getType(0).asGroupType();
+            GroupType repeatedGroup = type.asGroupType();
             // TODO: handle the legacy 2-level list physical format
             checkArgument(repeatedGroup.getFieldCount() == 1,
                 "Expected exactly one field in the repeated group");
-            targetType = repeatedGroup.getType(0);
+            return createConverter(initialBatchSize, typeFromClient.getElementType(),
+                repeatedGroup.getType(0));
         }
-        return createConverter(initialBatchSize, typeFromClient.getElementType(), targetType);
     }
 }
