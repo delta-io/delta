@@ -38,6 +38,7 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
 val SPARK_MASTER_VERSION = "4.0.0-preview1"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+sqlDeltaImport / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -178,14 +179,13 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    )
+    ),
 
     // Java-/Scala-/Uni-Doc Settings
-    // This isn't working yet against Spark Master.
-    // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
-    //    generating delta-spark unidoc compiles delta-iceberg
-    // 2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
-    //    issue above.
+    scalacOptions ++= Seq(
+      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+    ),
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
 }
 
@@ -267,10 +267,7 @@ lazy val spark = (project in file("spark"))
     },
     TestParallelization.settings,
   )
-  .configureUnidoc(
-    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
-    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION
-  )
+  .configureUnidoc(generateScalaDoc = true)
 
 lazy val contribs = (project in file("contribs"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -1153,13 +1150,13 @@ lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
     Test / publishArtifact := false,
     libraryDependencies ++= Seq(
       "io.netty" % "netty-buffer"  % "4.1.63.Final" % "test",
-      "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % defaultSparkVersion % "provided",
+      "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % sparkVersion.value % "provided",
       "org.rogach" %% "scallop" % "3.5.1",
       "org.scalatest" %% "scalatest" % scalaTestVersionForConnectors % "test",
       "com.h2database" % "h2" % "1.4.200" % "test",
-      "org.apache.spark" % ("spark-catalyst_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % defaultSparkVersion % "test",
-      "org.apache.spark" % ("spark-core_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % defaultSparkVersion % "test",
-      "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % defaultSparkVersion % "test"
+      "org.apache.spark" % ("spark-catalyst_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % sparkVersion.value % "test",
+      "org.apache.spark" % ("spark-core_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % sparkVersion.value % "test",
+      "org.apache.spark" % ("spark-sql_" + sqlDeltaImportScalaVersion(scalaBinaryVersion.value)) % sparkVersion.value % "test"
     )
   )
 

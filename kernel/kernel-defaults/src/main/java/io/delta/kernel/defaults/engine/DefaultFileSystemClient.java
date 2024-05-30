@@ -29,8 +29,6 @@ import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.util.Utils;
 
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
-
 /**
  * Default implementation of {@link FileSystemClient} based on Hadoop APIs. It takes a Hadoop
  * {@link Configuration} object to interact with the file system. The following optional
@@ -73,7 +71,8 @@ public class DefaultFileSystemClient
     @Override
     public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
         Path path = new Path(filePath);
-        LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
+        LogStore logStore = io.delta.kernel.defaults.internal.logstore.LogStoreProvider.getLogStore(
+            hadoopConf, path.toUri().getScheme());
 
         return Utils.toCloseableIterator(logStore.listFrom(path, hadoopConf))
                 .map(hadoopFileStatus ->
