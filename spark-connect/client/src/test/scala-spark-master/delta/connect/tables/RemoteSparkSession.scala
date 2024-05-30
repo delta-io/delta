@@ -27,9 +27,9 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
   private val buildLocation = System.getProperty("delta.test.home")
   private val deltaConnectJar = s"$buildLocation/" +
-    s"connect/server/target/scala-2.13/delta-connect-server-assembly-3.2.1-SNAPSHOT.jar"
+    s"spark-connect/server/target/scala-2.13/delta-connect-server-assembly-3.2.1-SNAPSHOT.jar"
 
-  private val resources = s"$buildLocation/connect/client/target/scala-2.13/resource_managed/test"
+  private val resources = s"$buildLocation/spark-connect/client/target/scala-2.13/resource_managed/test"
   private val sparkConnectJar = s"$resources/spark-connect.jar"
   private val sparkSubmit = s"$resources/spark/spark-4.0.0-preview1-bin-hadoop3/bin/spark-submit"
 
@@ -38,7 +38,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     command += sparkSubmit
     command += "--driver-class-path" += s"$sparkConnectJar:$deltaConnectJar"
     command += "--jars" += sparkConnectJar
-    command += "--class" += "org.apache.spark.sql.connect.delta.SimpleDeltaConnectService"
+    command += "--class" += "io.delta.tables.SimpleDeltaConnectService"
     command += "--conf" += s"spark.connect.grpc.binding.port=$serverPort"
     command += "--conf" += "spark.connect.extensions.relation.classes=" +
       "org.apache.spark.sql.connect.delta.DeltaRelationPlugin"
