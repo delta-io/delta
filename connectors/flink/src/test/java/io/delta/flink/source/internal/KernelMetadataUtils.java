@@ -2,6 +2,7 @@ package io.delta.flink.source.internal;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import io.delta.kernel.data.ArrayValue;
@@ -50,6 +51,8 @@ public class KernelMetadataUtils {
 
     public static Metadata getKernelMetadata() {
         StructType schema = getSchema();
+        Map<String, String> config = new HashMap<>();
+        config.put("1", "2");
         return new io.delta.kernel.internal.actions.Metadata(
             "id",
             Optional.ofNullable("name"),
@@ -92,24 +95,7 @@ public class KernelMetadataUtils {
                 }
             },
             Optional.ofNullable(1234L),
-            new MapValue() { // conf
-                @Override
-                public int getSize() {
-                    return 1;
-                }
-                @Override
-                public ColumnVector getKeys() {
-                    return DefaultGenericVector.fromArray(
-                        IntegerType.INTEGER, new Integer[]{new Integer(1)}
-                    );
-                }
-                @Override
-                public ColumnVector getValues() {
-                    return DefaultGenericVector.fromArray(
-                        IntegerType.INTEGER, new Integer[]{new Integer(2)}
-                    );
-                }
-            }
+            config
         );
     }
 }
