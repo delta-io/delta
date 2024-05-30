@@ -174,7 +174,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
 
     // Java-/Scala-/Uni-Doc Settings
     scalacOptions ++= Seq(
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+      // "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
     ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
