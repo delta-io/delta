@@ -14,9 +14,7 @@
 # limitations under the License.
 #
 
-# mypy: disable-error-code="union-attr"
-# mypy: disable-error-code="attr-defined"
-# type: ignore[union-attr]
+# mypy: disable-error-code="union-attr, attr-defined"
 
 import unittest
 import os
@@ -490,7 +488,7 @@ class DeltaTableTestsMixin:
         target_path = os.path.join(self.tempFile, "target")
         spark = self.spark
 
-        def f(spark):
+        def f(spark):  # type: ignore[no-untyped-def]
             spark.range(20) \
                 .withColumn("x", col("id")) \
                 .withColumn("y", col("id")) \
