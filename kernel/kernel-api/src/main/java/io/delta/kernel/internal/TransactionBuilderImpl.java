@@ -52,6 +52,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     private Optional<List<String>> partitionColumns = Optional.empty();
     private Optional<SetTransaction> setTxnOpt = Optional.empty();
     private Optional<Map<String, String>> configuration = Optional.empty();
+    private boolean metadataChange = false;
 
     public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
         this.table = table;
@@ -125,10 +126,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             validateTableEvolution(snapshot);
             Metadata metadata = snapshot.getMetadata();
             configuration.map(ele -> {
+                metadataChange = true;
                 metadata.updateConfiguration(ele);
                 return null;
             });
             schema.map(ele -> {
+                metadataChange = true;
                 metadata.updateSchema(ele);
                 metadata.updateSchemaString(ele.toJson());
                 return null;
@@ -156,7 +159,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 operation,
                 snapshot.getProtocol(),
                 snapshot.getMetadata(),
-                setTxnOpt);
+                setTxnOpt,
+                metadataChange);
     }
 
 

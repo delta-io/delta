@@ -104,6 +104,13 @@ public class DefaultFileSystemClient
         return fs.mkdirs(pathObject);
     }
 
+    @Override
+    public boolean delete(String path) throws IOException {
+        Path pathObject = new Path(path);
+        FileSystem fs = pathObject.getFileSystem(hadoopConf);
+        return fs.delete(pathObject, false);
+    }
+
     private ByteArrayInputStream getStream(String filePath, int offset, int size) {
         Path path = new Path(filePath);
         try {

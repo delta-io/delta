@@ -113,6 +113,10 @@ public final class FileNames {
         return new Path(path, String.format("%020d.checkpoint.%s.%s", version, uuid, fileType));
     }
 
+    public static Path checkpointPrefix(Path path, long version) {
+        return new Path(path, String.format("%20d.checkpoint", version));
+    }
+
     /**
      * Returns the path for a V2 sidecar file with a given UUID.
      */
