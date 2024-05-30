@@ -17,10 +17,12 @@
 // scalastyle:off line.size.limit
 
 import java.nio.file.Files
+import xsbti.compile.CompileAnalysis
 import Checkstyle._
 import Mima._
 import Unidoc._
 
+import sbt.internal.inc.Analysis
 import sbtprotoc.ProtocPlugin.autoImport._
 
 // Scala versions
@@ -197,13 +199,15 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
 def runTaskOnlyOnSparkMaster[T](
     task: sbt.TaskKey[T],
     taskName: String,
+    projectName: String,
     emptyValue: => T): Def.Initialize[Task[T]] = {
   if (getSparkVersion() == SPARK_MASTER_VERSION) {
     Def.task(task.value)
   } else {
     Def.task {
       // scalastyle:off println
-      println(s"Skipping `$taskName` as Spark version ${getSparkVersion()} does not equal $SPARK_MASTER_VERSION")
+      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
+        s"${getSparkVersion()} does not equal $SPARK_MASTER_VERSION")
       // scalastyle:on println
       emptyValue
     }
@@ -217,13 +221,21 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     crossSparkSettings(),
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
-      Compile / compile,
-      "compile",
-      sbt.internal.inc.Analysis.empty.asInstanceOf[xsbti.compile.CompileAnalysis]
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-connect-common",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
     ).value,
-    Test / test := runTaskOnlyOnSparkMaster(Test / test, "test", ()).value,
-    publish := runTaskOnlyOnSparkMaster(publish, "publish", ()).value,
-    publishArtifact := getSparkVersion() == SPARK_MASTER_VERSION,
+    Test / test := runTaskOnlyOnSparkMaster(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-connect-common",
+      emptyValue = ()).value,
+    publish := runTaskOnlyOnSparkMaster(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-connect-common",
+      emptyValue = ()).value,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
       "io.grpc" % "grpc-protobuf" % grpcVersion,
@@ -248,13 +260,23 @@ lazy val connectServer = (project in file("spark-connect/server"))
     commonSettings,
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
-      Compile / compile,
-      "compile",
-      sbt.internal.inc.Analysis.empty.asInstanceOf[xsbti.compile.CompileAnalysis]
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-connect-server",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
     ).value,
-    Test / test := runTaskOnlyOnSparkMaster(Test / test, "test", ()).value,
-    publish := runTaskOnlyOnSparkMaster(publish, "publish", ()).value,
-    publishArtifact := getSparkVersion() == SPARK_MASTER_VERSION,
+    Test / test := runTaskOnlyOnSparkMaster(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-connect-server",
+      emptyValue = ()
+    ).value,
+    publish := runTaskOnlyOnSparkMaster(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-connect-server",
+      emptyValue = ()
+    ).value,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
