@@ -174,7 +174,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
 
     // Java-/Scala-/Uni-Doc Settings
     scalacOptions ++= Seq(
-      // "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
     ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
@@ -349,6 +349,9 @@ lazy val connectClient = (project in file("spark-connect/client"))
         dest.get()
       }
     }.taskValue
+  ).configureUnidoc(
+    generatedJavaDoc = getSparkVersion() == SPARK_MASTER_VERSION,
+    generateScalaDoc = getSparkVersion() == SPARK_MASTER_VERSION
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
