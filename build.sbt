@@ -265,6 +265,9 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
+  ).configureUnidoc(
+    generatedJavaDoc = getSparkVersion() == SPARK_MASTER_VERSION,
+    generateScalaDoc = getSparkVersion() == SPARK_MASTER_VERSION
   )
 
 lazy val connectClient = (project in file("spark-connect/client"))
