@@ -341,7 +341,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
       }
     }.taskValue,
     (Test / resourceGenerators) += Def.task {
-      val src = url("https://repository.apache.org/content/groups/snapshots/org/apache/spark/spark-connect_2.13/4.0.0-SNAPSHOT/spark-connect_2.13-4.0.0-20240519.001538-258.jar")
+      val src = url("https://repository.apache.org/content/groups/snapshots/org/apache/spark/spark-connect_2.13/4.0.0-SNAPSHOT/spark-connect_2.13-4.0.0-20240522.001411-260.jar")
       val dest = (Test / resourceManaged).value / "spark-connect.jar"
       if (!dest.exists()) {
         src #> dest !;
