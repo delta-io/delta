@@ -29,17 +29,20 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import xsbti.compile.CompileAnalysis
 import Checkstyle._
-import Mima._
-import Unidoc._
+import Mima.*
+import Unidoc.*
 import org.apache.commons.compress.utils.IOUtils
 
 import sbt.internal.inc.Analysis
-import sbtprotoc.ProtocPlugin.autoImport._
+import sbtprotoc.ProtocPlugin.autoImport.*
+import sbtprotoc.ProtocPlugin.ProtobufConfig
 
 // Scala versions
 val scala212 = "2.12.18"
 val scala213 = "2.13.13"
 val all_scala_versions = Seq(scala212, scala213)
+
+ProtobufConfig / version := protoVersion
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
@@ -304,6 +307,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
       val location = url("https://dist.apache.org/repos/dist/dev/spark/v4.0.0-preview1-rc1-bin/spark-4.0.0-preview1-bin-hadoop3.tgz")
       val destDir = (Test / resourceManaged).value / "spark"
       if (!destDir.exists()) {
+
         IO.createDirectory(destDir)
         val files = mutable.Buffer.empty[File]
         Using(new BufferedInputStream(location.openStream())) { bi =>
