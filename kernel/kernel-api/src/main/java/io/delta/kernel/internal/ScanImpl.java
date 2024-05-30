@@ -127,6 +127,7 @@ public class ScanImpl implements Scan {
         // while constructing the table state.
         CloseableIterator<FilteredColumnarBatch> scanFileIter =
                 logReplay.getAddFilesAsColumnarBatches(
+                        engine,
                         shouldReadStats,
                         getPartitionsFilters().map(predicate ->
                                 rewritePartitionPredicateOnCheckpointFileSchema(
