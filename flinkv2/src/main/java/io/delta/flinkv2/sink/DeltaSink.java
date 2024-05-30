@@ -32,9 +32,9 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
         return new DeltaSink(tablePath, rowType, userProvidedPartitionColumns);
     }
 
-    ///////////////////
-    // Member fields //
-    ///////////////////
+    /////////////////////////////////////////////
+    // Member fields that MUST be Serializable //
+    /////////////////////////////////////////////
 
     private final String tablePath;
     private final RowType writeOperatorFlinkSchema;

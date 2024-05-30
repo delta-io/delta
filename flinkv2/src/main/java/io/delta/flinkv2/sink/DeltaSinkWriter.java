@@ -9,6 +9,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Literal;
@@ -25,6 +26,7 @@ import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
 
@@ -33,7 +35,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
     private final Row mockTxnState;
     private final StructType writeOperatorDeltaSchema;
     private final List<String> partitionColumns;
-    private final List<RowData> buffer; // TODO: better data type? store in columnar format?
+    private List<RowData> buffer; // TODO: better data type? store in columnar format?
 
     public DeltaSinkWriter(String tablePath, RowType writeOperatorFlinkSchema, List<String> partitionColumns) {
         this.engine = DefaultEngine.create(new Configuration());
@@ -95,6 +97,8 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
         final CloseableIterator<FilteredColumnarBatch> logicalData =
             flinkRowDataToKernelColumnarBatchClosableIterator();
 
+        this.buffer = new ArrayList<>(); // flush the buffer
+
         final Map<String, Literal> partitionValues = new HashMap<>(); // TODO: partition values
 
         System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating physicalData", writerId));
@@ -125,13 +129,14 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
         while (partitionDataActions.hasNext()) {
             output.add(partitionDataActions.next());
         }
+
+        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: output is:\n%s", writerId, output.stream().map(row -> JsonUtils.rowToJson(row)).collect(Collectors.joining("\n"))));
         return output;
     }
 
     @Override
     public void flush(boolean endOfInput) throws IOException, InterruptedException {
-        // TODO: perhaps have the writer write (i.e. flush) the data here, as this can be called
-        //       multiple times?
+        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > flush", writerId));
     }
 
     @Override
@@ -170,6 +175,14 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
                 if (rowData.isNullAt(colIdx)) {
                     mutableColumnVectors[colIdx].setIsNullAt(rowIdx);
                 } else if (colDataType.equivalent(IntegerType.INTEGER)) {
+                    System.out.println(
+                        String.format(
+                            "Scott > DeltaSinkWriter[%s] > flinkRowDataToKernelColumnarBatchClosableIterator :: writing rowIdx = %s, value = %s",
+                            writerId,
+                            rowIdx,
+                            rowData.getInt(colIdx)
+                        )
+                    );
                     mutableColumnVectors[colIdx].setInt(rowIdx, rowData.getInt(colIdx));
                 } else if (colDataType.equivalent(LongType.LONG)) {
                     mutableColumnVectors[colIdx].setLong(rowIdx, rowData.getLong(colIdx));

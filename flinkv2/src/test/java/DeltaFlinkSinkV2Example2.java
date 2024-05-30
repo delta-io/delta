@@ -1,12 +1,9 @@
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.connector.sink2.Sink;
-import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.connector.datagen.source.DataGeneratorSource;
 import org.apache.flink.connector.datagen.source.GeneratorFunction;
 import org.apache.flink.streaming.api.CheckpointingMode;
-import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.data.GenericRowData;
@@ -34,7 +31,7 @@ public class DeltaFlinkSinkV2Example2 {
         GeneratorFunction<Long, RowData> generatorFunction = x -> {
             try {
                 // Introduce a small delay to control the rate of data generation
-                Thread.sleep(10);
+                Thread.sleep(30);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -47,7 +44,7 @@ public class DeltaFlinkSinkV2Example2 {
 
         DataStreamSource<RowData> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Generator Source");
 
-        stream.sinkTo(deltaSink).setParallelism(1).setMaxParallelism(1);
+        stream.sinkTo(deltaSink); // .setParallelism(1).setMaxParallelism(1);
 
         env.execute("Delta Sink Example");
     }
