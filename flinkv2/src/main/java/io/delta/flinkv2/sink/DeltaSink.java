@@ -95,7 +95,7 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<DeltaCommitta
     @Override
     public SinkWriter<RowData> createWriter(InitContext context) throws IOException {
         System.out.println("Scott > DeltaSink > createWriter");
-        return new DeltaSinkWriter();
+        return new DeltaSinkWriter(txn.getTransactionState(engine));
     }
 
     @Override

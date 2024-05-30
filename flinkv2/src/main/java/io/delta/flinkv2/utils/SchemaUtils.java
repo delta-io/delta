@@ -29,14 +29,8 @@ public class SchemaUtils {
         switch (flinkType.getTypeRoot()) {
             case BIGINT:
                 return LongType.LONG;
-            case DOUBLE:
-                return DoubleType.DOUBLE;
-            case FLOAT:
-                return FloatType.FLOAT;
             case INTEGER:
                 return IntegerType.INTEGER;
-            case SMALLINT:
-                return ShortType.SHORT;
             default:
                 throw new UnsupportedOperationException(
                     "Type not supported: " + flinkType);
