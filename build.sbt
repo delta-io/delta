@@ -155,6 +155,8 @@ lazy val commonSettings = Seq(
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
+  unidoc in Compile := {},
+  unidoc in Test := {}
 )
 
 /**
