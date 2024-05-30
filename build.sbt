@@ -106,7 +106,7 @@ def getSparkVersion(): String = {
       SPARK_MASTER_VERSION
     case _ =>
       throw new IllegalArgumentException(s"Invalid sparkVersion: $input. Must be one of " +
-          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
+          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}.")
   }
 }
 

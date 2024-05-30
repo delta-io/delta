@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.connect
+package org.apache.spark.sql.connect.delta
 
 import io.delta.connect.spark.{proto => delta_spark_proto}
 

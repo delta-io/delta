@@ -17,7 +17,6 @@
 package org.apache.spark.sql.connect.delta
 
 import com.google.protobuf
-import io.delta.connect.ImplicitProtoConversions._
 import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
@@ -25,6 +24,7 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.connect.config.Connect
+import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
 import org.apache.spark.sql.connect.service.SessionHolder
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
