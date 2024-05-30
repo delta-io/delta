@@ -22,7 +22,7 @@ import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
-import io.delta.connect.ImplicitProtoConversions._
+import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 
 /**
  * Main class for programmatically interacting with Delta tables.
