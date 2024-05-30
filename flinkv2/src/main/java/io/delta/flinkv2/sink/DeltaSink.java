@@ -99,6 +99,8 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
         System.out.println("Scott > DeltaSink > addPreCommitTopology");
         // Sets the partitioning of the DataStream so that the output values all go to the first
         // instance of the next processing operator
+        //
+        // This essentially is what gives us a global committer.
         return committables.global();
     }
 
