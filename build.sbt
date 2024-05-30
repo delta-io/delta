@@ -307,7 +307,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
       val location = url("https://dist.apache.org/repos/dist/dev/spark/v4.0.0-preview1-rc1-bin/spark-4.0.0-preview1-bin-hadoop3.tgz")
       val destDir = (Test / resourceManaged).value / "spark"
       if (!destDir.exists()) {
-
         IO.createDirectory(destDir)
         val files = mutable.Buffer.empty[File]
         Using(new BufferedInputStream(location.openStream())) { bi =>
