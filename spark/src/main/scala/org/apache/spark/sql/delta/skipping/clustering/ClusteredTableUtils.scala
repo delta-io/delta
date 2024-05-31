@@ -130,17 +130,29 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
-   * Create an optional [[DomainMetadata]] action to store clustering columns.
+   * Returns [[DomainMetadata]] action to store clustering columns.
+   * If clusterBySpecOpt is not empty (clustering columns are specified by CLUSTER BY), it creates
+   * the domain metadata based on the clustering columns.
+   * Otherwise (CLUSTER BY is not specified for REPLACE TABLE), it creates the domain metadata
+   * with empty clustering columns if a clustering domain exists.
+   *
+   * This is used for CREATE TABLE and REPLACE TABLE.
    */
-  def getDomainMetadataOptional(
+  def getDomainMetadataFromTransaction(
       clusterBySpecOpt: Option[ClusterBySpec],
-      txn: OptimisticTransaction): Option[DomainMetadata] = {
+      txn: OptimisticTransaction): Seq[DomainMetadata] = {
     clusterBySpecOpt.map { clusterBy =>
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(
         txn.protocol, txn.metadata, clusterBy)
       val clusteringColumns =
         clusterBy.columnNames.map(_.toString).map(ClusteringColumn(txn.metadata.schema, _))
-      createDomainMetadata(clusteringColumns)
+       Some(createDomainMetadata(clusteringColumns)).toSeq
+    }.getOrElse {
+      if (txn.snapshot.domainMetadata.exists(_.domain == ClusteringMetadataDomain.domainName)) {
+        Some(createDomainMetadata(Seq.empty)).toSeq
+      } else {
+        None.toSeq
+      }
     }
   }
 
@@ -149,15 +161,6 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
    */
   def createDomainMetadata(clusteringColumns: Seq[ClusteringColumn]): DomainMetadata = {
     ClusteringMetadataDomain.fromClusteringColumns(clusteringColumns).toDomainMetadata
-  }
-
-  /**
-   * Create a [[ClusteringMetadataDomain]] with the given CatalogTable's clustering column property.
-   */
-  def getDomainMetadataOptional(
-      table: CatalogTable,
-      txn: OptimisticTransaction): Option[DomainMetadata] = {
-    getDomainMetadataOptional(getClusterBySpecOptional(table), txn)
   }
 
   /**
