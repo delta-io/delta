@@ -228,7 +228,6 @@ if __name__ == "__main__":
 
         # Python tests are run only when spark group of projects are being tested.
         is_testing_spark_group = args.group is None or args.group == "spark"
-        # Python tests are skipped when using Scala 2.13 as PySpark doesn't support it.
-        is_testing_scala_212 = scala_version is None or scala_version.startswith("2.12")
-        if is_testing_spark_group and is_testing_scala_212:
+
+        if is_testing_spark_group:
             run_python_tests(root_dir)
