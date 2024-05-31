@@ -56,17 +56,17 @@ jobs:
           pyenv install 3.9
           pyenv global system 3.9
           pipenv --python 3.9 install
-          pipenv run pip install flake8==3.9.0
+          pipenv run pip install flake8==3.9.0 pypandoc==1.3.3
           pipenv run pip install black==23.9.1
           pipenv run pip install importlib_metadata==3.10.0
-          pipenv run pip install mypy==1.8.0
+          pipenv run pip install mypy==0.982
           pipenv run pip install mypy-protobuf==3.3.0
           pipenv run pip install cryptography==37.0.4
           pipenv run pip install twine==4.0.1
           pipenv run pip install wheel==0.33.4
           pipenv run pip install setuptools==41.1.0
           pipenv run pip install pydocstyle==3.0.0
-          pipenv run pip install pandas==1.4.4
+          pipenv run pip install pandas==2.0.0
           pipenv run pip install pyarrow==8.0.0
           pipenv run pip install numpy==1.21
           pipenv run pip install grpcio==1.62.0
