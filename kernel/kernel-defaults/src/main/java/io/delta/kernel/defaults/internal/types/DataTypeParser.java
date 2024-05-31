@@ -177,8 +177,8 @@ public class DataTypeParser {
 
             if (value.isNull()) {
                 builder.putNull(key);
-            } else if (value.isInt()) {
-                builder.putLong(key, value.intValue());
+            } else if (value.isIntegralNumber()) { // covers both int and long
+                builder.putLong(key, value.longValue());
             } else if (value.isDouble()) {
                 builder.putDouble(key, value.doubleValue());
             } else if (value.isBoolean()) {
