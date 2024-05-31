@@ -29,7 +29,7 @@ import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, Pa
 import org.apache.spark.sql.types.{AtomicType, StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
 
-trait ReorgTableHelper {
+trait ReorgTableHelper extends Serializable {
   /**
    * Determine whether `fileSchema` has any columns that has a type that differ from
    * `tablePhysicalSchema`.
@@ -49,19 +49,28 @@ trait ReorgTableHelper {
   /**
    * Apply a filter on the list of AddFile to only keep the files that have their physical parquet
    * schema that satisfies the given filter function.
+   *
+   * Note: Filtering happens on the executors: **any variable captured by `filterFileFn` must be
+   * Serializable**
    */
-  protected def filterParquetFiles(
-      spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])(
-      filterFileFn: StructType => Boolean)
-    : Seq[AddFile] = {
+  protected def filterParquetFilesOnExecutors(
+      spark: SparkSession,
+      files: Seq[AddFile],
+      snapshot: Snapshot)(
+      filterFileFn: StructType => Boolean): Seq[AddFile] = {
+
     val serializedConf = new SerializableConfiguration(snapshot.deltaLog.newDeltaHadoopConf())
     val ignoreCorruptFiles = spark.sessionState.conf.ignoreCorruptFiles
     val assumeBinaryIsString = spark.sessionState.conf.isParquetBinaryAsString
     val assumeInt96IsTimestamp = spark.sessionState.conf.isParquetINT96AsTimestamp
     val dataPath = new Path(snapshot.deltaLog.dataPath.toString)
 
-    filterParquetFiles(files, dataPath, serializedConf.value, ignoreCorruptFiles,
-      assumeBinaryIsString, assumeInt96IsTimestamp)(filterFileFn)
+    import org.apache.spark.sql.delta.implicits._
+
+    files.toDF(spark).as[AddFile].mapPartitions { iter =>
+        filterParquetFiles(iter.toList, dataPath, serializedConf.value, ignoreCorruptFiles,
+          assumeBinaryIsString, assumeInt96IsTimestamp)(filterFileFn).toIterator
+    }.collect()
   }
 
   protected def filterParquetFiles(

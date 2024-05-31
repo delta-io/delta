@@ -135,7 +135,7 @@ class DeltaRewriteTypeWideningOperation extends DeltaReorgOperation with ReorgTa
   override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
     : Seq[AddFile] = {
     val physicalSchema = DeltaColumnMapping.renameColumns(snapshot.schema)
-    filterParquetFiles(spark, snapshot, files) {
+    filterParquetFilesOnExecutors(spark, files, snapshot) {
       schema => fileHasDifferentTypes(schema, physicalSchema)
     }
   }
