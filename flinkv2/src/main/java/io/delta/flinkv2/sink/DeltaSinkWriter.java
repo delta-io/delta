@@ -1,6 +1,7 @@
 package io.delta.flinkv2.sink;
 
 import io.delta.flinkv2.data.vector.IntVectorWrapper;
+import io.delta.flinkv2.utils.DataUtils;
 import io.delta.flinkv2.utils.SchemaUtils;
 import io.delta.kernel.*;
 import io.delta.kernel.data.ColumnVector;
@@ -12,12 +13,14 @@ import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatus;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
+import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
@@ -26,20 +29,24 @@ import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
+// TODO: implement stateful sink writer
+public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row>{
 
     private final Engine engine;
     private final String writerId;
     private final Row mockTxnState;
+    private final RowType writeOperatorFlinkSchema;
     private final StructType writeOperatorDeltaSchema;
-    private final List<String> partitionColumns;
+    private Set<String> tablePartitionColumns; // non-final since we set it in try-catch block
     private List<RowData> buffer; // TODO: better data type? store in columnar format?
 
-    public DeltaSinkWriter(String tablePath, RowType writeOperatorFlinkSchema, List<String> partitionColumns) {
+    private Map<Map<String, Literal>, DeltaSinkWriterTask> writerTasksByPartition;
+
+    public DeltaSinkWriter(String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns) {
         this.engine = DefaultEngine.create(new Configuration());
         this.writerId = java.util.UUID.randomUUID().toString();
+        this.writeOperatorFlinkSchema = writeOperatorFlinkSchema;
         this.writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(writeOperatorFlinkSchema);
-        this.partitionColumns = partitionColumns;
         this.buffer = new ArrayList<>();
 
         final Table table = Table.forPath(engine, tablePath);
@@ -51,12 +58,15 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
             );
 
         try {
-            table.getLatestSnapshot(engine);
+            final Snapshot latestSnapshot = table.getLatestSnapshot(engine);
+            this.tablePartitionColumns = ((SnapshotImpl) latestSnapshot).getMetadata().getPartitionColNames();
         } catch (TableNotFoundException ex) {
             // table doesn't exist
             txnBuilder = txnBuilder
                 .withSchema(engine, writeOperatorDeltaSchema)
-                .withPartitionColumns(engine, partitionColumns);
+                .withPartitionColumns(engine, userProvidedPartitionColumns);
+
+            this.tablePartitionColumns = new HashSet<>(userProvidedPartitionColumns);
         }
 
         this.mockTxnState = txnBuilder.build(engine).getTransactionState(engine);
@@ -75,8 +85,18 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
     // Public APIs //
     /////////////////
 
+    /**
+     * {@link DeltaSink} implements {@link SupportsPreWriteTopology} and its
+     * {@link DeltaSink#addPreCommitTopology} method ensures that all rows with the same partition
+     * hash will be sent to the same {@link DeltaSinkWriter} instance.
+     * <p>
+     * However, a single {@link DeltaSinkWriter} instance may receive rows for more than one
+     * partition hash. It may also receive no rows at all.
+     */
     @Override
     public void write(RowData element, Context context) throws IOException, InterruptedException {
+        final Map<String, Literal> partitionValues = DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, element, tablePartitionColumns);
+
         this.buffer.add(element);
 
         System.out.println(
@@ -91,13 +111,20 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
      */
     @Override
     public Collection<Row> prepareCommit() throws IOException, InterruptedException {
+        if (buffer.isEmpty()) return Collections.emptyList();
+
         System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating logicalData", writerId));
         final CloseableIterator<FilteredColumnarBatch> logicalData =
             flinkRowDataToKernelColumnarBatchClosableIterator();
 
-        this.buffer = new ArrayList<>(); // flush the buffer
+        final Map<String, Literal> partitionValues =
+            DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, buffer.get(0), tablePartitionColumns);
 
-        final Map<String, Literal> partitionValues = new HashMap<>(); // TODO: partition values
+        validatePartitionValues(partitionValues);
+
+        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: partitionValues=%s, buffer.get(0)=%s", writerId, partitionValues, buffer.get(0)));
+
+        this.buffer = new ArrayList<>(); // flush the buffer
 
         System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating physicalData", writerId));
         final CloseableIterator<FilteredColumnarBatch> physicalData =
@@ -185,5 +212,31 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
                 return filteredColumnarBatch;
             }
         };
+    }
+
+    private void validatePartitionValues(Map<String, Literal> expectedPartValues) {
+        for (RowData rowData : buffer) {
+            Map<String, Literal> actualPartValues = DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, rowData, tablePartitionColumns);
+
+            String msg = String.format(
+                "Scott > DeltaSinkWriter[%s] > is writing partition value :: %s",
+                writerId,
+                actualPartValues
+            );
+            System.out.println(msg);
+
+//            if (actualPartValues.hashCode() != expectedPartValues.hashCode()) {
+//                String msg = String.format(
+//                    "Scott > DeltaSinkWriter[%s] > validatePartitionValues :: actual=%s did not equal expected =%s",
+//                    writerId,
+//                    actualPartValues,
+//                    expectedPartValues
+//                );
+//
+//                System.out.println(msg);
+//
+////                throw new RuntimeException(msg);
+//            }
+        }
     }
 }

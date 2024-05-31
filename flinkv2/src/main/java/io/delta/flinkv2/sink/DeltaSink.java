@@ -1,5 +1,6 @@
 package io.delta.flinkv2.sink;
 
+import io.delta.flinkv2.utils.DataUtils;
 import io.delta.flinkv2.utils.SchemaUtils;
 import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
@@ -7,6 +8,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.types.StructType;
 import org.apache.flink.api.connector.sink2.*;
@@ -22,9 +24,15 @@ import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, SupportsPreCommitTopology<Row, Row>, SupportsPreWriteTopology<RowData>, Serializable {
+public class DeltaSink implements Sink<RowData>,
+    SupportsCommitter<Row>,
+    SupportsPreCommitTopology<Row, Row>,
+    SupportsPreWriteTopology<RowData>,
+    Serializable {
 
     ///////////////////////
     // Public static API //
@@ -41,6 +49,7 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
     private final String tablePath;
     private final RowType writeOperatorFlinkSchema;
     private final List<String> userProvidedPartitionColumns;
+    private Set<String> tablePartitionColumns; // non-final since we set it in try-catch block
 
     private DeltaSink(final String tablePath, final RowType rowType, final List<String> userProvidedPartitionColumns) {
         System.out.println(
@@ -74,8 +83,10 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
                     )
                 );
             }
+            this.tablePartitionColumns = ((SnapshotImpl) latestSnapshot).getMetadata().getPartitionColNames();
         } catch (TableNotFoundException ex) {
             // table doesn't exist
+            this.tablePartitionColumns = new HashSet<>(userProvidedPartitionColumns);
         }
     }
 
@@ -95,9 +106,21 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
         return new DeltaCommitter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
     }
 
+    /**
+     * This method ensures that all rows with the same partitionHash will be sent to the same
+     * {@link DeltaSinkWriter}. It makes no promises about how many unique partitionHash's that
+     * a {@link DeltaSinkWriter} will handle (it may even be 0).
+     */
     @Override
     public DataStream<RowData> addPreWriteTopology(DataStream<RowData> inputDataStream) {
-        return inputDataStream; // TODO: partition
+        System.out.println("Scott > DeltaSink > addPreWriteTopology");
+
+        return inputDataStream.keyBy(new KeySelector<RowData, Integer>() {
+            @Override
+            public Integer getKey(RowData value) throws Exception {
+                return DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, value, tablePartitionColumns).hashCode();
+            }
+        });
     }
 
     @Override
