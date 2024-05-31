@@ -27,10 +27,11 @@ import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.stream.Collectors;
 
 // TODO: implement stateful sink writer
-public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row>{
+public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
+
+    static final Map<Map<String, Literal>, String> partitionToSinkWriterId = new HashMap<>();
 
     private final Engine engine;
     private final String writerId;
@@ -38,7 +39,6 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row>{
     private final RowType writeOperatorFlinkSchema;
     private final StructType writeOperatorDeltaSchema;
     private Set<String> tablePartitionColumns; // non-final since we set it in try-catch block
-    private List<RowData> buffer; // TODO: better data type? store in columnar format?
 
     private Map<Map<String, Literal>, DeltaSinkWriterTask> writerTasksByPartition;
 
@@ -47,7 +47,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row>{
         this.writerId = java.util.UUID.randomUUID().toString();
         this.writeOperatorFlinkSchema = writeOperatorFlinkSchema;
         this.writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(writeOperatorFlinkSchema);
-        this.buffer = new ArrayList<>();
+        this.writerTasksByPartition = new HashMap<>();
 
         final Table table = Table.forPath(engine, tablePath);
         TransactionBuilder txnBuilder =
@@ -95,9 +95,37 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row>{
      */
     @Override
     public void write(RowData element, Context context) throws IOException, InterruptedException {
-        final Map<String, Literal> partitionValues = DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, element, tablePartitionColumns);
+        final Map<String, Literal> partitionValues =
+            DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, element, tablePartitionColumns);
 
-        this.buffer.add(element);
+        if (!partitionToSinkWriterId.containsKey(partitionValues)) {
+            partitionToSinkWriterId.put(partitionValues, writerId);
+            System.out.println(String.format("partitionToSinkWriterId=%s", partitionToSinkWriterId));
+        } else if (!partitionToSinkWriterId.get(partitionValues).equalsIgnoreCase(writerId)) {
+            throw new RuntimeException(
+                String.format(
+                    "Partition Value %s was assigned to more than one writer, %s and %s",
+                    partitionValues,
+                    writerId,
+                    partitionToSinkWriterId.get(partitionValues)
+                )
+            );
+        }
+
+        if (!writerTasksByPartition.containsKey(partitionValues)) {
+            writerTasksByPartition.put(
+                partitionValues,
+                new DeltaSinkWriterTask(
+                    engine,
+                    partitionValues,
+                    mockTxnState,
+                    writeOperatorDeltaSchema,
+                    writerId
+                )
+            );
+        }
+
+        writerTasksByPartition.get(partitionValues).write(element, context);
 
         System.out.println(
             String.format("Scott > DeltaSinkWriter[%s] > write :: element=%s", writerId, element)
@@ -111,51 +139,12 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row>{
      */
     @Override
     public Collection<Row> prepareCommit() throws IOException, InterruptedException {
-        if (buffer.isEmpty()) return Collections.emptyList();
-
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating logicalData", writerId));
-        final CloseableIterator<FilteredColumnarBatch> logicalData =
-            flinkRowDataToKernelColumnarBatchClosableIterator();
-
-        final Map<String, Literal> partitionValues =
-            DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, buffer.get(0), tablePartitionColumns);
-
-        validatePartitionValues(partitionValues);
-
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: partitionValues=%s, buffer.get(0)=%s", writerId, partitionValues, buffer.get(0)));
-
-        this.buffer = new ArrayList<>(); // flush the buffer
-
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating physicalData", writerId));
-        final CloseableIterator<FilteredColumnarBatch> physicalData =
-            Transaction.transformLogicalData(engine, mockTxnState, logicalData, partitionValues);
-
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating writeContext", writerId));
-        final DataWriteContext writeContext = Transaction.getWriteContext(engine, mockTxnState, partitionValues);
-
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating dataFiles", writerId));
-        final CloseableIterator<DataFileStatus> dataFiles =
-            engine.getParquetHandler()
-                .writeParquetFiles(
-                    writeContext.getTargetDirectory(),
-                    physicalData,
-                    writeContext.getStatisticsColumns());
-
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating partitionDataActions", writerId));
-        final CloseableIterator<Row> partitionDataActions =
-            Transaction.generateAppendActions(
-                engine,
-                mockTxnState,
-                dataFiles,
-                writeContext);
-
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: creating output", writerId));
         final Collection<Row> output = new ArrayList<>();
-        while (partitionDataActions.hasNext()) {
-            output.add(partitionDataActions.next());
+
+        for (DeltaSinkWriterTask writerTask : writerTasksByPartition.values()) {
+            output.addAll(writerTask.prepareCommit());
         }
 
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: output is:\n%s", writerId, output.stream().map(row -> JsonUtils.rowToJson(row)).collect(Collectors.joining("\n"))));
         return output;
     }
 
@@ -167,76 +156,5 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row>{
     @Override
     public void close() throws Exception {
 
-    }
-
-    ///////////////////
-    // Internal APIs //
-    ///////////////////
-
-    private CloseableIterator<FilteredColumnarBatch> flinkRowDataToKernelColumnarBatchClosableIterator() {
-        final int numColumns = writeOperatorDeltaSchema.length();
-        final int size = buffer.size();
-
-        final ColumnVector[] columnVectors = new ColumnVector[numColumns];
-
-        for (int colIdx = 0; colIdx < numColumns; colIdx++) {
-            final DataType colDataType = writeOperatorDeltaSchema.at(colIdx).getDataType();
-
-            if (colDataType.equivalent(IntegerType.INTEGER)) {
-                columnVectors[colIdx] = new IntVectorWrapper(buffer, colIdx);
-            }
-        }
-
-        return new CloseableIterator<FilteredColumnarBatch>() {
-            private boolean hasReturnedSingleElement = false;
-
-            private final FilteredColumnarBatch filteredColumnarBatch = new FilteredColumnarBatch(
-                new DefaultColumnarBatch(size, writeOperatorDeltaSchema, columnVectors),
-                Optional.empty() /* selectionVector */
-            );
-
-            @Override
-            public void close() throws IOException {
-
-            }
-
-            @Override
-            public boolean hasNext() {
-                return !hasReturnedSingleElement;
-            }
-
-            @Override
-            public FilteredColumnarBatch next() {
-                if (!hasNext()) throw new NoSuchElementException();
-                hasReturnedSingleElement = true;
-                return filteredColumnarBatch;
-            }
-        };
-    }
-
-    private void validatePartitionValues(Map<String, Literal> expectedPartValues) {
-        for (RowData rowData : buffer) {
-            Map<String, Literal> actualPartValues = DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, rowData, tablePartitionColumns);
-
-            String msg = String.format(
-                "Scott > DeltaSinkWriter[%s] > is writing partition value :: %s",
-                writerId,
-                actualPartValues
-            );
-            System.out.println(msg);
-
-//            if (actualPartValues.hashCode() != expectedPartValues.hashCode()) {
-//                String msg = String.format(
-//                    "Scott > DeltaSinkWriter[%s] > validatePartitionValues :: actual=%s did not equal expected =%s",
-//                    writerId,
-//                    actualPartValues,
-//                    expectedPartValues
-//                );
-//
-//                System.out.println(msg);
-//
-////                throw new RuntimeException(msg);
-//            }
-        }
     }
 }
