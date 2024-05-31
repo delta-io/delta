@@ -278,16 +278,16 @@ trait DeltaErrorsSuiteBase
         Some("NOT NULL constraint violated for column: col1.\n"))
     }
     {
-      val expr = CatalystSqlParser.parseExpression("concat(\"hello \", \"world\")")
+      val expr = UnresolvedAttribute("col")
       val e = intercept[DeltaInvariantViolationException] {
         throw DeltaInvariantViolationException(
           Constraints.Check(CharVarcharConstraint.INVARIANT_NAME,
             LessThanOrEqual(Length(expr), Literal(5))),
-          Map.empty[String, Any])
+          Map("col" -> "Hello World"))
       }
       checkErrorMessage(e, Some("DELTA_EXCEED_CHAR_VARCHAR_LIMIT"), Some("22001"),
-        Some("Exceeds char/varchar type length limitation. " +
-        "Failed check: (length('concat(hello , world)) <= 5)."))
+        Some("Value \"Hello World\" exceeds char/varchar type length limitation. " +
+          "Failed check: (length('col) <= 5)."))
     }
     {
       val e = intercept[DeltaInvariantViolationException] {

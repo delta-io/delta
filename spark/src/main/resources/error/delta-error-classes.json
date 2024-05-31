@@ -787,7 +787,7 @@
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
-      "Exceeds char/varchar type length limitation. Failed check: <expr>."
+      "Value \"<value>\" exceeds char/varchar type length limitation. Failed check: <expr>."
     ],
     "sqlState" : "22001"
   },
