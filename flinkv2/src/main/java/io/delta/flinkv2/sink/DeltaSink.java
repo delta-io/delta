@@ -10,9 +10,11 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.types.StructType;
 import org.apache.flink.api.connector.sink2.*;
+import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.streaming.api.connector.sink2.CommittableMessage;
 import org.apache.flink.streaming.api.connector.sink2.SupportsPreCommitTopology;
+import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
@@ -22,7 +24,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.List;
 
-public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, SupportsPreCommitTopology<Row, Row>, Serializable {
+public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, SupportsPreCommitTopology<Row, Row>, SupportsPreWriteTopology<RowData>, Serializable {
 
     ///////////////////////
     // Public static API //
@@ -91,6 +93,11 @@ public class DeltaSink implements Sink<RowData>, SupportsCommitter<Row>, Support
     public Committer<Row> createCommitter(CommitterInitContext context) throws IOException {
         System.out.println("Scott > DeltaSink > createCommitter");
         return new DeltaCommitter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
+    }
+
+    @Override
+    public DataStream<RowData> addPreWriteTopology(DataStream<RowData> inputDataStream) {
+        return inputDataStream; // TODO: partition
     }
 
     @Override

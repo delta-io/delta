@@ -1,10 +1,9 @@
 package io.delta.flinkv2.sink;
 
-import io.delta.flinkv2.data.vector.MutableAbstractColumnVector;
-import io.delta.flinkv2.data.vector.MutableIntColumnVector;
-import io.delta.flinkv2.data.vector.MutableLongColumnVector;
+import io.delta.flinkv2.data.vector.IntVectorWrapper;
 import io.delta.flinkv2.utils.SchemaUtils;
 import io.delta.kernel.*;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
@@ -15,7 +14,6 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.IntegerType;
-import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatus;
@@ -152,55 +150,21 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, Row> {
         final int numColumns = writeOperatorDeltaSchema.length();
         final int size = buffer.size();
 
-        final MutableAbstractColumnVector[] mutableColumnVectors =
-            new MutableAbstractColumnVector[numColumns];
+        final ColumnVector[] columnVectors = new ColumnVector[numColumns];
 
-        // Step 1: init the mutableColumnVectors
         for (int colIdx = 0; colIdx < numColumns; colIdx++) {
             final DataType colDataType = writeOperatorDeltaSchema.at(colIdx).getDataType();
 
             if (colDataType.equivalent(IntegerType.INTEGER)) {
-                mutableColumnVectors[colIdx] = new MutableIntColumnVector(size);
-            } else if (colDataType.equivalent(LongType.LONG)) {
-                mutableColumnVectors[colIdx] = new MutableLongColumnVector(size);
+                columnVectors[colIdx] = new IntVectorWrapper(buffer, colIdx);
             }
-        }
-
-        // Step 2: populate the mutableColumnVectors with the data
-        int rowIdx = 0;
-        for (RowData rowData : buffer) {
-            for (int colIdx = 0; colIdx < numColumns; colIdx++) {
-                final DataType colDataType = writeOperatorDeltaSchema.at(colIdx).getDataType();
-
-                if (rowData.isNullAt(colIdx)) {
-                    mutableColumnVectors[colIdx].setIsNullAt(rowIdx);
-                } else if (colDataType.equivalent(IntegerType.INTEGER)) {
-                    System.out.println(
-                        String.format(
-                            "Scott > DeltaSinkWriter[%s] > flinkRowDataToKernelColumnarBatchClosableIterator :: writing rowIdx = %s, value = %s",
-                            writerId,
-                            rowIdx,
-                            rowData.getInt(colIdx)
-                        )
-                    );
-                    mutableColumnVectors[colIdx].setInt(rowIdx, rowData.getInt(colIdx));
-                } else if (colDataType.equivalent(LongType.LONG)) {
-                    mutableColumnVectors[colIdx].setLong(rowIdx, rowData.getLong(colIdx));
-                } else {
-                    throw new UnsupportedOperationException(
-                        String.format("Type not supported: %s", colDataType)
-                    );
-                }
-            }
-
-            rowIdx++;
         }
 
         return new CloseableIterator<FilteredColumnarBatch>() {
             private boolean hasReturnedSingleElement = false;
 
             private final FilteredColumnarBatch filteredColumnarBatch = new FilteredColumnarBatch(
-                new DefaultColumnarBatch(size, writeOperatorDeltaSchema, mutableColumnVectors),
+                new DefaultColumnarBatch(size, writeOperatorDeltaSchema, columnVectors),
                 Optional.empty() /* selectionVector */
             );
 
