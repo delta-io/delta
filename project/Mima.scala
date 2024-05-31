@@ -44,7 +44,11 @@ object Mima {
   def getPrevSparkName(currentVersion: String): String = {
     val (major, minor, patch) = getMajorMinorPatch(currentVersion)
     // name change in version 3.0.0, so versions > 3.0.0 should have delta-spark are prev version.
-    if (major >= 3 && (minor > 0 || patch > 0)) "delta-spark" else "delta-core"
+    if (major < 3 || (major == 3 && minor == 0 && patch == 0)) {
+      "delta-core"
+    } else {
+      "delta-spark"
+    }
   }
 
   def getPrevSparkVersion(currentVersion: String): String = {
