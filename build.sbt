@@ -121,7 +121,7 @@ def getSparkVersion(): String = {
       SPARK_MASTER_VERSION
     case _ =>
       throw new IllegalArgumentException(s"Invalid sparkVersion: $input. Must be one of " +
-          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}.")
+          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
   }
 }
 
@@ -154,7 +154,7 @@ lazy val commonSettings = Seq(
   testOptions += Tests.Argument("-oF"),
 
   // Unidoc settings: by default dont document any source file
-  unidocSourceFilePatterns := Nil
+  unidocSourceFilePatterns := Nil,
 )
 
 /**
