@@ -67,7 +67,7 @@ jobs:
           pipenv run pip install setuptools==41.1.0
           pipenv run pip install pydocstyle==3.0.0
           pipenv run pip install pandas==2.0.0
-          pipenv run pip install pyarrow==8.0.0
+          pipenv run pip install pyarrow==10.0.0
           pipenv run pip install numpy==1.21
           pipenv run pip install grpcio==1.62.0
           pipenv run pip install grpcio-status==1.62.0
