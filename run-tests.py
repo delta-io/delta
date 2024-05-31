@@ -48,7 +48,6 @@ def get_args():
 
 def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
     print("##### Running SBT tests #####")
-    is_running_spark_tests = test_group in {None, "spark", "connectServer"}
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     cmd = [sbt_path, "clean"]
@@ -228,9 +227,6 @@ if __name__ == "__main__":
 
         # Python tests are run only when spark group of projects are being tested.
         is_testing_spark_group = args.group is None or args.group == "spark" or args.group == "connectServer"
-        # Python tests are skipped when using Scala 2.13 as PySpark doesn't support it.
-        is_testing_scala_212 = scala_version is None or scala_version.startswith("2.12")
-        if is_testing_spark_group and is_testing_scala_212:
-            run_python_tests(root_dir)
-        elif args.group == "connectServer":
+
+        if is_testing_spark_group:
             run_python_tests(root_dir)
