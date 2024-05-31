@@ -130,6 +130,8 @@ object Unidoc {
           ignoreUndocumentedSources(
             allSourceFiles = (JavaUnidoc / unidoc / unidocAllSources).value,
             sourceFilePatternsToKeep = unidocSourceFilePatterns.value)
+            // ignore any internal Scala code
+            .map(_.filterNot(_.getName.contains("$")))
         },
 
         // Settings for plain, old Java doc needed for successful doc generation during publishing.

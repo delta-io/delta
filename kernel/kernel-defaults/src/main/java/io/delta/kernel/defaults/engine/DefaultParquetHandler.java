@@ -38,10 +38,6 @@ import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
-import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
-import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
-
 /**
  * Default implementation of {@link ParquetHandler} based on Hadoop APIs.
  */
@@ -63,7 +59,8 @@ public class DefaultParquetHandler implements ParquetHandler {
             StructType physicalSchema,
             Optional<Predicate> predicate) throws IOException {
         return new CloseableIterator<ColumnarBatch>() {
-            private final ParquetFileReader batchReader = new ParquetFileReader(hadoopConf);
+            private final io.delta.kernel.defaults.internal.parquet.ParquetFileReader batchReader =
+                new io.delta.kernel.defaults.internal.parquet.ParquetFileReader(hadoopConf);
             private CloseableIterator<ColumnarBatch> currentFileReader;
 
             @Override
@@ -103,8 +100,9 @@ public class DefaultParquetHandler implements ParquetHandler {
             String directoryPath,
             CloseableIterator<FilteredColumnarBatch> dataIter,
             List<Column> statsColumns) throws IOException {
-        ParquetFileWriter batchWriter =
-            new ParquetFileWriter(hadoopConf, new Path(URI.create(directoryPath)), statsColumns);
+        io.delta.kernel.defaults.internal.parquet.ParquetFileWriter batchWriter =
+            new io.delta.kernel.defaults.internal.parquet.ParquetFileWriter(
+                hadoopConf, new Path(URI.create(directoryPath)), statsColumns);
         return batchWriter.write(dataIter);
     }
 
@@ -123,7 +121,8 @@ public class DefaultParquetHandler implements ParquetHandler {
         try {
             Path targetPath = new Path(URI.create(filePath));
             LogStore logStore =
-                    LogStoreProvider.getLogStore(hadoopConf, targetPath.toUri().getScheme());
+                io.delta.kernel.defaults.internal.logstore.LogStoreProvider.getLogStore(
+                    hadoopConf, targetPath.toUri().getScheme());
 
             boolean useRename = logStore.isPartialWriteVisible(targetPath, hadoopConf);
 
@@ -134,7 +133,9 @@ public class DefaultParquetHandler implements ParquetHandler {
                 String tempFileName = format(".%s.%s.tmp", targetPath.getName(), UUID.randomUUID());
                 writePath = new Path(targetPath.getParent(), tempFileName);
             }
-            ParquetFileWriter fileWriter = new ParquetFileWriter(hadoopConf, writePath);
+            io.delta.kernel.defaults.internal.parquet.ParquetFileWriter fileWriter =
+                new io.delta.kernel.defaults.internal.parquet.ParquetFileWriter(
+                    hadoopConf, writePath);
 
             Optional<DataFileStatus> writtenFile;
 

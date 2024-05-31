@@ -31,17 +31,17 @@ RUN apt-get install -y git
 # cryptography. Otherwise, building wheels for these packages fails.
 RUN pip3 install --upgrade pip
 
-RUN pip3 install pyspark==3.5.0
+RUN pip3 install https://dist.apache.org/repos/dist/dev/spark/v4.0.0-preview1-rc3-bin/pyspark-4.0.0.dev1.tar.gz
 
-RUN pip3 install mypy==0.982
+RUN pip3 install mypy==1.8.0
 
 RUN pip3 install pydocstyle==3.0.0
 
-RUN pip3 install pandas==1.0.5
+RUN pip3 install pandas==1.4.4
 
 RUN pip3 install pyarrow==8.0.0
 
-RUN pip3 install numpy==1.20.3
+RUN pip3 install numpy==1.21
 
 RUN pip3 install importlib_metadata==3.10.0
 
@@ -53,7 +53,7 @@ RUN pip3 install twine==4.0.1
 
 RUN pip3 install wheel==0.33.4
 
-RUN pip3 install setuptools==41.0.1
+RUN pip3 install setuptools==41.1.0
 
 # Do not add any non-deterministic changes (e.g., copy from files 
 # from repo) in this Dockerfile, so that the  docker image 

@@ -39,12 +39,6 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.util.Utils;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
-import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
-import io.delta.kernel.defaults.internal.types.DataTypeParser;
-
 /**
  * Default implementation of {@link JsonHandler} based on Hadoop APIs.
  */
@@ -80,7 +74,8 @@ public class DefaultJsonHandler implements JsonHandler {
                 rows.add(null);
             }
         }
-        return new DefaultRowBasedColumnarBatch(outputSchema, rows);
+        return new io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch(
+            outputSchema, rows);
     }
 
     @Override
@@ -88,7 +83,8 @@ public class DefaultJsonHandler implements JsonHandler {
         try {
             // We don't expect Java BigDecimal anywhere in a Delta schema so we use the default
             // JSON reader
-            return DataTypeParser.parseSchema(defaultObjectReader.readTree(structTypeJson));
+            return io.delta.kernel.defaults.internal.types.DataTypeParser.parseSchema(
+                defaultObjectReader.readTree(structTypeJson));
         } catch (JsonProcessingException ex) {
             throw new RuntimeException(
                 format("Could not parse JSON: %s", structTypeJson), ex);
@@ -152,7 +148,8 @@ public class DefaultJsonHandler implements JsonHandler {
                 }
                 while (currentBatchSize < maxBatchSize && hasNext());
 
-                return new DefaultRowBasedColumnarBatch(physicalSchema, rows);
+                return new io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch(
+                    physicalSchema, rows);
             }
 
             private void tryOpenNextFile() throws IOException {
@@ -191,7 +188,8 @@ public class DefaultJsonHandler implements JsonHandler {
             CloseableIterator<Row> data,
             boolean overwrite) throws IOException {
         Path path = new Path(URI.create(filePath));
-        LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
+        LogStore logStore = io.delta.kernel.defaults.internal.logstore.LogStoreProvider.getLogStore(
+            hadoopConf, path.toUri().getScheme());
         try {
             logStore.write(
                     path,
@@ -203,7 +201,8 @@ public class DefaultJsonHandler implements JsonHandler {
 
                         @Override
                         public String next() {
-                            return JsonUtils.rowToJson(data.next());
+                            return io.delta.kernel.defaults.internal.json.JsonUtils.rowToJson(
+                                data.next());
                         }
                     },
                     overwrite,
@@ -216,7 +215,8 @@ public class DefaultJsonHandler implements JsonHandler {
     private Row parseJson(String json, StructType readSchema) {
         try {
             final JsonNode jsonNode = objectReaderReadBigDecimals.readTree(json);
-            return new DefaultJsonRow((ObjectNode) jsonNode, readSchema);
+            return new io.delta.kernel.defaults.internal.data.DefaultJsonRow(
+                (ObjectNode) jsonNode, readSchema);
         } catch (JsonProcessingException ex) {
             throw new KernelEngineException(format("Could not parse JSON: %s", json), ex);
         }
