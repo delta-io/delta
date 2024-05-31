@@ -304,6 +304,10 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     SchemaMergingUtils.transformColumns(schema)((_, f, _) => {
       if (hasColumnId(f)) {
         maxId = maxId max getColumnId(f)
+        if (hasNestedColumnIds(f)) {
+          val nestedIds = getNestedColumnIds(f).toMap.values.map(_.asInstanceOf[Long])
+          maxId = maxId max (if (nestedIds.nonEmpty) nestedIds.max else 0)
+        }
       }
       f
     })
