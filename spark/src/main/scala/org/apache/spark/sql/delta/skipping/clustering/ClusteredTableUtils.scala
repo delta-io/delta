@@ -134,7 +134,7 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
    * If clusterBySpecOpt is not empty (clustering columns are specified by CLUSTER BY), it creates
    * the domain metadata based on the clustering columns.
    * Otherwise (CLUSTER BY is not specified for REPLACE TABLE), it creates the domain metadata
-   * with empty clustering columns.
+   * with empty clustering columns if a clustering domain exists.
    *
    * This is used for CREATE TABLE and REPLACE TABLE.
    */
