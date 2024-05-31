@@ -148,6 +148,8 @@ case class AlterTableSetPropertiesDeltaCommand(
         case k if k == TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature) =>
           throw DeltaErrors.alterTableSetClusteringTableFeatureException(
             ClusteringTableFeature.name)
+        case k if k == ClusteredTableUtils.PROP_CLUSTERING_COLUMNS =>
+          throw DeltaErrors.cannotModifyTableProperty(k)
         case _ =>
           true
       }.toMap
@@ -1092,6 +1094,22 @@ case class AlterTableClusterByDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     ClusteredTableUtils.validateNumClusteringColumns(clusteringColumns, Some(deltaLog))
+    // If the target table is not a clustered table and there are no clustering columns being added
+    // (CLUSTER BY NONE), do not convert the table into a clustered table.
+    val snapshot = deltaLog.update()
+    if (clusteringColumns.isEmpty &&
+      !ClusteredTableUtils.isSupported(snapshot.protocol)) {
+      logInfo(s"Skipping ALTER TABLE CLUSTER BY NONE on a non-clustered table: ${table.name()}.")
+      recordDeltaEvent(
+        deltaLog,
+        "delta.ddl.alter.clusterBy",
+        data = Map(
+          "isClusterByNoneSkipped" -> true,
+          "isNewClusteredTable" -> false,
+          "oldColumnsCount" -> 0,
+          "newColumnsCount" -> 0))
+      return Seq.empty
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.clusterBy") {
       val txn = startTransaction()
 
@@ -1111,6 +1129,7 @@ case class AlterTableClusterByDeltaCommand(
         deltaLog,
         "delta.ddl.alter.clusterBy",
         data = Map(
+          "isClusterByNoneSkipped" -> false,
           "isNewClusteredTable" -> !ClusteredTableUtils.isSupported(txn.protocol),
           "oldColumnsCount" -> oldColumnsCount, "newColumnsCount" -> clusteringColumns.size))
       // Add clustered table properties if the current table is not clustered.
