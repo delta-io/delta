@@ -570,9 +570,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         ColumnVector visitLike(final Predicate like) {
             List<Expression> children = like.getChildren();
             return LikeExpressionEvaluator.eval(
-                        children.stream()
-                        .map(this::visit)
-                        .collect(toList()));
+                    children,
+                    children.stream().map(this::visit).collect(toList()));
         }
 
         /**

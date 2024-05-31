@@ -85,18 +85,22 @@ public class LikeExpressionEvaluator {
         return new Predicate(like.getName(), children);
     }
 
-    static ColumnVector eval(List<ColumnVector> children) {
+    static ColumnVector eval(
+            List<Expression> childrenExpressions,
+            List<ColumnVector> childrenVectors) {
         final char DEFAULT_ESCAPE_CHAR = '\\';
+        final boolean isPatternLiteralType = childrenExpressions.get(1) instanceof Literal;
 
         return new ColumnVector() {
             final ColumnVector escapeCharVector =
-                    children.size() == 3 ?
-                    children.get(2) :
+                    childrenVectors.size() == 3 ?
+                    childrenVectors.get(2) :
                     null;
-            final ColumnVector left = children.get(0);
-            final ColumnVector right = children.get(1);
+            final ColumnVector left = childrenVectors.get(0);
+            final ColumnVector right = childrenVectors.get(1);
 
             Character escapeChar = null;
+            String regexCache = null;
 
             public void initEscapeCharIfRequired() {
                 if (escapeChar == null) {
@@ -135,10 +139,20 @@ public class LikeExpressionEvaluator {
 
             public boolean isLike(String input, String pattern, char escape) {
                 if (!Objects.isNull(input) && !Objects.isNull(pattern)) {
-                    String regex = escapeLikeRegex(pattern, escape);
+                    String regex = getRegexFromCacheOrEval(pattern, escape);
                     return input.matches(regex);
                 }
                 return false;
+            }
+
+            public String getRegexFromCacheOrEval(String pattern, char escape) {
+                String regex = (regexCache != null) ?
+                        regexCache :
+                        escapeLikeRegex(pattern, escape);
+                if(isPatternLiteralType) { // set cache only for literals to avoid re-computation
+                    regexCache = regex;
+                }
+                return regex;
             }
         };
     }
