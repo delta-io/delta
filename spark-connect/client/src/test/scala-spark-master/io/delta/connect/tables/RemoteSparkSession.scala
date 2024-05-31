@@ -31,7 +31,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
   private val resources = s"$buildLocation/spark-connect/client/target/scala-2.13/resource_managed/test"
   private val sparkConnectJar = s"$resources/spark-connect.jar"
-  private val sparkSubmit = s"$resources/spark/spark-4.0.0-preview1-bin-hadoop3/bin/spark-submit"
+  private val sparkSubmit = s"$resources/spark/spark-4.0.0-preview1-bin-hadoop3/sbin/start-connect-server.sh"
 
   private lazy val server = {
     val command = Seq.newBuilder[String]
@@ -55,9 +55,9 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
   override def beforeAll(): Unit = {
     super.beforeAll()
     server
-    Thread.sleep(100000)
+    Thread.sleep(1000)
     spark = SparkSession.builder().remote(s"sc://localhost:$serverPort").build()
-    Thread.sleep(100000)
+    Thread.sleep(1000)
   }
 
   override def afterAll(): Unit = {
