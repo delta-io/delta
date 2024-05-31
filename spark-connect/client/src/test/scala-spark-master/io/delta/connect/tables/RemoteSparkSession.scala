@@ -55,9 +55,9 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
   override def beforeAll(): Unit = {
     super.beforeAll()
     server
-    Thread.sleep(1000)
+    Thread.sleep(100000)
     spark = SparkSession.builder().remote(s"sc://localhost:$serverPort").build()
-    Thread.sleep(1000)
+    Thread.sleep(100000)
   }
 
   override def afterAll(): Unit = {
