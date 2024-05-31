@@ -43,7 +43,7 @@ sqlDeltaImport / sparkVersion := getSparkVersion()
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
 val flinkVersion = "1.16.1"
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -166,20 +166,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
     Antlr4 / antlr4Version := "4.13.1",
-    Test / javaOptions ++= Seq(
-      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
-      "--add-opens=java.base/java.lang=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens=java.base/java.io=ALL-UNNAMED",
-      "--add-opens=java.base/java.net=ALL-UNNAMED",
-      "--add-opens=java.base/java.nio=ALL-UNNAMED",
-      "--add-opens=java.base/java.util=ALL-UNNAMED",
-      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
-      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    ),
+    java17TestSettings,
 
     // Java-/Scala-/Uni-Doc Settings
     scalacOptions ++= Seq(
@@ -188,6 +175,22 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
 }
+
+lazy val java17TestSettings =
+  Test / javaOptions ++= Seq(
+    // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+  )
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
@@ -330,7 +333,8 @@ lazy val sharing = (project in file("sharing"))
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
-    )
+    ),
+    java17TestSettings
   ).configureUnidoc()
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
@@ -410,20 +414,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test"
     ),
-    Test / javaOptions ++= Seq(
-      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
-      "--add-opens=java.base/java.lang=ALL-UNNAMED",
-      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-      "--add-opens=java.base/java.io=ALL-UNNAMED",
-      "--add-opens=java.base/java.net=ALL-UNNAMED",
-      "--add-opens=java.base/java.nio=ALL-UNNAMED",
-      "--add-opens=java.base/java.util=ALL-UNNAMED",
-      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
-      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    ),
+    java17TestSettings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
