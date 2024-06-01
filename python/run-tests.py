@@ -59,13 +59,13 @@ def prepare(root_dir):
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
-    run_cmd([sbt_path, "clean", "publishM2"], stream_output=True)
+    run_cmd([sbt_path, "-DsparkVersion=master", "clean", "spark/publishM2"], stream_output=True)
 
     # Get current release which is required to be loaded
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-    package = "io.delta:delta-spark_2.12:" + version
+    package = "io.delta:delta-spark_2.13:" + version
     return package
 
 
@@ -179,7 +179,8 @@ if __name__ == "__main__":
     package = prepare(root_dir)
 
     run_python_style_checks(root_dir)
+    test(root_dir, package)
     run_mypy_tests(root_dir)
     run_pypi_packaging_tests(root_dir)
     run_delta_connect_codegen_python(root_dir)
-    test(root_dir, package)
+    # test(root_dir, package)
