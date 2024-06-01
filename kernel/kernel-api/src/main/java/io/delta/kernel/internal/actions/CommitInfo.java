@@ -43,6 +43,7 @@ import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 public class CommitInfo {
 
     public static StructType FULL_SCHEMA = new StructType()
+            .add("inCommitTimestamp", LongType.LONG, true /* nullable */)
             .add("timestamp", LongType.LONG)
             .add("engineInfo", StringType.STRING)
             .add("operation", StringType.STRING)
@@ -56,6 +57,7 @@ public class CommitInfo {
                     .boxed()
                     .collect(toMap(i -> FULL_SCHEMA.at(i).getName(), i -> i));
 
+    private final long inCommitTimestamp;
     private final long timestamp;
     private final String engineInfo;
     private final String operation;
@@ -64,18 +66,24 @@ public class CommitInfo {
     private final String txnId;
 
     public CommitInfo(
+            long inCommitTimestamp,
             long timestamp,
             String engineInfo,
             String operation,
             Map<String, String> operationParameters,
             boolean isBlindAppend,
             String txnId) {
+        this.inCommitTimestamp = inCommitTimestamp;
         this.timestamp = timestamp;
         this.engineInfo = engineInfo;
         this.operation = operation;
         this.operationParameters = Collections.unmodifiableMap(operationParameters);
         this.isBlindAppend = isBlindAppend;
         this.txnId = txnId;
+    }
+
+    public long getInCommitTimestamp() {
+        return inCommitTimestamp;
     }
 
     public long getTimestamp() {
@@ -97,6 +105,7 @@ public class CommitInfo {
      */
     public Row toRow() {
         Map<Integer, Object> commitInfo = new HashMap<>();
+        commitInfo.put(COL_NAME_TO_ORDINAL.get("inCommitTimestamp"), inCommitTimestamp);
         commitInfo.put(COL_NAME_TO_ORDINAL.get("timestamp"), timestamp);
         commitInfo.put(COL_NAME_TO_ORDINAL.get("engineInfo"), engineInfo);
         commitInfo.put(COL_NAME_TO_ORDINAL.get("operation"), operation);

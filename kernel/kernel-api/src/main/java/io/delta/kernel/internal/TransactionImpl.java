@@ -198,9 +198,16 @@ public class TransactionImpl
         return setTxnOpt;
     }
 
+    private long generateInCommitTimestampForFirstCommitAttempt(long currentTimestamp) {
+        return currentTimestamp;
+    }
+
     private Row generateCommitAction() {
+        long commitAttemptStartTime = System.currentTimeMillis();
         return new CommitInfo(
-                System.currentTimeMillis(), /* timestamp */
+                generateInCommitTimestampForFirstCommitAttempt(
+                        commitAttemptStartTime), /* inCommitTimestamp */
+                commitAttemptStartTime, /* timestamp */
                 "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
                 operation.getDescription(), /* description */
                 getOperationParameters(), /* operationParameters */
