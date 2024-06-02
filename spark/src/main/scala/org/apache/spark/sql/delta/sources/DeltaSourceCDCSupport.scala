@@ -195,25 +195,24 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       startIndex: Long,
       isInitialSnapshot: Boolean,
       endOffset: DeltaSourceOffset): DataFrame = {
-    val changes: Iterator[(Long, Iterator[IndexedFile])] =
-      getFileChangesForCDC(startVersion, startIndex, isInitialSnapshot, None, Some(endOffset))
+    val changes = getFileChangesForCDC(
+      startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
-    val groupedFileActions: Iterator[(Long, Seq[FileAction])] =
+    val groupedFileActions =
       changes.map { case (v, indexFiles) =>
-        (v, indexFiles.filter(_.hasFileAction).map { _.getFileAction }.toSeq)
+        (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq)
       }
 
     val (result, duration) = Utils.timeTakenMs {
-      val cdcInfo = CDCReader.changesToDF(
-        readSnapshotDescriptor,
-        startVersion,
-        endOffset.reservoirVersion,
-        groupedFileActions,
-        spark,
-        isStreaming = true
-      )
-
-      cdcInfo.fileChangeDf
+      CDCReader
+        .changesToDF(
+          readSnapshotDescriptor,
+          startVersion,
+          endOffset.reservoirVersion,
+          groupedFileActions,
+          spark,
+          isStreaming = true)
+        .fileChangeDf
     }
     logInfo(s"Getting CDC dataFrame for delta_log_path=${deltaLog.logPath} with " +
       s"startVersion=$startVersion, startIndex=$startIndex, " +
