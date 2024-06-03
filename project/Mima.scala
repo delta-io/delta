@@ -44,7 +44,11 @@ object Mima {
   def getPrevSparkName(currentVersion: String): String = {
     val (major, minor, patch) = getMajorMinorPatch(currentVersion)
     // name change in version 3.0.0, so versions > 3.0.0 should have delta-spark are prev version.
-    if (major >= 3 && (minor > 0 || patch > 0)) "delta-spark" else "delta-core"
+    if (major < 3 || (major == 3 && minor == 0 && patch == 0)) {
+      "delta-core"
+    } else {
+      "delta-spark"
+    }
   }
 
   def getPrevSparkVersion(currentVersion: String): String = {
@@ -53,9 +57,10 @@ object Mima {
     val lastVersionInMajorVersion = Map(
       0 -> "0.8.0",
       1 -> "1.2.1",
-      2 -> "2.4.0"
+      2 -> "2.4.0",
+      3 -> "3.2.0"
     )
-    if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0
+    if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0 or 4.0.0
       lastVersionInMajorVersion.getOrElse(major - 1, {
         throw new Exception(s"Last version of ${major - 1}.x.x not configured.")
       })
@@ -73,7 +78,8 @@ object Mima {
       // We skip from 0.6.0 to 3.0.0 when migrating connectors to the main delta repo
       0 -> "0.6.0",
       1 -> "0.6.0",
-      2 -> "0.6.0"
+      2 -> "0.6.0",
+      3 -> "3.2.0"
     )
     if (minor == 0) {  // 1.0.0
       majorToLastMinorVersions.getOrElse(major - 1, {

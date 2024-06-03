@@ -65,10 +65,10 @@ setup(
         'delta': ['py.typed'],
     },
     install_requires=[
-        'pyspark>=3.5.0,<3.6.0',
+        'pyspark>=4.0.0.dev1',
         'importlib_metadata>=1.0.0',
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.9',
     cmdclass={
         'verify': VerifyVersionCommand,
     }

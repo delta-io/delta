@@ -85,7 +85,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
+    package = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
 
     repo = extra_maven_repo if extra_maven_repo else ""
 
@@ -128,9 +128,9 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
     artifact_name = get_artifact_name(version)
     jar = path.join(
         os.path.expanduser("~/.m2/repository/io/delta/"),
-        "delta-%s_2.12" % artifact_name,
+        "delta-%s_2.13" % artifact_name,
         version,
-        "delta-%s_2.12-%s.jar" % (artifact_name, str(version)))
+        "delta-%s_2.13-%s.jar" % (artifact_name, str(version)))
 
     try:
         cmd = ["spark-submit",
@@ -160,7 +160,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
+    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
     packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
     if extra_packages:
         packages += "," + extra_packages
@@ -204,76 +204,6 @@ def run_s3_log_store_util_integration_tests():
         print("Failed IntegrationTests")
         raise
 
-
-def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version, extra_maven_repo, use_local):
-    print("\n\n##### Running Iceberg tests on version %s #####" % str(version))
-    clear_artifact_cache()
-    if use_local:
-        run_cmd(["build/sbt", "publishM2"])
-
-    test_dir = path.join(root_dir, path.join("iceberg", "integration_tests"))
-
-    # Add more Iceberg tests here if needed ...
-    test_files_names = ["iceberg_converter.py"]
-    test_files = [path.join(test_dir, f) for f in test_files_names]
-
-    python_root_dir = path.join(root_dir, "python")
-    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = ','.join([
-        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version),
-        "io.delta:delta-iceberg_2.12:" + version,
-        "org.apache.iceberg:iceberg-spark-runtime-{}_2.12:{}".format(spark_version, iceberg_version)])
-
-    repo = extra_maven_repo if extra_maven_repo else ""
-
-    for test_file in test_files:
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", package,
-                   "--repositories", repo, test_file]
-            print("\nRunning Iceberg tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed Iceberg tests in %s" % (test_file))
-            raise
-
-def run_uniform_hudi_integration_tests(root_dir, version, extra_maven_repo, use_local):
-    print("\n\n##### Running Uniform hudi tests on version %s #####" % str(version))
-    # clear_artifact_cache()
-    if use_local:
-        run_cmd(["build/sbt", "publishM2"])
-        run_cmd(["build/sbt", "hudi/assembly"])
-
-    test_dir = path.join(root_dir, path.join("hudi", "integration_tests"))
-
-    print("attn " + root_dir)
-    # Add more tests here if needed ...
-    test_files_names = ["write_uniform_hudi.py"]
-    test_files = [path.join(test_dir, f) for f in test_files_names]
-
-    python_root_dir = path.join(root_dir, "python")
-    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = ','.join([
-        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)])
-    jars = path.join(root_dir, "hudi/target/scala-2.12/delta-hudi-assembly_2.12-%s.jar" % (version))
-
-    repo = extra_maven_repo if extra_maven_repo else ""
-
-    for test_file in test_files:
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", package,
-                   "--jars", jars,
-                   "--repositories", repo, test_file]
-            print("\nRunning Uniform Hudi tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed Uniform Hudi tests in %s" % (test_file))
-            raise
 
 def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
@@ -402,8 +332,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--scala-version",
         required=False,
-        default="2.12",
-        help="Specify scala version for scala tests only, valid values are '2.12' and '2.13'")
+        default="2.13",
+        help="Specify scala version for scala tests only, valid values are '2.13'")
     parser.add_argument(
         "--pip-only",
         required=False,
@@ -486,9 +416,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.scala_version not in ["2.12", "2.13"]:
-        raise Exception("Scala version can only be specified as --scala-version 2.12 or " +
-                        "--scala-version 2.13")
+    if args.scala_version not in ["2.13"]:
+        raise Exception("Scala version can only be specified as --scala-version 2.13")
 
     if args.pip_only and args.no_pip:
         raise Exception("Cannot specify both --pip-only and --no-pip")
@@ -499,17 +428,6 @@ if __name__ == "__main__":
     run_python = not args.scala_only and not args.pip_only
     run_scala = not args.python_only and not args.pip_only
     run_pip = not args.python_only and not args.scala_only and not args.no_pip
-
-    if args.run_iceberg_integration_tests:
-        run_iceberg_integration_tests(
-            root_dir, args.version,
-            args.iceberg_spark_version, args.iceberg_lib_version, args.maven_repo, args.use_local)
-        quit()
-
-    if args.run_uniform_hudi_integration_tests:
-        run_uniform_hudi_integration_tests(
-            root_dir, args.version, args.maven_repo, args.use_local)
-        quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test, args.maven_repo,

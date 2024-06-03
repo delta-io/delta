@@ -18,7 +18,6 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala212 = "2.12.18"
 val scala213 = "2.13.13"
 val icebergVersion = "1.4.1"
 val defaultDeltaVersion = {
@@ -43,7 +42,9 @@ def getMajorMinor(version: String): (Int, Int) = {
   }
 }
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
-  // versions 3.0.0 and above
+  // version 4.0.0-preview1
+  case (major, minor) if major >= 4 => "4.0.0-preview1"
+  // versions 3.x.x
   case (major, minor) if major >= 3 => "3.5.0"
   // versions 2.4.x
   case (major, minor) if major == 2 && minor == 4 => "3.4.0"
@@ -75,13 +76,11 @@ val getIcebergSparkRuntimeArtifactName = settingKey[String](
 )
 getScalaVersion := {
   sys.env.get("SCALA_VERSION") match {
-    case Some("2.12") | Some(`scala212`) =>
-      scala212
     case Some("2.13") | Some(`scala213`) =>
       scala213
     case Some(v) =>
       println(
-        s"[warn] Invalid  SCALA_VERSION. Expected one of {2.12, $scala212, 2.13, $scala213} but " +
+        s"[warn] Invalid  SCALA_VERSION. Expected one of {2.13, $scala213} but " +
         s"got $v. Fallback to $scala213."
       )
       scala213
@@ -123,18 +122,15 @@ lazy val root = (project in file("."))
   .settings(
     run / fork := true,
     name := "hello-world",
-    crossScalaVersions := Seq(scala212, scala213),
+    crossScalaVersions := Seq(scala213),
     libraryDependencies ++= Seq(
       "io.delta" %% getDeltaArtifactName.value % getDeltaVersion.value,
-      "io.delta" %% "delta-iceberg" % getDeltaVersion.value,
       "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
         getMajorMinor(getDeltaVersion.value)
       ),
       "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
         getMajorMinor(getDeltaVersion.value)
-      ),
-      "org.apache.iceberg" %% getIcebergSparkRuntimeArtifactName.value % icebergVersion,
-      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
+      )
     ),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
