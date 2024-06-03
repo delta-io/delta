@@ -231,11 +231,14 @@ public class TransactionImpl
     }
 
     private Map<String, String> getOperationParameters() {
-        List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
-        String partitionBy = partitionCols.stream()
-            .map(col -> "\"" + col + "\"")
-            .collect(Collectors.joining(",", "[", "]"));
-        return Collections.singletonMap("partitionBy", partitionBy);
+        if (isNewTable) {
+            List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
+            String partitionBy = partitionCols.stream()
+                    .map(col -> "\"" + col + "\"")
+                    .collect(Collectors.joining(",", "[", "]"));
+            return Collections.singletonMap("partitionBy", partitionBy);
+        }
+        return Collections.emptyMap();
     }
 
     /**
