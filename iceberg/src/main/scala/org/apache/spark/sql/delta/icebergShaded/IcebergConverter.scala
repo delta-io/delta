@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
+import shadedForDelta.org.apache.iceberg.{Table => IcebergTable}
 import shadedForDelta.org.apache.iceberg.hive.{HiveCatalog, HiveTableOperations}
 
 import org.apache.spark.sql.SparkSession
@@ -51,6 +52,9 @@ object IcebergConverter {
   val DELTA_TIMESTAMP_PROPERTY = "delta-timestamp"
 
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+
+  def getLastConvertedDeltaVersion(table: Option[IcebergTable]): Option[Long] =
+    table.flatMap(_.properties().asScala.get(DELTA_VERSION_PROPERTY)).map(_.toLong)
 }
 
 /**
@@ -235,13 +239,16 @@ class IcebergConverter(spark: SparkSession)
       catalogTable: CatalogTable): Option[(Long, Long)] =
       recordFrameProfile("Delta", "IcebergConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
-    val lastDeltaVersionConverted: Option[Long] =
-      loadLastDeltaVersionConverted(snapshotToConvert, catalogTable)
+    val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, catalogTable)
+    val lastConvertedIcebergSnapshotId =
+      lastConvertedIcebergTable.flatMap(it => Option(it.currentSnapshot())).map(_.snapshotId())
+    val lastDeltaVersionConverted = IcebergConverter
+      .getLastConvertedDeltaVersion(lastConvertedIcebergTable)
     val maxCommitsToConvert =
       spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_COMMITS_TO_CONVERT)
 
     // Nth to convert
-    if (lastDeltaVersionConverted.exists(_ == snapshotToConvert.version)) {
+    if (lastDeltaVersionConverted.contains(snapshotToConvert.version)) {
       return None
     }
 
@@ -276,7 +283,8 @@ class IcebergConverter(spark: SparkSession)
     }
 
     val icebergTxn = new IcebergConversionTransaction(
-      catalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp, lastDeltaVersionConverted)
+      catalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
+      lastConvertedIcebergSnapshotId, lastDeltaVersionConverted)
 
     // Write out the actions taken since the last conversion (or since table creation).
     // This is done in batches, with each batch corresponding either to one delta file,
@@ -349,8 +357,23 @@ class IcebergConverter(spark: SparkSession)
   override def loadLastDeltaVersionConverted(
       snapshot: Snapshot, catalogTable: CatalogTable): Option[Long] =
     recordFrameProfile("Delta", "IcebergConverter.loadLastDeltaVersionConverted") {
-        catalogTable.properties.get(IcebergConverter.DELTA_VERSION_PROPERTY).map(_.toLong)
+      IcebergConverter.getLastConvertedDeltaVersion(loadIcebergTable(snapshot, catalogTable))
     }
+
+  protected def loadIcebergTable(
+      snapshot: Snapshot, catalogTable: CatalogTable): Option[IcebergTable] = {
+    recordFrameProfile("Delta", "IcebergConverter.loadLastConvertedIcebergTable") {
+      val hiveCatalog = IcebergTransactionUtils
+        .createHiveCatalog(snapshot.deltaLog.newDeltaHadoopConf())
+      val icebergTableId = IcebergTransactionUtils
+        .convertSparkTableIdentifierToIcebergHive(catalogTable.identifier)
+      if (hiveCatalog.tableExists(icebergTableId)) {
+        Some(hiveCatalog.loadTable(icebergTableId))
+      } else {
+        None
+      }
+    }
+  }
 
   /**
    * Build an iceberg TransactionHelper from the provided txn, and commit the set of changes

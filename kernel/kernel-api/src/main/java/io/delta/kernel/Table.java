@@ -38,17 +38,17 @@ public interface Table {
      *     <li>
      *         Behavior when the table location doesn't exist:
      *         <ul>
-     *         <li>reads will fail with a {@link TableNotFoundException}}</li>
-     *         <li>writes will create the location</li>
+     *         <li>Reads will fail with a {@link TableNotFoundException}</li>
+     *         <li>Writes will create the location</li>
      *         </ul>
      *     </li>
      *     <li>
-     *         Behavior when the table location exists (with contents or not) but not a Delta table
+     *         Behavior when the table location exists (with contents or not) but not a Delta table:
      *         <ul>
-     *          <li>reads will fail with a {@link TableNotFoundException}</li>
-     *          <li>writes will create a Delta table to the given location. If there are any
+     *          <li>Reads will fail with a {@link TableNotFoundException}</li>
+     *          <li>Writes will create a Delta table at the given location. If there are any
      *          existing files in the location that are not already part of the Delta table, they
-     *          will remain excluded as part of the Delta table.</li>
+     *          will remain excluded from the Delta table.</li>
      *         </ul>
      *     </li>
      * </ul>
@@ -56,7 +56,7 @@ public interface Table {
      * @param engine {@link Engine} instance to use in Delta Kernel.
      * @param path        location of the table. Path is resolved to fully
      *                    qualified path using the given {@code engine}.
-     * @return an instance of {@link Table} representing the Delta table at given path
+     * @return an instance of {@link Table} representing the Delta table at the given path
      */
     static Table forPath(Engine engine, String path) {
         return TableImpl.forPath(engine, path);
@@ -76,6 +76,7 @@ public interface Table {
      *
      * @param engine {@link Engine} instance to use in Delta Kernel.
      * @return an instance of {@link Snapshot}
+     * @throws TableNotFoundException if the table is not found
      */
     Snapshot getLatestSnapshot(Engine engine)
         throws TableNotFoundException;
@@ -86,6 +87,7 @@ public interface Table {
      * @param engine {@link Engine} instance to use in Delta Kernel.
      * @param versionId snapshot version to retrieve
      * @return an instance of {@link Snapshot}
+     * @throws TableNotFoundException if the table is not found
      * @throws KernelException if the provided version is less than the first available version
      *                         or greater than the last available version
      * @since 3.2.0
@@ -113,6 +115,7 @@ public interface Table {
      * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the
      *                            unix epoch
      * @return an instance of {@link Snapshot}
+     * @throws TableNotFoundException if the table is not found
      * @throws KernelException if the provided timestamp is before the earliest available version or
      *                         after the latest available version
      * @since 3.2.0
