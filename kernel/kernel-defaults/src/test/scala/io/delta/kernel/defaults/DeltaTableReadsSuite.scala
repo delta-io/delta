@@ -645,9 +645,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       val log = org.apache.spark.sql.delta.DeltaLog.forTable(
         spark, new org.apache.hadoop.fs.Path(tablePath))
+      val deltaCommitFileProvider = org.apache.spark.sql.delta.util.DeltaCommitFileProvider(
+        log.unsafeVolatileSnapshot)
       // Delete the log files for versions 0-9, truncating the table history to version 10
       (0 to 9).foreach { i =>
-        val jsonFile = org.apache.spark.sql.delta.util.FileNames.deltaFile(log.logPath, i)
+        val jsonFile = deltaCommitFileProvider.deltaFile(i)
         new File(new org.apache.hadoop.fs.Path(log.logPath, jsonFile).toUri).delete()
       }
       // Create version 11 that overwrites the whole table
