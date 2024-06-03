@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.exceptions.TableNotFoundException
+import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
@@ -587,6 +587,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         .build()
     }
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
+  }
+
+  test("table with void type - throws KernelException") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
+      val e = intercept[KernelException] {
+        latestSnapshot(path)
+      }
+      assert(e.getMessage.contains(
+        "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))
+    }
   }
 
   //////////////////////////////////////////////////////////////////////////////////
