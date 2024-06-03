@@ -306,7 +306,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
     ),
     (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
     (Test / resourceGenerators) += Def.task {
-      val location = url("https://dist.apache.org/repos/dist/dev/spark/v4.0.0-preview1-rc1-bin/spark-4.0.0-preview1-bin-hadoop3.tgz")
+      val location = url("https://dist.apache.org/repos/dist/release/spark/spark-4.0.0-preview1/spark-4.0.0-preview1-bin-hadoop3.tgz")
       val destDir = (Test / resourceManaged).value / "spark"
       if (!destDir.exists()) {
         IO.createDirectory(destDir)
@@ -342,7 +342,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
       }
     }.taskValue,
     (Test / resourceGenerators) += Def.task {
-      val src = url("https://repository.apache.org/content/groups/snapshots/org/apache/spark/spark-connect_2.13/4.0.0-SNAPSHOT/spark-connect_2.13-4.0.0-20240522.001411-260.jar")
+      val src = url("https://repository.apache.org/content/groups/public/org/apache/spark/spark-connect_2.13/4.0.0-preview1/spark-connect_2.13-4.0.0-preview1.jar")
       val dest = (Test / resourceManaged).value / "spark-connect.jar"
       if (!dest.exists()) {
         src #> dest !;
