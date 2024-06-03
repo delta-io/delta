@@ -135,7 +135,7 @@ case class CreateDeltaTableCommand(
         if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
           // the path should be empty for non-UFI table; for UFI table,
           // an external iceberg table already exists at the specific location.
-          if (!tableWithLocation.properties.contains("isUniformIngressTable")) {
+          if (tableWithLocation.owner != "UniformIngressTable") {
             assertPathEmpty(hadoopConf, tableWithLocation)
           }
         }

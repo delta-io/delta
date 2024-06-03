@@ -402,8 +402,9 @@ class DeltaAnalysis(session: SparkSession)
             storage = CatalogStorageFormat.empty.copy(locationUri = Some(externalTableUri)),
             // the schema should be the same as iceberg source
             schema = source.schema,
-            // currently `properties` is used as special identifier in `handleCommit`
-            properties = Map { "isUniformIngressTable" -> "_" },
+            // TODO: ensure this
+            // currently `owner` is used as special identifier in `handleCommit`
+            owner = "UniformIngressTable",
             provider = Some("delta")
             // TODO: check whether to add `capabilities` or not, and if so, where?
           )
@@ -422,6 +423,19 @@ class DeltaAnalysis(session: SparkSession)
             operation = tableCreationMode,
             output = CloneTableCommand.output
           )
+        case _ => throw DeltaErrors.uniformIngressOperationNotSupported
+      }
+
+    case refreshUniformStmt: RefreshUniformTableStatement =>
+      EliminateSubqueryAliases(refreshUniformStmt.target) match {
+        case DataSourceV2Relation(table: DeltaTableV2, _, _, _, _) =>
+          RefreshUniformTableCommand(
+            table = table,
+            isForce = refreshUniformStmt.isForce,
+            providedMetadataPath = refreshUniformStmt.metadataPath
+          )
+        case u: UnresolvedRelation =>
+          u.tableNotFound(u.multipartIdentifier)
         case _ => throw DeltaErrors.uniformIngressOperationNotSupported
       }
 

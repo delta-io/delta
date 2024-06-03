@@ -16,8 +16,16 @@
 
 package org.apache.spark.sql.delta.commands
 
+import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
+import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPlan, UnaryNode}
+import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
+
+import scala.util.control.NonFatal
 
 case class CreateUniformTableStatement(
     table: LogicalPlan,
@@ -46,4 +54,68 @@ case class RefreshUniformTableStatement(
 
   override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
     copy(target = newChild)
+}
+
+case class RefreshUniformTableCommand(
+    table: DeltaTableV2,
+    isForce: Boolean,
+    providedMetadataPath: Option[String])
+  extends LeafRunnableCommand
+    with DeltaCommand
+    with IgnoreCachedData
+    with DeltaLogging {
+
+  override val output: Seq[Attribute] = CloneTableCommand.output
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val catalogTable = table.catalogTable.getOrElse(
+      throw DeltaErrors.notADeltaTable(table.name())
+    )
+
+    if (catalogTable.owner != "UniformIngressTable") {
+      // TODO: change the error to `UniformIngressNotUFITable`
+      throw DeltaErrors.uniformIngressOperationNotSupported
+    }
+
+    val icebergMetadataLoc = providedMetadataPath.getOrElse(
+      // TODO: change the error to `uniformIngressMetadataPathNotProvided`
+      throw DeltaErrors.uniformIngressOperationNotSupported
+    )
+
+    // TODO: add sanity check to ensure the `providedMetadataPath` and `table.path`
+    // is under the same dir.
+
+    val deltaLog = table.deltaLog
+    val snapshot = deltaLog.update()
+    val cloneSource = CloneIcebergSource(
+      tableIdentifier = TableIdentifier(icebergMetadataLoc),
+      sparkTable = None,
+      tableSchema = Some(snapshot.metadata.schema),
+      spark = sparkSession
+    )
+
+    val txn = deltaLog.startTransaction(Some(catalogTable))
+    var res = Seq.empty[Row]
+    try {
+      res = CloneTableCommand(
+        sourceTable = cloneSource,
+        targetIdent = catalogTable.identifier,
+        // TODO: this is a current workaround for bypassing cloning check,
+        //  needs further review.
+        tablePropertyOverrides = Map { "_isUniformIngressTable" -> "_" },
+        targetPath = table.path
+      ).handleClone(sparkSession, txn, deltaLog)
+    } catch {
+      case NonFatal(e) =>
+        logError(s"Error convert metadata to delta for table ${catalogTable.identifier} " +
+          s"${e.getStackTrace.mkString("\n")}")
+        // TODO: change the error to `uniformIngressMetadataConversionFailed`
+        throw DeltaErrors.uniformIngressOperationNotSupported
+    }
+    val updateSnapshot = deltaLog.update()
+    logInfo(s"Convert metadata from $icebergMetadataLoc to delta succeed for" +
+      s"table ${catalogTable.identifier} with updated version ${updateSnapshot.version}")
+
+    res
+  }
 }

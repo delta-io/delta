@@ -199,8 +199,10 @@ abstract class CloneTableBase(
     val (
       addedFileList
       ) = {
+      // TODO: needs further review, see also `UniformTableCommand.scala`.
       // Make sure target table is empty before running clone
-      if (txn.snapshot.allFiles.count() > 0) {
+      if (txn.snapshot.allFiles.count() > 0 &&
+          !tablePropertyOverrides.contains("_isUniformIngressTable")) {
         throw DeltaErrors.cloneReplaceNonEmptyTable
       }
       val toAdd = sourceTable.allFiles

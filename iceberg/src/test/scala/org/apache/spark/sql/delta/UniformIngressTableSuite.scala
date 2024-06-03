@@ -42,15 +42,51 @@ class UniformIngressTableSuite extends QueryTest
         spark, dir.getPath, icebergTableName, df1, Seq("id")
       )
       val targetTable = "ufi_table_1"
-        withTable(targetTable) {
-          spark.sql(
-            s"""
-              | CREATE TABLE $targetTable
-              | UNIFORM iceberg
-              | METADATA_PATH '${metadataLoc(icebergTable, 2)}'
-              |""".stripMargin)
-          val answer = spark.sql(s"SELECT * FROM default.$targetTable")
-          checkAnswer(answer, df1.collect())
+      withTable(targetTable) {
+        spark.sql(
+          s"""
+            | CREATE TABLE $targetTable
+            | UNIFORM iceberg
+            | METADATA_PATH '${metadataLoc(icebergTable, 2)}'
+            |""".stripMargin)
+        val answer = spark.sql(s"SELECT * FROM default.$targetTable")
+        checkAnswer(answer, df1.collect())
+      }
+    }
+  }
+
+  test("Refresh Uniform Ingress Table Test") {
+    withTempDir { dir =>
+      val icebergTableName = "iceberg_table_2"
+      val seq1 = Seq((1, "Alex", 23), (2, "Michael", 21))
+      val df1 = seq1.toDF("id", "name", "age")
+      val icebergTable = IcebergTestUtils.createIcebergTable(
+        spark, dir.getPath, icebergTableName, df1, Seq("id")
+      )
+      val targetTable = "ufi_table_2"
+      withTable(targetTable) {
+        spark.sql(
+          s"""
+             | CREATE TABLE $targetTable
+             | UNIFORM iceberg
+             | METADATA_PATH '${metadataLoc(icebergTable, 2)}'
+             |""".stripMargin)
+        val answer1 = spark.sql(s"SELECT * FROM default.$targetTable")
+        checkAnswer(answer1, df1.collect())
+
+        // write two more rows to the existing iceberg table
+        val seq2 = Seq((3, "Cat", 123), (4, "Dog", 456))
+        val df2 = seq2.toDF("id", "name", "age")
+        IcebergTestUtils.writeIcebergTable(icebergTable, df2)
+
+        spark.sql(
+          s"""
+             | REFRESH TABLE $targetTable
+             | METADATA_PATH '${metadataLoc(icebergTable, 3)}'
+             |""".stripMargin
+        )
+        val answer2 = spark.sql(s"SELECT * FROM default.$targetTable")
+        checkAnswer(answer2, df1.collect() ++ df2.collect())
       }
     }
   }
