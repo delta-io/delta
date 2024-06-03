@@ -974,6 +974,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS =
+    buildConf("workAroundColonsInHadoopPaths.enabled")
+      .internal()
+      .doc("""
+             |When enabled, Delta will work around to allow colons in file paths. Normally Hadoop
+             |does not support colons in file paths due to ambiguity, but some file systems like
+             |S3 allow them.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val REPLACEWHERE_DATACOLUMNS_ENABLED =
     buildConf("replaceWhere.dataColumns.enabled")
       .doc(

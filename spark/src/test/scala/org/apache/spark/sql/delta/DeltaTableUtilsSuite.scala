@@ -55,14 +55,23 @@ class DeltaTableUtilsSuite extends SharedSparkSession with DeltaSQLCommandTest {
       new Path("s3://my-bucket/subfolder/_delta/_log"))
     assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "_delta/_log") ==
       new Path("s3://my-bucket/_delta/_log"))
-    assert(DeltaTableUtils.safeConcatPaths(basePath, "part-2024-03-05T16:08:53.002.csv") ==
-      new Path("s3://my-bucket/subfolder/part-2024-03-05T16:08:53.002.csv"))
-    assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "part-2024-03-05T16:08:53.002.csv") ==
-      new Path("s3://my-bucket/part-2024-03-05T16:08:53.002.csv"))
-    assert(DeltaTableUtils.safeConcatPaths(basePath, "part/2024-03-05T16:08:53.002.csv") ==
-      new Path("s3://my-bucket/subfolder/part/2024-03-05T16:08:53.002.csv"))
-    assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "part/2024-03-05T16:08:53.002.csv") ==
-      new Path("s3://my-bucket/part/2024-03-05T16:08:53.002.csv"))
+
+    withSQLConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS.key -> "false") {
+      assert(intercept[IllegalArgumentException] {
+        DeltaTableUtils.safeConcatPaths(basePath, "part-2024-03-05T16:08:53.002.csv")
+      }.getMessage.contains("Relative path in absolute URI"))
+    }
+
+    withSQLConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS.key -> "true") {
+      assert(DeltaTableUtils.safeConcatPaths(basePath, "part-2024-03-05T16:08:53.002.csv") ==
+        new Path("s3://my-bucket/subfolder/part-2024-03-05T16:08:53.002.csv"))
+      assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "part-2024-03-05T16:08:53.002.csv") ==
+        new Path("s3://my-bucket/part-2024-03-05T16:08:53.002.csv"))
+      assert(DeltaTableUtils.safeConcatPaths(basePath, "part/2024-03-05T16:08:53.002.csv") ==
+        new Path("s3://my-bucket/subfolder/part/2024-03-05T16:08:53.002.csv"))
+      assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "part/2024-03-05T16:08:53.002.csv") ==
+        new Path("s3://my-bucket/part/2024-03-05T16:08:53.002.csv"))
+    }
   }
 
   test("removeInternalMetadata") {
