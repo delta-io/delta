@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 
-case class CreateUniformTableCommand(
+case class CreateUniformTableStatement(
     table: LogicalPlan,
     ifNotExists: Boolean,
     isReplace: Boolean,

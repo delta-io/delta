@@ -3107,6 +3107,25 @@ trait DeltaErrorsBase
     )
   }
 
+  // TODO: change the error class
+  def uniformIngressNotSupportedFormat(fileFormat: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      messageParameters = Array(
+        UniversalFormat.ICEBERG_FORMAT,
+        "Currently only support iceberg transformation"
+      )
+    )
+  }
+
+  // TODO: change the error class
+  def uniformIngressOperationNotSupported: Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",
+      messageParameters = Array.empty
+    )
+  }
+
   def uniFormIcebergRequiresIcebergCompat(): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNIVERSAL_FORMAT_VIOLATION",

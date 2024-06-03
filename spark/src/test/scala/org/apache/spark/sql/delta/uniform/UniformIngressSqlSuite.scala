@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.uniform
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
-import org.apache.spark.sql.delta.commands.CreateUniformTableCommand
+import org.apache.spark.sql.delta.commands.CreateUniformTableStatement
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -50,7 +50,7 @@ class UniformIngressSqlSuite extends QueryTest
       metadataPath: String): Unit = {
     val target = new UnresolvedRelation(Seq(targetTable))
     // TODO(Zihao): add support for refresh command.
-    val result = CreateUniformTableCommand(
+    val result = CreateUniformTableStatement(
       table = target,
       ifNotExists = ifNotExists,
       isReplace = isReplace,

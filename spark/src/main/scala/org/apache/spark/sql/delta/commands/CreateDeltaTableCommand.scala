@@ -45,8 +45,8 @@ import org.apache.spark.sql.types.StructType
  * Single entry point for all write or declaration operations for Delta tables accessed through
  * the table name.
  *
- * @param table The table identifier for the Delta table
- * @param existingTableOpt The existing table for the same identifier if exists
+ * @param table The catalog table that contains metadata for the delta table.
+ * @param existingTableOpt The existing table for the same identifier if exists.
  * @param mode The save mode when writing data. Relevant when the query is empty or set to Ignore
  *             with `CREATE TABLE IF NOT EXISTS`.
  * @param query The query to commit into the Delta table if it exist. This can come from
@@ -133,7 +133,11 @@ case class CreateDeltaTableCommand(
         // We may have failed a previous write. The retry should still succeed even if we have
         // garbage data
         if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
-          assertPathEmpty(hadoopConf, tableWithLocation)
+          // the path should be empty for non-UFI table; for UFI table,
+          // an external iceberg table already exists at the specific location.
+          if (!tableWithLocation.properties.contains("isUniformIngressTable")) {
+            assertPathEmpty(hadoopConf, tableWithLocation)
+          }
         }
       }
     }
