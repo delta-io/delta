@@ -16,6 +16,7 @@
 package io.delta.kernel.internal;
 
 import java.util.*;
+import java.util.Map.Entry;
 import static java.util.Objects.requireNonNull;
 
 import org.slf4j.Logger;
@@ -126,8 +127,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             validateTableEvolution(snapshot);
             Metadata metadata = snapshot.getMetadata();
             configuration.map(ele -> {
-                metadataChange = true;
-                metadata.updateConfiguration(ele);
+                for (Entry<String, String> entry : ele.entrySet()) {
+                    if (metadata.updateConfiguration(entry.getKey(), entry.getValue())) {
+                        metadataChange = true;
+                    }
+                }
                 return null;
             });
             schema.map(ele -> {

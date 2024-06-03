@@ -170,8 +170,12 @@ public class Metadata {
         return Collections.unmodifiableMap(configuration);
     }
 
-    public void updateConfiguration(Map<String, String> configuration) {
-        this.configuration.putAll(configuration);
+    public boolean updateConfiguration(String key, String value) {
+        String oldValue = this.configuration.put(key, value);
+        if (oldValue != null) {
+            return !oldValue.equals(value);
+        }
+        return true;
     }
 
     /**
