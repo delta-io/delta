@@ -133,11 +133,7 @@ lazy val root = (project in file("."))
       )
     ),
     extraMavenRepo,
-    resolvers ++= Seq(
-      Resolver.mavenLocal,
-      // TODO remove this once the Spark preview release has been finalized
-      "Apache Spark 4.0 Preview (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1454/"
-    ),
+    resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature"
