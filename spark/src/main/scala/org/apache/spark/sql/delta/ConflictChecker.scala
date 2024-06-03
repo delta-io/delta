@@ -308,13 +308,32 @@ private[delta] class ConflictChecker(
     def rewritePredicateFn(
         predicate: Expression,
         shouldRewriteFilter: Boolean): DeltaTableReadPredicate = {
-      val rewrittenPredicate = if (shouldWidenNonDeterministicPredicates) {
+      var rewrittenPredicate = Seq(predicate)
+
+      // Eliminate outer references in subqueries.
+      if (spark.conf.get(DeltaSQLConf.DELTA_CONFLICT_DETECTION_WIDEN_OUTER_REFERENCES)) {
+        val predicateElimination = eliminateOuterReferencePredicates(Seq(predicate))
+        if (predicateElimination.eliminatedPredicates.nonEmpty) {
+          recordDeltaEvent(
+            deltaLog,
+            opType = "delta.conflictDetection.partitionLevelConcurrency.widenOuterReferences",
+            data = Map(
+              "predicate" -> rewrittenPredicate.toString(),
+              "eliminatedPredicate" -> predicateElimination.eliminatedPredicates)
+          )
+          rewrittenPredicate = predicateElimination.newPredicates
+        }
+      }
+
+      // Eliminate non-deterministic predicates.
+      if (shouldWidenNonDeterministicPredicates) {
         val checkDeterministicOptions =
           CheckDeterministicOptions(allowDeterministicUdf = !shouldWidenAllUdf)
-        eliminateNonDeterministicPredicates(Seq(predicate), checkDeterministicOptions).newPredicates
-      } else {
-        Seq(predicate)
+        rewrittenPredicate =
+          eliminateNonDeterministicPredicates(rewrittenPredicate, checkDeterministicOptions)
+            .newPredicates
       }
+
       DeltaTableReadPredicate(
         partitionPredicates = rewrittenPredicate,
         shouldRewriteFilter = shouldRewriteFilter)

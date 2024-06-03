@@ -1150,6 +1150,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONFLICT_DETECTION_WIDEN_OUTER_REFERENCES =
+    buildConf("conflictDetection.partitionLevelConcurrency.widenOuterReferences ")
+      .doc("Whether to widen outer references in subqueries during partition-level concurrency.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   final object NonDeterministicPredicateWidening {
     final val OFF = "off"
     final val LOGGING = "logging"
