@@ -38,7 +38,6 @@ jobs:
           # cache new stuff.
           key: delta-sbt-cache-spark-master-scala${{ matrix.scala }}
       - name: Install Job dependencies
-        # TODO: update pyspark installation once Spark preview is formally released
         run: |
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
@@ -72,8 +71,7 @@ jobs:
           pipenv run pip install grpcio==1.62.0
           pipenv run pip install grpcio-status==1.62.0
           pipenv run pip install googleapis-common-protos==1.56.4
-          pipenv run pip install https://dist.apache.org/repos/dist/dev/spark/v4.0.0-preview1-rc3-bin/pyspark-4.0.0.dev1.tar.gz
-        if: steps.git-diff.outputs.diff
+          pipenv run pip install pyspark==4.0.0.dev1
       - name: Run Spark Master tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         # NOTE: in this branch, the default sparkVersion is the SPARK_MASTER_VERSION

@@ -173,8 +173,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     crossScalaVersions := Seq(scala213),
     targetJvm := "17",
     resolvers ++= Seq(
-      "Spark master staging" at "https://repository.apache.org/content/groups/snapshots/",
-      "Apache Spark 4.0 Preview (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1456/",
+      "Spark master staging" at "https://repository.apache.org/content/groups/snapshots/"
     ),
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
@@ -259,7 +258,8 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
-  )
+    unidocSourceFilePatterns := Nil,
+  ).configureUnidoc()
 
 lazy val connectServer = (project in file("spark-connect/server"))
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
@@ -302,7 +302,8 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
-  )
+    unidocSourceFilePatterns := Nil,
+  ).configureUnidoc()
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
@@ -422,7 +423,6 @@ lazy val contribs = (project in file("contribs"))
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value
   ).configureUnidoc()
 
-// TODO what about sharing?
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .settings(
@@ -577,7 +577,6 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     )
   ).configureUnidoc()
 
-// TODO are we sure about this?
 /*
 val icebergSparkRuntimeArtifactName = {
  val (expMaj, expMin, _) = getMajorMinorPatch(defaultSparkVersion)
