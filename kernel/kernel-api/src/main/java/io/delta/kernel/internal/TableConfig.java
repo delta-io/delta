@@ -60,6 +60,14 @@ public class TableConfig<T> {
             "needs to be a positive integer."
     );
 
+    public static final TableConfig<Boolean> IN_COMMIT_TIMESTAMPS_ENABLED = new TableConfig<>(
+            "delta.enableInCommitTimestamps-preview",
+            "false",
+            Boolean::valueOf,
+            value -> true,
+            "needs to be a boolean."
+    );
+
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;

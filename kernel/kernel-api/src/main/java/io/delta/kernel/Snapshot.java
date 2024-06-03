@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.internal.actions.Metadata;
 
 /**
  * Represents the snapshot of a Delta table.
@@ -35,6 +36,8 @@ public interface Snapshot {
      * @return version of this snapshot in the Delta table
      */
     long getVersion(Engine engine);
+
+    Metadata getMetadata();
 
     /**
      * Get the schema of the table at this snapshot.

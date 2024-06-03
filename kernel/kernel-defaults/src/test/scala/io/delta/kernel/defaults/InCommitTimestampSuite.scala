@@ -21,14 +21,13 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.actions.SingleAction
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import java.util.Optional
-import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
 
 class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   val testEngineInfo = "test-engine"
@@ -53,6 +52,17 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   test("Enable ICT on commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
       val beforeCommitAttemptStartTime = System.currentTimeMillis
+      createTableWithInCommitTimestampsEnabled(tablePath, true)
+      val table = Table.forPath(engine, tablePath)
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0)
+      assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver0Snapshot.getMetadata))
+      assert(getInCommitTimestamp(engine, table, 0) >= beforeCommitAttemptStartTime)
+    }
+  }
+
+  test("Enable ICT on commit 1") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val beforeCommitAttemptStartTime = System.currentTimeMillis
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
@@ -61,8 +71,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         .build(engine)
 
       txn.commit(engine, emptyIterable())
-
-      assert(getInCommitTimestamp(engine, table, 0) >= beforeCommitAttemptStartTime)
+      setInCommitTimestampsEnabled(tablePath, true)
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0)
+      assert(!TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver0Snapshot.getMetadata))
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1)
+      assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver1Snapshot.getMetadata))
+      assert(getInCommitTimestamp(engine, table, 1) >= beforeCommitAttemptStartTime)
     }
   }
 }

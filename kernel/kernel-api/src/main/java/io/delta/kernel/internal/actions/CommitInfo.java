@@ -57,7 +57,7 @@ public class CommitInfo {
                     .boxed()
                     .collect(toMap(i -> FULL_SCHEMA.at(i).getName(), i -> i));
 
-    private final long inCommitTimestamp;
+    private final Optional<Long> inCommitTimestamp;
     private final long timestamp;
     private final String engineInfo;
     private final String operation;
@@ -66,7 +66,7 @@ public class CommitInfo {
     private final String txnId;
 
     public CommitInfo(
-            long inCommitTimestamp,
+            Optional<Long> inCommitTimestamp,
             long timestamp,
             String engineInfo,
             String operation,
@@ -82,7 +82,7 @@ public class CommitInfo {
         this.txnId = txnId;
     }
 
-    public long getInCommitTimestamp() {
+    public Optional<Long> getInCommitTimestamp() {
         return inCommitTimestamp;
     }
 
@@ -105,7 +105,8 @@ public class CommitInfo {
      */
     public Row toRow() {
         Map<Integer, Object> commitInfo = new HashMap<>();
-        commitInfo.put(COL_NAME_TO_ORDINAL.get("inCommitTimestamp"), inCommitTimestamp);
+        commitInfo.put(COL_NAME_TO_ORDINAL.get("inCommitTimestamp"),
+                inCommitTimestamp.orElse(null));
         commitInfo.put(COL_NAME_TO_ORDINAL.get("timestamp"), timestamp);
         commitInfo.put(COL_NAME_TO_ORDINAL.get("engineInfo"), engineInfo);
         commitInfo.put(COL_NAME_TO_ORDINAL.get("operation"), operation);

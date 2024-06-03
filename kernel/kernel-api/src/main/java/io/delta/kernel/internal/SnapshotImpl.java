@@ -78,6 +78,7 @@ public class SnapshotImpl implements Snapshot {
         );
     }
 
+    @Override
     public Metadata getMetadata() {
         return metadata;
     }
