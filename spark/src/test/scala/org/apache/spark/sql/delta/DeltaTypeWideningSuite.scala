@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.{File, PrintWriter}
 import java.util.concurrent.TimeUnit
 
 import com.databricks.spark.util.Log4jUsageLogger
@@ -1508,6 +1509,26 @@ trait DeltaTypeWideningTableFeatureTests extends DeltaTypeWideningTestCases {
       expectedColumnTypes = Map("a" -> IntegerType)
     )
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
+  }
+
+  test("rewriting files fails if there are corrupted files") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+    addSingleFile(Seq(2), IntegerType)
+    addSingleFile(Seq(3), IntegerType)
+    val filePath = deltaLog.update().allFiles.first().path
+    val pw = new PrintWriter(new File(tempPath, filePath))
+    pw.write("corrupted")
+    pw.close()
+
+    // Rewriting files when dropping type widening should ignore this config, if the corruption is
+    // transient it will leave files behind that some clients can't read.
+    withSQLConf(SQLConf.IGNORE_CORRUPT_FILES.key -> "true") {
+      val ex = intercept[SparkException] {
+        sql(s"ALTER TABLE delta.`$tempDir` DROP FEATURE '${TypeWideningTableFeature.name}'")
+      }
+      assert(ex.getMessage.contains("Cannot seek after EOF"))
+    }
   }
 }
 

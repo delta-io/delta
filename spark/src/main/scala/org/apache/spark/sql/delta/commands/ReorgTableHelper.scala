@@ -56,11 +56,11 @@ trait ReorgTableHelper extends Serializable {
   protected def filterParquetFilesOnExecutors(
       spark: SparkSession,
       files: Seq[AddFile],
-      snapshot: Snapshot)(
+      snapshot: Snapshot,
+      ignoreCorruptFiles: Boolean)(
       filterFileFn: StructType => Boolean): Seq[AddFile] = {
 
     val serializedConf = new SerializableConfiguration(snapshot.deltaLog.newDeltaHadoopConf())
-    val ignoreCorruptFiles = spark.sessionState.conf.ignoreCorruptFiles
     val assumeBinaryIsString = spark.sessionState.conf.isParquetBinaryAsString
     val assumeInt96IsTimestamp = spark.sessionState.conf.isParquetINT96AsTimestamp
     val dataPath = new Path(snapshot.deltaLog.dataPath.toString)
