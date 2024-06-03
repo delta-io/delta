@@ -268,7 +268,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
-    unidocSourceFilePatterns := Nil
+    unidocSourceFilePatterns := Nil,
   ).configureUnidoc()
 
 lazy val connectClient = (project in file("spark-connect/client"))
@@ -352,8 +352,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
       } else {
         dest.get()
       }
-    }.taskValue
-    unidocSourceFilePatterns := Nil
+    }.taskValue,
+    unidocSourceFilePatterns := Nil,
   ).configureUnidoc()
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -397,7 +397,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
-    unidocSourceFilePatterns := Nil
+    unidocSourceFilePatterns := Nil,
   ).configureUnidoc()
 
 lazy val spark = (project in file("spark"))
