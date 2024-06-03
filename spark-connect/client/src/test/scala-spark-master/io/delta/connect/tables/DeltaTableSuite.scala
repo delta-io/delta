@@ -40,4 +40,13 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
       )
     }
   }
+
+  test("as") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      checkAnswer(
+        DeltaTable.forPath(spark, dir.getAbsolutePath).as("tbl").toDF.select("tbl.value"),
+        testData.select("value").collect().toSeq)
+    }
+  }
 }
