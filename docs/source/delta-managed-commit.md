@@ -4,11 +4,11 @@ description: Learn about Delta Managed Commits.
 
 # Delta Managed Commits
 
-.. warning:: This feature is available in preview in <Delta> 4.0. Since this feature is still in preview, it is can undergo major changes. Furthermore, table which has this preview feature enabled cannot be written to by future Delta releases until
+.. warning:: This feature is available in preview in <Delta> 4.0. Since this feature is still in preview, it can undergo major changes. Furthermore, a table which has this preview feature enabled cannot be written to by future Delta releases until
 this feature is manually dropped from the table.
 
-The Managed Commit writer table feature defines a general protocol which can be extended to define custom commit protocols. The feature enables clients to designate "commit owners" for tables, which means that every commit to the table must be managed by that commit owner.
-This makes multi-cluster and multi-engine writes to tables safe. The commit owner for a table can be discovered by reading the table through the filesystem.
+The [Managed Commit](https://github.com/delta-io/delta/issues/2598) writer table feature defines a general protocol which can be extended to define custom commit protocols. The feature enables clients to designate "commit owners" for tables, which means that every commit to the table must be managed by that commit owner.
+The presence of a commit owner which is responsible for all commits to a table makes multi-cluster and multi-engine writes to tables safe. The commit owner for a table can be discovered by reading the table through the filesystem.
 
 
 # DynamoDB Commit Owner
@@ -66,7 +66,7 @@ Any future commit to this table will now by managed by the DynamoDB Commit Owner
     ALTER TABLE <table_name>
     SET TBLPROPERTIES ('delta.managedCommits.commitOwner-preview' = 'dynamodb', 'delta.managedCommits.commitOwnerConf-preview' = '{\"managedCommitsTableName\"=\"<dynamodb_table_name>\",\"dynamoDBEndpoint\"=\"<dynamodb_region_endpoint>\"}');
     ```
-..warning:: The commit that converts a table to a managed commit table does not go through the commit owner. This means that the multi-cluster write restrictions imposed by the configured `LogStore` implementation still apply. To avoid
+..warning:: The commit that converts a table to a managed commit table goes through the configured `LogStore` directly. This means that the multi-cluster write restrictions imposed by the configured `LogStore` implementation still apply. To avoid
 corruption in filesystems where concurrent commits are not safe, no concurrent commits must be performed when the conversion to managed commits happens. 
 
 .. note:: Instead of specifying the table properties on every table creation, you can specify them as default table properties which will be used for every new table using spark configs. To do this, you can set the spark properties `spark.databricks.delta.properties.defaults.managedCommits.commitOwner-preview` and `spark.databricks.delta.properties.defaults.managedCommits.commitOwnerConf-preview`.
