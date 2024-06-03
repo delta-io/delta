@@ -40,6 +40,7 @@ import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -198,8 +199,12 @@ public class TransactionImpl
         return setTxnOpt;
     }
 
-    private long generateInCommitTimestampForFirstCommitAttempt(long currentTimestamp) {
-        return currentTimestamp;
+    private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(long currentTimestamp) {
+        if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+            return Optional.of(currentTimestamp);
+        } else {
+            return Optional.empty();
+        }
     }
 
     private Row generateCommitAction() {

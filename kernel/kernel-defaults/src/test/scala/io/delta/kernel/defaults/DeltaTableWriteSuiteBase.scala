@@ -78,6 +78,17 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       s"SET TBLPROPERTIES ('delta.checkpointInterval' = '$interval')")
   }
 
+  def setInCommitTimestampsEnabled(tablePath: String, enabled: Boolean): Unit = {
+    spark.sql(s"ALTER TABLE delta.`$tablePath` " +
+      s"SET TBLPROPERTIES ('delta.enableInCommitTimestamps-preview' = '$enabled')")
+  }
+
+  def createTableWithInCommitTimestampsEnabled(tablePath: String, enabled: Boolean): Unit = {
+    spark.sql(s"CREATE TABLE test (a INT, b STRING) USING delta CLUSTER BY (a) " +
+      s"LOCATION '$tablePath' " +
+      s"TBLPROPERTIES ('delta.enableInCommitTimestamps-preview' = '$enabled')")
+  }
+
   def dataFileCount(tablePath: String): Int = {
     Files.walk(Paths.get(tablePath)).iterator().asScala
       .count(path => path.toString.endsWith(".parquet") && !path.toString.contains("_delta_log"))
