@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.uniform
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
-import org.apache.spark.sql.delta.commands.CreateUniformTableStatement
+import org.apache.spark.sql.delta.commands.{CreateUniformTableStatement, RefreshUniformTableStatement}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -61,7 +61,7 @@ class UniformIngressSqlSuite extends QueryTest
     assert(spark.sessionState.sqlParser.parsePlan(sql) == result)
   }
 
-  test("create uniform table command") {
+  test("create uniform ingress table command") {
     val sql1 = "CREATE TABLE ufi_table_1 UNIFORM iceberg METADATA_PATH 'metadata_path_1'"
     parseAndValidate(
       sql = sql1,
@@ -107,6 +107,39 @@ class UniformIngressSqlSuite extends QueryTest
       isCreate = false,
       fileFormat = "iceberg",
       metadataPath = "metadata_path_4"
+    )
+  }
+
+  test("refresh uniform ingress table command") {
+    val target = UnresolvedRelation(Seq("a"))
+    assert(
+      spark.sessionState.sqlParser.parsePlan(
+        s"REFRESH TABLE a METADATA_PATH 'path'") ==
+        RefreshUniformTableStatement(
+          target,
+          isForce = false,
+          metadataPath = Some("path")
+        )
+    )
+
+    assert(
+      spark.sessionState.sqlParser.parsePlan(
+        s"REFRESH TABLE a METADATA_PATH 'path' FORCE") ==
+        RefreshUniformTableStatement(
+          target,
+          isForce = true,
+          metadataPath = Some("path")
+        )
+    )
+
+    assert(
+      spark.sessionState.sqlParser.parsePlan(
+        s"REFRESH TABLE a METADATA_PATH 'path' force") ==
+        RefreshUniformTableStatement(
+          target,
+          isForce = true,
+          metadataPath = Some("path")
+        )
     )
   }
 }

@@ -27,10 +27,23 @@ case class CreateUniformTableStatement(
     fileFormat: String,
     metadataPath: String) extends UnaryNode {
 
-    override def child: LogicalPlan = table
+  override def child: LogicalPlan = table
 
-    override def output: Seq[Attribute] = Nil
+  override def output: Seq[Attribute] = Nil
 
-    override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
-      copy(table = newChild)
+  override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
+    copy(table = newChild)
+}
+
+case class RefreshUniformTableStatement(
+    target: LogicalPlan,
+    isForce: Boolean,
+    metadataPath: Option[String]) extends UnaryNode {
+
+  override def child: LogicalPlan = target
+
+  override def output: Seq[Attribute] = Nil
+
+  override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
+    copy(target = newChild)
 }

@@ -105,6 +105,9 @@ statement
     | cloneTableHeader
         UNIFORM format=qualifiedName
         METADATA_PATH metadataPath=stringLit                            #createUniformTable
+    | REFRESH TABLE table=qualifiedName
+        (METADATA_PATH metadataPath=stringLit)?
+        (FORCE)?                                                        #refreshUniformTable
     | .*? clusterBySpec+ .*?                                            #clusterBy
     | .*?                                                               #passThrough
     ;
@@ -274,6 +277,7 @@ EXISTS: 'EXISTS';
 FALSE: 'FALSE';
 FEATURE: 'FEATURE';
 FOR: 'FOR';
+FORCE: 'FORCE';
 GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
@@ -295,6 +299,7 @@ OPTIMIZE: 'OPTIMIZE';
 REORG: 'REORG';
 PARTITIONED: 'PARTITIONED';
 PURGE: 'PURGE';
+REFRESH: 'REFRESH';
 REPLACE: 'REPLACE';
 RESTORE: 'RESTORE';
 RETAIN: 'RETAIN';

@@ -426,6 +426,17 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     )
   }
 
+  override def visitRefreshUniformTable(
+      ctx: RefreshUniformTableContext): LogicalPlan = withOrigin(ctx) {
+    // TODO: ensure the `targetTable` here
+    val targetTable = new UnresolvedRelation(visitTableIdentifier(ctx.table).nameParts)
+    RefreshUniformTableStatement(
+      target = targetTable,
+      isForce = ctx.FORCE() != null,
+      metadataPath = Option(string(visitStringLit(ctx.metadataPath)))
+    )
+  }
+
   override def visitDescribeDeltaDetail(
       ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaDetailCommand(
