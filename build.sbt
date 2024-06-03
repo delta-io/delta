@@ -215,14 +215,6 @@ lazy val java17TestSettings =
     "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
   )
 
-    // Java-/Scala-/Uni-Doc Settings
-    // This isn't working yet against Spark Master.
-    // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
-    //    generating delta-spark unidoc compiles delta-iceberg
-    // 2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
-    //    issue above.
-  )
-
 def runTaskOnlyOnSparkMaster[T](
     task: sbt.TaskKey[T],
     taskName: String,

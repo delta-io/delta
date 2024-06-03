@@ -66,7 +66,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
   private val buildLocation = System.getProperty("delta.test.home")
   private val deltaConnectJar = s"$buildLocation/" +
-    "spark-connect/server/target/scala-2.13/delta-connect-server-assembly-3.3.0-SNAPSHOT.jar"
+    "spark-connect/server/target/scala-2.13/delta-connect-server-assembly-4.0.0-SNAPSHOT.jar"
 
   private val resources = s"$buildLocation/spark-connect/client/target/scala-2.13/resource_managed/test"
   private val sparkConnectJar = s"$resources/spark-connect.jar"
