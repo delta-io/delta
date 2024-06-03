@@ -7,8 +7,6 @@ import java.util.Optional;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.MapValue;
-import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
 
