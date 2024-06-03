@@ -203,6 +203,11 @@ public final class DeltaErrors {
         return new ProtocolChangedException(attemptVersion);
     }
 
+    public static KernelException voidTypeEncountered() {
+        return new KernelException(
+                "Failed to parse the schema. Encountered unsupported Delta data type: VOID");
+    }
+
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
