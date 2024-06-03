@@ -222,7 +222,6 @@ lazy val java17TestSettings =
     // 2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
     //    issue above.
   )
-}
 
 def runTaskOnlyOnSparkMaster[T](
     task: sbt.TaskKey[T],
