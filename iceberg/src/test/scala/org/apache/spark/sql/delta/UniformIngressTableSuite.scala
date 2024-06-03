@@ -17,10 +17,8 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.hadoop.fs.Path
 import org.apache.iceberg
 
 class UniformIngressTableSuite extends QueryTest
