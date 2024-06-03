@@ -50,6 +50,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   /** Test table schemas and test */
   val testSchema = new StructType().add("id", INTEGER)
+  val testSchema1 = new StructType().add("id", INTEGER).add("name", STRING)
+  val testSchema2 = new StructType().add("id", INTEGER).add("age", INTEGER)
   val dataBatches1 = generateData(testSchema, Seq.empty, Map.empty, 200, 3)
   val dataBatches2 = generateData(testSchema, Seq.empty, Map.empty, 400, 5)
 
@@ -116,32 +118,60 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create table - table already exists at the location") {
+  test("create table - table already exists, with new schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
-      val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
+      var txn = txnBuilder.withSchema(engine, testSchema).build(engine)
       txn.commit(engine, emptyIterable())
 
       {
-        val ex = intercept[TableAlreadyExistsException] {
+        txn = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+          .withSchema(engine, testSchema1)
+          .build(engine)
+        txn.commit(engine, emptyIterable())
+        val schema = table.getLatestSnapshot(engine).getSchema(engine)
+        assert(schema.equals(testSchema1))
+      }
+    }
+  }
+
+  test("create table - table already exists, with new schema drop column") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      var txn = txnBuilder.withSchema(engine, testSchema1).build(engine)
+      txn.commit(engine, emptyIterable())
+
+      {
+        val ex = intercept[KernelException] {
           table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
             .withSchema(engine, testSchema)
             .build(engine)
         }
-        assert(ex.getMessage.contains("Table already exists, but provided a new schema. " +
-          "Schema can only be set on a new table."))
+        assert(ex.getMessage.equals("Kernel doesn't support schema evolution drop column."))
       }
-      {
-        val ex = intercept[TableAlreadyExistsException] {
-          table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-            .withPartitionColumns(engine, Seq("part1", "part2").asJava)
-            .build(engine)
-        }
-        assert(ex.getMessage.contains("Table already exists, but provided new partition columns." +
-          " Partition columns can only be set on a new table."))
+    }
+  }
+
+  test("create table - table already exists, with new column") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val par1 = Seq("part1")
+
+      val txn = txnBuilder.withSchema(engine, testPartitionSchema)
+        .withPartitionColumns(engine, par1.asJava).build(engine)
+      txn.commit(engine, emptyIterable())
+
+      val par2 = Seq("part1", "part2")
+      val ex = intercept[KernelException] {
+        table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+          .withPartitionColumns(engine, par2.asJava).build(engine)
       }
+      assert(ex.getMessage.equals("Kernel doesn't support partition columns change."))
     }
   }
 

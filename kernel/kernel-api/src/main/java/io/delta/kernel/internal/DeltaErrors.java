@@ -144,7 +144,7 @@ public final class DeltaErrors {
     }
 
     public static KernelException unsupportedSchemaColumnDrop() {
-        String message = "Kernel doesn't support schema columns drop.";
+        String message = "Kernel doesn't support schema evolution drop column.";
         return new KernelException(message);
     }
 
