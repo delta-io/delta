@@ -47,7 +47,7 @@ import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.util.SparkStringUtils.sideBySide
 import org.apache.spark.util.ArrayImplicits._
 
-// Copied from Spark until SPARK-48341 is resolved.
+// TODO: Copied from Spark until SPARK-48341 is resolved.
 
 abstract class DeltaQueryTest extends AnyFunSuite with SQLHelper {
 
@@ -62,7 +62,7 @@ abstract class DeltaQueryTest extends AnyFunSuite with SQLHelper {
    *   the expected result in a [[Seq]] of [[Row]]s.
    */
   protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit = {
-    QueryTest.checkAnswer(df, expectedAnswer)
+    DeltaQueryTest.checkAnswer(df, expectedAnswer)
   }
 
   protected def checkAnswer(df: => DataFrame, expectedAnswer: Row): Unit = {
@@ -84,7 +84,7 @@ abstract class DeltaQueryTest extends AnyFunSuite with SQLHelper {
   protected def checkDataset[T](ds: => Dataset[T], expectedAnswer: T*): Unit = {
     val result = ds.collect()
 
-    if (!QueryTest.compare(result.toSeq, expectedAnswer)) {
+    if (!DeltaQueryTest.compare(result.toSeq, expectedAnswer)) {
       fail(s"""
               |Decoded objects do not match expected objects:
               |expected: $expectedAnswer
@@ -102,7 +102,7 @@ abstract class DeltaQueryTest extends AnyFunSuite with SQLHelper {
       expectedAnswer: T*): Unit = {
     val result = ds.collect()
 
-    if (!QueryTest.compare(result.toSeq.sorted, expectedAnswer.sorted)) {
+    if (!DeltaQueryTest.compare(result.toSeq.sorted, expectedAnswer.sorted)) {
       fail(s"""
               |Decoded objects do not match expected objects:
               |expected: $expectedAnswer
@@ -112,7 +112,7 @@ abstract class DeltaQueryTest extends AnyFunSuite with SQLHelper {
   }
 }
 
-object QueryTest extends Assertions {
+object DeltaQueryTest extends Assertions {
 
   /**
    * Runs the plan and makes sure the answer matches the expected result.
@@ -154,7 +154,7 @@ object QueryTest extends Assertions {
                |== Exception ==
                |$e
                |${org.apache.spark.util.SparkErrorUtils.stackTraceToString(e)}
-        """.stripMargin
+            """.stripMargin
           return Some(errorMessage)
       }
 
