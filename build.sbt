@@ -17,9 +17,17 @@
 // scalastyle:off line.size.limit
 
 import java.nio.file.Files
+
+import sbt.internal.inc.Analysis
+import sbtprotoc.ProtocPlugin.autoImport._
+
+import xsbti.compile.CompileAnalysis
+
 import Checkstyle._
 import Mima._
 import Unidoc._
+
+import sbtprotoc.ProtocPlugin.autoImport._
 
 // Scala versions
 val scala213 = "2.13.13"
@@ -38,6 +46,8 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
 val SPARK_MASTER_VERSION = "4.0.0-preview1"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+connectCommon / sparkVersion := getSparkVersion()
+connectServer / sparkVersion := getSparkVersion()
 sqlDeltaImport / sparkVersion := getSparkVersion()
 
 // Dependent library versions
@@ -57,6 +67,9 @@ val tezVersion = "0.9.2"
 val hadoopVersionForHive2 = "2.7.2"
 val hive2Version = "2.3.3"
 val tezVersionForHive2 = "0.8.4"
+
+val protoVersion = "3.25.1"
+val grpcVersion = "1.62.2"
 
 scalaVersion := default_scala_version.value
 
@@ -190,6 +203,105 @@ lazy val java17TestSettings =
     "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
     "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
     "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+  )
+
+def runTaskOnlyOnSparkMaster[T](
+    task: sbt.TaskKey[T],
+    taskName: String,
+    projectName: String,
+    emptyValue: => T): Def.Initialize[Task[T]] = {
+  if (getSparkVersion() == SPARK_MASTER_VERSION) {
+    Def.task(task.value)
+  } else {
+    Def.task {
+      // scalastyle:off println
+      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
+        s"${getSparkVersion()} does not equal $SPARK_MASTER_VERSION.")
+      // scalastyle:on println
+      emptyValue
+    }
+  }
+}
+
+lazy val connectCommon = (project in file("spark-connect/common"))
+  .settings(
+    name := "delta-connect-common",
+    commonSettings,
+    crossSparkSettings(),
+    releaseSettings,
+    Compile / compile := runTaskOnlyOnSparkMaster(
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-connect-common",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkMaster(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-connect-common",
+      emptyValue = ()).value,
+    publish := runTaskOnlyOnSparkMaster(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-connect-common",
+      emptyValue = ()).value,
+    libraryDependencies ++= Seq(
+      "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
+      "javax.annotation" % "javax.annotation-api" % "1.3.2",
+
+      "org.apache.spark" %% "spark-connect-common" % sparkVersion.value % "provided",
+    ),
+    PB.protocVersion := protoVersion,
+    Compile / PB.targets := Seq(
+      PB.gens.java -> (Compile / sourceManaged).value,
+      PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
+    ),
+  )
+
+lazy val connectServer = (project in file("spark-connect/server"))
+  .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
+  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .settings(
+    name := "delta-connect-server",
+    commonSettings,
+    releaseSettings,
+    Compile / compile := runTaskOnlyOnSparkMaster(
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-connect-server",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkMaster(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-connect-server",
+      emptyValue = ()
+    ).value,
+    publish := runTaskOnlyOnSparkMaster(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-connect-server",
+      emptyValue = ()
+    ).value,
+    crossSparkSettings(),
+    libraryDependencies ++= Seq(
+      "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
+
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
+
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
+    ),
   )
 
 lazy val spark = (project in file("spark"))
