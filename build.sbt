@@ -221,7 +221,7 @@ def runTaskOnlyOnSparkMaster[T](
     Def.task {
       // scalastyle:off println
       println(s"Project $projectName: Skipping `$taskName` as Spark version " +
-        s"${getSparkVersion()} does not equal $SPARK_MASTER_VERSION")
+        s"${getSparkVersion()} does not equal $SPARK_MASTER_VERSION.")
       // scalastyle:on println
       emptyValue
     }
