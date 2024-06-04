@@ -72,6 +72,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     checkSupported(createTestProtocol(minWriterVersion = 7, writerFeatures = "appendOnly"))
   }
 
+  test("validateWriteSupported: protocol 7 with inCommitTimestamp-preview") {
+    checkSupported(
+      createTestProtocol(minWriterVersion = 7, writerFeatures = "inCommitTimestamp-preview"))
+  }
+
   Seq("invariants", "checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
       "columnMapping", "identityColumns", "deletionVectors", "rowTracking", "timestampNtz",
       "domainMetadata", "v2Checkpoint", "icebergCompatV1", "icebergCompatV2", "clustering",
