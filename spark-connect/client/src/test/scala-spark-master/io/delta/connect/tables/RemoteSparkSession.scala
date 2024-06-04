@@ -96,9 +96,9 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     server
     // TODO: Instead of sleeping for a fix time, which is a bit brittle,
     // we should repeatly check when the server is ready.
-    Thread.sleep(1000)
+    Thread.sleep(10000)
     spark = SparkSession.builder().remote(s"sc://localhost:$serverPort").build()
-    Thread.sleep(1000)
+    Thread.sleep(10000)
   }
 
   override def afterAll(): Unit = {
