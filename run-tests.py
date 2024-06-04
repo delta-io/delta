@@ -54,9 +54,11 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
 
     test_cmd = "test"
 
-    if test_group:
+    if test_group != "connectServer":
         # if test group is specified, then run tests only on that test group
         test_cmd = "{}Group/test".format(test_group)
+    else:
+        test_cmd = f"{test_group}/test"
 
     if coverage:
         cmd += ["coverage"]
