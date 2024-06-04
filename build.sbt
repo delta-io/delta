@@ -147,12 +147,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
     Antlr4 / antlr4Version := "4.9.3",
-
-    // Java-/Scala-/Uni-Doc Settings
-    scalacOptions ++= Seq(
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
-    ),
-    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
 
   case SPARK_MASTER_VERSION => Seq(
@@ -166,12 +160,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
     Antlr4 / antlr4Version := "4.13.1",
     java17TestSettings,
-
-    // Java-/Scala-/Uni-Doc Settings
-    scalacOptions ++= Seq(
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
-    ),
-    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
 }
 
@@ -268,6 +256,12 @@ lazy val spark = (project in file("spark"))
       Seq(file)
     },
     TestParallelization.settings,
+    
+    // Java-/Scala-/Uni-Doc Settings
+    scalacOptions ++= Seq(
+      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+    ),
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
   .configureUnidoc(generateScalaDoc = true)
 
