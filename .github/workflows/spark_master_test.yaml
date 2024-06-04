@@ -72,5 +72,7 @@ jobs:
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         # NOTE: in this branch, the default sparkVersion is the SPARK_MASTER_VERSION
         run: |
+          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectServer/compile connectClient/test
+          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/test
           TEST_PARALLELISM_COUNT=2 pipenv run python run-tests.py --group spark
         if: steps.git-diff.outputs.diff

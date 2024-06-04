@@ -15,5 +15,8 @@
             distribution: "zulu"
             java-version: "17"
         - uses: actions/checkout@v3
-        - name: generate unidoc
+        - name: generate unidoc for Spark Latest
           run: build/sbt "++ ${{ matrix.scala }}" unidoc
+        - name: generate unidoc for Spark Master (Scala 2.13 only)
+          run: build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" unidoc
+          if: ${{ startsWith(matrix.scala, '2.13.') }}
