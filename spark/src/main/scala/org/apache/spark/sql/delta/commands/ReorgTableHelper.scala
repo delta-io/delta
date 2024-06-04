@@ -31,7 +31,7 @@ import org.apache.spark.util.SerializableConfiguration
 
 trait ReorgTableHelper extends Serializable {
   /**
-   * Determine whether `fileSchema` has any columns that has a type that differ from
+   * Determine whether `fileSchema` has any columns that has a type that differs from
    * `tablePhysicalSchema`.
    */
   protected def fileHasDifferentTypes(
@@ -39,7 +39,7 @@ trait ReorgTableHelper extends Serializable {
       tablePhysicalSchema: StructType): Boolean = {
     SchemaMergingUtils.transformColumns(fileSchema, tablePhysicalSchema) {
       case (_, StructField(_, fileType: AtomicType, _, _),
-      Some(StructField(_, tableType: AtomicType, _, _)), _) if fileType != tableType =>
+        Some(StructField(_, tableType: AtomicType, _, _)), _) if fileType != tableType =>
         return true
       case (_, field, _, _) => field
     }
@@ -47,8 +47,8 @@ trait ReorgTableHelper extends Serializable {
   }
 
   /**
-   * Apply a filter on the list of AddFile to only keep the files that have their physical parquet
-   * schema that satisfies the given filter function.
+   * Apply a filter on the list of AddFile to only keep the files that have physical parquet schema
+   * that satisfies the given filter function.
    *
    * Note: Filtering happens on the executors: **any variable captured by `filterFileFn` must be
    * Serializable**
