@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.PreprocessTimeTravel
@@ -128,12 +129,12 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
 
     extensions.injectPlanNormalizationRule { _ => GenerateRowIDs }
 
-    // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
-    // `PrepareDeltaScan`.
-    // For example, `ConstantFolding` will break unit tests in `OptimizeGeneratedColumnSuite`.
     extensions.injectPreCBORule { session =>
       new PrepareDeltaScan(session)
     }
+    // Fold constants that may have been introduced by PrepareDeltaScan. This is only useful with
+    // Spark 3.5 as later versions apply constant folding after pre-CBO rules.
+    extensions.injectPreCBORule { _ => ConstantFolding }
 
     // Add skip row column and filter.
     extensions.injectPlannerStrategy(PreprocessTableWithDVsStrategy)

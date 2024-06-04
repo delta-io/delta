@@ -299,7 +299,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
       val file = AddFile("abc", Map.empty, 1, 1, true)
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0L),
+        FileNames.unsafeDeltaFile(log.logPath, 0L),
         Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)))
     }
   }
@@ -365,8 +365,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     val metadata = Metadata(
       schemaString = new StructType().add("id", IntegerType).json
     )
-    log.store.write(
-      FileNames.deltaFile(log.logPath, 0L),
+    log.store.write(FileNames.unsafeDeltaFile(log.logPath, 0L),
 
       // Protocol reader version explicitly set too high
       // Also include a Metadata
@@ -402,7 +401,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val addFile = AddFile("abc", Map.empty, 1, 1, true)
     log.store.write(
-      FileNames.deltaFile(log.logPath, 0L),
+      FileNames.unsafeDeltaFile(log.logPath, 0L),
       Iterator(Metadata(), Protocol(), commitInfoFile, addFile).map(a => JsonUtils.toJson(a.wrap)))
   }
 
@@ -474,7 +473,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
       file.setLastModified(ts)
       startVersion += 1
     }

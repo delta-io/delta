@@ -40,7 +40,7 @@ import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, IgnoreCachedData, QualifiedColType}
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, SparkCharVarcharUtils}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
@@ -148,6 +148,8 @@ case class AlterTableSetPropertiesDeltaCommand(
         case k if k == TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature) =>
           throw DeltaErrors.alterTableSetClusteringTableFeatureException(
             ClusteringTableFeature.name)
+        case k if k == ClusteredTableUtils.PROP_CLUSTERING_COLUMNS =>
+          throw DeltaErrors.cannotModifyTableProperty(k)
         case _ =>
           true
       }.toMap
@@ -1005,17 +1007,26 @@ case class AlterTableAddConstraintDeltaCommand(
           (Constraints.checkConstraintPropertyName(name) -> exprText)
       )
 
-      val expr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
-      if (expr.dataType != BooleanType) {
-        throw DeltaErrors.checkConstraintNotBoolean(name, exprText)
+      val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+      val unresolvedExpr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
+
+      try {
+        df.where(new Column(unresolvedExpr)).queryExecution.analyzed
+      } catch {
+        case a: AnalysisException
+            if a.errorClass.contains("DATATYPE_MISMATCH.FILTER_NOT_BOOLEAN") =>
+          throw DeltaErrors.checkConstraintNotBoolean(name, exprText)
+        case a: AnalysisException =>
+          // Strip out the context of the DataFrame that was used to analyze the expression.
+          throw a.copy(context = Array.empty)
       }
+
       logInfo(s"Checking that $exprText is satisfied for existing data. " +
         "This will require a full table scan.")
       recordDeltaOperation(
           txn.snapshot.deltaLog,
           "delta.ddl.alter.addConstraint.checkExisting") {
-        val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
-        val n = df.where(new Column(Or(Not(expr), IsUnknown(expr)))).count()
+        val n = df.where(new Column(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr)))).count()
 
         if (n > 0) {
           throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)
@@ -1083,6 +1094,22 @@ case class AlterTableClusterByDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
     ClusteredTableUtils.validateNumClusteringColumns(clusteringColumns, Some(deltaLog))
+    // If the target table is not a clustered table and there are no clustering columns being added
+    // (CLUSTER BY NONE), do not convert the table into a clustered table.
+    val snapshot = deltaLog.update()
+    if (clusteringColumns.isEmpty &&
+      !ClusteredTableUtils.isSupported(snapshot.protocol)) {
+      logInfo(s"Skipping ALTER TABLE CLUSTER BY NONE on a non-clustered table: ${table.name()}.")
+      recordDeltaEvent(
+        deltaLog,
+        "delta.ddl.alter.clusterBy",
+        data = Map(
+          "isClusterByNoneSkipped" -> true,
+          "isNewClusteredTable" -> false,
+          "oldColumnsCount" -> 0,
+          "newColumnsCount" -> 0))
+      return Seq.empty
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.clusterBy") {
       val txn = startTransaction()
 
@@ -1102,6 +1129,7 @@ case class AlterTableClusterByDeltaCommand(
         deltaLog,
         "delta.ddl.alter.clusterBy",
         data = Map(
+          "isClusterByNoneSkipped" -> false,
           "isNewClusteredTable" -> !ClusteredTableUtils.isSupported(txn.protocol),
           "oldColumnsCount" -> oldColumnsCount, "newColumnsCount" -> clusteringColumns.size))
       // Add clustered table properties if the current table is not clustered.

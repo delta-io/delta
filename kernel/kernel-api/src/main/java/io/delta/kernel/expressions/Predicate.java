@@ -103,6 +103,12 @@ import io.delta.kernel.engine.ExpressionHandler;
  *    <li>Since version: 3.2.0</li>
  *   </ul>
  *  </li>
+ *  <li>Name: <code>LIKE</code>
+ *   <ul>
+ *    <li>SQL semantic: <code>expr LIKE expr</code></li>
+ *    <li>Since version: 3.3.0</li>
+ *   </ul>
+ *  </li>
  * </ol>
  *
  * @since 3.0.0

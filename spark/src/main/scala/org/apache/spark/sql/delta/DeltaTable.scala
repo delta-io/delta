@@ -470,24 +470,31 @@ object DeltaTableUtils extends PredicateHelper
   def withActiveSession[T](spark: SparkSession)(body: => T): T = spark.withActive(body)
 
   /**
-   * Uses org.apache.hadoop.fs.Path(Path, String) to concatenate a base path
-   * and a relative child path and safely handles the case where the base path represents
-   * a Uri with an empty path component (e.g. s3://my-bucket, where my-bucket would be
-   * interpreted as the Uri authority).
+   * Uses org.apache.hadoop.fs.Path.mergePaths to concatenate a base path and a relative child path.
    *
-   * In that case, the child path is converted to an absolute path at the root, i.e. /childPath.
-   * This prevents a "URISyntaxException: Relative path in absolute URI", which would be thrown
-   * by org.apache.hadoop.fs.Path(Path, String) because it tries to convert the base path to a Uri
-   * and then resolve the child on top of it. This is invalid for an empty base path and a
-   * relative child path according to the Uri specification, which states that if an authority
-   * is defined, the path component needs to be either empty or start with a '/'.
+   * This method is designed to address two specific issues in Hadoop Path:
+   *
+   * Issue 1:
+   * When the base path represents a Uri with an empty path component, such as concatenating
+   * "s3://my-bucket" and "childPath". In this case, the child path is converted to an absolute
+   * path at the root, i.e. /childPath. This prevents a "URISyntaxException: Relative path in
+   * absolute URI", which would be thrown by org.apache.hadoop.fs.Path(Path, String) because it
+   * tries to convert the base path to a Uri and then resolve the child on top of it. This is
+   * invalid for an empty base path and a relative child path according to the Uri specification,
+   * which states that if an authority is defined, the path component needs to be either empty or
+   * start with a '/'.
+   *
+   * Issue 2:
+   * When the child path contains a special character ':', such as "aaaa:bbbb.csv".
+   * This is valid in many file systems such as S3, but is actually ambiguous because it can be
+   * parsed either as an absolute path with a scheme ("aaaa") and authority ("bbbb.csv"), or as
+   * a relative path with a colon in the name ("aaaa:bbbb.csv"). Hadoop Path will always interpret
+   * it as the former, which is not what we want in this case. Therefore, we prepend a '/' to the
+   * child path to ensure that it is always interpreted as a relative path.
+   * See [[https://issues.apache.org/jira/browse/HDFS-14762]] for more details.
    */
   def safeConcatPaths(basePath: Path, relativeChildPath: String): Path = {
-    if (basePath.toUri.getPath.isEmpty) {
-      new Path(basePath, s"/$relativeChildPath")
-    } else {
-      new Path(basePath, relativeChildPath)
-    }
+    Path.mergePaths(basePath, new Path(s"/$relativeChildPath"))
   }
 
   /**

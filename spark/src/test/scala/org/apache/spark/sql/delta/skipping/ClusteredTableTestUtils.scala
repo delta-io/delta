@@ -61,7 +61,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     }
     val expectedClusteringColumns = logicalColumnNames.map(ClusteringColumn(snapshot.schema, _))
     val actualClusteringColumns =
-      ClusteredTableUtils.getClusteringColumnsOptional(snapshot).getOrElse(Seq.empty)
+      ClusteredTableUtils.getClusteringColumnsOptional(snapshot).orNull
     assert(expectedClusteringColumns == actualClusteringColumns)
   }
 
@@ -152,6 +152,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
         } else {
           assertClusterByNotExist()
         }
+      case "WRITE" =>
+        doAssert(!lastOperationParameters.contains(CLUSTERING_PARAMETER_KEY))
       case _ =>
         // Other operations are not tested yet. If the test fails here, please check the expected
         // behavior and add the operation to the appropriate case.
@@ -212,7 +214,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
   def verifyClusteringColumns(
       tableIdentifier: TableIdentifier,
-      expectedLogicalClusteringColumns: String): Unit = {
+      expectedLogicalClusteringColumns: String
+    ): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
     verifyClusteringColumnsInternal(
       snapshot,
@@ -235,12 +238,15 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
   def verifyClusteringColumnsInternal(
       snapshot: Snapshot,
       tableNameOrPath: String,
-      expectedLogicalClusteringColumns: String): Unit = {
+      expectedLogicalClusteringColumns: String
+    ): Unit = {
     assert(ClusteredTableUtils.isSupported(snapshot.protocol) === true)
     verifyClusteringColumnsInDomainMetadata(snapshot, expectedLogicalClusteringColumns)
 
     // Verify Delta history operation parameters' clusterBy
-    verifyDescribeHistoryOperationParameters(tableNameOrPath)
+    verifyDescribeHistoryOperationParameters(
+      tableNameOrPath
+    )
   }
 }
 

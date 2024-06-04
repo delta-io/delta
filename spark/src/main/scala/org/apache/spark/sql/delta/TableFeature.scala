@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -342,7 +343,8 @@ object TableFeature {
       V2CheckpointTableFeature,
       RowTrackingFeature,
       InCommitTimestampTableFeature,
-      VariantTypeTableFeature)
+      VariantTypeTableFeature,
+      ManagedCommitTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -361,9 +363,7 @@ object TableFeature {
         TestFeatureWithTransitiveDependency,
         TestWriterFeatureWithTransitiveDependency,
         // Identity columns are under development and only available in testing.
-        IdentityColumnsTableFeature,
-        // managed-commits are under development and only available in testing.
-        ManagedCommitTableFeature)
+        IdentityColumnsTableFeature)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -490,6 +490,7 @@ object ColumnMappingTableFeature
     name = "columnMapping",
     minReaderVersion = 2,
     minWriterVersion = 5)
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
@@ -499,6 +500,27 @@ object ColumnMappingTableFeature
       case _ => true
     }
   }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val schemaHasNoColumnMappingMetadata =
+      SchemaMergingUtils.explode(snapshot.schema).forall { case (_, col) =>
+        !DeltaColumnMapping.hasPhysicalName(col) &&
+          !DeltaColumnMapping.hasColumnId(col)
+      }
+    val metadataHasNoMappingMode = snapshot.metadata.columnMappingMode match {
+      case NoMapping => true
+      case _ => false
+    }
+    schemaHasNoColumnMappingMetadata && metadataHasNoMappingMode
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+      case m: Metadata => DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(m) != NoMapping
+      case _ => false
+    }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    ColumnMappingPreDowngradeCommand(table)
 }
 
 object IdentityColumnsTableFeature
@@ -652,7 +674,7 @@ object V2CheckpointTableFeature
 
 /** Table feature to represent tables whose commits are managed by separate commit-owner */
 object ManagedCommitTableFeature
-  extends WriterFeature(name = "managed-commit-dev")
+  extends WriterFeature(name = "managed-commit-preview")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {
 

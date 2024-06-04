@@ -59,7 +59,7 @@ public interface Scan {
      *    <li>name: {@code path}, type: {@code string}, description: location of the file.</li>
      *    <li>name: {@code partitionValues}, type: {@code map(string, string)},
      *       description: A map from partition column to value for this logical file. </li>
-     *    <li>name: {@code size}, type: {@code log}, description: size of the file.</li>
+     *    <li>name: {@code size}, type: {@code long}, description: size of the file.</li>
      *    <li>name: {@code modificationTime}, type: {@code log}, description: the time this
      *       logical file was created, as milliseconds since the epoch.</li>
      *    <li>name: {@code dataChange}, type: {@code boolean}, description: When false the
@@ -77,6 +77,8 @@ public interface Scan {
      *       <li>name: {@code sizeInBytes}, type: {@code log}</li>
      *       <li>name: {@code cardinality}, type: {@code log}</li>
      *    </ul></li>
+     *    <li>name: {@code tags}, type: {@code map(string, string)}, description: Map containing
+     *      metadata about the scan file.</li>
      *   </ul></li>
      *  </ul></li>
      *  <li><ul>

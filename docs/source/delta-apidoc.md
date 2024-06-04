@@ -8,7 +8,7 @@ description: Learn about the APIs provided by <Delta>.
 
 ## Delta Spark
 
-Delta Spark is library for reading or write Delta tables using the Apache Spark™. For most read and write operations on Delta tables, you can use <AS> [reader and writer](/spark/latest/dataframes-datasets/index.md) APIs. For examples,  see [_](delta-batch.md) and [_](delta-streaming.md).
+Delta Spark is a library for reading and writing Delta tables using Apache Spark™. For most read and write operations on Delta tables, you can use <AS> [reader and writer](/spark/latest/dataframes-datasets/index.md) APIs. For examples,  see [_](delta-batch.md) and [_](delta-streaming.md).
 
 However, there are some operations that are specific to <Delta> and you must use <Delta> APIs. For examples, see [_](delta-utility.md).
 

@@ -30,10 +30,6 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
-import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator;
-import io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator;
-
 /**
  * Default implementation of {@link ExpressionHandler}
  */
@@ -44,12 +40,14 @@ public class DefaultExpressionHandler implements ExpressionHandler {
         StructType inputSchema,
         Expression expression,
         DataType outputType) {
-        return new DefaultExpressionEvaluator(inputSchema, expression, outputType);
+        return new  io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator(
+            inputSchema, expression, outputType);
     }
 
     @Override
     public PredicateEvaluator getPredicateEvaluator(StructType inputSchema, Predicate predicate) {
-        return new DefaultPredicateEvaluator(inputSchema, predicate);
+        return new io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator(
+            inputSchema, predicate);
     }
 
     @Override
@@ -61,6 +59,7 @@ public class DefaultExpressionHandler implements ExpressionHandler {
 
         // Make a copy of the `values` array.
         boolean[] valuesCopy = Arrays.copyOfRange(values, from, to);
-        return new DefaultBooleanVector(length, Optional.empty(), valuesCopy);
+        return new io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector(
+            length, Optional.empty(), valuesCopy);
     }
 }

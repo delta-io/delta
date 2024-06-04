@@ -204,13 +204,7 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
       }
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       writeCommitZero(logPath)
-      var expectedVersion = -1
-      if (tableCommitOwnerClient.commitOwnerClient.isInstanceOf[DynamoDBCommitOwnerClient]) {
-        // DynamoDBCommitOwnerClient stores attemptVersion as the current table version when
-        // registerTable is called.
-        expectedVersion = 0
-      }
-      assert(tableCommitOwnerClient.getCommits() == GetCommitsResponse(Seq.empty, expectedVersion))
+      assert(tableCommitOwnerClient.getCommits() == GetCommitsResponse(Seq.empty, -1))
       assertBackfilled(version = 0, logPath, Some(0L))
 
       // Test backfilling functionality for commits 1 - 8

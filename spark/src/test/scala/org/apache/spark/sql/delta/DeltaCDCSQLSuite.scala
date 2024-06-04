@@ -115,7 +115,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
             .withColumn("_change_type", lit("insert")))
       }
       assert(plans.map(_.executedPlan).toString
-        .contains("PushedFilters: [IsNotNull(id), LessThan(id,5)]"))
+        .contains("PushedFilters: [*IsNotNull(id), *LessThan(id,5)]"))
     }
   }
 

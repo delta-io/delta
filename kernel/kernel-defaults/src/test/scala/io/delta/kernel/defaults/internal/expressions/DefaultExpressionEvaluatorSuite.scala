@@ -307,6 +307,207 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "Coalesce is only supported for boolean type expressions")
   }
 
+  test("evaluate expression: like") {
+    val col1 = stringVector(Seq[String](
+      "one", "two", "three", "four", null, null, "seven", "eight"))
+    val col2 = stringVector(Seq[String](
+      "one", "Two", "thr%", "four%", "f", null, null, "%ght"))
+    val schema = new StructType()
+      .add("col1", StringType.STRING)
+      .add("col2", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    def checkLike(
+          input: DefaultColumnarBatch,
+          likeExpression: Predicate,
+          expOutputSeq: Seq[BooleanJ]): Unit = {
+      val actOutputVector =
+        new DefaultExpressionEvaluator(
+          schema, likeExpression, BooleanType.BOOLEAN).eval(input)
+      val expOutputVector = booleanVector(expOutputSeq);
+      checkBooleanVectors(actOutputVector, expOutputVector)
+    }
+
+    // check column expressions on both sides
+    checkLike(
+      input,
+      like(new Column("col1"), new Column("col2")),
+      Seq[BooleanJ](true, false, true, true, null, null, null, true))
+
+    // check column expression against literal
+    checkLike(
+      input,
+      like(new Column("col1"), Literal.ofString("t%")),
+      Seq[BooleanJ](false, true, true, false, null, null, false, false))
+
+    // ends with checks
+    checkLike(
+      input,
+      like(new Column("col1"), Literal.ofString("%t")),
+      Seq[BooleanJ](false, false, false, false, null, null, false, true))
+
+    // contains checks
+    checkLike(
+      input,
+      like(new Column("col1"), Literal.ofString("%t%")),
+      Seq[BooleanJ](false, true, true, false, null, null, false, true))
+
+    val dummyInput = new DefaultColumnarBatch(1,
+        new StructType().add("dummy", StringType.STRING),
+        Array(stringVector(Seq[String](""))))
+
+    def checkLikeLiteral(left: String, right: String,
+        escape: Character = null, expOutput: BooleanJ): Unit = {
+      val expression = like(Literal.ofString(left), Literal.ofString(right), Option(escape))
+      checkLike(dummyInput, expression, Seq[BooleanJ](expOutput))
+    }
+
+    // null/empty
+    checkLikeLiteral(null, "a", null, null)
+    checkLikeLiteral("a", null, null, null)
+    checkLikeLiteral(null, null, null, null)
+    checkLikeLiteral("", "", null, true)
+    checkLikeLiteral("a", "", null, false)
+    checkLikeLiteral("", "a", null, false)
+
+    Seq('!', '@', '#').foreach {
+      escape => {
+        // simple patterns
+        checkLikeLiteral("abc", "abc", escape, true)
+        checkLikeLiteral("a_%b", s"a${escape}__b", escape, true)
+        checkLikeLiteral("abbc", "a_%c", escape, true)
+        checkLikeLiteral("abbc", s"a${escape}__c", escape, false)
+        checkLikeLiteral("abbc", s"a%${escape}%c", escape, false)
+        checkLikeLiteral("a_%b", s"a%${escape}%b", escape, true)
+        checkLikeLiteral("abbc", "a%", escape, true)
+        checkLikeLiteral("abbc", "**", escape, false)
+        checkLikeLiteral("abc", "a%", escape, true)
+        checkLikeLiteral("abc", "b%", escape, false)
+        checkLikeLiteral("abc", "bc%", escape, false)
+        checkLikeLiteral("a\nb", "a_b", escape, true)
+        checkLikeLiteral("ab", "a%b", escape, true)
+        checkLikeLiteral("a\nb", "a%b", escape, true)
+        checkLikeLiteral("a\nb", "ab", escape, false)
+        checkLikeLiteral("a\nb", "a\nb", escape, true)
+        checkLikeLiteral("a\n\nb", "a\nb", escape, false)
+        checkLikeLiteral("a\n\nb", "a\n_b", escape, true)
+
+        // case
+        checkLikeLiteral("A", "a%", escape, false)
+        checkLikeLiteral("a", "a%", escape, true)
+        checkLikeLiteral("a", "A%", escape, false)
+        checkLikeLiteral(s"aAa", s"aA_", escape, true)
+
+        // regex
+        checkLikeLiteral("a([a-b]{2,4})a", "_([a-b]{2,4})%", null, true)
+        checkLikeLiteral("a([a-b]{2,4})a", "_([a-c]{2,6})_", null, false)
+
+        // %/_
+        checkLikeLiteral("a%a", s"%${escape}%%", escape, true)
+        checkLikeLiteral("a%", s"%${escape}%%", escape, true)
+        checkLikeLiteral("a%a", s"_${escape}%_", escape, true)
+        checkLikeLiteral("a_a", s"%${escape}_%", escape, true)
+        checkLikeLiteral("a_", s"%${escape}_%", escape, true)
+        checkLikeLiteral("a_a", s"_${escape}__", escape, true)
+
+        // double-escaping
+        checkLikeLiteral(
+          s"$escape$escape$escape$escape", s"%${escape}${escape}%", escape, true)
+        checkLikeLiteral("%%", "%%", escape, true)
+        checkLikeLiteral(s"${escape}__", s"${escape}${escape}${escape}__", escape, true)
+        checkLikeLiteral(s"${escape}__", s"%${escape}${escape}%${escape}%", escape, false)
+        checkLikeLiteral(s"_${escape}${escape}${escape}%",
+          s"%${escape}${escape}", escape, false)
+      }
+    }
+
+    // check '_' for escape char
+    checkLikeLiteral("abc", "abc", '_', true)
+    checkLikeLiteral("a_%b", s"a__%%b", '_', true)
+    checkLikeLiteral("abbc", "a__c", '_', false)
+    checkLikeLiteral("abbc", "a%%c", '_', true)
+    checkLikeLiteral("abbc", s"a___%c", '_', false)
+    checkLikeLiteral("abbc", s"a%_%c", '_', false)
+
+    // check '%' for escape char
+    checkLikeLiteral("abc", "abc", '%', true)
+    checkLikeLiteral("a_%b", s"a__%%b", '%', false)
+    checkLikeLiteral("a_%b", s"a_%%b", '%', true)
+    checkLikeLiteral("abbc", "a__c", '%', true)
+    checkLikeLiteral("abbc", "a%%c", '%', false)
+    checkLikeLiteral("abbc", s"a%__c", '%', false)
+    checkLikeLiteral("abbc", s"a%_%_c", '%', false)
+
+    def checkUnsupportedTypes(
+         col1Type: DataType, col2Type: DataType): Unit = {
+      val schema = new StructType()
+        .add("col1", col1Type)
+        .add("col2", col2Type)
+      val expr = like(new Column("col1"), new Column("col2"), Option(null))
+      val input = new DefaultColumnarBatch(5, schema,
+        Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
+
+      val e = intercept[UnsupportedOperationException] {
+        new DefaultExpressionEvaluator(
+          schema, expr, BooleanType.BOOLEAN).eval(input)
+      }
+      assert(e.getMessage.contains("LIKE is only supported for string type expressions"))
+    }
+    checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
+    checkUnsupportedTypes(LongType.LONG, LongType.LONG)
+    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER)
+    checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
+    checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
+    checkUnsupportedTypes(StringType.STRING, LongType.LONG)
+    checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
+
+    // input count checks
+    val inputCountCheckUserMessage =
+      "Invalid number of inputs to LIKE expression. Example usage:"
+    val inputCountError1 = intercept[UnsupportedOperationException] {
+      val expression = like(List(Literal.ofString("a")))
+      checkLike(dummyInput, expression, Seq[BooleanJ](null))
+    }
+    assert(inputCountError1.getMessage.contains(inputCountCheckUserMessage))
+
+    val inputCountError2 = intercept[UnsupportedOperationException] {
+      val expression = like(List(Literal.ofString("a"), Literal.ofString("b"),
+        Literal.ofString("c"), Literal.ofString("d")))
+      checkLike(dummyInput, expression, Seq[BooleanJ](null))
+    }
+    assert(inputCountError2.getMessage.contains(inputCountCheckUserMessage))
+
+    // additional escape token checks
+    val escapeCharError1 = intercept[UnsupportedOperationException] {
+      val expression =
+        like(List(Literal.ofString("a"), Literal.ofString("b"), Literal.ofString("~~")))
+      checkLike(dummyInput, expression, Seq[BooleanJ](null))
+    }
+    assert(escapeCharError1.getMessage.contains(
+      "LIKE expects escape token to be a single character"))
+
+    val escapeCharError2 = intercept[UnsupportedOperationException] {
+      val expression = like(List(Literal.ofString("a"), Literal.ofString("b"), Literal.ofInt(1)))
+      checkLike(dummyInput, expression, Seq[BooleanJ](null))
+    }
+    assert(escapeCharError2.getMessage.contains(
+      "LIKE expects escape token expression to be a literal of String type"))
+
+    // empty input checks
+    val emptyInput = new DefaultColumnarBatch(0,
+          new StructType().add("dummy", StringType.STRING),
+          Array(stringVector(Seq[String](""))))
+    checkLike(emptyInput,
+      like(Literal.ofString("abc"), Literal.ofString("abc"), Some('_')), Seq[BooleanJ]())
+
+    // invalid pattern check
+    val invalidPatternError = intercept[IllegalArgumentException] {
+      checkLikeLiteral("abbc", "a%%%c", '%', false)
+    }
+    assert(invalidPatternError.getMessage.contains(
+      "LIKE expression has invalid escape sequence"))
+  }
+
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)

@@ -26,6 +26,7 @@ from delta._typing import (
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions, SparkSession
 from pyspark.sql.types import DataType, StructType, StructField
+from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
 
 
 if TYPE_CHECKING:
@@ -380,6 +381,10 @@ class DeltaTable(object):
         """
         assert sparkSession is not None
 
+        if isinstance(sparkSession, RemoteSparkSession):
+            from delta.connect.tables import DeltaTable as RemoteDeltaTable
+            return RemoteDeltaTable.forPath(sparkSession, path, hadoopConf)
+
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
 
@@ -411,6 +416,10 @@ class DeltaTable(object):
             deltaTable = DeltaTable.forName(spark, "tblName")
         """
         assert sparkSession is not None
+
+        if isinstance(sparkSession, RemoteSparkSession):
+            from delta.connect.tables import DeltaTable as RemoteDeltaTable
+            return RemoteDeltaTable.forName(sparkSession, tableOrViewName)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
