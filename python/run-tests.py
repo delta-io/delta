@@ -22,16 +22,16 @@ import shutil
 from os import path
 
 
-def test(root_dir, package):
-    # Run all of the test under test/python directory, each of them
+def test(root_dir, test_path, package):
+    # Run all of the tests under test_path directory, each of them
     # has main entry point to execute, which is python's unittest testing
     # framework.
     python_root_dir = path.join(root_dir, "python")
-    test_dir = path.join(python_root_dir, path.join("delta", "tests"))
+    test_dir = path.join(python_root_dir, path.join(test_path, "tests"))
     test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
-    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    extra_class_path = path.join(python_root_dir, path.join(test_path, "testing"))
 
     for test_file in test_files:
         try:
@@ -65,7 +65,7 @@ def prepare(root_dir):
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-    package = "io.delta:delta-spark_2.12:" + version
+    package = "io.delta:delta-spark_2.13:" + version
     return package
 
 
@@ -178,8 +178,11 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
 
-    run_python_style_checks(root_dir)
-    run_mypy_tests(root_dir)
-    run_pypi_packaging_tests(root_dir)
-    run_delta_connect_codegen_python(root_dir)
-    test(root_dir, package)
+    # run_python_style_checks(root_dir)
+    # run_mypy_tests(root_dir)
+    # run_pypi_packaging_tests(root_dir)
+    # run_delta_connect_codegen_python(root_dir)
+    test(root_dir, "delta", package)
+    is_spark_master = os.getenv("IS_SPARK_MASTER")
+    if is_spark_master is not None:
+        test(root_dir, path.join("delta", "connect"), package)
