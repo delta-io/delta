@@ -71,6 +71,11 @@ public class TableConfig<T> {
      * - If you are running a streaming query reading from the table, you should make sure the query
      *   doesn't stop longer than this value. Otherwise, the query may not be able to restart as it
      *   still needs to read old files.
+     *
+     * We didn't validate the value is greater than 0. In standalone lib, the log expire time is
+     * based on day, so if we want to clean the log immediately, we need to config the value to
+     * "-1 days", so here didn't validate the value.
+     * See: io.delta.standalone.internal.MetadataCleanup#cleanUpExpiredLogs().
      */
     public static final TableConfig<Long> LOG_RETENTION = new TableConfig<>(
             "delta.logRetentionDuration",
