@@ -319,7 +319,7 @@ private[delta] class ConflictChecker(
             opType = "delta.conflictDetection.partitionLevelConcurrency.widenOuterReferences",
             data = Map(
               "predicate" -> rewrittenPredicate.toString(),
-              "eliminatedPredicate" -> predicateElimination.eliminatedPredicates)
+              "eliminatedPredicate" -> predicateElimination.eliminatedPredicates.toString())
           )
           rewrittenPredicate = predicateElimination.newPredicates
         }
