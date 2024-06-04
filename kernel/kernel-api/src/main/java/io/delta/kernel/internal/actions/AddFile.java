@@ -55,7 +55,10 @@ public class AddFile {
         .add("size", LongType.LONG, false /* nullable*/)
         .add("modificationTime", LongType.LONG, false /* nullable*/)
         .add("dataChange", BooleanType.BOOLEAN, false /* nullable*/)
-        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
+        .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
+        .add("tags",
+                new MapType(StringType.STRING, StringType.STRING, true /* valueContainsNull */),
+                true /* nullable */);
 
     public static final StructType SCHEMA_WITH_STATS = SCHEMA_WITHOUT_STATS
         .add(JSON_STATS_FIELD);
@@ -63,12 +66,7 @@ public class AddFile {
     /**
      * Full schema of the {@code add} action in the Delta Log.
      */
-    public static final StructType FULL_SCHEMA = SCHEMA_WITHOUT_STATS
-            .add("stats", StringType.STRING, true /* nullable */)
-            .add(
-                    "tags",
-                    new MapType(StringType.STRING, StringType.STRING, true),
-                    true /* nullable */);
+    public static final StructType FULL_SCHEMA = SCHEMA_WITH_STATS;
     // There are more fields which are added when row-id tracking and clustering is enabled.
     // When Kernel starts supporting row-ids and clustering, we should add those fields here.
 

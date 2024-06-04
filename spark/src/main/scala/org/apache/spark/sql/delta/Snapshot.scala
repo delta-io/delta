@@ -234,7 +234,7 @@ class Snapshot(
    */
   val tableCommitOwnerClientOpt: Option[TableCommitOwnerClient] = initializeTableCommitOwner()
   protected def initializeTableCommitOwner(): Option[TableCommitOwnerClient] = {
-    ManagedCommitUtils.getTableCommitOwner(this)
+    ManagedCommitUtils.getTableCommitOwner(spark, this)
   }
 
   /** Number of columns to collect stats on for data skipping */

@@ -23,6 +23,8 @@ import java.util.regex.Pattern;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import io.delta.kernel.types.*;
+
+import io.delta.kernel.internal.DeltaErrors;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
@@ -177,8 +179,8 @@ public class DataTypeParser {
 
             if (value.isNull()) {
                 builder.putNull(key);
-            } else if (value.isInt()) {
-                builder.putLong(key, value.intValue());
+            } else if (value.isIntegralNumber()) { // covers both int and long
+                builder.putLong(key, value.longValue());
             } else if (value.isDouble()) {
                 builder.putDouble(key, value.doubleValue());
             } else if (value.isBoolean()) {
@@ -258,6 +260,10 @@ public class DataTypeParser {
             return BasePrimitiveType.createPrimitive(name);
         } else if (name.equals("decimal")) {
             return DecimalType.USER_DEFAULT;
+        } else if ("void".equalsIgnoreCase(name)) {
+            // Earlier versions of Delta had VOID type which is not specified in Delta Protocol.
+            // It is not readable or writable. Throw a user-friendly error message.
+            throw DeltaErrors.voidTypeEncountered();
         } else {
             // decimal has a special pattern with a precision and scale
             Matcher decimalMatcher = FIXED_DECIMAL_PATTERN.matcher(name);
@@ -267,6 +273,9 @@ public class DataTypeParser {
                 return new DecimalType(precision, scale);
             }
 
+            // We have encountered a type that is beyond the specification of the protocol
+            // checks. This must be an invalid type (according to protocol) and
+            // not an unsupported data type by Kernel.
             throw new IllegalArgumentException(
                 String.format("%s is not a supported delta data type", name));
         }

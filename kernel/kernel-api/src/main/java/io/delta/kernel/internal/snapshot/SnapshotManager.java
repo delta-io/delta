@@ -260,7 +260,7 @@ public class SnapshotManager {
         } catch (FileNotFoundException e) {
             return Optional.empty();
         } catch (IOException io) {
-            throw new RuntimeException("Failed to list the files in delta log", io);
+            throw new UncheckedIOException("Failed to list the files in delta log", io);
         }
     }
 
