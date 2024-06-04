@@ -33,7 +33,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   val testEngineInfo = "test-engine"
   val testSchema = new StructType().add("id", INTEGER)
 
-  private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Long = {
+  private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Option[Long] = {
     val logPath = new Path(table.getPath(engine), "_delta_log")
     val file = engine
       .getFileSystemClient
@@ -46,7 +46,11 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
     val commitInfoOrd = row.getSchema.indexOf("commitInfo")
     val commitInfoRow = row.getStruct(commitInfoOrd)
     val inCommitTimestampOrd = commitInfoRow.getSchema.indexOf("inCommitTimestamp")
-    commitInfoRow.getLong(inCommitTimestampOrd)
+    if (commitInfoRow.isNullAt(inCommitTimestampOrd)) {
+      None
+    } else {
+      Some(commitInfoRow.getLong(inCommitTimestampOrd))
+    }
   }
 
   test("Enable ICT on commit 0") {
@@ -56,7 +60,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val table = Table.forPath(engine, tablePath)
       val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0)
       assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver0Snapshot.getMetadata))
-      assert(getInCommitTimestamp(engine, table, 0) >= beforeCommitAttemptStartTime)
+      assert(getInCommitTimestamp(engine, table, 0).get >= beforeCommitAttemptStartTime)
     }
   }
 
@@ -74,9 +78,10 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       setInCommitTimestampsEnabled(tablePath, true)
       val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0)
       assert(!TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver0Snapshot.getMetadata))
+      assert(getInCommitTimestamp(engine, table, 0).isEmpty)
       val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1)
       assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver1Snapshot.getMetadata))
-      assert(getInCommitTimestamp(engine, table, 1) >= beforeCommitAttemptStartTime)
+      assert(getInCommitTimestamp(engine, table, 1).get >= beforeCommitAttemptStartTime)
     }
   }
 }
