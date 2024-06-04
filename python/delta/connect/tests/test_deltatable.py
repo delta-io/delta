@@ -17,8 +17,14 @@
 import unittest
 
 from delta.connect.testing.utils import DeltaTestCase
-from delta.tests.test_deltatable import DeltaTableTestsMixin
+import os
+import sys
 
+delta_connect_tests = os.path.dirname(os.path.abspath(__file__))
+delta = os.path.dirname(os.path.dirname(delta_connect_tests))
+sys.path.append(delta)
+
+from tests.test_deltatable import DeltaTableTestsMixin
 
 class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
     @unittest.skip("delete has not been implemented yet")
