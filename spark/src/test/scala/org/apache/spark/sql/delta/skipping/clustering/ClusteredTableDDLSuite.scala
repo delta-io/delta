@@ -21,7 +21,6 @@ import java.io.File
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException}
-import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
@@ -481,7 +480,8 @@ trait ClusteredTableDDLWithColumnMapping
     "validate dropping clustering column is not allowed: single clustering column",
     "validate dropping clustering column is not allowed: multiple clustering columns",
     "validate dropping clustering column is not allowed: clustering column + " +
-      "non-clustering column"
+      "non-clustering column",
+    "validate RESTORE on clustered table"
   )
 
   test("validate dropping clustering column is not allowed: single clustering column") {
@@ -853,12 +853,20 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(tableIdentifier, "a")
     }
 
-    // Scenario 3: restore unclustered table to clustered version.
+    // Scenario 3: restore from table with clustering columns to non-empty clustering columns
     withClusteredTable(testTable, "a int", "a") {
       verifyClusteringColumns(tableIdentifier, "a")
 
       sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
       verifyClusteringColumns(tableIdentifier, "")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 4: restore to latest version.
+    withClusteredTable(testTable, "a int", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
       verifyClusteringColumns(tableIdentifier, "a")
