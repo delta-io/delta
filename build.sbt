@@ -287,11 +287,13 @@ lazy val connectClient = (project in file("spark-connect/client"))
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.apache.spark" %% "spark-common-utils" % sparkVersion.value % "test",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
     (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
     (Test / resourceGenerators) += Def.task {
