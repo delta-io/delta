@@ -41,7 +41,15 @@ import java.util.Optional
 import scala.collection.convert.ImplicitConversions._
 import scala.collection.mutable.ArrayBuffer
 
-class LogReplayMetricsSuite extends QueryTest
+/**
+ * Suite to test the engine metrics while replaying logs for getting the table protocol and
+ * metadata (P&M) and scanning files. The metrics include how many files delta files, checkpoint
+ * files read, size of checkpoint read set, and how many times `_last_checkpoint` is read etc.
+ *
+ * The goal is to test the behavior of calls to `readJsonFiles` and `readParquetFiles` that
+ * Kernel makes. This calls determine the performance.
+ */
+class LogReplayEngineMetricsSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
