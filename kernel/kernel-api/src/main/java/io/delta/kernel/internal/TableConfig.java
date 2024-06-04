@@ -60,6 +60,18 @@ public class TableConfig<T> {
             "needs to be a positive integer."
     );
 
+    /**
+     * The shortest duration we have to keep logically deleted data files around before deleting them
+     * physically. This is to prevent failures in stale readers after compactions or partition
+     * overwrites.
+     *
+     * Note: this value should be large enough:
+     * - It should be larger than the longest possible duration of a job if you decide to run "VACUUM"
+     *   when there are concurrent readers or writers accessing the table.
+     * - If you are running a streaming query reading from the table, you should make sure the query
+     *   doesn't stop longer than this value. Otherwise, the query may not be able to restart as it
+     *   still needs to read old files.
+     */
     public static final TableConfig<Long> LOG_RETENTION = new TableConfig<>(
             "delta.logRetentionDuration",
             "interval 30 days",
@@ -69,6 +81,7 @@ public class TableConfig<T> {
                 + "and years are not accepted. You may specify '365 days' for a year instead."
         );
 
+    /** Whether to clean up expired checkpoints and delta logs. */
     public static final TableConfig<Boolean> ENABLE_EXPIRED_LOG_CLEANUP = new TableConfig<>(
             "delta.enableExpiredLogCleanup",
             "true",
@@ -77,6 +90,9 @@ public class TableConfig<T> {
             "needs to be a boolean."
     );
 
+    /**
+     * Whether this Delta table is append-only. Files can't be deleted, or values can't be updated.
+     */
     public static final TableConfig<Boolean> IS_APPEND_ONLY = new TableConfig<>(
         "delta.appendOnly",
         "false",
