@@ -23,6 +23,15 @@ object Variant {
 
   def main(args: Array[String]): Unit = {
     val tableName = "tbl"
+
+    val spark = SparkSession
+      .builder()
+      .appName("Variant-Delta")
+      .master("local[*]")
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .getOrCreate()
+
     // Create and insert variant values.
     try {
       spark.sql(s"CREATE TABLE $tableName(v VARIANT) USING DELTA")
