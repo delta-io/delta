@@ -169,7 +169,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
-    Antlr4 / antlr4Version := "4.9.3"
+    Antlr4 / antlr4Version := "4.9.3",
   )
 
   case SPARK_MASTER_VERSION => Seq(
@@ -182,7 +182,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
     Antlr4 / antlr4Version := "4.13.1",
-    java17TestSettings
+    java17TestSettings,
   )
 }
 
