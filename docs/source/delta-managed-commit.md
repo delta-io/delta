@@ -52,7 +52,7 @@ The DynamoDB Commit Owner needs a DynamoDB table at the backend to manage commit
 #. Create a table with DynamoDB as the commit owner by running the following command:
 
     ```sql
-    CREATE TABLE <table_name> USING DELTA (id string)
+    CREATE TABLE <table_name> (id string) USING DELTA
     TBLPROPERTIES ('delta.managedCommits.commitOwner-preview' = 'dynamodb', 'delta.managedCommits.commitOwnerConf-preview' = '{\"managedCommitsTableName\"=\"<dynamodb_table_name>\",\"dynamoDBEndpoint\"=\"<dynamodb_region_endpoint>\"}');
     ```
 
@@ -64,7 +64,7 @@ Any future commit to this table will now by managed by the DynamoDB Commit Owner
 
     ```sql
     ALTER TABLE <table_name>
-    SET TBLPROPERTIES ('delta.managedCommits.commitOwner-preview' = 'dynamodb', 'delta.managedCommits.commitOwnerConf-preview' = '{\"managedCommitsTableName\"=\"<dynamodb_table_name>\",\"dynamoDBEndpoint\"=\"<dynamodb_region_endpoint>\"}');
+    SET TBLPROPERTIES ('delta.managedCommits.commitOwner-preview' = 'dynamodb', 'delta.managedCommits.commitOwnerConf-preview' = '{\"managedCommitsTableName\": \"<dynamodb_table_name>\",\"dynamoDBEndpoint\": \"<dynamodb_region_endpoint>\"}');
     ```
 ..warning:: The commit that converts a table to a managed commit table goes through the configured `LogStore` directly. This means that the multi-cluster write restrictions imposed by the configured `LogStore` implementation still apply. To avoid
 corruption in filesystems where concurrent commits are not safe, no concurrent commits must be performed when the conversion to managed commits happens. 
