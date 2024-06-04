@@ -17,7 +17,7 @@
 from typing import Dict, Optional
 
 from delta.connect.plan import DeltaScan
-import io.delta.connect.proto as proto
+import delta.connect.proto as proto
 from delta.tables import DeltaTable as LocalDeltaTable
 
 from pyspark.sql.connect.dataframe import DataFrame
