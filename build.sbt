@@ -469,7 +469,7 @@ lazy val spark = (project in file("spark"))
     ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
-  .configureUnidoc(generateScalaDoc = true)
+  .configureUnidoc(generateScalaDoc = false)
 
 lazy val contribs = (project in file("contribs"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
