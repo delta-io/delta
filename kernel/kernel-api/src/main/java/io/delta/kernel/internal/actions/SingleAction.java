@@ -54,8 +54,8 @@ public class SingleAction {
     // Schema to use when writing out the single action to the Delta Log.
     public static StructType FULL_SCHEMA = new StructType()
             .add("txn", SetTransaction.FULL_SCHEMA)
-            .add("add", AddFile.SCHEMA_WITH_STATS)
-            .add("remove", new StructType())
+            .add("add", AddFile.FULL_SCHEMA)
+            .add("remove", RemoveFile.FULL_SCHEMA)
             .add("metaData", Metadata.FULL_SCHEMA)
             .add("protocol", Protocol.FULL_SCHEMA)
             .add("cdc", new StructType())
