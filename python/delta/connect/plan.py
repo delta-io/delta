@@ -16,7 +16,7 @@
 
 from typing import Optional
 
-import delta.connect.proto as proto
+import io.delta.connect.proto as proto
 
 from pyspark.sql.connect.client import SparkConnectClient
 from pyspark.sql.connect.plan import LogicalPlan
