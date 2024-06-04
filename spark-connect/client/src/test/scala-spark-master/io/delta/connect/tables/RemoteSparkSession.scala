@@ -41,7 +41,6 @@ package io.delta.tables
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connect.common.config.ConnectCommon
 
 /**
  * An util class to start a local Delta Connect server in a different process for local E2E tests.
@@ -62,7 +61,7 @@ import org.apache.spark.sql.connect.common.config.ConnectCommon
  */
 trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
-  private val serverPort = ConnectCommon.CONNECT_GRPC_BINDING_PORT + util.Random.nextInt(1000)
+  private val serverPort = 15003
   var spark: SparkSession = _
 
   private val buildLocation = System.getProperty("delta.test.home")
