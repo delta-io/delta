@@ -403,8 +403,8 @@ class DeltaAnalysis(session: SparkSession)
             // the schema should be the same as iceberg source
             schema = source.schema,
             // TODO: ensure this
-            // currently `owner` is used as special identifier in `handleCommit`
-            owner = "UniformIngressTable",
+            // currently properties contains a special key-value pair for UFI table
+            properties = Map { "_isUniformIngressTable" -> "_" },
             provider = Some("delta")
             // TODO: check whether to add `capabilities` or not, and if so, where?
           )
@@ -417,7 +417,8 @@ class DeltaAnalysis(session: SparkSession)
                 sourceTable = source,
                 targetIdent = tableIdentifier,
                 tablePropertyOverrides = Map.empty,
-                targetPath = new Path(externalTableUri)
+                targetPath = new Path(externalTableUri),
+                isUFI = true
               )
             ),
             operation = tableCreationMode,

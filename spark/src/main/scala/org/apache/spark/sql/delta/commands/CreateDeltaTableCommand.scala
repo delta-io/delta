@@ -135,7 +135,7 @@ case class CreateDeltaTableCommand(
         if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
           // the path should be empty for non-UFI table; for UFI table,
           // an external iceberg table already exists at the specific location.
-          if (tableWithLocation.owner != "UniformIngressTable") {
+          if (!tableWithLocation.properties.contains("_isUniformIngressTable")) {
             assertPathEmpty(hadoopConf, tableWithLocation)
           }
         }
@@ -604,6 +604,14 @@ case class CreateDeltaTableCommand(
       table.storage.copy(properties = Map.empty)
     }
 
+    // The special property key-value pair that needs to persist if the
+    // table is UFI table, mainly for distinguish purpose.
+    val ufiProperty = if (table.properties.contains("_isUniformIngressTable")) {
+      Map { "_isUniformIngressTable" -> "_" }
+    } else {
+      Map.empty
+    }
+
     // If we have to update the catalog, use the correct schema and table properties, otherwise
     // empty out the schema and property information
     if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
@@ -622,13 +630,13 @@ case class CreateDeltaTableCommand(
         // we store the partition columns as regular data columns.
         partitionColumnNames = Nil,
         properties = UpdateCatalog.updatedProperties(snapshot)
-          ++ additionalProperties,
+          ++ additionalProperties ++ ufiProperty,
         storage = storageProps,
         tracksPartitionsInCatalog = true)
     } else {
       table.copy(
         schema = new StructType(),
-        properties = Map.empty,
+        properties = Map.empty ++ ufiProperty,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,

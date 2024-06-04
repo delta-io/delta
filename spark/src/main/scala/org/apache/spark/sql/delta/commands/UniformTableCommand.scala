@@ -72,7 +72,7 @@ case class RefreshUniformTableCommand(
       throw DeltaErrors.notADeltaTable(table.name())
     )
 
-    if (catalogTable.owner != "UniformIngressTable") {
+    if (!catalogTable.properties.contains("_isUniformIngressTable")) {
       // TODO: change the error to `UniformIngressNotUFITable`
       throw DeltaErrors.uniformIngressOperationNotSupported
     }
@@ -102,8 +102,9 @@ case class RefreshUniformTableCommand(
         targetIdent = catalogTable.identifier,
         // TODO: this is a current workaround for bypassing cloning check,
         //  needs further review.
-        tablePropertyOverrides = Map { "_isUniformIngressTable" -> "_" },
-        targetPath = table.path
+        targetPath = table.path,
+        tablePropertyOverrides = Map.empty,
+        isUFI = true
       ).handleClone(sparkSession, txn, deltaLog)
     } catch {
       case NonFatal(e) =>

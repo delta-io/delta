@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import org.apache.iceberg
 import org.apache.iceberg.hadoop.HadoopCatalog
+import org.apache.iceberg.types.Types
+import org.apache.iceberg.types.Type.PrimitiveType
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, PhysicalWriteInfo}
 import org.apache.spark.sql.types.StructType
@@ -34,11 +36,101 @@ object IcebergTestUtils {
 
   /** Wrapper classes used to write data into Iceberg table through the scala interface. */
   case class TestLogicalWriteInfo(
-                                   queryId: String,
-                                   schema: StructType,
-                                   options: CaseInsensitiveStringMap) extends LogicalWriteInfo
+      queryId: String,
+      schema: StructType,
+      options: CaseInsensitiveStringMap) extends LogicalWriteInfo
 
   case class TestPhysicalWriteInfo(numPartitions: Int) extends PhysicalWriteInfo
+
+  /** helper trait to achieve the generic iceberg schema update */
+  sealed trait IcebergSchemaUpdateAction
+
+  /** add a group of columns of the iceberg table */
+  case class AddColumns(colTypeMap: Map[String, String]) extends IcebergSchemaUpdateAction
+
+  /** delete a group of columns of the iceberg table */
+  case class DeleteColumns(cols: Seq[String]) extends IcebergSchemaUpdateAction
+
+  /** rename a group of columns of the iceberg table */
+  case class RenameColumns(colNameMap: Map[String, String]) extends IcebergSchemaUpdateAction
+
+  /** update a group of columns of the iceberg table */
+  case class UpdateColumns(colTypeMap: Map[String, String]) extends IcebergSchemaUpdateAction
+
+  /**
+   * Helper function to get the `PrimitiveType` based on the column type string.
+   *
+   * @param colTypeString the type string representing a new column of a iceberg table.
+   * @return the corresponding `PrimitiveType` of the `colTypeString`.
+   */
+  private def getColumnType(colTypeString: String): PrimitiveType = colTypeString match {
+    case "int" => Types.IntegerType.get()
+    case "long" => Types.LongType.get()
+    case "string" => Types.StringType.get()
+    case "date" => Types.DateType.get()
+    case "bool" => Types.BooleanType.get()
+    case "float" => Types.FloatType.get()
+    case "double" => Types.DoubleType.get()
+    // TODO: add more types, e.g., nested type, etc.
+    case _ => throw new IllegalArgumentException(s"Unsupported column type: $colTypeString")
+  }
+
+  /**
+   * Get an *existing* iceberg table based on the provided parameters.
+   *
+   * @param spark the spark session to use.
+   * @param tableName the name of the existing iceberg table.
+   * @param warehousePath the path of the iceberg table.
+   * @return the `iceberg.Table` ready for use, e.g., update the table schema, etc.
+   */
+  private def getIcebergTableInternal(
+      spark: SparkSession,
+      tableName: String,
+      warehousePath: String): iceberg.Table = {
+    val tableIdent = iceberg.catalog.TableIdentifier.of("db", tableName)
+    // scalastyle:off deltahadoopconfiguration
+    // load the existing table from hadoop catalog
+    new HadoopCatalog(spark.sessionState.newHadoopConf(), warehousePath).loadTable(tableIdent)
+    // scalastyle:on deltahadoopconfiguration
+  }
+
+  def updateIcebergTableSchema(
+      spark: SparkSession,
+      warehousePath: String,
+      tableName: String,
+      actions: IcebergSchemaUpdateAction*): iceberg.Table = {
+    // get the existing iceberg table
+    val table = getIcebergTableInternal(spark, tableName, warehousePath)
+    // the schema to be updated
+    val updatedSchema = table.updateSchema()
+
+    def getTypeMap(colTypeMap: Map[String, String]): Map[String, PrimitiveType] = {
+      colTypeMap.map { case (colName, colTypeString) => (colName, getColumnType(colTypeString)) }
+    }
+
+    // iterate through the actions to update the iceberg table schema accordingly
+    actions.foreach {
+      case AddColumns(colTypeMap) =>
+        getTypeMap(colTypeMap).foreach {
+          case (colName, colType) => updatedSchema.addColumn(colName, colType)
+        }
+      case DeleteColumns(cols) =>
+        cols.foreach { col => updatedSchema.deleteColumn(col) }
+      case RenameColumns(colNameMap) =>
+        colNameMap.foreach {
+          case (oldName, newName) => updatedSchema.renameColumn(oldName, newName)
+        }
+      case UpdateColumns(colTypeMap) =>
+        getTypeMap(colTypeMap).foreach {
+          // TODO: update doc string for the column?
+          case (colName, colType) => updatedSchema.updateColumn(colName, colType)
+        }
+    }
+
+    // commit all update actions to the schema
+    updatedSchema.commit()
+    table
+  }
 
   /**
    * Creates an Iceberg table from a Dataframe with provided configs using the scala interface,
@@ -52,11 +144,11 @@ object IcebergTestUtils {
    * @return the created iceberg table object.
    */
   def createIcebergTable(
-                          spark: SparkSession,
-                          warehousePath: String,
-                          tableName: String,
-                          data: DataFrame,
-                          partitionNames: Seq[String] = Seq.empty[String]): iceberg.Table = {
+      spark: SparkSession,
+      warehousePath: String,
+      tableName: String,
+      data: DataFrame,
+      partitionNames: Seq[String] = Seq.empty[String]): iceberg.Table = {
     val table = createIcebergTable(spark, warehousePath, tableName, data.schema, partitionNames)
     writeIcebergTable(table, data)
     table
@@ -73,18 +165,20 @@ object IcebergTestUtils {
    * @return the created iceberg table object.
    */
   def createIcebergTable(
-                          spark: SparkSession,
-                          warehousePath: String,
-                          tableName: String,
-                          schema: StructType,
-                          partitionNames: Seq[String]): iceberg.Table = {
+      spark: SparkSession,
+      warehousePath: String,
+      tableName: String,
+      schema: StructType,
+      partitionNames: Seq[String]): iceberg.Table = {
     val tableIdent = iceberg.catalog.TableIdentifier.of("db", tableName)
     val icebergSchema = iceberg.spark.SparkSchemaUtil.convert(schema)
     val specBuilder = iceberg.PartitionSpec.builderFor(icebergSchema)
     partitionNames.foreach(specBuilder.identity)
 
+    // scalastyle:off deltahadoopconfiguration
     new HadoopCatalog(spark.sessionState.newHadoopConf(), warehousePath)
       .createTable(tableIdent, icebergSchema, specBuilder.build())
+    // scalastyle:on deltahadoopconfiguration
   }
 
   /**
@@ -96,12 +190,14 @@ object IcebergTestUtils {
    * @param tableName: the table name to drop.
    */
   def dropIcebergTable(
-                        spark: SparkSession,
-                        warehousePath: String,
-                        tableName: String): Unit = {
+      spark: SparkSession,
+      warehousePath: String,
+      tableName: String): Unit = {
     val tableIdent = iceberg.catalog.TableIdentifier.of("db", tableName)
+    // scalastyle:off deltahadoopconfiguration
     new HadoopCatalog(spark.sessionState.newHadoopConf(), warehousePath)
       .dropTable(tableIdent)
+    // scalastyle:on deltahadoopconfiguration
   }
 
   /**
