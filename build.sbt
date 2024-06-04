@@ -366,7 +366,7 @@ lazy val spark = (project in file("spark"))
       Seq(file)
     },
     TestParallelization.settings,
-    
+
     // Java-/Scala-/Uni-Doc Settings
     scalacOptions ++= Seq(
       "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
