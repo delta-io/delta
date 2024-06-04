@@ -25,6 +25,9 @@ import java.util.stream.Collectors;
 
 public class DeltaSinkWriterTask {
 
+    private final String appId;
+    private final String writerId;
+    private final int checkpointId;
     private final Engine engine;
     private final String writerTaskId;
     private List<RowData> buffer;
@@ -33,11 +36,17 @@ public class DeltaSinkWriterTask {
     private final StructType writeOperatorDeltaSchema;
 
     public DeltaSinkWriterTask(
+            String appId,
+            String writerId,
+            int checkpointId,
             Engine engine,
             Map<String, Literal> partitionValues,
             Row mockTxnState,
             StructType writeOperatorDeltaSchema,
             String parentWriterId) {
+        this.appId = appId;
+        this.writerId = writerId;
+        this.checkpointId = checkpointId;
         this.engine = engine;
         this.writerTaskId = java.util.UUID.randomUUID().toString();
         this.buffer = new ArrayList<>();
@@ -59,7 +68,7 @@ public class DeltaSinkWriterTask {
         buffer.add(element);
     }
 
-    public Collection<Row> prepareCommit() throws IOException, InterruptedException {
+    public Collection<DeltaCommittable> prepareCommit() throws IOException, InterruptedException {
         if (buffer.isEmpty()) return Collections.emptyList();
 
         System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating logicalData", writerTaskId));
@@ -94,12 +103,20 @@ public class DeltaSinkWriterTask {
                 writeContext);
 
         System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating output", writerTaskId));
-        final Collection<Row> output = new ArrayList<>();
+        final Collection<DeltaCommittable> output = new ArrayList<>();
         while (partitionDataActions.hasNext()) {
-            output.add(partitionDataActions.next());
+            DeltaCommittable deltaCommittable = new DeltaCommittable(
+                appId,
+                writerId,
+                checkpointId,
+                partitionDataActions.next()
+            );
+
+            System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: created %s", writerTaskId, deltaCommittable));
+
+            output.add(deltaCommittable);
         }
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: output is:\n%s", writerTaskId, output.stream().map(row -> JsonUtils.rowToJson(row)).collect(Collectors.joining("\n"))));
         return output;
     }
 

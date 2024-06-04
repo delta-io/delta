@@ -29,8 +29,8 @@ import java.util.List;
 import java.util.Set;
 
 public class DeltaSink implements Sink<RowData>,
-    SupportsCommitter<Row>,
-    SupportsPreCommitTopology<Row, Row>,
+    SupportsCommitter<DeltaCommittable>,
+    SupportsPreCommitTopology<DeltaCommittable, DeltaCommittable>,
     SupportsPreWriteTopology<RowData>,
     Serializable {
 
@@ -46,6 +46,7 @@ public class DeltaSink implements Sink<RowData>,
     // Member fields that MUST be Serializable //
     /////////////////////////////////////////////
 
+    private final String appId; // TODO: be able to restore this
     private final String tablePath;
     private final RowType writeOperatorFlinkSchema;
     private final List<String> userProvidedPartitionColumns;
@@ -60,6 +61,7 @@ public class DeltaSink implements Sink<RowData>,
                 userProvidedPartitionColumns)
         );
 
+        this.appId = java.util.UUID.randomUUID().toString();
         this.tablePath = tablePath;
         this.writeOperatorFlinkSchema = rowType;
         this.userProvidedPartitionColumns = userProvidedPartitionColumns;
@@ -97,11 +99,11 @@ public class DeltaSink implements Sink<RowData>,
     @Override
     public SinkWriter<RowData> createWriter(InitContext context) throws IOException {
         System.out.println("Scott > DeltaSink > createWriter");
-        return new DeltaSinkWriter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
+        return new DeltaSinkWriter(appId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
     }
 
     @Override
-    public Committer<Row> createCommitter(CommitterInitContext context) throws IOException {
+    public Committer<DeltaCommittable> createCommitter(CommitterInitContext context) throws IOException {
         System.out.println("Scott > DeltaSink > createCommitter");
         return new DeltaCommitter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
     }
@@ -115,6 +117,8 @@ public class DeltaSink implements Sink<RowData>,
     public DataStream<RowData> addPreWriteTopology(DataStream<RowData> inputDataStream) {
         System.out.println("Scott > DeltaSink > addPreWriteTopology");
 
+//        return inputDataStream;
+
         return inputDataStream.keyBy(new KeySelector<RowData, Integer>() {
             @Override
             public Integer getKey(RowData value) throws Exception {
@@ -123,9 +127,9 @@ public class DeltaSink implements Sink<RowData>,
         });
     }
 
-    @Override
-    public DataStream<CommittableMessage<Row>> addPreCommitTopology(
-            DataStream<CommittableMessage<Row>> committables) {
+        @Override
+    public DataStream<CommittableMessage<DeltaCommittable>> addPreCommitTopology(
+            DataStream<CommittableMessage<DeltaCommittable>> committables) {
         System.out.println("Scott > DeltaSink > addPreCommitTopology");
         // Sets the partitioning of the DataStream so that the output values all go to the first
         // instance of the next processing operator
@@ -135,28 +139,12 @@ public class DeltaSink implements Sink<RowData>,
     }
 
     @Override
-    public SimpleVersionedSerializer<Row> getWriteResultSerializer() {
-        return new SimpleVersionedSerializer<Row>() {
-            @Override
-            public int getVersion() {
-                return 1;
-            }
-
-            @Override
-            public byte[] serialize(Row obj) throws IOException {
-                return JsonUtils.rowToJson(obj).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            }
-
-            @Override
-            public Row deserialize(int version, byte[] serialized) throws IOException {
-                final String json = new String(serialized, java.nio.charset.StandardCharsets.UTF_8);
-                return JsonUtils.rowFromJson(json, SingleAction.FULL_SCHEMA);
-            }
-        };
+    public SimpleVersionedSerializer<DeltaCommittable> getWriteResultSerializer() {
+        return new DeltaCommittableSerializer();
     }
 
     @Override
-    public SimpleVersionedSerializer<Row> getCommittableSerializer() {
-        return getWriteResultSerializer();
+    public SimpleVersionedSerializer<DeltaCommittable> getCommittableSerializer() {
+        return new DeltaCommittableSerializer();
     }
 }

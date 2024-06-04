@@ -26,7 +26,7 @@ import java.util.NoSuchElementException;
  * restart from previous checkpoint and re-attempt to commit all committables. Thus, some or all
  * committables may have already been committed.
  */
-public class DeltaCommitter implements Committer<Row> {
+public class DeltaCommitter implements Committer<DeltaCommittable> {
 
     private final String committerId;
     private final String tablePath;
@@ -46,7 +46,7 @@ public class DeltaCommitter implements Committer<Row> {
 
     @Override
     public void commit(
-            Collection<CommitRequest<Row>> committables)
+            Collection<CommitRequest<DeltaCommittable>> committables)
             throws IOException, InterruptedException {
         System.out.println(
             String.format("Scott > DeltaCommitter[%s] > commit :: committablesSize=%s", committerId, committables.size())
@@ -97,7 +97,7 @@ public class DeltaCommitter implements Committer<Row> {
             @Override
             public CloseableIterator<Row> iterator() {
                 return new CloseableIterator<Row>() {
-                    private final Iterator<CommitRequest<Row>> iter = committables.iterator();
+                    private final Iterator<CommitRequest<DeltaCommittable>> iter = committables.iterator();
 
                     @Override
                     public void close() throws IOException {
@@ -113,7 +113,13 @@ public class DeltaCommitter implements Committer<Row> {
                     public Row next() {
                         if (!hasNext()) throw new NoSuchElementException();
 
-                        return iter.next().getCommittable();
+                        final DeltaCommittable deltaCommittable = iter.next().getCommittable();
+
+                        System.out.println(
+                            String.format("Scott > DeltaCommitter[%s] > commit :: %s", committerId, deltaCommittable)
+                        );
+
+                        return deltaCommittable.getKernelActionRow();
                     }
                 };
             }

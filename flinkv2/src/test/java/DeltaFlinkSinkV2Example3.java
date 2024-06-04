@@ -42,7 +42,7 @@ public class DeltaFlinkSinkV2Example3 {
             return createSimpleRow(x.intValue());
         };
 
-        DataGeneratorSource<RowData> source = new DataGeneratorSource<>(generatorFunction, 10000, Types.GENERIC(RowData.class));
+        DataGeneratorSource<RowData> source = new DataGeneratorSource<>(generatorFunction, 100, Types.GENERIC(RowData.class));
 
         DataStreamSource<RowData> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Generator Source");
 
