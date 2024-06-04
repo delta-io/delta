@@ -27,7 +27,8 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.actions.SingleAction
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -42,7 +43,7 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
 
 import java.util
-import java.util.{HashMap, Optional}
+import java.util.Optional
 import scala.collection.JavaConverters._
 
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
@@ -402,6 +403,58 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(ex.getMessage.contains(
         "Transaction is already attempted to commit. Create a new transaction."))
     }
+  }
+
+  test("remove data from table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val config: util.HashMap[String, String] = new util.HashMap[String, String]
+      config.put(TableConfig.IS_APPEND_ONLY.key(), "true")
+      var txn = txnBuilder.withSchema(engine, testSchema).withConfiguration(engine, config)
+        .build(engine)
+      txn.commit(engine, emptyIterable())
+
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        partCols = Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2))
+      )
+
+      val snapshot = table.getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder(engine).build()
+
+      val removeFiles = new util.ArrayList[Row]();
+      val scanFile = scan.getScanFiles(engine)
+      while (scanFile.hasNext) {
+        val batch = scanFile.next()
+        val rows = batch.getRows
+        while (rows.hasNext) {
+          val singleAction = rows.next()
+          val addFileAction = singleAction.getStruct(
+            InternalScanFileUtils.SCAN_FILE_SCHEMA.indexOf("add"))
+
+          val removeFileRow = SingleAction.addFileToRemoveFile(
+            addFileAction, System.currentTimeMillis())
+          removeFiles.add(SingleAction.createRemoveFileSingleAction(removeFileRow))
+        }
+        rows.close()
+      }
+      scanFile.close()
+      val actions = inMemoryIterable(CloseableIterator.toCloseableIterator(removeFiles))
+
+      txn = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE).build(engine)
+      val ex = intercept[KernelException] {
+        txn.commit(engine, actions)
+      }
+      assert(ex.getMessage.contains(
+        "This table is configured to only allow appends. If you would like to permit updates or " +
+          "deletes, update config 'delta.appendOnly' to true"))
+    }
+
   }
 
   test("insert into partitioned table - table created from scratch") {

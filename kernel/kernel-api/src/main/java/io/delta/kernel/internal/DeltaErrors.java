@@ -198,6 +198,12 @@ public final class DeltaErrors {
         return new KernelException(format(msgT, partitionColumn, tablePath));
     }
 
+    public static KernelException modifyAppendOnlyTableException() {
+        return new KernelException(
+            "This table is configured to only allow appends. If you would like to permit updates"
+                + " or deletes, update config 'delta.appendOnly' to true");
+    }
+
     public static KernelException concurrentTransaction(
             String appId,
             long txnVersion,

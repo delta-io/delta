@@ -132,7 +132,13 @@ public class TransactionImpl
         try {
             checkState(!closed,
                     "Transaction is already attempted to commit. Create a new transaction.");
-
+            if (TableConfig.IS_APPEND_ONLY.fromMetadata(metadata)) {
+                for (Row dataAction : dataActions) {
+                    if (SingleAction.isRemoveFileAction(dataAction)) {
+                        throw DeltaErrors.modifyAppendOnlyTableException();
+                    }
+                }
+            }
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
             int numRetries = 0;
             do {
