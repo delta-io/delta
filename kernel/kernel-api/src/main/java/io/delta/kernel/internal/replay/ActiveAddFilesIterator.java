@@ -121,12 +121,10 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     public void close() throws IOException {
         closed = true;
         Utils.closeCloseables(iter);
-        if (logger.isInfoEnabled()) {
-            // Log the metrics of the log replay of actions that are consumed so far.
-            // If the iterator is closed before consuming all the actions, the metrics will be
-            // partial.
-            logger.info("Log replay metrics: {}", metrics);
-        }
+
+        // Log the metrics of the log replay of actions that are consumed so far. If the iterator
+        // is closed before consuming all the actions, the metrics will be partial.
+        logger.info("Active add file finding log replay metrics: {}", metrics);
     }
 
     /**
