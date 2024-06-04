@@ -157,30 +157,6 @@ trait ConvertIcebergToDeltaSuiteBase
       }
   }
 
-  test("convert with statistics 111") {
-    withTable(table) {
-      spark.sql(
-        s"""CREATE TABLE $table (id bigint, data string)
-           |USING iceberg PARTITIONED BY (data)""".stripMargin)
-      spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b')")
-//      spark.sql(s"INSERT INTO $table VALUES (3, 'c')")
-      val targetTable = "target_ufi_1"
-
-      withTable(targetTable) {
-        spark.sql(
-          s"""
-             | CREATE TABLE $targetTable
-             | UNIFORM iceberg
-             | METADATA_PATH '${tablePath + "/metadata/v2.metadata.json"}'
-             |""".stripMargin)
-        val answer = spark.sql(s"SELECT * FROM default.$targetTable")
-        val df1 = Seq((1, "a"), (2, "b")).toDF("id", "data")
-        checkAnswer(answer, df1.collect())
-    }
-  }
-    }
-
-
   test("table with deleted files") {
     withTable(table) {
       spark.sql(

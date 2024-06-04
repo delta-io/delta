@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.uniform.UniformIngressUtils
+
 import java.util.Locale
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -390,24 +392,28 @@ class DeltaAnalysis(session: SparkSession)
             throw DeltaErrors.cannotReplaceMissingTableException(ident)
           }
           val tableIdentifier = ident.asTableIdentifier
+
           // <table_uri>/metadata/<version>-<uuid>.metadata.json
           val externalMetadataPath = new Path(createUniformStmt.metadataPath)
-          // TODO: need further review
+
           // note: the external iceberg table path is also used as the path for the
           // to-be-converted/created delta table.
           val externalTableUri = externalMetadataPath.getParent.getParent.toUri
+
+          // construct the catalog table for the to-be-created UFI table
           val catalogTable = new CatalogTable(
             identifier = tableIdentifier,
             tableType = CatalogTableType.EXTERNAL,
             storage = CatalogStorageFormat.empty.copy(locationUri = Some(externalTableUri)),
             // the schema should be the same as iceberg source
             schema = source.schema,
-            // TODO: ensure this
-            // currently properties contains a special key-value pair for UFI table
-            properties = Map { "_isUniformIngressTable" -> "_" },
+            // special for UFI table
+            properties = UniformIngressUtils.property,
             provider = Some("delta")
-            // TODO: check whether to add `capabilities` or not, and if so, where?
           )
+
+          // the actual command that creates the UFI table,
+          // note that the SHALLOW CLONE is conducted via the `CloneTableCommand`.
           CreateDeltaTableCommand(
             table = catalogTable,
             existingTableOpt = None,

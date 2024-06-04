@@ -23,6 +23,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LogicalPla
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.uniform.UniformIngressUtils
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 
 import scala.util.control.NonFatal
@@ -72,7 +73,8 @@ case class RefreshUniformTableCommand(
       throw DeltaErrors.notADeltaTable(table.name())
     )
 
-    if (!catalogTable.properties.contains("_isUniformIngressTable")) {
+    // refresh should only be called on an existing UFI table
+    if (!UniformIngressUtils.isUniformIngressTable(catalogTable)) {
       // TODO: change the error to `UniformIngressNotUFITable`
       throw DeltaErrors.uniformIngressOperationNotSupported
     }
@@ -95,15 +97,15 @@ case class RefreshUniformTableCommand(
     )
 
     val txn = deltaLog.startTransaction(Some(catalogTable))
-    var res = Seq.empty[Row]
+    var result = Seq.empty[Row]
     try {
-      res = CloneTableCommand(
+      // the existing `_delta_log` will be overwritten
+      result = CloneTableCommand(
         sourceTable = cloneSource,
         targetIdent = catalogTable.identifier,
-        // TODO: this is a current workaround for bypassing cloning check,
-        //  needs further review.
         targetPath = table.path,
         tablePropertyOverrides = Map.empty,
+        // the special flag to bypass cloning check
         isUFI = true
       ).handleClone(sparkSession, txn, deltaLog)
     } catch {
@@ -117,6 +119,6 @@ case class RefreshUniformTableCommand(
     logInfo(s"Convert metadata from $icebergMetadataLoc to delta succeed for" +
       s"table ${catalogTable.identifier} with updated version ${updateSnapshot.version}")
 
-    res
+    result
   }
 }

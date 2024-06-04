@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
-
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
@@ -31,12 +30,12 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.delta.uniform.UniformIngressUtils
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
@@ -134,8 +133,9 @@ case class CreateDeltaTableCommand(
         // garbage data
         if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
           // the path should be empty for non-UFI table; for UFI table,
-          // an external iceberg table already exists at the specific location.
-          if (!tableWithLocation.properties.contains("_isUniformIngressTable")) {
+          // an external iceberg table already exists at the specific location,
+          // and we need to bypass the empty path check here.
+          if (!UniformIngressUtils.isUniformIngressTable(table)) {
             assertPathEmpty(hadoopConf, tableWithLocation)
           }
         }
@@ -606,8 +606,8 @@ case class CreateDeltaTableCommand(
 
     // The special property key-value pair that needs to persist if the
     // table is UFI table, mainly for distinguish purpose.
-    val ufiProperty = if (table.properties.contains("_isUniformIngressTable")) {
-      Map { "_isUniformIngressTable" -> "_" }
+    val ufiProperty = if (UniformIngressUtils.isUniformIngressTable(table)) {
+      UniformIngressUtils.property
     } else {
       Map.empty
     }

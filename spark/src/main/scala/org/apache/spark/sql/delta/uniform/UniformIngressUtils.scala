@@ -30,4 +30,7 @@ object UniformIngressUtils extends DeltaLogging {
   def isUniformIngressTable(catalogTable: CatalogTable): Boolean = {
     catalogTable.properties.contains(UFI_IDENT)
   }
+
+  /** The special property used to distinguish UFI table */
+  def property: Map[String, String] = Map { UFI_IDENT -> "_" }
 }
