@@ -29,6 +29,8 @@ import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
  * Delta log action representing a commit information action. According to the Delta protocol there
  * isn't any specific schema for this action, but we use the following schema:
  * <ul>
+ *     <li>inCommitTimestamp: Long - A monotonically increasing timestamp that represents the time
+ *     since epoch in milliseconds when the commit write was started</li>
  *     <li>timestamp: Long - Milliseconds since epoch UTC of when this commit happened</li>
  *     <li>engineInfo: String - Engine that made this commit</li>
  *     <li>operation: String - Operation (e.g. insert, delete, merge etc.)</li>

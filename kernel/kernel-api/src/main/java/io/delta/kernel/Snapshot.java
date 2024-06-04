@@ -37,6 +37,11 @@ public interface Snapshot {
      */
     long getVersion(Engine engine);
 
+    /**
+     * Get the metadata of the table at this snapshot.
+     *
+     * @return Metadata of the Delta table at this snapshot.
+     */
     Metadata getMetadata();
 
     /**
