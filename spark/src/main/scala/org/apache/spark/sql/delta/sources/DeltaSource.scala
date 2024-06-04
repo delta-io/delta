@@ -651,6 +651,7 @@ trait DeltaSourceBase extends Source
           // This is only allowed when we are "backfilling", i.e. the stream progress is older than
           // the analyzed table version. Any schema change past the analysis should still throw
           // exception, because additive schema changes MUST be taken into account.
+          allowTypeWidening = true,
           allowMissingColumns =
             isStreamingFromColumnMappingTable &&
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
@@ -670,7 +671,8 @@ trait DeltaSourceBase extends Source
         // and if it works (including that `schemaChange` should not tighten the nullability
         // constraint from `schema`), it is a retryable exception.
         val retryable = !backfilling && SchemaUtils.isReadCompatible(
-          schema, schemaChange, forbidTightenNullability = shouldForbidTightenNullability)
+          schema, schemaChange, forbidTightenNullability = shouldForbidTightenNullability,
+          allowTypeWidening = true)
         throw DeltaErrors.schemaChangedException(
           schema,
           schemaChange,
