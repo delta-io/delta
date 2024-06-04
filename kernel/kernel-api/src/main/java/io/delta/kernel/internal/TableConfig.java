@@ -61,13 +61,13 @@ public class TableConfig<T> {
     );
 
     /**
-     * The shortest duration we have to keep logically deleted data files around before deleting them
-     * physically. This is to prevent failures in stale readers after compactions or partition
+     * The shortest duration we have to keep logically deleted data files around before deleting
+     * them physically. This is to prevent failures in stale readers after compactions or partition
      * overwrites.
      *
      * Note: this value should be large enough:
-     * - It should be larger than the longest possible duration of a job if you decide to run "VACUUM"
-     *   when there are concurrent readers or writers accessing the table.
+     * - It should be larger than the longest possible duration of a job if you decide to run
+     * "VACUUM" when there are concurrent readers or writers accessing the table.
      * - If you are running a streaming query reading from the table, you should make sure the query
      *   doesn't stop longer than this value. Otherwise, the query may not be able to restart as it
      *   still needs to read old files.
