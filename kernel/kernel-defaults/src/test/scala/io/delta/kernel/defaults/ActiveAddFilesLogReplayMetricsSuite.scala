@@ -55,7 +55,7 @@ class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
         for (_ <- 0 to 3) {
           appendCommit(path)
         }
-        checkpoint(path, actionsPerFile = if (multipartCheckpoint) 5 else 1000000)
+        checkpoint(path, actionsPerFile = if (multipartCheckpoint) 2 else 1000000)
         for (_ <- 4 to 9) {
           appendCommit(path)
         }
@@ -79,7 +79,7 @@ class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
           appendCommit(path)
         } // has 8 add files
         deleteCommit(path) // version 4 - deletes 4 files and adds 1 file
-        checkpoint(path, actionsPerFile = if (multipartCheckpoint) 5 else 1000000) // version 4
+        checkpoint(path, actionsPerFile = if (multipartCheckpoint) 2 else 1000000) // version 4
         appendCommit(path) // version 5 - adds 2 files
         deleteCommit(path) // version 6 - deletes 1 file and adds 1 file
         appendCommit(path) // version 7 - adds 2 files
@@ -107,7 +107,7 @@ class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
           appendCommit(path)
         } // activeAdds = 4
         deleteCommit(path) // ver 2 - deletes 2 files and adds 1 file, activeAdds = 3
-        checkpoint(path, actionsPerFile = if (multipartCheckpoint) 5 else 1000000) // version 2
+        checkpoint(path, actionsPerFile = if (multipartCheckpoint) 2 else 1000000) // version 2
         appendCommit(path) // ver 3 - adds 2 files, activeAdds = 5
         recomputeStats(path) // ver 4 - adds the same 5 add files again, activeAdds = 5, dupes = 5
         deleteCommit(path) // ver 5 - removes 1 file and adds 1 file, activeAdds = 5, dupes = 5
