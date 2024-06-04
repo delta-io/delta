@@ -169,7 +169,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
-    Antlr4 / antlr4Version := "4.9.3",
+    Antlr4 / antlr4Version := "4.9.3"
   )
 
   case SPARK_MASTER_VERSION => Seq(
@@ -182,7 +182,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
     Antlr4 / antlr4Version := "4.13.1",
-    java17TestSettings,
+    java17TestSettings
   )
 }
 
@@ -256,8 +256,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
-    unidocSourceFilePatterns := Nil,
-  ).configureUnidoc()
+  )
 
 lazy val connectClient = (project in file("spark-connect/client"))
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
@@ -341,8 +340,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
         dest.get()
       }
     }.taskValue,
-    unidocSourceFilePatterns := Nil,
-  ).configureUnidoc()
+  )
 
 lazy val connectServer = (project in file("spark-connect/server"))
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
@@ -385,8 +383,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
-    unidocSourceFilePatterns := Nil,
-  ).configureUnidoc()
+  )
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
@@ -465,7 +462,7 @@ lazy val spark = (project in file("spark"))
       Seq(file)
     },
     TestParallelization.settings,
-    
+
     // Java-/Scala-/Uni-Doc Settings
     scalacOptions ++= Seq(
       "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
