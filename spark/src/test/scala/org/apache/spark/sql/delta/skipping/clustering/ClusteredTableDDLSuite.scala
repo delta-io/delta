@@ -398,6 +398,66 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
     }
   }
 
+  test("Replace clustered table with non-clustered table") {
+    import testImplicits._
+    withTable(sourceTable) {
+      sql(s"CREATE TABLE $sourceTable(i int, s string) USING delta")
+      spark.range(1000)
+        .map(i => (i.intValue(), "string col"))
+        .toDF("i", "s")
+        .write
+        .format("delta")
+        .mode("append")
+        .saveAsTable(sourceTable)
+
+      // Validate REPLACE TABLE (AS SELECT).
+      Seq("REPLACE", "CREATE OR REPLACE").foreach { clause =>
+        withClusteredTable(testTable, "a int", "a") {
+          verifyClusteringColumns(TableIdentifier(testTable), "a")
+
+          Seq(true, false).foreach { isRTAS =>
+            val testQuery = if (isRTAS) {
+              s"$clause TABLE $testTable USING delta AS SELECT * FROM $sourceTable"
+            } else {
+              sql(s"$clause TABLE $testTable (i int, s string) USING delta")
+              s"INSERT INTO $testTable SELECT * FROM $sourceTable"
+            }
+            sql(testQuery)
+            // Note that clustering table feature are still retained after REPLACE TABLE.
+            verifyClusteringColumns(TableIdentifier(testTable), "")
+          }
+        }
+      }
+    }
+  }
+
+  test("Replace clustered table with non-clustered table - dataframe writer") {
+    import testImplicits._
+    withTable(sourceTable) {
+      sql(s"CREATE TABLE $sourceTable(i int, s string) USING delta")
+      spark.range(1000)
+        .map(i => (i.intValue(), "string col"))
+        .toDF("i", "s")
+        .write
+        .format("delta")
+        .mode("append")
+        .saveAsTable(sourceTable)
+
+      withClusteredTable(testTable, "a int", "a") {
+        verifyClusteringColumns(TableIdentifier(testTable), "a")
+
+        spark.table(sourceTable)
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option("overwriteSchema", "true")
+          .saveAsTable(testTable)
+        // Note that clustering table feature are still retained after REPLACE TABLE.
+        verifyClusteringColumns(TableIdentifier(testTable), "")
+      }
+    }
+  }
+
   protected def withTempDirIfNecessary(f: Option[String] => Unit): Unit = {
     if (isPathBased) {
       withTempDir { dir =>

@@ -255,7 +255,8 @@ case class CreateDeltaTableCommand(
       // exists (replacing table), otherwise it is handled inside WriteIntoDelta (creating table).
       if (!isV1Writer && isReplace && txn.readVersion > -1L) {
         val newDomainMetadata = Seq.empty[DomainMetadata] ++
-          ClusteredTableUtils.getDomainMetadataOptional(table, txn)
+          ClusteredTableUtils.getDomainMetadataFromTransaction(
+            ClusteredTableUtils.getClusterBySpecOptional(table), txn)
         // Ensure to remove any domain metadata for REPLACE TABLE.
         val newActions = taggedCommitData.actions ++
           DomainMetadataUtils.handleDomainMetadataForReplaceTable(
@@ -337,7 +338,8 @@ case class CreateDeltaTableCommand(
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
         }
-        ClusteredTableUtils.getDomainMetadataOptional(table, txn).toSeq
+        ClusteredTableUtils.getDomainMetadataFromTransaction(
+          ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq
       } else {
         verifyTableMetadata(txn, tableWithLocation)
         Nil
@@ -381,7 +383,8 @@ case class CreateDeltaTableCommand(
         actionsToCommit = removes ++
           DomainMetadataUtils.handleDomainMetadataForReplaceTable(
             txn.snapshot.domainMetadata,
-            ClusteredTableUtils.getDomainMetadataOptional(table, txn).toSeq)
+            ClusteredTableUtils.getDomainMetadataFromTransaction(
+              ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq)
         actionsToCommit
     }
 
