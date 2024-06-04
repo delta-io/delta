@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 
-import org.apache.spark.sql.catalyst.expressions.{And, EmptyRow, Expression, Literal, Or}
+import org.apache.spark.sql.catalyst.expressions.{And, EmptyRow, Expression, Literal, Or, OuterReference}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
@@ -79,6 +79,60 @@ private[delta] trait ConflictCheckerPredicateElimination extends DeltaSparkPlanU
           newPredicates = Seq(newPredicate),
           eliminatedPredicates = eliminatedChildren.eliminatedPredicates)
       }
+    }
+  }
+
+  protected def eliminateOuterReferencePredicates(
+     predicates: Seq[Expression]): PredicateElimination = {
+    eliminateUnsupportedPredicates(predicates) {
+      case p @ SubqueryExpression(plan) =>
+        findFirstOuterReferenceInPlan(plan) match {
+          case Some(node) =>
+            PredicateElimination.eliminate(p, eliminated = Some(planOrExpressionName(node)))
+          case None =>
+            PredicateElimination.keep(p)
+        }
+      // And and Or can safely be recursed through. Replacing any unsupported sub-tree
+      // with `True` will lead us to at most select more files than necessary later.
+      case p: And => PredicateElimination.recurse(p, eliminateOuterReferencePredicates)
+      case p: Or => PredicateElimination.recurse(p, eliminateOuterReferencePredicates)
+      case p =>
+        // We always look for unsupported child nodes, whether or not `p` is actually
+        // supported. This gives us better feedback on which node was unsupported.
+        findFirstChildWithOuterReference(p.children) match {
+          case Some(node) =>
+            PredicateElimination.eliminate(p, eliminated = Some(planOrExpressionName(node)))
+          case None =>
+            PredicateElimination.keep(p)
+        }
+    }
+  }
+
+  private def findFirstChildWithOuterReference(
+      children: Seq[Expression]): Option[PlanOrExpression] =
+    collectFirst(children, findFirstOuterReferenceInExpression)
+
+  private def findFirstOuterReferenceInExpression(
+      expression: Expression): Option[PlanOrExpression] = {
+    expression match {
+      case SubqueryExpression(plan) =>
+        findFirstOuterReferenceInPlan(plan)
+      case r: OuterReference =>
+        Some(Right(r))
+      case p =>
+        collectFirst[Expression, PlanOrExpression](
+          p.children,
+          findFirstOuterReferenceInExpression)
+    }
+  }
+
+  private def findFirstOuterReferenceInPlan(plan: LogicalPlan): Option[PlanOrExpression] = {
+    collectFirst[Expression, PlanOrExpression](
+      plan.expressions,
+      findFirstOuterReferenceInExpression).orElse {
+      collectFirst[LogicalPlan, PlanOrExpression](
+        plan.children,
+        findFirstOuterReferenceInPlan)
     }
   }
 
