@@ -109,7 +109,7 @@ class DeltaSqlTests(DeltaTestCase):
 
             self.spark.sql(f"CREATE TABLE {table}(a LONG, b String NOT NULL) USING delta")
             self.assertEqual(read_table().count(), 0)
-            self.spark.sql(f"CREATE TABLE {table}_part(a LONG, b String NOT NULL)"
+            self.spark.sql(f"CREATE TABLE {table}_part1(a LONG, b String NOT NULL)"
                            " USING delta PARTITIONED BY (a)")
 
             # Unpartitioned table does not include partitioning information in Spark 3.4+
@@ -122,7 +122,7 @@ class DeltaSqlTests(DeltaTestCase):
             answer_part = [("a", "bigint"), ("b", "string"), ("# Partition Information", ""),
                            ("# col_name", "data_type"), ("a", "bigint")]
             self.__checkAnswer(
-                self.spark.sql(f"DESCRIBE TABLE {table}_part").select("col_name", "data_type"),
+                self.spark.sql(f"DESCRIBE TABLE {table}_part1").select("col_name", "data_type"),
                 answer_part,
                 schema=["col_name", "data_type"])
 
