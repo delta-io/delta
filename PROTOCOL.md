@@ -60,6 +60,7 @@
   - [Reader Requirements for Vacuum Protocol Check](#reader-requirements-for-vacuum-protocol-check)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
+- [Variant Type (Preview) (variantType-preview)](#variant-type-preview-varianttype-preview)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
@@ -98,6 +99,7 @@
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
     - [Map Type](#map-type)
+    - [Variant Type](#variant-type)
     - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
@@ -1253,6 +1255,12 @@ The example above converts `configuration` field into JSON format, including esc
 }
 ```
 
+# Variant Type (Preview) (variantType-preview)
+This feature introduces a new data type to store semi-structured data. See [Variant Type RFC](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md) for more details.
+
+To support this feature:
+- To have a column of Variant type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `variantType-preview` must exist in the table's `readerFeatures` and `writerFeatures`.
+
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
@@ -1826,6 +1834,16 @@ Field Name | Description
 type| Always the string "map".
 keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+
+### Variant Type
+
+A variant stores encoded semi-structured data and is modeled as a struct of two binary fields. See [Variant Type](#variant-type-feature) for more details.
+
+To use this type, a table must support a feature `variantType-preview`.
+
+Field Name | Description
+-|-
+type| Always the string "variant".
 
 ### Column Metadata
 A column metadata stores various information about the column.
