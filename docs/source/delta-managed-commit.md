@@ -4,9 +4,9 @@ description: Learn about Delta Managed Commits.
 
 # Delta Managed Commits
 
-.. warning:: This feature is available in preview in <Delta> 4.0-preview. Since this feature is still in preview, it can undergo major changes. Furthermore, a table which has this preview feature enabled cannot be written to by future Delta releases until this feature is manually dropped from the table.
+.. warning:: This feature is available in preview in <Delta> 4.0-preview. Since this feature is still in preview, it can undergo major changes. Furthermore, a table with this preview feature enabled cannot be written to by future Delta releases until the feature is manually removed from the table.
 
-[Managed Commit](https://github.com/delta-io/delta/issues/2598) is a new commit protocol which makes the commit process more flexible and pluggable by giving control of the commit to an external commit owner. Each managed commit table has a designated "commit owner" and all the commits to the table must go via it.
+[Managed Commit](https://github.com/delta-io/delta/issues/2598) is a new commit protocol which makes the commit process more flexible and pluggable by delegating control of the commit to an external commit owner. Each managed commit table has a designated "commit owner" and all the commits to the table must go via it.
 
 
 # DynamoDB Commit Owner
@@ -16,7 +16,7 @@ description: Learn about Delta Managed Commits.
 ## Quickstart Guide
 
 ### 1. Create the DynamoDB table
-The DynamoDB Commit Owner needs a DynamoDB table at the backend to manage commits. One DynamoDB table can be used to manage multiple Delta tables. You have the choice of creating the DynamoDB table yourself (recommended) or having it created for you automatically.
+The DynamoDB Commit Owner requires a backend DynamoDB table to manage commits. One DynamoDB table can be used to manage multiple Delta tables. You have the choice of creating the DynamoDB table yourself (recommended) or having it created for you automatically.
 
 - Creating the DynamoDB table yourself
 
@@ -55,7 +55,7 @@ CREATE TABLE <table_name> (id string) USING DELTA
 TBLPROPERTIES ('delta.managedCommits.commitOwner-preview' = 'dynamodb', 'delta.managedCommits.commitOwnerConf-preview' = '{\"managedCommitsTableName\": \"<dynamodb_table_name>\",\"dynamoDBEndpoint\": \"<dynamodb_region_endpoint>\"}');
 ```
 
-Note that `managedCommits.commitOwnerConf-preview` is a serialized json with two top-level properties:
+Note that `managedCommits.commitOwnerConf-preview` is a serialized JSON with two top-level properties:
 1. `managedCommitsTableName`: This is the name of the table which will be used by the commit owner client to store information about the table that it is managing. This is the same table that was created in step 1.
 2. `dynamoDBEndpoint`: This must specify the fully-qualified url endpoint (e.g. `https://dynamodb.us-west-2.amazonaws.com`) of the DynamoDB instance. The full list of endpoints can be found [here](https://docs.aws.amazon.com/general/latest/gr/ddb.html).
 
@@ -66,14 +66,14 @@ ALTER TABLE <table_name>
 SET TBLPROPERTIES ('delta.managedCommits.commitOwner-preview' = 'dynamodb', 'delta.managedCommits.commitOwnerConf-preview' = '{\"managedCommitsTableName\": \"<dynamodb_table_name>\",\"dynamoDBEndpoint\": \"<dynamodb_region_endpoint>\"}');
 ```
 
-.. warning:: The commit that converts a table to a managed commit table goes through the configured `LogStore` directly. This means that the multi-cluster write restrictions imposed by the configured `LogStore` implementation still apply. To avoid corruption in filesystems where concurrent commits are not safe, no concurrent commits must be performed when the conversion to managed commits happens.
+.. warning:: The commit that converts a table to a managed commit table goes through the configured `LogStore` directly. This means the multi-cluster write restrictions imposed by the configured LogStore implementation still apply. To avoid corruption in filesystems where concurrent commits are not safe, no concurrent commits must be performed when the conversion to managed commits happens.
 
-.. note:: Instead of specifying the table properties on every table creation, you can specify them as default table properties which will be used for every new table using spark configs. To do this, you can set the spark properties `spark.databricks.delta.properties.defaults.managedCommits.commitOwner-preview` and `spark.databricks.delta.properties.defaults.managedCommits.commitOwnerConf-preview`.
+.. note:: Instead of specifying the table properties for each table creation, you can set them as default table properties to be used for every new table via Spark configurations. To do this, you can set the spark properties `spark.databricks.delta.properties.defaults.managedCommits.commitOwner-preview` and `spark.databricks.delta.properties.defaults.managedCommits.commitOwnerConf-preview`.
 
 
 ## Removing the Managed Commit Feature
 
-The feature can be removed from a Delta table using the `DROP FEATURE` command:
+The feature can be removed from a Delta table by using the `DROP FEATURE` command:
 
 ```sql
 ALTER TABLE <table-name> DROP FEATURE 'managed-commit-preview' [TRUNCATE HISTORY]
@@ -83,10 +83,10 @@ ALTER TABLE <table-name> DROP FEATURE 'managed-commit-preview' [TRUNCATE HISTORY
 
 ## Compatibility
 
-Managed Commit is a writer table feature, so only clients that understand the feature can write to these tables.
+Managed Commit is a writer table feature, so only clients that recognize the feature can write to these tables.
 Older clients which do not understand this table feature can still read a managed commit table. However, the read may give stale results depending on table's [commit owner backfill policy](https://github.com/delta-io/delta/blob/branch-4.0-preview1/protocol_rfcs/managed-commits.md#commit-backfills). Note that the DynamoDB Commit Owner tries to backfill all commits immediately.
 
 
 ## Dependencies
 
-The Managed Commit feature depends on two other features to work correctly --- [In Commit Timestamps](https://github.com/delta-io/delta/issues/2532) and [Vacuum Protocol Check](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check). Both these features will be enabled automatically (if not already enabled) when Managed Commit is enabled.
+The Managed Commit feature depends on two other features to function correctly --- [In Commit Timestamps](https://github.com/delta-io/delta/issues/2532) and [Vacuum Protocol Check](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check). These features will be enabled automatically (if not already enabled) when Managed Commit is activated.
