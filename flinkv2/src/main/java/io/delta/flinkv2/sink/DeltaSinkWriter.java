@@ -11,6 +11,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.types.StructType;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
+import org.apache.flink.api.connector.sink2.StatefulSinkWriter;
 import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
@@ -20,9 +21,11 @@ import java.io.IOException;
 import java.util.*;
 
 // TODO: implement stateful sink writer
-public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommittable> {
+public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommittable>,
+    StatefulSinkWriter<RowData, DeltaSinkWriterState> {
 
-    private int checkpointId;
+    private long checkpointId; // checkpointId that all FUTURE writes will be a part of
+    private long lastSnapshottedCheckpointId = -1;
     private final String appId;
     private final Engine engine;
     private final String writerId;
@@ -33,11 +36,19 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
 
     private Map<Map<String, Literal>, DeltaSinkWriterTask> writerTasksByPartition;
 
-    public DeltaSinkWriter(String appId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns) {
-        this.checkpointId = 1;
+    public static DeltaSinkWriter restoreWriter(String appId, String writerId, long checkpointId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns) {
+        return new DeltaSinkWriter(appId, writerId, checkpointId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
+    }
+
+    public static DeltaSinkWriter createNewWriter(String appId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns) {
+        return new DeltaSinkWriter(appId, java.util.UUID.randomUUID().toString(), 1, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
+    }
+
+    private DeltaSinkWriter(String appId, String writerId, long checkpointId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns) {
         this.appId = appId;
+        this.writerId = writerId;
+        this.checkpointId = checkpointId;
         this.engine = DefaultEngine.create(new Configuration());
-        this.writerId = java.util.UUID.randomUUID().toString();
         this.writeOperatorFlinkSchema = writeOperatorFlinkSchema;
         this.writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(writeOperatorFlinkSchema);
         this.writerTasksByPartition = new HashMap<>();
@@ -66,8 +77,9 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
 
         System.out.println(
             String.format(
-                "Scott > DeltaSinkWriter > constructor :: writerId=%s, writeOperatorDeltaSchema=%s, txnStateSchema=%s",
+                "Scott > DeltaSinkWriter > constructor :: writerId=%s, checkpointId=%s, writeOperatorDeltaSchema=%s, txnStateSchema=%s",
                 writerId,
+                checkpointId,
                 writeOperatorDeltaSchema,
                 mockTxnState.getSchema()
             )
@@ -88,6 +100,27 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
      */
     @Override
     public void write(RowData element, Context context) throws IOException, InterruptedException {
+        // checkpointId is the checkpoint id that this data WILL be checkpointed into
+        if (lastSnapshottedCheckpointId != -1 && checkpointId != lastSnapshottedCheckpointId + 1) {
+            System.out.println(
+                String.format(
+                    "Scott > DeltaSinkWriter[%s] > write :: weird state where checkpointId=%s but lastSnapshottedCheckpointId=%s",
+                    writerId,
+                    checkpointId,
+                    lastSnapshottedCheckpointId
+                )
+            );
+        }
+
+//        if (java.util.concurrent.ThreadLocalRandom.current().nextInt() % 600 == 0) {
+//            int totalRowsBuffered = writerTasksByPartition.values().stream()
+//                .mapToInt(DeltaSinkWriterTask::getBufferSize)
+//                .sum();
+//            final String msg = String.format("RANDOM FAILURE ---- Scott > DeltaSinkWriter[%s] > write :: element=%s :: checkpointId=%s, totalRowsBuffered=%s", writerId, element, checkpointId, totalRowsBuffered);
+//            System.out.println(msg);
+//            throw new RuntimeException("!!!!!" + msg);
+//        }
+
         final Map<String, Literal> partitionValues =
             DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, element, tablePartitionColumns);
 
@@ -118,10 +151,15 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
      * Preparing the commit is the first part of a two-phase commit protocol.
      *
      * Returns the data to commit as the second step of the two-phase commit protocol.
+     *
+     * This gets called before every checkpoint, even if no data was written
      */
     @Override
     public Collection<DeltaCommittable> prepareCommit() throws IOException, InterruptedException {
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: checkpointId=%s", writerId, checkpointId));
+        int totalRowsBuffered = writerTasksByPartition.values().stream()
+            .mapToInt(DeltaSinkWriterTask::getBufferSize)
+            .sum();
+        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: checkpointId=%s, totalRowsBuffered=%s", writerId, checkpointId, totalRowsBuffered));
 
         final Collection<DeltaCommittable> output = new ArrayList<>();
 
@@ -129,8 +167,11 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
             output.addAll(writerTask.prepareCommit());
         }
 
-        checkpointId++;
         writerTasksByPartition.clear();
+
+        checkpointId++;
+
+        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: incrementing checkpointId to %s", writerId, checkpointId));
 
         return output;
     }
@@ -143,5 +184,30 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
     @Override
     public void close() throws Exception {
 
+    }
+
+    /////////////////////////////
+    // StatefulSinkWriter APIs //
+    /////////////////////////////
+
+    /** Called after prepareCommit */
+    @Override
+    public List<DeltaSinkWriterState> snapshotState(long latestCheckpointId) throws IOException {
+        lastSnapshottedCheckpointId = latestCheckpointId;
+
+        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > snapshotState :: checkpointIdToSnapshot=%s :: %s", writerId, latestCheckpointId, this));
+
+        return Collections.singletonList(new DeltaSinkWriterState(appId, writerId, lastSnapshottedCheckpointId));
+    }
+
+    @Override
+    public String toString() {
+        return "DeltaSinkWriter{" +
+            "checkpointId=" + checkpointId +
+            ", appId='" + appId + '\'' +
+            ", engine=" + engine +
+            ", writerId='" + writerId + '\'' +
+            ", numWriterTasks='" + writerTasksByPartition.size() + '\'' +
+            '}';
     }
 }

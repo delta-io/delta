@@ -459,6 +459,7 @@ lazy val flinkV2 = (project in file("flinkv2"))
       "org.apache.flink" % "flink-table-common" % "1.19.0" % "provided",
       "org.apache.flink" % "flink-streaming-java" % "1.19.0" % "provided",
 
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
       "org.apache.flink" % "flink-clients" % "1.19.0" % "test", // java.lang.IllegalStateException: No ExecutorFactory found to execute the application.
       "org.apache.flink" % "flink-connector-files" % "1.19.0" % "provided", // TODO: delete this, this is just to look at the jars
     )

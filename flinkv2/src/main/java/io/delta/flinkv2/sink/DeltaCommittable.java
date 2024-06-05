@@ -6,7 +6,7 @@ import io.delta.kernel.defaults.internal.json.JsonUtils;
 public class DeltaCommittable {
     private final String appId;
     private final String writerId;
-    private final long checkpointId;
+    private final long checkpointId; // checkpointId that this committable is a part of
     private final Row kernelActionRow;
 
     public DeltaCommittable(String appId, String writeId, long checkpointId, Row kernelActionRow) {

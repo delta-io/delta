@@ -26,8 +26,8 @@ import java.util.stream.Collectors;
 public class DeltaSinkWriterTask {
 
     private final String appId;
-    private final String writerId;
-    private final int checkpointId;
+    private final String writerId; // checkpointId that all FUTURE writes will be a part of
+    private final long checkpointId;
     private final Engine engine;
     private final String writerTaskId;
     private List<RowData> buffer;
@@ -38,7 +38,7 @@ public class DeltaSinkWriterTask {
     public DeltaSinkWriterTask(
             String appId,
             String writerId,
-            int checkpointId,
+            long checkpointId,
             Engine engine,
             Map<String, Literal> partitionValues,
             Row mockTxnState,
@@ -62,6 +62,10 @@ public class DeltaSinkWriterTask {
                 partitionValues
             )
         );
+    }
+
+    public int getBufferSize() {
+        return buffer.size();
     }
 
     public void write(RowData element, SinkWriter.Context context) throws IOException, InterruptedException {
@@ -104,6 +108,7 @@ public class DeltaSinkWriterTask {
 
         System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating output", writerTaskId));
         final Collection<DeltaCommittable> output = new ArrayList<>();
+
         while (partitionDataActions.hasNext()) {
             DeltaCommittable deltaCommittable = new DeltaCommittable(
                 appId,
@@ -116,6 +121,8 @@ public class DeltaSinkWriterTask {
 
             output.add(deltaCommittable);
         }
+
+        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: returning output", writerTaskId));
 
         return output;
     }

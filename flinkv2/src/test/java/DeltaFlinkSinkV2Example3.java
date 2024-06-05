@@ -10,10 +10,14 @@ import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.IntType;
 import org.apache.flink.table.types.logical.RowType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 
 public class DeltaFlinkSinkV2Example3 {
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaFlinkSinkV2Example3.class);
+
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
@@ -42,12 +46,13 @@ public class DeltaFlinkSinkV2Example3 {
             return createSimpleRow(x.intValue());
         };
 
-        DataGeneratorSource<RowData> source = new DataGeneratorSource<>(generatorFunction, 100, Types.GENERIC(RowData.class));
+        DataGeneratorSource<RowData> source = new DataGeneratorSource<>(generatorFunction, 1000, Types.GENERIC(RowData.class));
 
         DataStreamSource<RowData> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Generator Source");
 
-        stream.sinkTo(deltaSink); //.setParallelism(1).setMaxParallelism(1);
+        stream.sinkTo(deltaSink); //.setParallelism(3).setMaxParallelism(3);
 
+        LOG.info(String.format("AAA Stream parallelism: %s", stream.getParallelism()));
         System.out.println(String.format("Stream parallelism: %s", stream.getParallelism()));
         env.execute("Delta Sink Example");
     }

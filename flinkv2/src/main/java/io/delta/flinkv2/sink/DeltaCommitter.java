@@ -13,10 +13,7 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
 
 import java.io.IOException;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.List;
-import java.util.NoSuchElementException;
+import java.util.*;
 
 /**
  * The Committer is responsible for committing the data staged by the CommittingSinkWriter in the
@@ -93,6 +90,9 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
 
         final Transaction txn = txnBuilder.build(engine);
 
+        final Set<Long> checkpointIds = new HashSet<>();
+        final Set<String> writerIds = new HashSet<>();
+
         final CloseableIterable<Row> dataActions = new CloseableIterable<Row>() {
             @Override
             public CloseableIterator<Row> iterator() {
@@ -119,6 +119,9 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
                             String.format("Scott > DeltaCommitter[%s] > commit :: %s", committerId, deltaCommittable)
                         );
 
+                        checkpointIds.add(deltaCommittable.getCheckpointId());
+                        writerIds.add(deltaCommittable.getWriterId());
+
                         return deltaCommittable.getKernelActionRow();
                     }
                 };
@@ -133,7 +136,7 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
         TransactionCommitResult result = txn.commit(engine, dataActions);
 
         System.out.println(
-            String.format("Scott > DeltaCommitter[%s] > commit :: resultVersion=%s", committerId, result.getVersion())
+            String.format("Scott > DeltaCommitter[%s] > commit :: resultVersion=%s, checkpointIds=%s, writerIds=%s", committerId, result.getVersion(), checkpointIds, writerIds)
         );
     }
 
