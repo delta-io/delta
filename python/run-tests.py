@@ -180,11 +180,11 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
 
-    # run_python_style_checks(root_dir)
-    # run_mypy_tests(root_dir)
-    # run_pypi_packaging_tests(root_dir)
-    # run_delta_connect_codegen_python(root_dir)
-    # test(root_dir, "delta", package)
+    run_python_style_checks(root_dir)
+    run_mypy_tests(root_dir)
+    run_pypi_packaging_tests(root_dir)
+    run_delta_connect_codegen_python(root_dir)
+    test(root_dir, "delta", package)
     is_spark_master = os.getenv("IS_SPARK_MASTER")
     if is_spark_master is not None:
         test(root_dir, path.join("delta", "connect"), package)
