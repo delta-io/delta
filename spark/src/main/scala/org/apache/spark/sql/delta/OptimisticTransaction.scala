@@ -1245,7 +1245,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected def updateMetadataWithManagedCommitConfs(): Boolean = {
     validateManagedCommitConfInMetadata(newMetadata)
-    val newManagedCommitTableConfOpt = registerTableForManagedCommitsIfNeeded(metadata, protocol)
+    val newManagedCommitTableConfOpt = registerTableForManagedCommitIfNeeded(metadata, protocol)
     val newManagedCommitTableConf = newManagedCommitTableConfOpt.getOrElse {
       return false
     }
@@ -1515,7 +1515,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    *         This metadata should be added to the [[Metadata.configuration]] before doing the
    *         commit.
    */
-  protected def registerTableForManagedCommitsIfNeeded(
+  protected def registerTableForManagedCommitIfNeeded(
       finalMetadata: Metadata,
       finalProtocol: Protocol): Option[Map[String, String]] = {
     val (oldOwnerName, oldOwnerConf) = ManagedCommitUtils.getManagedCommitConfs(snapshot.metadata)

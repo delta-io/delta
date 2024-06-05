@@ -42,7 +42,7 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
      * commits for this owner. The value of this key is stored in the `conf`
      * which is passed to the `build` method.
      */
-    private static final String MANAGED_COMMITS_TABLE_NAME_KEY = "managedCommitsTableName";
+    private static final String MANAGED_COMMITS_TABLE_NAME_KEY = "managedCommitTableName";
     /**
      * The endpoint of the DynamoDB service. The value of this key is stored in the
      * `conf` which is passed to the `build` method.
@@ -51,7 +51,7 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
 
     @Override
     public CommitOwnerClient build(SparkSession spark, Map<String, String> conf) {
-        String managedCommitsTableName = conf.get(MANAGED_COMMITS_TABLE_NAME_KEY).getOrElse(() -> {
+        String managedCommitTableName = conf.get(MANAGED_COMMITS_TABLE_NAME_KEY).getOrElse(() -> {
             throw new RuntimeException(MANAGED_COMMITS_TABLE_NAME_KEY + " not found");
         });
         String dynamoDBEndpoint = conf.get(DYNAMO_DB_ENDPOINT_KEY).getOrElse(() -> {
@@ -72,7 +72,7 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
                     spark.sessionState().newHadoopConf()
             );
             return getDynamoDBCommitOwnerClient(
-                    managedCommitsTableName,
+                    managedCommitTableName,
                     dynamoDBEndpoint,
                     ddbClient,
                     BACKFILL_BATCH_SIZE,
@@ -86,7 +86,7 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
     }
 
     protected DynamoDBCommitOwnerClient getDynamoDBCommitOwnerClient(
-            String managedCommitsTableName,
+            String managedCommitTableName,
             String dynamoDBEndpoint,
             AmazonDynamoDB ddbClient,
             long backfillBatchSize,
@@ -95,7 +95,7 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
             boolean skipPathCheck
     ) throws IOException {
         return new DynamoDBCommitOwnerClient(
-                managedCommitsTableName,
+                managedCommitTableName,
                 dynamoDBEndpoint,
                 ddbClient,
                 backfillBatchSize,

@@ -63,7 +63,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
     /**
      * The name of the DynamoDB table used to store unbackfilled commits.
      */
-    final String managedCommitsTableName;
+    final String managedCommitTableName;
 
     /**
      * The DynamoDB client used to interact with the DynamoDB table.
@@ -124,12 +124,12 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
 
 
     public DynamoDBCommitOwnerClient(
-            String managedCommitsTableName,
+            String managedCommitTableName,
             String endpoint,
             AmazonDynamoDB client,
             long backfillBatchSize) throws IOException {
         this(
-            managedCommitsTableName,
+            managedCommitTableName,
             endpoint,
             client,
             backfillBatchSize,
@@ -139,14 +139,14 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
     }
 
     public DynamoDBCommitOwnerClient(
-            String managedCommitsTableName,
+            String managedCommitTableName,
             String endpoint,
             AmazonDynamoDB client,
             long backfillBatchSize,
             long readCapacityUnits,
             long writeCapacityUnits,
             boolean skipPathCheck) throws IOException {
-        this.managedCommitsTableName = managedCommitsTableName;
+        this.managedCommitTableName = managedCommitTableName;
         this.endpoint = endpoint;
         this.client = client;
         this.backfillBatchSize = backfillBatchSize;
@@ -169,7 +169,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
     private GetItemResult getEntryFromCommitOwner(
             Map<String, String> managedCommitTableConf, String... attributesToGet) {
         GetItemRequest request = new GetItemRequest()
-                .withTableName(managedCommitsTableName)
+                .withTableName(managedCommitTableName)
                 .addKeyEntry(
                         DynamoDBTableEntryConstants.TABLE_ID,
                         new AttributeValue().withS(getTableId(managedCommitTableConf)))
@@ -248,7 +248,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                 new AttributeValue().withN(Long.toString(commitFile.getModificationTime())));
 
         UpdateItemRequest request = new UpdateItemRequest()
-                .withTableName(managedCommitsTableName)
+                .withTableName(managedCommitTableName)
                 .addKeyEntry(
                         DynamoDBTableEntryConstants.TABLE_ID,
                         new AttributeValue().withS(getTableId(managedCommitTableConf)))
@@ -579,7 +579,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             }
         }
         UpdateItemRequest request = new UpdateItemRequest()
-                .withTableName(managedCommitsTableName)
+                .withTableName(managedCommitTableName)
                 .addKeyEntry(
                         DynamoDBTableEntryConstants.TABLE_ID,
                         new AttributeValue().withS(getTableId(managedCommitTableConf)))
@@ -660,7 +660,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                 new AttributeValue().withN(Integer.toString(CLIENT_VERSION)));
 
         PutItemRequest request = new PutItemRequest()
-                .withTableName(managedCommitsTableName)
+                .withTableName(managedCommitTableName)
                 .withItem(item)
                 .withConditionExpression(
                         String.format(
@@ -686,14 +686,14 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
         while(retries < 20) {
             String status = "CREATING";
             try {
-                DescribeTableResult result = client.describeTable(managedCommitsTableName);
+                DescribeTableResult result = client.describeTable(managedCommitTableName);
                 TableDescription descr = result.getTable();
                 status = descr.getTableStatus();
             } catch (ResourceNotFoundException e) {
                 LOG.info(
                         "DynamoDB table `{}` for endpoint `{}` does not exist. " +
                         "Creating it now with provisioned throughput of {} RCUs and {} WCUs.",
-                        managedCommitsTableName, endpoint, readCapacityUnits, writeCapacityUnits);
+                        managedCommitTableName, endpoint, readCapacityUnits, writeCapacityUnits);
                 try {
                     client.createTable(
                             // attributeDefinitions
@@ -702,7 +702,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                                             DynamoDBTableEntryConstants.TABLE_ID,
                                             ScalarAttributeType.S)
                             ),
-                            managedCommitsTableName,
+                            managedCommitTableName,
                             // keySchema
                             java.util.Collections.singletonList(
                                     new KeySchemaElement(
@@ -718,23 +718,23 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             }
             if (status.equals("ACTIVE")) {
                 if (created) {
-                    LOG.info("Successfully created DynamoDB table `{}`", managedCommitsTableName);
+                    LOG.info("Successfully created DynamoDB table `{}`", managedCommitTableName);
                 } else {
-                    LOG.info("Table `{}` already exists", managedCommitsTableName);
+                    LOG.info("Table `{}` already exists", managedCommitTableName);
                 }
                 break;
             } else if (status.equals("CREATING")) {
                 retries += 1;
-                LOG.info("Waiting for `{}` table creation", managedCommitsTableName);
+                LOG.info("Waiting for `{}` table creation", managedCommitTableName);
                 try {
                     Thread.sleep(1000);
                 } catch(InterruptedException e) {
                     throw new InterruptedIOException(e.getMessage());
                 }
             } else {
-                LOG.error("table `{}` status: {}", managedCommitsTableName, status);
+                LOG.error("table `{}` status: {}", managedCommitTableName, status);
                 throw new RuntimeException("DynamoDBCommitOwnerCliet: Unable to create table with " +
-                        "name " + managedCommitsTableName + " for endpoint " + endpoint + ". Ensure " +
+                        "name " + managedCommitTableName + " for endpoint " + endpoint + ". Ensure " +
                         "that the credentials provided have the necessary permissions to create " +
                         "tables in DynamoDB. If the table already exists, ensure that the table " +
                         "is in the ACTIVE state.");
@@ -748,7 +748,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             return false;
         }
         DynamoDBCommitOwnerClient otherStore = (DynamoDBCommitOwnerClient) other;
-        return this.managedCommitsTableName.equals(otherStore.managedCommitsTableName)
+        return this.managedCommitTableName.equals(otherStore.managedCommitTableName)
                 && this.endpoint.equals(otherStore.endpoint);
     }
 }
