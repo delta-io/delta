@@ -21,6 +21,7 @@ import java.io.File
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
@@ -864,12 +865,31 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(tableIdentifier, "a")
     }
 
-    // Scenario 4: restore to latest version.
+    // Scenario 4: restore to start version.
     withClusteredTable(testTable, "a int", "a") {
       verifyClusteringColumns(tableIdentifier, "a")
 
+      sql(s"INSERT INTO $testTable VALUES (1)")
+
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
       verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 5: restore unclustered table to unclustered table.
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT) USING delta")
+      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
+      assert(!startingSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
+
+      sql(s"INSERT INTO $testTable VALUES (1)")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0").collect
+      val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(currentSnapshot.protocol))
+      assert(!currentSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
     }
   }
 
