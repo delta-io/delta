@@ -31,7 +31,7 @@ import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
  *   DeltaTable.forPath(sparkSession, pathToTheDeltaTable)
  * }}}
  *
- * @since 3.3.0
+ * @since 4.0.0
  */
 class DeltaTable private[tables](
     private val df: Dataset[Row],
@@ -44,7 +44,7 @@ class DeltaTable private[tables](
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
    * SQL `tableName AS alias`.
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def as(alias: String): DeltaTable = new DeltaTable(df.as(alias), table)
 
@@ -52,14 +52,14 @@ class DeltaTable private[tables](
    * Apply an alias to the DeltaTable. This is similar to `Dataset.as(alias)` or
    * SQL `tableName AS alias`.
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def alias(alias: String): DeltaTable = as(alias)
 
   /**
    * Get a DataFrame (that is, Dataset[Row]) representation of this Delta table.
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def toDF: Dataset[Row] = df
 }
@@ -71,7 +71,7 @@ class DeltaTable private[tables](
  *   DeltaTable.forPath(sparkSession, pathToTheDeltaTable)
  * }}}
  *
- * @since 3.3.0
+ * @since 4.0.0
  */
 object DeltaTable {
   /**
@@ -83,7 +83,7 @@ object DeltaTable {
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def forPath(path: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
@@ -97,7 +97,7 @@ object DeltaTable {
    * path is invalid (i.e. either no table exists or an existing table is not a Delta table),
    * it throws a `not a Delta table` error.
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def forPath(sparkSession: SparkSession, path: String): DeltaTable = {
     forPath(sparkSession, path, Map.empty[String, String])
@@ -120,7 +120,7 @@ object DeltaTable {
    *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
    * }}}
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def forPath(
       sparkSession: SparkSession,
@@ -153,7 +153,7 @@ object DeltaTable {
    *   DeltaTable.forPath(spark, "/path/to/table", hadoopConf)
    * }}}
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def forPath(
       sparkSession: SparkSession,
@@ -177,7 +177,7 @@ object DeltaTable {
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def forName(tableOrViewName: String): DeltaTable = {
     val sparkSession = SparkSession.getActiveSession.getOrElse {
@@ -196,7 +196,7 @@ object DeltaTable {
    * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
    * the given path (consistent with the [[forPath]]).
    *
-   * @since 3.3.0
+   * @since 4.0.0
    */
   def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
     val table = proto.DeltaTable
