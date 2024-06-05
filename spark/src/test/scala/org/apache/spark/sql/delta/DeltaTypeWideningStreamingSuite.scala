@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
-import org.apache.spark.sql.execution.streaming.sources.MemorySink
 import org.apache.spark.sql.types._
 
 /**

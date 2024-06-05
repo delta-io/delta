@@ -51,7 +51,6 @@ class DeltaTypeWideningSuite
   extends QueryTest
     with ParquetTest
     with RowTrackingTestUtils
-    with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
     with DeltaTypeWideningDropFeatureTestMixin
     with DeltaTypeWideningAlterTableTests
@@ -67,8 +66,10 @@ class DeltaTypeWideningSuite
 /**
  * Test mixin that enables type widening by default for all tests in the suite.
  */
-trait DeltaTypeWideningTestMixin extends SharedSparkSession with DeltaDMLTestUtils {
-  self: QueryTest =>
+trait DeltaTypeWideningTestMixin
+  extends SharedSparkSession
+    with DeltaSQLCommandTest
+    with DeltaDMLTestUtils { self: QueryTest =>
 
   import testImplicits._
 

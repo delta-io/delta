@@ -39,7 +39,6 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 class DeltaTypeWideningSchemaEvolutionSuite
     extends QueryTest
     with DeltaDMLTestUtils
-    with DeltaSQLCommandTest
     with DeltaTypeWideningTestMixin
     with DeltaMergeIntoTypeWideningSchemaEvolutionTests
     with DeltaInsertTypeWideningSchemaEvolutionTeststs {
