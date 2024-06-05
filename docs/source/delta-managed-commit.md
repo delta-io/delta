@@ -39,7 +39,8 @@ The DynamoDB Commit Owner needs a DynamoDB table at the backend to manage commit
 
 ```bash
 bin/spark-shell \
---packages io.delta:delta-spark_2.12:4.0.0,org.apache.hadoop:hadoop-aws:3.3.4 \
+--packages io.delta:delta-spark_2.13:4.0.0,org.apache.hadoop:hadoop-aws:3.3.4 \
+--repositories https://oss.sonatype.org/content/repositories/iodelta-1147 \
 --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
 --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
 --conf spark.databricks.delta.managedCommits.commitOwner.ddb.awsCredentialsProviderName=<credentialsProviderName>
@@ -51,7 +52,7 @@ bin/spark-shell \
 
 ```sql
 CREATE TABLE <table_name> (id string) USING DELTA
-TBLPROPERTIES ('delta.managedCommits.commitOwner-preview' = 'dynamodb', 'delta.managedCommits.commitOwnerConf-preview' = '{\"managedCommitsTableName\"=\"<dynamodb_table_name>\",\"dynamoDBEndpoint\"=\"<dynamodb_region_endpoint>\"}');
+TBLPROPERTIES ('delta.managedCommits.commitOwner-preview' = 'dynamodb', 'delta.managedCommits.commitOwnerConf-preview' = '{\"managedCommitsTableName\": \"<dynamodb_table_name>\",\"dynamoDBEndpoint\": \"<dynamodb_region_endpoint>\"}');
 ```
 
 Note that `managedCommits.commitOwnerConf-preview` is a serialized json with two top-level properties:
