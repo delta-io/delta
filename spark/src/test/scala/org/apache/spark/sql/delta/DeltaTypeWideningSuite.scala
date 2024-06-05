@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.{File, PrintWriter}
 import java.util.concurrent.TimeUnit
 
 import com.databricks.spark.util.Log4jUsageLogger
@@ -1017,7 +1018,7 @@ trait DeltaTypeWideningStatsTests {
  * Tests covering adding and removing the type widening table feature. Dropping the table feature
  * also includes rewriting data files with the old type and removing type widening metadata.
  */
-trait DeltaTypeWideningTableFeatureTests {
+trait DeltaTypeWideningTableFeatureTests extends DeltaTypeWideningTestCases {
   self: QueryTest
     with ParquetTest
     with RowTrackingTestUtils
@@ -1351,6 +1352,21 @@ trait DeltaTypeWideningTableFeatureTests {
     }
   }
 
+  for {
+    testCase <- supportedTestCases
+  }
+  test(s"drop feature after type change ${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+    append(testCase.initialValuesDF.repartition(2))
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN value TYPE ${testCase.toType.sql}")
+    append(testCase.additionalValuesDF.repartition(3))
+    dropTableFeature(
+      expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
+      expectedNumFilesRewritten = 2,
+      expectedColumnTypes = Map("value" -> testCase.toType)
+    )
+    checkAnswer(readDeltaTable(tempPath), testCase.expectedResult)
+  }
+
   test("drop feature after a type change with schema evolution") {
     setupManualClock()
     sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
@@ -1453,7 +1469,7 @@ trait DeltaTypeWideningTableFeatureTests {
 
       dropTableFeature(
         expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
-        expectedNumFilesRewritten = 3,
+        expectedNumFilesRewritten = 2,
         expectedColumnTypes = Map("a" -> IntegerType)
       )
       checkAnswer(readDeltaTable(tempPath),
@@ -1497,6 +1513,26 @@ trait DeltaTypeWideningTableFeatureTests {
       expectedColumnTypes = Map("a" -> IntegerType)
     )
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
+  }
+
+  test("rewriting files fails if there are corrupted files") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA")
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
+    addSingleFile(Seq(2), IntegerType)
+    addSingleFile(Seq(3), IntegerType)
+    val filePath = deltaLog.update().allFiles.first().path
+    val pw = new PrintWriter(new File(tempPath, filePath))
+    pw.write("corrupted")
+    pw.close()
+
+    // Rewriting files when dropping type widening should ignore this config, if the corruption is
+    // transient it will leave files behind that some clients can't read.
+    withSQLConf(SQLConf.IGNORE_CORRUPT_FILES.key -> "true") {
+      val ex = intercept[SparkException] {
+        sql(s"ALTER TABLE delta.`$tempDir` DROP FEATURE '${TypeWideningTableFeature.name}'")
+      }
+      assert(ex.getMessage.contains("Cannot seek after EOF"))
+    }
   }
 }
 
