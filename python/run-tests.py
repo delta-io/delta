@@ -38,7 +38,8 @@ def test(root_dir, test_path, package):
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
                    "--packages", package + ",io.delta:delta-connect-server_2.13:4.0.0-SNAPSHOT,io.delta:delta-connect-common_2.13:4.0.0-SNAPSHOT," +
-                   "org.apache.spark:spark-connect_2.13:4.0.0-preview1,org.apache.spark:spark-connect-client-jvm_2.13:4.0.0-preview1,org.apache.spark:spark-connect-common_2.13:4.0.0-preview1", test_file]
+                   "org.apache.spark:spark-connect_2.13:4.0.0-preview1,org.apache.spark:spark-connect-client-jvm_2.13:4.0.0-preview1,org.apache.spark:spark-connect-common_2.13:4.0.0-preview1" +
+                   "com.google.protobuf:protobuf-java:3.25.1", test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
