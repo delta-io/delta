@@ -16,7 +16,7 @@ description: Learn about Delta Managed Commits.
 ## Quickstart Guide
 
 ### 1. Create the DynamoDB table
-The DynamoDB Commit Owner needs a DynamoDB table at the backend to manage commits. You have the choice of creating the DynamoDB table yourself (recommended) or having it created for you automatically.
+The DynamoDB Commit Owner needs a DynamoDB table at the backend to manage commits. One DynamoDB table can be used to manage multiple Delta tables. You have the choice of creating the DynamoDB table yourself (recommended) or having it created for you automatically.
 
 - Creating the DynamoDB table yourself
 
