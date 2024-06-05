@@ -33,9 +33,15 @@ class UniformIngressTableSuite extends QueryTest
   import testImplicits._
 
   /** Helper method to get the location of the metadata of the specific iceberg table */
+  @deprecated
   private def metadataLoc(table: iceberg.Table, metadataVer: Int): String =
     table.location() + s"/metadata/v$metadataVer.metadata.json"
 
+  /**
+   * Get the location of metadata version.
+   * Please note that the table location is fixed under the current
+   * test framework, which will be stored at `tablePath`.
+   */
   private def metadataLoc(metadataVer: Int): String =
     tablePath + s"/metadata/v$metadataVer.metadata.json"
 
@@ -68,8 +74,10 @@ class UniformIngressTableSuite extends QueryTest
 
     assert(catalogTable.tableType == CatalogTableType.EXTERNAL)
     assert(UniformIngressUtils.isUniformIngressTable(catalogTable))
-    // assert(icebergMetadataLoc.contains(catalogTable.storage.locationUri.get.toString))
     assert(catalogTable.location.toString.contains("/db/table"))
+
+    // TODO: ensure the correct storage path for the metadata location
+    // assert(icebergMetadataLoc.contains(catalogTable.storage.locationUri.get.toString))
   }
 
   /**
@@ -101,8 +109,10 @@ class UniformIngressTableSuite extends QueryTest
 
     assert(catalogTable.tableType == CatalogTableType.EXTERNAL)
     assert(UniformIngressUtils.isUniformIngressTable(catalogTable))
-    // assert(catalogTable.storage.locationUri.get.toString == icebergMetadataLoc)
     assert(catalogTable.location.toString.contains("/db/table"))
+
+    // TODO: same as above, ensure the correct storage path
+    // assert(catalogTable.storage.locationUri.get.toString == icebergMetadataLoc)
   }
 
   test("Create Uniform Ingress Table Test") {
@@ -113,6 +123,7 @@ class UniformIngressTableSuite extends QueryTest
         partition = Some("id")
       )
 
+      // write two rows to the newly created iceberg table at first
       val df1 = Seq((1, "Alex"), (2, "Michael")).toDF("id", "name")
       IcebergTestUtils.writeIcebergTable(
         name = table,
@@ -121,6 +132,7 @@ class UniformIngressTableSuite extends QueryTest
 
       val deltaTable1 = "ufi_table_1"
       withTable(deltaTable1) {
+        // check the CREATE UFI Table command's result
         checkReadingIcebergAsDelta(metadataLoc(2), deltaTable1, df1.collect(), "id, name")
 
         // write two more rows to the existing iceberg table
@@ -147,6 +159,7 @@ class UniformIngressTableSuite extends QueryTest
         partition = Some("id")
       )
 
+      // write two rows to the newly created iceberg table at first
       val df1 = Seq((1, "Alex", 23), (2, "Michael", 21)).toDF("id", "name", "age")
       IcebergTestUtils.writeIcebergTable(
         name = table,
@@ -155,6 +168,7 @@ class UniformIngressTableSuite extends QueryTest
 
       val deltaTable1 = "ufi_table_1"
       withTable(deltaTable1) {
+        // check the CREATE UFI Table command's result
         checkReadingIcebergAsDelta(metadataLoc(2), deltaTable1, df1.collect(), "id, name, age")
 
         // write two more rows to the existing iceberg table
@@ -164,6 +178,7 @@ class UniformIngressTableSuite extends QueryTest
           rows = df2.collect()
         )
 
+        // check the UFI table's content after triggering the REFRESH command
         val targetData = df1.collect() ++ df2.collect()
         checkRefreshingIcebergAsDelta(metadataLoc(3), deltaTable1, targetData, "id, name, age")
       }
@@ -189,13 +204,22 @@ class UniformIngressTableSuite extends QueryTest
         checkReadingIcebergAsDelta(metadataLoc(2), deltaTable1, df1.collect(), "id, name, age")
 
         // delete the column for `age: int` in the existing iceberg table
+        // now the schema is `id: bigint, name: string`
         spark.sql(s"ALTER TABLE $table DROP COLUMN age")
+
+        // the new dataframe should not contain the previous
+        // `age: int` column.
         val df2 = Seq((1, "Alex"), (2, "Michael")).toDF("id", "name")
+        // check the columns with data after REFRESH command is triggered
         checkRefreshingIcebergAsDelta(metadataLoc(3), deltaTable1, df2.collect(), "id, name")
       }
     }
   }
 
+  /**
+   * Dummy override method of convert.
+   * This is needed to successfully use the existing test framework.
+   */
   override protected def convert(
       tableIdentifier: String,
       partitioning: Option[String] = None,
