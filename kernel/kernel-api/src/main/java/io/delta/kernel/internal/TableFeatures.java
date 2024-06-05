@@ -71,7 +71,7 @@ public class TableFeatures {
      * <ul>
      *     <li>protocol writer version 1.</li>
      *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
-     *     <li>protocol writer version 7 with "appendOnly, inCommitTimestamp-preview" feature
+     *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview} feature
      *     enabled.</li>
      * </ul>
      *
