@@ -44,7 +44,7 @@ class DeltaTable(object):
             self._plan = DeltaScan(self._to_proto())
 
     def toDF(self) -> DataFrame:
-        return DataFrame.withPlan(self._plan, session=self._spark)
+        return DataFrame(self._plan, session=self._spark)
 
     def alias(self, aliasName: str) -> "DeltaTable":
         return DeltaTable(
