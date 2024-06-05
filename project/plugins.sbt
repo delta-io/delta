@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+libraryDependencies += "org.apache.commons" % "commons-compress" % "1.0"
+
 libraryDependencies += "org.apache.spark" % "spark-connect" % "2.13" % "4.0.0-preview1"
 
 libraryDependencies += "org.apache.spark" % "spark-connect-client-jvm" % "2.13" % "4.0.0-preview1"
