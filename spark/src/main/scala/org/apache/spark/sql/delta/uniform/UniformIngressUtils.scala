@@ -15,10 +15,15 @@
  */
 
 package org.apache.spark.sql.delta.uniform
+
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 object UniformIngressUtils extends DeltaLogging {
+  /**
+   * The special identifier for UFI table,
+   * used to distinguish Uniform Ingress Table.
+   */
   private val UFI_IDENT = "_isUniformIngressTable"
 
   /**
@@ -31,6 +36,11 @@ object UniformIngressUtils extends DeltaLogging {
     catalogTable.properties.contains(UFI_IDENT)
   }
 
-  /** The special property used to distinguish UFI table */
+  /**
+   * The special property used to distinguish UFI table from normal delta table.
+   * In the above `isUniformIngressUtils` we will check whether the
+   * `CatalogTable.properties` contains the special key-value pair.
+   * If so, then the table is considered as UFI table.
+   */
   def property: Map[String, String] = Map { UFI_IDENT -> "_" }
 }

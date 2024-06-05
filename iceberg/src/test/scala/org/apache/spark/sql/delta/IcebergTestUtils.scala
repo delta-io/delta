@@ -135,6 +135,8 @@ object IcebergTestUtils {
 
   /**
    * Create an iceberg table from the current spark session.
+   * Do note that this is creating a real underlying iceberg table
+   * under the hood, which can be interacted via spark sql.
    *
    * @param name the name of the to-be-created iceberg table.
    * @param schema the schema to create.
