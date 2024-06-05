@@ -43,6 +43,10 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
     def test_merge(self):
         pass
 
+    @unittest.skip("merge has not been implemented yet")
+    def test_merge_with_inconsistent_sessions(self):
+        pass
+
     @unittest.skip("history has not been implemented yet")
     def test_history(self):
         pass
@@ -65,6 +69,10 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
 
     @unittest.skip("create has not been implemented yet")
     def test_create_table_with_existing_schema(self):
+        pass
+
+    @unittest.skip("createOrReplace has not been implemented yet")
+    def test_create_replace_table_with_cluster_by(self):
         pass
 
     @unittest.skip("createOrReplace has not been implemented yet")
