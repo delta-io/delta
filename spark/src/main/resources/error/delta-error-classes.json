@@ -1490,7 +1490,7 @@
   },
   "DELTA_MERGE_UNRESOLVED_EXPRESSION" : {
     "message" : [
-      "Cannot resolve <sqlExpr> in <clause> given <cols>"
+      "Cannot resolve <sqlExpr> in <clause> given columns <cols>."
     ],
     "sqlState" : "42601"
   },
