@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+libraryDependencies += "org.apache.spark" % "spark-connect" % "2.13" % "4.0.0-preview1"
+
 addSbtPlugin("com.github.sbt" % "sbt-release" % "1.1.0")
 
 addSbtPlugin("com.github.sbt" % "sbt-pgp" % "2.1.2")
