@@ -20,12 +20,15 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql._
 import org.apache.iceberg
-import org.scalatest.time.{Seconds, Span}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
+import org.apache.spark.sql.delta.uniform.UniformIngressUtils
 
 class UniformIngressTableSuite extends QueryTest
   with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with ConvertIcebergToDeltaSuiteBase {
 
   import testImplicits._
 
@@ -33,257 +36,172 @@ class UniformIngressTableSuite extends QueryTest
   private def metadataLoc(table: iceberg.Table, metadataVer: Int): String =
     table.location() + s"/metadata/v$metadataVer.metadata.json"
 
+  private def metadataLoc(metadataVer: Int): String =
+    tablePath + s"/metadata/v$metadataVer.metadata.json"
+
+  /**
+   * Create a new delta UFI table based on the provided `icebergMetadataLoc` and `targetData`,
+   * then validate if the `targetData` in the iceberg table could be correctly read by the
+   * new delta table.
+   *
+   * @param icebergMetadataLoc the actual metadata location for the iceberg table.
+   * @param targetTableName the name for the delta UFI table.
+   * @param targetData the data that has been written to iceberg table, used to validate the read.
+   */
+  private def checkReadingIcebergAsDelta(
+      icebergMetadataLoc: String,
+      targetTableName: String,
+      targetData: Seq[Row],
+      cols: String): Unit = {
+    sql(
+      s"""
+         | CREATE TABLE $targetTableName
+         | UNIFORM iceberg
+         | METADATA_PATH '$icebergMetadataLoc'
+         |""".stripMargin
+    )
+    val result = sql(s"SELECT $cols from default.$targetTableName")
+    checkAnswer(result, targetData)
+
+    val tableIdent = new TableIdentifier(targetTableName)
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(tableIdent)
+
+    assert(catalogTable.tableType == CatalogTableType.EXTERNAL)
+    assert(UniformIngressUtils.isUniformIngressTable(catalogTable))
+    // assert(icebergMetadataLoc.contains(catalogTable.storage.locationUri.get.toString))
+    assert(catalogTable.location.toString.contains("/db/table"))
+  }
+
+  /**
+   * Refresh an existing delta UFI table based on the provided
+   * `icebergMetadataLoc` and `targetData`.
+   * Then validate if the `targetData` in the iceberg table could be correctly read by the
+   * new delta table.
+   *
+   * @param icebergMetadataLoc the actual metadata location for the iceberg table.
+   * @param targetTableName the name for the delta UFI table.
+   * @param targetData the data that has been written to iceberg table, used to validate the read.
+   */
+  private def checkRefreshingIcebergAsDelta(
+      icebergMetadataLoc: String,
+      targetTableName: String,
+      targetData: Seq[Row],
+      cols: String): Unit = {
+    sql(
+      s"""
+         | REFRESH TABLE $targetTableName
+         | METADATA_PATH '$icebergMetadataLoc'
+         |""".stripMargin
+    )
+    val result = sql(s"SELECT $cols from default.$targetTableName")
+    checkAnswer(result, targetData)
+
+    val tableIdent = new TableIdentifier(targetTableName)
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(tableIdent)
+
+    assert(catalogTable.tableType == CatalogTableType.EXTERNAL)
+    assert(UniformIngressUtils.isUniformIngressTable(catalogTable))
+    // assert(catalogTable.storage.locationUri.get.toString == icebergMetadataLoc)
+    assert(catalogTable.location.toString.contains("/db/table"))
+  }
+
   test("Create Uniform Ingress Table Test") {
-    withTempDir { dir =>
-      val icebergTableName = "iceberg_table_1"
-      val seq1 = Seq((1, "Alex", 23), (2, "Michael", 21))
-      val df1 = seq1.toDF("id", "name", "age")
-      val icebergTable = IcebergTestUtils.createIcebergTable(
-        spark, dir.getPath, icebergTableName, df1, Seq("id")
+    withTable(table) {
+      IcebergTestUtils.createIcebergTable(
+        name = table,
+        schema = "id bigint, name string",
+        partition = Some("id")
       )
-      val targetTable = "ufi_table_1"
-      withTable(targetTable) {
-        spark.sql(
-          s"""
-            | CREATE TABLE $targetTable
-            | UNIFORM iceberg
-            | METADATA_PATH '${metadataLoc(icebergTable, 2)}'
-            |""".stripMargin)
-        val answer = spark.sql(s"SELECT * FROM default.$targetTable")
-        checkAnswer(answer, df1.collect())
+
+      val df1 = Seq((1, "Alex"), (2, "Michael")).toDF("id", "name")
+      IcebergTestUtils.writeIcebergTable(
+        name = table,
+        rows = df1.collect()
+      )
+
+      val deltaTable1 = "ufi_table_1"
+      withTable(deltaTable1) {
+        checkReadingIcebergAsDelta(metadataLoc(2), deltaTable1, df1.collect(), "id, name")
+
+        // write two more rows to the existing iceberg table
+        val df2 = Seq((3, "Cat"), (4, "Cat")).toDF("id", "name")
+        IcebergTestUtils.writeIcebergTable(
+          name = table,
+          rows = df2.collect()
+        )
+
+        val deltaTable2 = "ufi_table_2"
+        withTable(deltaTable2) {
+          val targetData = df1.collect() ++ df2.collect()
+          checkReadingIcebergAsDelta(metadataLoc(3), deltaTable2, targetData, "id, name")
+        }
       }
     }
   }
 
   test("Refresh Uniform Ingress Table Test") {
-    withTempDir { dir =>
-      val icebergTableName = "iceberg_table_2"
-      val seq1 = Seq((1, "Alex", 23), (2, "Michael", 21))
-      val df1 = seq1.toDF("id", "name", "age")
-      val icebergTable = IcebergTestUtils.createIcebergTable(
-        spark, dir.getPath, icebergTableName, df1, Seq("id")
+    withTable(table) {
+      IcebergTestUtils.createIcebergTable(
+        name = table,
+        schema = "id bigint, name string, age int",
+        partition = Some("id")
       )
-      val targetTable = "ufi_table_2"
-      withTable(targetTable) {
-        spark.sql(
-          s"""
-             | CREATE TABLE $targetTable
-             | UNIFORM iceberg
-             | METADATA_PATH '${metadataLoc(icebergTable, 2)}'
-             |""".stripMargin)
-        val answer1 = spark.sql(s"SELECT * FROM default.$targetTable")
-        checkAnswer(answer1, df1.collect())
+
+      val df1 = Seq((1, "Alex", 23), (2, "Michael", 21)).toDF("id", "name", "age")
+      IcebergTestUtils.writeIcebergTable(
+        name = table,
+        rows = df1.collect()
+      )
+
+      val deltaTable1 = "ufi_table_1"
+      withTable(deltaTable1) {
+        checkReadingIcebergAsDelta(metadataLoc(2), deltaTable1, df1.collect(), "id, name, age")
 
         // write two more rows to the existing iceberg table
-        val seq2 = Seq((3, "Cat", 123), (4, "Dog", 456))
-        val df2 = seq2.toDF("id", "name", "age")
-        IcebergTestUtils.writeIcebergTable(icebergTable, df2)
-
-        spark.sql(
-          s"""
-             | REFRESH TABLE $targetTable
-             | METADATA_PATH '${metadataLoc(icebergTable, 3)}'
-             |""".stripMargin
+        val df2 = Seq((3, "Cat", 33), (4, "Cat", 44)).toDF("id", "name", "age")
+        IcebergTestUtils.writeIcebergTable(
+          name = table,
+          rows = df2.collect()
         )
-        val answer2 = spark.sql(s"SELECT * FROM default.$targetTable")
-        checkAnswer(answer2, df1.collect() ++ df2.collect())
+
+        val targetData = df1.collect() ++ df2.collect()
+        checkRefreshingIcebergAsDelta(metadataLoc(3), deltaTable1, targetData, "id, name, age")
       }
     }
   }
 
-  test("Refresh UFI Table For Deleting Column") {
-    withTempDir { dir =>
-      val targetTable = "target_table_refresh"
-      val icebergTableName = "iceberg_table_4"
-
-      val seq1 = Seq((1, "Alice", true, 23, 1.030), (2, "Bob", false, 24, 2.002))
-      val df1 = seq1.toDF("id", "name", "vip", "age", "rate")
-      val icebergTable = IcebergTestUtils.createIcebergTable(
-        spark,
-        dir.getPath,
-        icebergTableName,
-        df1,
-        Seq("vip")
+  test("Refresh Uniform Ingress Table for Deleting/Dropping Column") {
+    withTable(table) {
+      IcebergTestUtils.createIcebergTable(
+        name = table,
+        schema = "id bigint, name string, age int",
+        partition = Some("id")
       )
 
-      withTable(targetTable) {
-        // check the initial data remains consistent
-        sql(
-          s"""
-             | CREATE TABLE $targetTable
-             | UNIFORM iceberg
-             | METADATA_PATH '${metadataLoc(icebergTable, 2)}'
-             |""".stripMargin
-        )
-        val result1 = sql(s"SELECT id, name, vip, age, rate from default.$targetTable")
-        checkAnswer(result1, df1.collect())
+      val df1 = Seq((1, "Alex", 23), (2, "Michael", 21)).toDF("id", "name", "age")
+      IcebergTestUtils.writeIcebergTable(
+        name = table,
+        rows = df1.collect()
+      )
 
-        // delete two columns in iceberg table
-        val updatedTable = IcebergTestUtils.updateIcebergTableSchema(
-          spark,
-          dir.getPath,
-          icebergTableName,
-          IcebergTestUtils.DeleteColumns(Seq("age", "rate"))
-        )
-        // refresh the table
-        sql(
-          s"""
-             | REFRESH TABLE $targetTable
-             | METADATA_PATH '${metadataLoc(updatedTable, 3)}'
-             |""".stripMargin
-        )
-        // now the metadata (i.e., schema) of the UFI table
-        // should be synced with the iceberg table.
-        DeltaLog.clearCache()
-        val metadata =
-          spark.sessionState.catalog.getTableMetadata(new TableIdentifier(targetTable))
-        val nameMap = metadata.schema.fields.map(_.name)
-        assert(!nameMap.contains("age") && !nameMap.contains("rate"))
+      val deltaTable1 = "ufi_table_1"
+      withTable(deltaTable1) {
+        checkReadingIcebergAsDelta(metadataLoc(2), deltaTable1, df1.collect(), "id, name, age")
 
-        // check the result
-        val result2 = sql(s"SELECT id, name, vip FROM default.$targetTable")
-        val df2 = Seq((1, "Alice", true), (2, "Bob", false)).toDF("id", "name", "vip")
-        checkAnswer(result2, df2.collect())
+        // delete the column for `age: int` in the existing iceberg table
+        spark.sql(s"ALTER TABLE $table DROP COLUMN age")
+        val df2 = Seq((1, "Alex"), (2, "Michael")).toDF("id", "name")
+        checkRefreshingIcebergAsDelta(metadataLoc(3), deltaTable1, df2.collect(), "id, name")
       }
     }
   }
 
-  test("Refresh UFI Table For Renaming Column") {
-    withTempDir { dir =>
-      val targetTable = "target_table_refresh"
-      val icebergTableName = "iceberg_table_5"
-
-      val seq1 = Seq((1, "Alice", true, 23, 1.030), (2, "Bob", false, 24, 2.002))
-      val df1 = seq1.toDF("id", "name", "vip", "age", "rate")
-      val icebergTable = IcebergTestUtils.createIcebergTable(
-        spark,
-        dir.getPath,
-        icebergTableName,
-        df1,
-        Seq("vip")
-      )
-
-      withTable(targetTable) {
-        // check the initial data remains consistent
-        sql(
-          s"""
-             | CREATE TABLE $targetTable
-             | UNIFORM iceberg
-             | METADATA_PATH '${metadataLoc(icebergTable, 2)}'
-             |""".stripMargin
-        )
-        val result1 = sql(s"SELECT id, name, vip, age, rate from default.$targetTable")
-        checkAnswer(result1, df1.collect())
-
-        // rename two columns in iceberg table
-        val updatedTable = IcebergTestUtils.updateIcebergTableSchema(
-          spark,
-          dir.getPath,
-          icebergTableName,
-          IcebergTestUtils.RenameColumns(Map("age" -> "age_rename", "rate" -> "rate_rename"))
-        )
-        // refresh the table
-        sql(
-          s"""
-             | REFRESH TABLE $targetTable
-             | METADATA_PATH '${metadataLoc(updatedTable, 3)}'
-             |""".stripMargin
-        )
-        // now the metadata (i.e., schema) of the UFI table
-        // should be synced with the iceberg table.
-//        eventually(timeout(Span(10, Seconds))) {
-//          DeltaLog.clearCache()
-//          val metadata =
-//            spark.sessionState.catalog.getTableMetadata(new TableIdentifier(targetTable))
-//          val nameMap = metadata.schema.fields.map(_.name)
-//          assert(!nameMap.contains("age") && !nameMap.contains("rate"))
-//          assert(nameMap.contains("age_rename") && nameMap.contains("rate_rename"))
-//        }
-
-        // check the result
-        val result2 = sql(
-          s"SELECT id, name, vip, age_rename, rate_rename from default.$targetTable"
-        )
-        checkAnswer(result2, df1.collect())
-      }
-    }
-  }
-
-  test("Refresh UFI Table For Updating Column") {
-    withTempDir { dir =>
-      val targetTable = "target_table_refresh"
-      val icebergTableName = "iceberg_table_6"
-
-      val seq1 = Seq((1, "Alice", true, 23, 1.03f), (2, "Bob", false, 24, 2.02f))
-      val df1 = seq1.toDF("id", "name", "vip", "age", "rate")
-      val icebergTable = IcebergTestUtils.createIcebergTable(
-        spark,
-        dir.getPath,
-        icebergTableName,
-        df1,
-        Seq("vip")
-      )
-
-      withTable(targetTable) {
-        // check the initial data remains consistent
-        sql(
-          s"""
-             | CREATE TABLE $targetTable
-             | UNIFORM iceberg
-             | METADATA_PATH '${metadataLoc(icebergTable, 2)}'
-             |""".stripMargin
-        )
-        val result1 = sql(s"SELECT id, name, vip, age, rate from default.$targetTable")
-        checkAnswer(result1, df1.collect())
-
-        // rename two columns in iceberg table
-        val updatedTable = IcebergTestUtils.updateIcebergTableSchema(
-          spark,
-          dir.getPath,
-          icebergTableName,
-          // only ("int -> bigint", "float -> double", etc.) are considered safe updates here,
-          // otherwise the column will be null.
-          IcebergTestUtils.UpdateColumns(Map("rate" -> "double"))
-        )
-        // refresh the table
-        sql(
-          s"""
-             | REFRESH TABLE $targetTable
-             | METADATA_PATH '${metadataLoc(updatedTable, 3)}'
-             |""".stripMargin
-        )
-        // now the metadata (i.e., schema) of the UFI table
-        // should be synced with the iceberg table.
-//        DeltaLog.clearCache()
-//        val metadata =
-//          spark.sessionState.catalog.getTableMetadata(new TableIdentifier(targetTable))
-//        val nameMap = metadata.schema.fields.map(_.name)
-//        assert(nameMap.contains("rate"))
-//        metadata.schema.fields.foreach {
-//          case field => if (field.name == "rate") {
-//            assert(field.dataType.typeName == "double")
-//          }
-//        }
-
-        val seq2 = Seq((3, "Alex", true, 23, 3.33d), (4, "Michael", true, 21, 4.44d))
-        val df2 = seq2.toDF("id", "name", "vip", "age", "rate")
-        IcebergTestUtils.writeIcebergTable(updatedTable, df2)
-        // refresh again
-        sql(
-          s"""
-             | REFRESH TABLE $targetTable
-             | METADATA_PATH '${metadataLoc(updatedTable, 4)}'
-             |""".stripMargin
-        )
-
-        // FIXME: currently update column is not correct when testing locally.
-        // check the result
-        // val result2 = sql(
-        //   s"SELECT * from default.$targetTable"
-        // )
-        // checkAnswer(result2, df1.withColumn("rate", lit(null.asInstanceOf[Double])).collect()
-        //  ++ df2.collect())
-      }
-    }
+  override protected def convert(
+      tableIdentifier: String,
+      partitioning: Option[String] = None,
+      collectStats: Boolean = true): Unit = {
+    val statement = partitioning.map(p => s" PARTITIONED BY ($p)").getOrElse("")
+    spark.sql(s"CONVERT TO DELTA ${tableIdentifier}${statement} " +
+      s"${collectStatisticsStringOption(collectStats)}")
   }
 }

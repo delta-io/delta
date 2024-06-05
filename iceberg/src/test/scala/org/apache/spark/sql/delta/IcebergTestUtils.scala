@@ -22,9 +22,10 @@ import org.apache.iceberg.types.Types
 import org.apache.iceberg.types.Type.PrimitiveType
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, PhysicalWriteInfo}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{CharType, DataType, StringType, StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql._
 import org.apache.spark.unsafe.types.UTF8String
 
 import java.util.UUID
@@ -133,52 +134,82 @@ object IcebergTestUtils {
   }
 
   /**
-   * Creates an Iceberg table from a Dataframe with provided configs using the scala interface,
-   * this works in the UC environment, where SQL interface is not available.
+   * Create an iceberg table from the current spark session.
    *
-   * @param spark: the spark session to use.
-   * @param warehousePath: the warehouse path, where to create the table.
-   * @param tableName: the table name used to create the table.
-   * @param data: the Dataframe used to create the table.
-   * @param partitionNames: the list of partition column names, can be empty.
-   * @return the created iceberg table object.
+   * @param name the name of the to-be-created iceberg table.
+   * @param schema the schema to create.
+   * @param partition whether the table contains partition columns or not.
+   * @param spark the spark session used to create the iceberg table.
    */
   def createIcebergTable(
-      spark: SparkSession,
-      warehousePath: String,
-      tableName: String,
-      data: DataFrame,
-      partitionNames: Seq[String] = Seq.empty[String]): iceberg.Table = {
-    val table = createIcebergTable(spark, warehousePath, tableName, data.schema, partitionNames)
-    writeIcebergTable(table, data)
-    table
+      name: String,
+      schema: String,
+      partition: Option[String] = None)(implicit spark: SparkSession): Unit = {
+    val partitionStr = partition match {
+      case Some(str) => s"PARTITIONED BY ($str)"
+      case None => ""
+    }
+    spark.sql(
+      s"""
+         | CREATE TABLE $name ($schema)
+         | USING ICEBERG $partitionStr
+         |""".stripMargin
+    )
   }
 
   /**
-   * Similar as above, except creating an empty Iceberg table from the schema.
+   * Convert the raw row string to the sql-compatible format.
+   * e.g., from [1, Alex] to (1, 'Alex')
    *
-   * @param spark: the spark session to use.
-   * @param warehousePath: the warehouse path, where to create the table.
-   * @param tableName: the table name used to create the table.
-   * @param schema: the schema used to create the table.
-   * @param partitionNames: the list of partition column names, can be empty.
-   * @return the created iceberg table object.
+   * @param row the raw row string to be converted.
+   * @return the converted, sql-compatible row string.
    */
-  def createIcebergTable(
-      spark: SparkSession,
-      warehousePath: String,
-      tableName: String,
-      schema: StructType,
-      partitionNames: Seq[String]): iceberg.Table = {
-    val tableIdent = iceberg.catalog.TableIdentifier.of("db", tableName)
-    val icebergSchema = iceberg.spark.SparkSchemaUtil.convert(schema)
-    val specBuilder = iceberg.PartitionSpec.builderFor(icebergSchema)
-    partitionNames.foreach(specBuilder.identity)
+  private def convertRowString(row: String, schema: StructType): String = {
+    def isStringOrChar(dt: DataType): Boolean = {
+      dt == StringType || dt == CharType
+    }
+    assert(row.length >= 2)
+    assert(row.startsWith("[") && row.endsWith("]"))
+    val rowUpdate = row.substring(1, row.length - 1)
+    val rowArray = rowUpdate.split(",")
+    var convertedRowStr = "("
+    for ((col, i) <- rowArray.zipWithIndex) {
+      val colUpdate = if (isStringOrChar(schema.fields(i).dataType)) {
+        "'" + col + "'"
+      } else {
+        col
+      }
+      convertedRowStr += colUpdate
+      if (i != rowArray.length - 1) {
+        convertedRowStr += ", "
+      }
+    }
+    convertedRowStr + ")"
+  }
 
-    // scalastyle:off deltahadoopconfiguration
-    new HadoopCatalog(spark.sessionState.newHadoopConf(), warehousePath)
-      .createTable(tableIdent, icebergSchema, specBuilder.build())
-    // scalastyle:on deltahadoopconfiguration
+  /**
+   * Write new rows to an existing iceberg table.
+   * note: this is actually append-only.
+   *
+   * @param name the name of the iceberg table.
+   * @param rows the new rows to be appended.
+   * @param spark the spark session used for the iceberg table.
+   */
+  def writeIcebergTable(
+      name: String,
+      rows: Seq[Row])(implicit spark: SparkSession): Unit = {
+    var valueStr = ""
+    for ((row, i) <- rows.zipWithIndex) {
+      valueStr += convertRowString(row.toString, row.schema)
+      if (i != rows.length - 1) {
+        valueStr += ", "
+      }
+    }
+    spark.sql(
+      s"""
+         | INSERT INTO $name VALUES $valueStr
+         |""".stripMargin
+    )
   }
 
   /**
