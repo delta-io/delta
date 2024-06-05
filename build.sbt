@@ -31,15 +31,12 @@ import scala.util.Using
 
 import sbt.internal.inc.Analysis
 import sbtprotoc.ProtocPlugin.autoImport._
-import sbtprotoc.ProtocPlugin.ProtobufConfig
 
 import xsbti.compile.CompileAnalysis
 
 import Checkstyle._
 import Mima._
 import Unidoc._
-
-import sbtprotoc.ProtocPlugin.autoImport._
 
 // Scala versions
 val scala213 = "2.13.13"
@@ -83,8 +80,6 @@ val tezVersionForHive2 = "0.8.4"
 
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
-
-ProtobufConfig / version := protoVersion
 
 scalaVersion := default_scala_version.value
 
