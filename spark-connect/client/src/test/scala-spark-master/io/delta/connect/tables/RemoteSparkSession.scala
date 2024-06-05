@@ -61,10 +61,13 @@ import org.apache.spark.sql.SparkSession
  */
 trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
+  // TODO: Instead of hard-coding the server port, assign port number the same way as in Spark Connect.
   private val serverPort = 15003
   var spark: SparkSession = _
 
   private val buildLocation = System.getProperty("delta.test.home")
+  // TODO: Instead of hard-coding the path, use the findJar function from
+  // Apache Spark's IntegrationTestUtils.scala.
   private val deltaConnectJar = s"$buildLocation/" +
     "spark-connect/server/target/scala-2.13/delta-connect-server-assembly-3.3.0-SNAPSHOT.jar"
 
