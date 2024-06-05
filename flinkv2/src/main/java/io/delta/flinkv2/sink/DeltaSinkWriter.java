@@ -24,7 +24,7 @@ import java.util.*;
 public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommittable>,
     StatefulSinkWriter<RowData, DeltaSinkWriterState> {
 
-    static boolean hasFailed = false;
+    static int failCount = 0;
 
     private long nextCheckpointId; // checkpointId that all FUTURE writes will be a part of
     private long lastSnapshottedCheckpointId = -1;
@@ -79,7 +79,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
 
         System.out.println(
             String.format(
-                "Scott > DeltaSinkWriter > constructor :: writerId=%s, checkpointId=%s, writeOperatorDeltaSchema=%s, txnStateSchema=%s",
+                "Scott > DeltaSinkWriter > constructor :: writerId=%s, nextCheckpointId=%s, writeOperatorDeltaSchema=%s, txnStateSchema=%s",
                 writerId,
                 nextCheckpointId,
                 writeOperatorDeltaSchema,
@@ -106,7 +106,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
         if (lastSnapshottedCheckpointId != -1 && nextCheckpointId != lastSnapshottedCheckpointId + 1) {
             System.out.println(
                 String.format(
-                    "Scott > DeltaSinkWriter[%s] > write :: weird state where checkpointId=%s but lastSnapshottedCheckpointId=%s",
+                    "Scott > DeltaSinkWriter[%s] > write :: weird state where nextCheckpointId=%s but lastSnapshottedCheckpointId=%s",
                     writerId,
                     nextCheckpointId,
                     lastSnapshottedCheckpointId
@@ -114,8 +114,8 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
             );
         }
 
-        if (!hasFailed && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 400 == 0) {
-            hasFailed = true;
+        if (failCount < 2 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 200 == 0) {
+            failCount++;
 
             int totalRowsBuffered = writerTasksByPartition.values().stream()
                 .mapToInt(DeltaSinkWriterTask::getBufferSize)
@@ -163,7 +163,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
         int totalRowsBuffered = writerTasksByPartition.values().stream()
             .mapToInt(DeltaSinkWriterTask::getBufferSize)
             .sum();
-        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: checkpointId=%s, totalRowsBuffered=%s", writerId, nextCheckpointId, totalRowsBuffered));
+        System.out.println(String.format("Scott > DeltaSinkWriter[%s] > prepareCommit :: nextCheckpointId=%s, totalRowsBuffered=%s", writerId, nextCheckpointId, totalRowsBuffered));
 
         final Collection<DeltaCommittable> output = new ArrayList<>();
 
@@ -212,7 +212,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
     @Override
     public String toString() {
         return "DeltaSinkWriter{" +
-            "checkpointId=" + nextCheckpointId +
+            "nextCheckpointId=" + nextCheckpointId +
             ", appId='" + appId + '\'' +
             ", engine=" + engine +
             ", writerId='" + writerId + '\'' +
