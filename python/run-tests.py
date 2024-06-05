@@ -37,7 +37,7 @@ def test(root_dir, test_path, package):
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
-                   "--packages", package + ",io.delta:delta-connect-server_2.13:4.0.0-SNAPSHOT", test_file]
+                   "--packages", package + ",io.delta:delta-connect-server_2.13:4.0.0-SNAPSHOT,io.delta:delta-connect-common_2.13:4.0.0-SNAPSHOT", test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
