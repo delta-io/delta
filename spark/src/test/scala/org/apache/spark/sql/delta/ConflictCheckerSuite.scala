@@ -20,6 +20,7 @@ import scala.concurrent.duration.Duration
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
@@ -29,6 +30,7 @@ import org.apache.spark.util.ThreadUtils
 
 class ConflictCheckerSuite
   extends QueryTest
+  with DeltaSQLCommandTest
   with SharedSparkSession
   with PhaseLockingTestMixin
   with TransactionExecutionTestMixin {
