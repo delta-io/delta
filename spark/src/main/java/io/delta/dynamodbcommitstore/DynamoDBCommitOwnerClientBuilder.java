@@ -42,7 +42,7 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
      * commits for this owner. The value of this key is stored in the `conf`
      * which is passed to the `build` method.
      */
-    private static final String MANAGED_COMMITS_TABLE_NAME_KEY = "dynamoDBManagedCommitsTableName";
+    private static final String MANAGED_COMMITS_TABLE_NAME_KEY = "dynamoDBTableName";
     /**
      * The endpoint of the DynamoDB service. The value of this key is stored in the
      * `conf` which is passed to the `build` method.
