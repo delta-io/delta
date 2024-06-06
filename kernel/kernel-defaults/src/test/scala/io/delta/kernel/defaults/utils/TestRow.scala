@@ -19,9 +19,8 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.{Seq => MutableSeq}
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.{Row => SparkRow}
-import org.apache.spark.unsafe.types.VariantVal
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
-import io.delta.kernel.defaults.internal.data.value.DefaultVariantValue
+import io.delta.kernel.defaults.VariantShims
 import io.delta.kernel.types._
 
 import java.sql.Timestamp
@@ -144,9 +143,7 @@ object TestRow {
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
         }
         case _: sparktypes.StructType => TestRow(obj.asInstanceOf[SparkRow])
-        case _: sparktypes.VariantType =>
-          val sparkVariant = obj.asInstanceOf[VariantVal]
-          new DefaultVariantValue(sparkVariant.getValue(), sparkVariant.getMetadata())
+        case t if VariantShims.isVariantType(t) => VariantShims.convertToKernelVariant(obj)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     }
@@ -180,9 +177,7 @@ object TestRow {
             decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
           }
         case _: sparktypes.StructType => TestRow(row.getStruct(i))
-        case _: sparktypes.VariantType =>
-          val sparkVariant = row.getAs[VariantVal](i)
-          new DefaultVariantValue(sparkVariant.getValue(), sparkVariant.getMetadata())
+        case t if VariantShims.isVariantType(t) => VariantShims.getVariantAndConvertToKernel(row, i)
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     })

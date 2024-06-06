@@ -24,6 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.defaults.VariantShims
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.engine.Engine
@@ -701,7 +702,7 @@ trait TestUtils extends Assertions with SQLHelper {
             field.isNullable
           )
         }.toSeq)
-      case VariantType.VARIANT => sparktypes.DataTypes.VariantType
+      case VariantType.VARIANT => VariantShims.getSparkVariantType()
     }
   }
 

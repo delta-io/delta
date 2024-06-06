@@ -51,7 +51,10 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 
-class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
+class ScanSuite extends AnyFunSuite
+  with ExpressionTestUtils
+  with SQLHelper
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import io.delta.kernel.defaults.ScanSuite._
 
@@ -1596,7 +1599,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   private def testReadWithVariant(testName: String)(df: => DataFrame): Unit = {
-    test(testName) {
+    testSparkMasterOnly(testName) {
       withTable("test_table") {
         df.write
           .format("delta")

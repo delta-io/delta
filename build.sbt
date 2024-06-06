@@ -166,6 +166,25 @@ def crossSparkProjectSettings(): Seq[Setting[_]] = getSparkVersion() match {
 }
 
 /**
+ * Java-/Scala-/Uni-Doc settings aren't working yet against Spark Master.
+    1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
+       generating delta-spark unidoc compiles delta-iceberg
+    2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
+       issue above.
+ */
+def crossDeltaSparkProjectSettings(): Seq[Setting[_]] = getSparkVersion() match {
+  case LATEST_RELEASED_SPARK_VERSION => Seq(
+    // Java-/Scala-/Uni-Doc Settings
+    scalacOptions ++= Seq(
+      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+    ),
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
+  )
+
+  case SPARK_MASTER_VERSION => Seq()
+}
+
+/**
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
  *       setting macro.
  */
@@ -315,7 +334,7 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
-    crossSparkProjectSettings(),
+    crossDeltaSparkProjectSettings(),
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",

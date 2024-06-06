@@ -46,7 +46,6 @@ import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 
 import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
 
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
@@ -627,7 +626,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val parquetAllTypes = goldenTablePath("parquet-all-types")
       val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
 
-      val data = readTableUsingKernel(engine, parquetAllTypes, schema).toSeq
+      val data = readTableUsingKernel(engine, parquetAllTypes, schema)
       val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
 
       appendData(engine, tblPath, isNewTable = true, schema, Seq.empty, dataWithPartInfo)
@@ -703,7 +702,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         }.toMap
       }
 
-      val data = readTableUsingKernel(engine, parquetAllTypes, schema).toSeq
+      val data = readTableUsingKernel(engine, parquetAllTypes, schema)
 
       // From the above table read data, convert each row as a new batch with partition info
       // Take the values of the partitionCols from the data and create a new batch with the
