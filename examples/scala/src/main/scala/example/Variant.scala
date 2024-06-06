@@ -89,7 +89,7 @@ object Variant {
         .whenNotMatched()
         .insertAll()
         .execute()
-      val insertedVals = spark.sql(s"SELECT v::int FROM $tableName")
+      val insertedVals = spark.sql(s"SELECT v::int v FROM $tableName ORDER BY v")
         .collect()
         .map { r => r.getInt(0) }
         .toSeq
