@@ -99,7 +99,7 @@ class DeltaSqlTests(DeltaTestCase):
     def test_ddls(self) -> None:
         table = "deltaTable"
         table2 = "deltaTable2"
-        with self.table(table, table2):
+        with self.table(table, table + "_part", table2):
             def read_table() -> DataFrame:
                 return self.spark.sql(f"SELECT * FROM {table}")
 
