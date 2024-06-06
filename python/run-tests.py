@@ -22,16 +22,16 @@ import shutil
 from os import path
 
 
-def test(root_dir, test_path, packages):
-    # Run all of the tests under test_path directory, each of them
-    # has main entry point to execute, which is python's unittest testing
+def test(root_dir, codes_dir, packages):
+    # Test the codes in the codes_dir directory using its "tests" subdirectory,
+    # each of them has main entry point to execute, which is python's unittest testing
     # framework.
     python_root_dir = path.join(root_dir, "python")
-    test_dir = path.join(python_root_dir, path.join(test_path, "tests"))
+    test_dir = path.join(python_root_dir, path.join(codes_dir, "tests"))
     test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
-    extra_class_path = path.join(python_root_dir, path.join(test_path, "testing"))
+    extra_class_path = path.join(python_root_dir, path.join(codes_dir, "testing"))
 
     for test_file in test_files:
         try:
@@ -67,8 +67,7 @@ def get_local_package(package_name):
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-    local_package = f"io.delta:{package_name}_2.13:" + version
-    return local_package
+    return f"io.delta:{package_name}_2.13:" + version
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
@@ -179,14 +178,14 @@ if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     prepare(root_dir)
-    delta_spark_package = get_local_package("delta-spark")
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
     run_pypi_packaging_tests(root_dir)
     run_delta_connect_codegen_python(root_dir)
     run_delta_connect_tests = os.getenv("RUN_DELTA_CONNECT_TESTS")
-    if run_delta_connect_tests is None:
+    if run_delta_connect_tests is None or run_delta_connect_tests == "false":
+        delta_spark_package = get_local_package("delta-spark")
         test(root_dir, "delta", [delta_spark_package])
     else:
         assert(run_delta_connect_tests == "true")
@@ -197,7 +196,4 @@ if __name__ == "__main__":
                                   "org.apache.spark:spark-connect_2.13:4.0.0-preview1",
                                   get_local_package("delta-connect-server")]
 
-        test(
-            root_dir,
-            path.join("delta", "connect"),
-            delta_connect_packages)
+        test(root_dir, path.join("delta", "connect"), delta_connect_packages)
