@@ -126,11 +126,11 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
   private def isManagedCommitToFSConversion(
       commitVersion: Long,
       updatedActions: UpdatedActions): Boolean = {
-    val oldMetadataHasManagedCommits = updatedActions.getOldMetadata.asInstanceOf[Metadata]
+    val oldMetadataHasManagedCommit = updatedActions.getOldMetadata.asInstanceOf[Metadata]
       .managedCommitOwnerName.nonEmpty
-    val newMetadataHasManagedCommits = updatedActions.getNewMetadata.asInstanceOf[Metadata]
+    val newMetadataHasManagedCommit = updatedActions.getNewMetadata.asInstanceOf[Metadata]
       .managedCommitOwnerName.nonEmpty
-    oldMetadataHasManagedCommits && !newMetadataHasManagedCommits && commitVersion > 0
+    oldMetadataHasManagedCommit && !newMetadataHasManagedCommit && commitVersion > 0
   }
 
   protected def generateUUID(): String = UUID.randomUUID().toString
