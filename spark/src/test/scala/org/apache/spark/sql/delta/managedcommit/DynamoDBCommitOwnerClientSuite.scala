@@ -276,7 +276,7 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
       }
     }
     val commitOwnerConf = JsonUtils.toJson(Map(
-      "managedCommitTableName" -> "tableName-1223",
+      "dynamoDBManagedCommitsTableName" -> "tableName-1223",
       "dynamoDBEndpoint" -> "endpoint-1224"
     ))
     withSQLConf(
