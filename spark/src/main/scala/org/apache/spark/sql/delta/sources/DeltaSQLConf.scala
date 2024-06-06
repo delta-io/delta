@@ -551,7 +551,7 @@ trait DeltaSQLConfBase {
   /////////////////////////////////////////////
 
   val MANAGED_COMMIT_DDB_AWS_CREDENTIALS_PROVIDER_NAME =
-    buildConf("managedCommit.commitOwner.ddb.awsCredentialsProviderName")
+    buildConf("managedCommit.commitOwner.dynamodb.awsCredentialsProviderName")
       .internal()
       .doc("The fully qualified class name of the AWS credentials provider to use for " +
         "interacting with DynamoDB in the DynamoDB Commit Owner Client. e.g. " +
@@ -560,7 +560,7 @@ trait DeltaSQLConfBase {
       .createWithDefault("com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
 
   val MANAGED_COMMIT_DDB_SKIP_PATH_CHECK =
-    buildConf("managedCommit.commitOwner.ddb.skipPathCheck.enabled")
+    buildConf("managedCommit.commitOwner.dynamodb.skipPathCheckEnabled")
       .internal()
       .doc("When enabled, the DynamoDB Commit Owner will not enforce that the table path of the " +
         "current Delta table matches the stored in the corresponding DynamoDB table. This " +
@@ -572,7 +572,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val MANAGED_COMMIT_DDB_READ_CAPACITY_UNITS =
-    buildConf("managedCommit.commitOwner.ddb.readCapacityUnits")
+    buildConf("managedCommit.commitOwner.dynamodb.readCapacityUnits")
       .internal()
       .doc("Controls the provisioned read capacity units for the DynamoDB table backing the " +
         "DynamoDB Commit Owner. This configuration is only used when the DynamoDB table is first " +
@@ -581,7 +581,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(5)
 
   val MANAGED_COMMIT_DDB_WRITE_CAPACITY_UNITS =
-    buildConf("managedCommit.commitOwner.ddb.writeCapacityUnits")
+    buildConf("managedCommit.commitOwner.dynamodb.writeCapacityUnits")
       .internal()
       .doc("Controls the provisioned write capacity units for the DynamoDB table backing the " +
         "DynamoDB Commit Owner. This configuration is only used when the DynamoDB table is first " +
