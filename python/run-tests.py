@@ -200,4 +200,4 @@ if __name__ == "__main__":
         test(
             root_dir,
             path.join("delta", "connect"),
-            [delta_spark_package] + delta_connect_packages)
+            delta_connect_packages)
