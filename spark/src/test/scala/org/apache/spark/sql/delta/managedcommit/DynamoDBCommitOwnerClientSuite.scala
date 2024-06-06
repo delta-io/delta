@@ -252,21 +252,21 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
       }
 
       override def getDynamoDBCommitOwnerClient(
-          managedCommitsTableName: String,
+          managedCommitTableName: String,
           dynamoDBEndpoint: String,
           ddbClient: AmazonDynamoDB,
           backfillBatchSize: Long,
           readCapacityUnits: Int,
           writeCapacityUnits: Int,
           skipPathCheck: Boolean): DynamoDBCommitOwnerClient = {
-        assert(managedCommitsTableName == "tableName-1223")
+        assert(managedCommitTableName == "tableName-1223")
         assert(dynamoDBEndpoint == "endpoint-1224")
         assert(backfillBatchSize == 1)
         assert(readCapacityUnits == 1226)
         assert(writeCapacityUnits == 1227)
         assert(skipPathCheck)
         new DynamoDBCommitOwnerClient(
-          managedCommitsTableName,
+          managedCommitTableName,
           dynamoDBEndpoint,
           ddbClient,
           backfillBatchSize,
@@ -276,7 +276,7 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
       }
     }
     val commitOwnerConf = JsonUtils.toJson(Map(
-      "managedCommitsTableName" -> "tableName-1223",
+      "dynamoDBTableName" -> "tableName-1223",
       "dynamoDBEndpoint" -> "endpoint-1224"
     ))
     withSQLConf(

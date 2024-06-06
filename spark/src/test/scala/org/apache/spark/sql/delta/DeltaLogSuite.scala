@@ -499,7 +499,7 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-      if (managedCommitsEnabledInTests) {
+      if (managedCommitEnabledInTests) {
         // For Managed Commit table with a commit that is not backfilled, we can't use
         // 00000000002.json yet. Contact commit store to get uuid file path to malform json file.
         val oc = CommitOwnerProvider.getCommitOwnerClient(
@@ -598,7 +598,7 @@ class DeltaLogSuite extends QueryTest
 
       val log = DeltaLog.forTable(spark, path)
       var commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
-      if (managedCommitsEnabledInTests) {
+      if (managedCommitEnabledInTests) {
         // For Managed Commit table with a commit that is not backfilled, we can't use
         // 00000000001.json yet. Contact commit store to get uuid file path to malform json file.
         val oc = CommitOwnerProvider.getCommitOwnerClient(

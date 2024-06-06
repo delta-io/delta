@@ -712,7 +712,7 @@ class ManagedCommitSuite
   for (upgradeExistingTable <- BOOLEAN_DOMAIN)
   testWithDifferentBackfillInterval("upgrade + downgrade [FS -> MC1 -> FS -> MC2]," +
       s" upgradeExistingTable = $upgradeExistingTable") { backfillInterval =>
-    withoutManagedCommitsDefaultTableProperties {
+    withoutManagedCommitDefaultTableProperties {
       CommitOwnerProvider.clearNonDefaultBuilders()
       val builder1 = TrackingInMemoryCommitOwnerBuilder(batchSize = backfillInterval)
       val builder2 = new TrackingInMemoryCommitOwnerBuilder(batchSize = backfillInterval) {
