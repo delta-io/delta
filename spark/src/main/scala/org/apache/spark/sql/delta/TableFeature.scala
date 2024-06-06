@@ -674,7 +674,7 @@ object V2CheckpointTableFeature
 
 /** Table feature to represent tables whose commits are managed by separate commit-owner */
 object ManagedCommitTableFeature
-  extends WriterFeature(name = "managedCommitPreview")
+  extends WriterFeature(name = "managedCommit-preview")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {
 
