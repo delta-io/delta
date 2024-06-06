@@ -54,8 +54,9 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
 
     test_cmd = "test"
 
-    # if test group is specified, then run tests only on that test group
-    test_cmd = "{}Group/test".format(test_group)
+    if test_group:
+        # if test group is specified, then run tests only on that test group
+        test_cmd = "{}Group/test".format(test_group)
 
     if coverage:
         cmd += ["coverage"]
@@ -222,7 +223,6 @@ if __name__ == "__main__":
         run_tests_in_docker(test_env_image_tag, args.group)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        if args.group is not None:
             run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
 
         # Python tests are run only when spark group of projects are being tested.

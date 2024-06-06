@@ -37,7 +37,7 @@ def test(root_dir, test_path, packages):
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
-                   "--packages", packages, test_file]
+                   "--packages", ",".join(packages), test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
@@ -61,12 +61,14 @@ def prepare(root_dir):
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     run_cmd([sbt_path, "clean", "publishM2"], stream_output=True)
 
+
+def get_local_package(package_name):
     # Get current release which is required to be loaded
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-    package = "io.delta:delta-spark_2.13:" + version
-    return package
+    local_package = f"io.delta:{package_name}_2.13:" + version
+    return local_package
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
@@ -176,7 +178,8 @@ def run_delta_connect_codegen_python(root_dir):
 if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    package = prepare(root_dir)
+    prepare(root_dir)
+    delta_spark_package = get_local_package("delta-spark")
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
@@ -184,15 +187,12 @@ if __name__ == "__main__":
     run_delta_connect_codegen_python(root_dir)
     run_delta_connect_tests = os.getenv("RUN_DELTA_CONNECT_TESTS")
     if run_delta_connect_tests is None:
-        test(root_dir, "delta", package)
+        test(root_dir, "delta", [delta_spark_package])
     else:
         assert(run_delta_connect_tests == "true")
 
-        delta_connect_packages = ",".join(["com.google.protobuf:protobuf-java:3.25.1",
-                                          "org.apache.spark:spark-connect_2.13:4.0.0-preview1"])
+        delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
+                                  "org.apache.spark:spark-connect_2.13:4.0.0-preview1",
+                                  get_local_package("delta-connect-server")]
 
-        test(
-            root_dir,
-            path.join("delta", "connect"),
-            ",".join([package, delta_connect_packages]),
-            True)
+        test(root_dir, path.join("delta", "connect"), [delta_spark_package] + delta_connect_packages)
