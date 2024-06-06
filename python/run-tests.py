@@ -197,4 +197,4 @@ if __name__ == "__main__":
         test(root_dir, path.join("delta", "connect"), delta_connect_packages)
     else:
         raise Exception(f"Invalid value for RUN_DELTA_CONNECT_TESTS {un_delta_connect_tests}"
-                        + ", should be either True or False")
+                        + ", should be either true or false.")
