@@ -22,16 +22,16 @@ import shutil
 from os import path
 
 
-def test(root_dir, codes_dir, packages):
-    # Test the codes in the codes_dir directory using its "tests" subdirectory,
+def test(root_dir, code_dir, packages):
+    # Test the codes in the code_dir directory using its "tests" subdirectory,
     # each of them has main entry point to execute, which is python's unittest testing
     # framework.
     python_root_dir = path.join(root_dir, "python")
-    test_dir = path.join(python_root_dir, path.join(codes_dir, "tests"))
+    test_dir = path.join(python_root_dir, path.join(code_dir, "tests"))
     test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
-    extra_class_path = path.join(python_root_dir, path.join(codes_dir, "testing"))
+    extra_class_path = path.join(python_root_dir, path.join(code_dir, "testing"))
 
     for test_file in test_files:
         try:
@@ -187,9 +187,7 @@ if __name__ == "__main__":
     if run_delta_connect_tests is None or run_delta_connect_tests == "false":
         delta_spark_package = get_local_package("delta-spark")
         test(root_dir, "delta", [delta_spark_package])
-    else:
-        assert(run_delta_connect_tests == "true")
-
+    elif run_delta_connect_tests == "true":
         # TODO: In the future, find a way to get these
         # packages locally instead of downloading from Maven.
         delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
@@ -197,3 +195,6 @@ if __name__ == "__main__":
                                   get_local_package("delta-connect-server")]
 
         test(root_dir, path.join("delta", "connect"), delta_connect_packages)
+    else:
+        raise Exception(f"Invalid value for RUN_DELTA_CONNECT_TESTS {un_delta_connect_tests}"
+                        + ", should be either True or False")
