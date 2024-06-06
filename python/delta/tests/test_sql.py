@@ -104,6 +104,7 @@ class DeltaSqlTests(DeltaTestCase):
                 return self.spark.sql(f"SELECT * FROM {table}")
 
             self.spark.sql(f"DROP TABLE IF EXISTS {table}")
+            self.spark.sql(f"DROP TABLE IF EXISTS {table}_part")
             self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
             self.spark.sql(f"CREATE TABLE {table}(a LONG, b String NOT NULL) USING delta")

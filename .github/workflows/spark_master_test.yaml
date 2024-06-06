@@ -81,6 +81,5 @@ jobs:
         # NOTE: in this branch, the default sparkVersion is the SPARK_MASTER_VERSION
         run: |
           TEST_PARALLELISM_COUNT=2 IS_SPARK_MASTER=true pipenv run python run-tests.py --group connectServer
-          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectClient/test
           TEST_PARALLELISM_COUNT=2 pipenv run python run-tests.py --group spark
         if: steps.git-diff.outputs.diff
