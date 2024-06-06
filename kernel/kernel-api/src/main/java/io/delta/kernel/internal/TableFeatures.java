@@ -63,7 +63,7 @@ public class TableFeatures {
                             break;
                         case "deletionVectors": // fall through
                         case "timestampNtz": // fall through
-                        case "variantType-dev": // fall through
+                        case "variantType-preview": // fall through
                         case "vacuumProtocolCheck": // fall through
                         case "v2Checkpoint":
                             break;

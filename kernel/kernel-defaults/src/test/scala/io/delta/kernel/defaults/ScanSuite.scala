@@ -1670,8 +1670,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         map('v', parse_json(cast(id as string)))
       ) as array_map_v""",
       "map('test', parse_json(cast(id as string))) as map_value_v",
-      "map('test', named_struct('v', parse_json(cast(id as string)))) as map_struct_v",
-      "map(parse_json(cast(id as string)), parse_json(cast(id as string))) as map_key_v"
+      "map('test', named_struct('v', parse_json(cast(id as string)))) as map_struct_v"
     )
   }
 

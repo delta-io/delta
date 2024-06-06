@@ -665,22 +665,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                         mapType.getValueType()
                     );
                 }
-                ColumnVector keyVec = mapVec.getKeyVector();
-                if (mapType.getKeyType() instanceof ArrayType ||
-                    mapType.getKeyType() instanceof StructType ||
-                    mapType.getKeyType() instanceof MapType ||
-                    mapType.getKeyType() instanceof VariantType) {
-                    keyVec = variantCoalesceImpl(
-                        mapVec.getKeyVector(),
-                        mapType.getKeyType()
-                    );
-                }
                 return new DefaultMapVector(
                     mapVec.getSize(),
                     mapType,
                     mapVec.getNullability(),
                     mapVec.getOffsets(),
-                    keyVec,
+                    mapVec.getKeyVector(),
                     valueVec
                 );
             }
