@@ -37,7 +37,7 @@ object VariantShims {
   def convertToKernelVariant(v: Any): DefaultVariantValue =
     throw new UnsupportedOperationException("Not supported")
 
-  /** 
+  /**
    * Retrieves a Spark variant from a Spark row and converts it to Kernel Default's variant value
    * for testing.
    *
