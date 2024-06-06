@@ -192,7 +192,9 @@ if __name__ == "__main__":
         assert(run_delta_connect_tests == "true")
 
         delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
-                                  "org.apache.spark:spark-connect_2.13:4.0.0-preview1",
                                   get_local_package("delta-connect-server")]
 
-        test(root_dir, path.join("delta", "connect"), [delta_spark_package] + delta_connect_packages)
+        test(
+            root_dir,
+            path.join("delta", "connect"),
+            [delta_spark_package] + delta_connect_packages)
