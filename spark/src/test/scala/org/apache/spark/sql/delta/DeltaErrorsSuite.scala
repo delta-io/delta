@@ -3179,19 +3179,6 @@ trait DeltaErrorsSuiteBase
       )
     }
     {
-      val e = intercept[DeltaAnalysisException] {
-        throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0011",
-          messageParameters = Array.empty)
-      }
-      checkErrorMessage(
-        e,
-        Some("_LEGACY_ERROR_TEMP_DELTA_0011"),
-        None,
-        Some("Failed to resolve plan.")
-      )
-    }
-    {
       val exprs = Seq("1".expr, "2".expr)
       val e = intercept[DeltaAnalysisException] {
         throw new DeltaAnalysisException(
