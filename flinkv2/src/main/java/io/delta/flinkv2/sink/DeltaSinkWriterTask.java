@@ -18,12 +18,16 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatus;
 import org.apache.flink.api.connector.sink2.SinkWriter;
 import org.apache.flink.table.data.RowData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class DeltaSinkWriterTask {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaSinkWriterTask.class);
 
     private final String appId;
     private final String writerId; // checkpointId that all FUTURE writes will be a part of
@@ -54,7 +58,7 @@ public class DeltaSinkWriterTask {
         this.mockTxnState = mockTxnState;
         this.writeOperatorDeltaSchema = writeOperatorDeltaSchema;
 
-        System.out.println(
+        LOG.info(
             String.format(
                 "Scott > DeltaSinkWriterTask > constructor :: parentWriterId=%s, writerTaskId=%s, partitionValues=%s",
                 parentWriterId,
@@ -75,22 +79,22 @@ public class DeltaSinkWriterTask {
     public Collection<DeltaCommittable> prepareCommit() throws IOException, InterruptedException {
         if (buffer.isEmpty()) return Collections.emptyList();
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating logicalData", writerTaskId));
+        LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating logicalData", writerTaskId));
         final CloseableIterator<FilteredColumnarBatch> logicalData =
             flinkRowDataToKernelColumnarBatchClosableIterator();
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: partitionValues=%s, buffer.get(0)=%s", writerTaskId, partitionValues, buffer.get(0)));
+        LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: partitionValues=%s, buffer.get(0)=%s", writerTaskId, partitionValues, buffer.get(0)));
 
         this.buffer = new ArrayList<>(); // flush the buffer
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating physicalData", writerTaskId));
+        LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating physicalData", writerTaskId));
         final CloseableIterator<FilteredColumnarBatch> physicalData =
             Transaction.transformLogicalData(engine, mockTxnState, logicalData, partitionValues);
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating writeContext", writerTaskId));
+        LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating writeContext", writerTaskId));
         final DataWriteContext writeContext = Transaction.getWriteContext(engine, mockTxnState, partitionValues);
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating dataFiles", writerTaskId));
+        LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating dataFiles", writerTaskId));
         final CloseableIterator<DataFileStatus> dataFiles =
             engine.getParquetHandler()
                 .writeParquetFiles(
@@ -98,7 +102,7 @@ public class DeltaSinkWriterTask {
                     physicalData,
                     writeContext.getStatisticsColumns());
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating partitionDataActions", writerTaskId));
+        LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating partitionDataActions", writerTaskId));
         final CloseableIterator<Row> partitionDataActions =
             Transaction.generateAppendActions(
                 engine,
@@ -106,7 +110,7 @@ public class DeltaSinkWriterTask {
                 dataFiles,
                 writeContext);
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating output", writerTaskId));
+        LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: creating output", writerTaskId));
         final Collection<DeltaCommittable> output = new ArrayList<>();
 
         while (partitionDataActions.hasNext()) {
@@ -117,12 +121,12 @@ public class DeltaSinkWriterTask {
                 partitionDataActions.next()
             );
 
-            System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: created %s", writerTaskId, deltaCommittable));
+            LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: created %s", writerTaskId, deltaCommittable));
 
             output.add(deltaCommittable);
         }
 
-        System.out.println(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: returning output", writerTaskId));
+        LOG.info(String.format("Scott > DeltaSinkWriterTask[%s] > prepareCommit :: returning output", writerTaskId));
 
         return output;
     }

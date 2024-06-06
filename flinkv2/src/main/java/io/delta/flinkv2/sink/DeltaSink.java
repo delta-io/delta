@@ -18,6 +18,8 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -33,6 +35,8 @@ public class DeltaSink implements Sink<RowData>,
     SupportsPreCommitTopology<DeltaCommittable, DeltaCommittable>,
     SupportsPreWriteTopology<RowData>,
     Serializable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaSink.class);
 
     ///////////////////////
     // Public static API //
@@ -53,7 +57,7 @@ public class DeltaSink implements Sink<RowData>,
     private Set<String> tablePartitionColumns; // non-final since we set it in try-catch block
 
     private DeltaSink(final String tablePath, final RowType rowType, final List<String> userProvidedPartitionColumns) {
-        System.out.println(
+        LOG.info(
             String.format(
                 "Scott > DeltaSink > constructor :: tablePath=%s, rowType=%s, userProvidedPartitionColumns=%s",
                 tablePath,
@@ -66,7 +70,7 @@ public class DeltaSink implements Sink<RowData>,
         this.writeOperatorFlinkSchema = rowType;
         this.userProvidedPartitionColumns = userProvidedPartitionColumns;
 
-        System.out.println(
+        LOG.info(
             String.format("Equivalent Delta schema is: %s", SchemaUtils.toDeltaDataType(rowType))
         );
 
@@ -88,7 +92,7 @@ public class DeltaSink implements Sink<RowData>,
             this.tablePartitionColumns = ((SnapshotImpl) latestSnapshot).getMetadata().getPartitionColNames();
         } catch (TableNotFoundException ex) {
             // table doesn't exist
-            System.out.println(String.format("Scott > DeltaSink > constructor :: DOES NOT EXIST tablePath=%s", tablePath));
+            LOG.info(String.format("Scott > DeltaSink > constructor :: DOES NOT EXIST tablePath=%s", tablePath));
             this.tablePartitionColumns = new HashSet<>(userProvidedPartitionColumns);
         }
     }
@@ -99,14 +103,24 @@ public class DeltaSink implements Sink<RowData>,
 
     @Override
     public SinkWriter<RowData> createWriter(InitContext context) throws IOException {
-        System.out.println("Scott > DeltaSink > createWriter");
-        return DeltaSinkWriter.createNewWriter(appId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
+        LOG.info(
+            String.format(
+                "Scott > DeltaSink > createWriter :: context.getRestoredCheckpointId()=%s",
+                context.getRestoredCheckpointId()
+            )
+        );
+        return DeltaSinkWriter.createNewWriter(appId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
     }
 
     @Override
     public Committer<DeltaCommittable> createCommitter(CommitterInitContext context) throws IOException {
-        System.out.println("Scott > DeltaSink > createCommitter");
-        return new DeltaCommitter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
+        LOG.info(
+            String.format(
+                "Scott > DeltaSink > createCommitter :: context.getRestoredCheckpointId=%s",
+                context.getRestoredCheckpointId()
+            )
+        );
+        return new DeltaCommitter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
     }
 
     /**
@@ -116,7 +130,7 @@ public class DeltaSink implements Sink<RowData>,
      */
     @Override
     public DataStream<RowData> addPreWriteTopology(DataStream<RowData> inputDataStream) {
-        System.out.println("Scott > DeltaSink > addPreWriteTopology");
+        LOG.info("Scott > DeltaSink > addPreWriteTopology");
 
 //        return inputDataStream;
 
@@ -131,24 +145,25 @@ public class DeltaSink implements Sink<RowData>,
         @Override
     public DataStream<CommittableMessage<DeltaCommittable>> addPreCommitTopology(
             DataStream<CommittableMessage<DeltaCommittable>> committables) {
-        System.out.println("Scott > DeltaSink > addPreCommitTopology");
+        LOG.info("Scott > DeltaSink > addPreCommitTopology");
         // Sets the partitioning of the DataStream so that the output values all go to the first
         // instance of the next processing operator
         //
         // This essentially is what gives us a global committer.
+        // TODO: consider injecting checkpointId information explicitly? like in the iceberg PR?
         return committables.global();
     }
 
     @Override
     public SimpleVersionedSerializer<DeltaCommittable> getWriteResultSerializer() {
-        System.out.println("Scott > DeltaSink > getWriteResultSerializer");
-        return new DeltaCommittableSerializer();
+        LOG.info("Scott > DeltaSink > getWriteResultSerializer");
+        return new DeltaCommittable.Serializer();
     }
 
     @Override
     public SimpleVersionedSerializer<DeltaCommittable> getCommittableSerializer() {
-        System.out.println("Scott > DeltaSink > getCommittableSerializer");
-        return new DeltaCommittableSerializer();
+        LOG.info("Scott > DeltaSink > getCommittableSerializer");
+        return new DeltaCommittable.Serializer();
     }
 
     //////////////////////////////
@@ -163,22 +178,21 @@ public class DeltaSink implements Sink<RowData>,
             .map(DeltaSinkWriterState::getWriterId)
             .collect(Collectors.toSet());
 
-        System.out.println(String.format("Scott > DeltaSink > restoreWriter :: writerIds=%s", writerIds));
-
+        LOG.info(String.format("Scott > DeltaSink > restoreWriter :: writerIds=%s, context.getRestoredCheckpointId=%s", writerIds, context.getRestoredCheckpointId()));
         if (writerIds.size() != 1) {
             String msg = String.format("ERROR: restoreWriter called with # writerIds != 1. writerIds=%s", writerIds);
-            System.out.println(msg);
+            LOG.info(msg);
             throw new RuntimeException(msg);
         }
 
         DeltaSinkWriterState state = recoveredState.stream().findFirst().get();
 
-        return DeltaSinkWriter.restoreWriter(state.getAppId(), state.getWriterId(), state.getCheckpointId(), tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns);
+        return DeltaSinkWriter.restoreWriter(state.getAppId(), state.getWriterId(), state.getCheckpointId(), tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
     }
 
     @Override
     public SimpleVersionedSerializer<DeltaSinkWriterState> getWriterStateSerializer() {
-        System.out.println("Scott > DeltaSink > getWriterStateSerializer");
+        LOG.info("Scott > DeltaSink > getWriterStateSerializer");
         return new DeltaSinkWriterState.Serializer();
     }
 }

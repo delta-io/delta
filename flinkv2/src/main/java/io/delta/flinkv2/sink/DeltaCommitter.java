@@ -11,6 +11,8 @@ import io.delta.kernel.utils.CloseableIterator;
 import org.apache.flink.api.connector.sink2.Committer;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.*;
@@ -25,27 +27,42 @@ import java.util.*;
  */
 public class DeltaCommitter implements Committer<DeltaCommittable> {
 
+    private static final Logger LOG = LoggerFactory.getLogger(DeltaCommitter.class);
+
+    static int numFailures = 0;
+
     private final String committerId;
     private final String tablePath;
     private final StructType writeOperatorSchema;
     private final List<String> partitionColumns;
 
-    public DeltaCommitter(String tablePath, RowType writeOperatorSchema, List<String> partitionColumns) {
+    // use this to determine if we are re-committing committables that may or may not have been
+    // written to the delta log already
+    private final OptionalLong restoredCheckpointId;
+
+    private boolean completedFirstCommit = false;
+
+    // if restoredCheckpointId.nonEmpty and !completedFirstCommit then do recovery to prevent duplicate writes
+    // maybe even just if !completedFirstCommit
+
+    public DeltaCommitter(String tablePath, RowType writeOperatorSchema, List<String> partitionColumns, OptionalLong restoredCheckpointId) {
         this.committerId = java.util.UUID.randomUUID().toString();
         this.tablePath = tablePath;
         this.writeOperatorSchema = SchemaUtils.toDeltaDataType(writeOperatorSchema);
         this.partitionColumns = partitionColumns;
+        this.restoredCheckpointId = restoredCheckpointId;
 
-        System.out.println(
-            String.format("Scott > DeltaCommitter > constructor :: committerId=%s", committerId)
+        LOG.info(
+            String.format("Scott > DeltaCommitter > constructor :: committerId=%s, restoredCheckpointId=%s", committerId, restoredCheckpointId)
         );
     }
 
+    // TODO: group by checkpointId, commit in increasing order
     @Override
     public void commit(
             Collection<CommitRequest<DeltaCommittable>> committables)
             throws IOException, InterruptedException {
-        System.out.println(
+        LOG.info(
             String.format("Scott > DeltaCommitter[%s] > commit :: committablesSize=%s", committerId, committables.size())
         );
 
@@ -70,7 +87,7 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
             isCreateNewTable = true;
         }
 
-        System.out.println(
+        LOG.info(
             String.format("Scott > DeltaCommitter[%s] > commit :: isCreateNewTable=%s", committerId, isCreateNewTable)
         );
 
@@ -113,10 +130,11 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
                     public Row next() {
                         if (!hasNext()) throw new NoSuchElementException();
 
-                        final DeltaCommittable deltaCommittable = iter.next().getCommittable();
+                        final CommitRequest<DeltaCommittable> commitRequest = iter.next();
+                        final DeltaCommittable deltaCommittable = commitRequest.getCommittable();
 
-                        System.out.println(
-                            String.format("Scott > DeltaCommitter[%s] > commit :: %s", committerId, deltaCommittable)
+                        LOG.info(
+                            String.format("Scott > DeltaCommitter[%s] > commit :: retryNumber=%s, %s", committerId, commitRequest.getNumberOfRetries(), deltaCommittable)
                         );
 
                         checkpointIds.add(deltaCommittable.getCheckpointId());
@@ -133,11 +151,24 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
             }
         };
 
+//        if (java.util.concurrent.ThreadLocalRandom.current().nextInt() % 5 == 0) {
+//            throw new RuntimeException(
+//                String.format("!!!!! RANDOM FAILURE ---- Scott > DeltaCommitter[%s] > commit [BEFORE txn.commit]", committerId)
+//            );
+//        }
+
         TransactionCommitResult result = txn.commit(engine, dataActions);
 
-        System.out.println(
+        LOG.info(
             String.format("Scott > DeltaCommitter[%s] > commit :: resultVersion=%s, checkpointIds=%s, writerIds=%s", committerId, result.getVersion(), checkpointIds, writerIds)
         );
+
+//        if (numFailures < 1 && result.getVersion() > 0 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 2 == 0) {
+//            numFailures++;
+//            throw new RuntimeException(
+//                String.format("!!!!! RANDOM FAILURE ---- Scott > DeltaCommitter[%s] > commit [AFTER txn.commit] :: resultVersion=%s, checkpointIds=%s, writerIds=%s", committerId, result.getVersion(), checkpointIds, writerIds)
+//            );
+//        }
     }
 
     @Override
