@@ -206,7 +206,7 @@ public interface Scan {
                 // Transform physical variant columns (struct of binaries) into logical variant
                 // columns.
                 nextDataBatch = VariantUtils.withVariantColumns(
-                    tableClient.getExpressionHandler(),
+                    engine.getExpressionHandler(),
                     nextDataBatch
                 );
 

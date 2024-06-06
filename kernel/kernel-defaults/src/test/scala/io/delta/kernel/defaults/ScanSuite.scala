@@ -35,7 +35,7 @@ import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.Scan
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.utils.TestRow
-import io.delta.kernel.engine.{JsonHandler, ParquetHandler, TableClient}
+import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.types.StructType
@@ -1611,11 +1611,11 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         val kernelSchema = tableSchema(path)
 
         val snapshot = latestSnapshot(path)
-        val scan = snapshot.getScanBuilder(defaultTableClient).build()
-        val scanState = scan.getScanState(defaultTableClient)
+        val scan = snapshot.getScanBuilder(defaultEngine).build()
+        val scanState = scan.getScanState(defaultEngine)
         val physicalReadSchema =
-          ScanStateRow.getPhysicalDataReadSchema(defaultTableClient, scanState)
-        val scanFilesIter = scan.getScanFiles(defaultTableClient)
+          ScanStateRow.getPhysicalDataReadSchema(defaultEngine, scanState)
+        val scanFilesIter = scan.getScanFiles(defaultEngine)
 
         val readRows = ArrayBuffer[Row]()
         while (scanFilesIter.hasNext()) {
@@ -1625,13 +1625,13 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             val scanFileRow = scanFileRows.next()
             val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
 
-            val physicalDataIter = defaultTableClient.getParquetHandler.readParquetFiles(
+            val physicalDataIter = defaultEngine.getParquetHandler.readParquetFiles(
               singletonCloseableIterator(fileStatus),
               physicalReadSchema,
               Optional.empty())
 
             val transformedRowsIter = Scan.transformPhysicalData(
-              defaultTableClient,
+              defaultEngine,
               scanState,
               scanFileRow,
               physicalDataIter

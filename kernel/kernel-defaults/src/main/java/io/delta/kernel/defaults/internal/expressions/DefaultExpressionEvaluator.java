@@ -294,6 +294,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                         children.stream().map(e -> e.outputType).collect(toList()));
 
             return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+        }
 
         ExpressionTransformResult visitVariantCoalesce(ScalarExpression variantCoalesce) {
             checkArgument(

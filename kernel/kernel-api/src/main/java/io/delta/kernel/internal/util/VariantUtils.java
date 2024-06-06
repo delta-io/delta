@@ -18,9 +18,9 @@ package io.delta.kernel.internal.util;
 
 import java.util.Arrays;
 
-import io.delta.kernel.client.ExpressionHandler;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 

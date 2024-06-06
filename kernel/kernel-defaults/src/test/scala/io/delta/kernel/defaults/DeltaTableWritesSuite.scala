@@ -627,7 +627,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val parquetAllTypes = goldenTablePath("parquet-all-types")
       val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
 
-      val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+      val data = readTableUsingKernel(engine, parquetAllTypes, schema).toSeq
       val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
 
       appendData(engine, tblPath, isNewTable = true, schema, Seq.empty, dataWithPartInfo)
@@ -670,7 +670,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         "timestampType"
       )
       val casePreservingPartCols =
-        casePreservingPartitionColNames(schema, partCols.asJava).asScala.to[Seq]
+        casePreservingPartitionColNames(schema, partCols.asJava).asScala.toSeq
 
       // get the partition values from the data batch at the given rowId
       def getPartitionValues(batch: ColumnarBatch, rowId: Int): Map[String, Literal] = {
@@ -703,7 +703,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         }.toMap
       }
 
-      val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+      val data = readTableUsingKernel(engine, parquetAllTypes, schema).toSeq
 
       // From the above table read data, convert each row as a new batch with partition info
       // Take the values of the partitionCols from the data and create a new batch with the
