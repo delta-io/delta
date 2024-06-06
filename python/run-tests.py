@@ -194,5 +194,5 @@ if __name__ == "__main__":
         test(
             root_dir,
             path.join("delta", "connect"),
-            ",".join(package, delta_connect_packages),
+            ",".join([package, delta_connect_packages]),
             True)
