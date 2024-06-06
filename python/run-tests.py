@@ -179,9 +179,9 @@ if __name__ == "__main__":
     package = prepare(root_dir)
 
     run_python_style_checks(root_dir)
-    # run_mypy_tests(root_dir)
-    # run_pypi_packaging_tests(root_dir)
-    # run_delta_connect_codegen_python(root_dir)
+    run_mypy_tests(root_dir)
+    run_pypi_packaging_tests(root_dir)
+    run_delta_connect_codegen_python(root_dir)
     run_delta_connect_tests = os.getenv("RUN_DELTA_CONNECT_TESTS")
     if run_delta_connect_tests is None:
         test(root_dir, "delta", package)
