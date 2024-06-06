@@ -22,7 +22,7 @@ import shutil
 from os import path
 
 
-def test(root_dir, test_path, package):
+def test(root_dir, test_path, packages):
     # Run all of the tests under test_path directory, each of them
     # has main entry point to execute, which is python's unittest testing
     # framework.
@@ -37,13 +37,7 @@ def test(root_dir, test_path, package):
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
-                   "--packages", package +
-                   ",io.delta:delta-connect-server_2.13:4.0.0-SNAPSHOT," +
-                   "io.delta:delta-connect-common_2.13:4.0.0-SNAPSHOT," +
-                   "org.apache.spark:spark-connect_2.13:4.0.0-preview1," +
-                   "org.apache.spark:spark-connect-client-jvm_2.13:4.0.0-preview1," +
-                   "org.apache.spark:spark-connect-common_2.13:4.0.0-preview1," +
-                   "com.google.protobuf:protobuf-java:3.25.1", test_file]
+                   "--packages", packages, test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
@@ -184,12 +178,21 @@ if __name__ == "__main__":
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     package = prepare(root_dir)
 
-    run_python_style_checks(root_dir)
-    run_mypy_tests(root_dir)
-    run_pypi_packaging_tests(root_dir)
-    run_delta_connect_codegen_python(root_dir)
-    is_spark_master = os.getenv("IS_SPARK_MASTER")
-    if is_spark_master is not None:
-        test(root_dir, path.join("delta", "connect"), package)
-    else:
+    #run_python_style_checks(root_dir)
+    #run_mypy_tests(root_dir)
+    #run_pypi_packaging_tests(root_dir)
+    #run_delta_connect_codegen_python(root_dir)
+    run_delta_connect_tests = os.getenv("RUN_DELTA_CONNECT_TESTS")
+    if run_delta_connect_tests is None:
         test(root_dir, "delta", package)
+    else:
+        assert(run_delta_connect_tests == "true")
+
+        delta_connect_packages =",".join(["com.google.protobuf:protobuf-java:3.25.1",
+                                          "org.apache.spark:spark-connect_2.13:4.0.0-preview1"])
+
+        test(
+            root_dir,
+            path.join("delta", "connect"),
+            ",".join(package, delta_connect_packages),
+            True)

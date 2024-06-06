@@ -25,7 +25,7 @@ import argparse
 # Define groups of subprojects that can be tested separately from other groups.
 # As of now, we have only defined project groups in the SBT build, so these must match
 # the group names defined in build.sbt.
-valid_project_groups = ["spark", "kernel", "connectServer"]
+valid_project_groups = ["spark", "kernel"]
 
 
 def get_args():
@@ -54,11 +54,8 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
 
     test_cmd = "test"
 
-    if test_group != "connectServer":
-        # if test group is specified, then run tests only on that test group
-        test_cmd = "{}Group/test".format(test_group)
-    else:
-        test_cmd = f"{test_group}/test"
+    # if test group is specified, then run tests only on that test group
+    test_cmd = "{}Group/test".format(test_group)
 
     if coverage:
         cmd += ["coverage"]
@@ -225,10 +222,11 @@ if __name__ == "__main__":
         run_tests_in_docker(test_env_image_tag, args.group)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        # run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
+        if args.group is not None:
+            run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
 
         # Python tests are run only when spark group of projects are being tested.
-        is_testing_spark_group = args.group is None or args.group == "spark" or args.group == "connectServer"
+        is_testing_spark_group = args.group is None or args.group == "spark"
 
         if is_testing_spark_group:
             run_python_tests(root_dir)
