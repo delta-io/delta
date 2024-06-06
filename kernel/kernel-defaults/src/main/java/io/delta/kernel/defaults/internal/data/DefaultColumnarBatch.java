@@ -110,6 +110,19 @@ public class DefaultColumnarBatch
     }
 
     @Override
+    public ColumnarBatch withReplacedColumnVector(int ordinal, StructField newColumnSchema,
+                                                   ColumnVector newVector) {
+        ArrayList<StructField> newStructFields = new ArrayList<>(schema.fields());
+        newStructFields.set(ordinal, newColumnSchema);
+        StructType newSchema = new StructType(newStructFields);
+
+        ArrayList<ColumnVector> newColumnVectors = new ArrayList<>(columnVectors);
+        newColumnVectors.set(ordinal, newVector);
+        return new DefaultColumnarBatch(
+            size, newSchema, newColumnVectors.toArray(new ColumnVector[0]));
+    }
+
+    @Override
     public int getSize() {
         return size;
     }

@@ -40,7 +40,7 @@ public class VariantUtils {
 
             ExpressionEvaluator evaluator = expressionHandler.getEvaluator(
                 // Field here is variant type if its actually a variant.
-                // TODO: probably better to pass in the schema as an argument
+                // TODO: probably better to pass in the schema as an expression argument
                 // so the schema is enforced at the expression level. Need to pass in a literal
                 // schema
                 new StructType().add(field),
@@ -51,11 +51,8 @@ public class VariantUtils {
                 VariantType.VARIANT
             );
 
-            // TODO: don't need to pass in the entire batch.
             ColumnVector variantCol = evaluator.eval(dataBatch);
-            // TODO: make a more efficient way to do this.
-            dataBatch =
-                dataBatch.withDeletedColumnAt(i).withNewColumn(i, field, variantCol);
+            dataBatch = dataBatch.withReplacedColumnVector(i, field, variantCol);
         }
         return dataBatch;
     }

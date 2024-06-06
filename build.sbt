@@ -153,7 +153,7 @@ lazy val commonSettings = Seq(
     2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
        issue above.
  */
-def crossSparkProjectSettings(): Seq[Setting[_]] = getSparkVersion() match {
+def crossSparkUniDocSettings(): Seq[Setting[_]] = getSparkVersion() match {
   case LATEST_RELEASED_SPARK_VERSION => Seq(
     // Java-/Scala-/Uni-Doc Settings
     scalacOptions ++= Seq(
@@ -248,6 +248,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     name := "delta-connect-common",
     commonSettings,
     crossSparkSettings(),
+    crossSparkUniDocSettings(),
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
@@ -307,6 +308,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
       emptyValue = ()
     ).value,
     crossSparkSettings(),
+    crossSparkUniDocSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
@@ -334,7 +336,7 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
-    crossDeltaSparkProjectSettings(),
+    crossSparkUniDocSettings(),
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
