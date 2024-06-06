@@ -191,9 +191,9 @@ if __name__ == "__main__":
     else:
         assert(run_delta_connect_tests == "true")
 
-        delta_connect_packages = [# TODO: In the future, find a way to get these
-                                  # packages locally instead of downloading from Maven.
-                                  "com.google.protobuf:protobuf-java:3.25.1",
+        # TODO: In the future, find a way to get these
+        # packages locally instead of downloading from Maven.
+        delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
                                   "org.apache.spark:spark-connect_2.13:4.0.0-preview1",
                                   get_local_package("delta-connect-server")]
 
