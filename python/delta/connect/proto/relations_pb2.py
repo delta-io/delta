@@ -27,7 +27,7 @@ from google.protobuf import symbol_database as _symbol_database
 _sym_db = _symbol_database.Default()
 
 
-from delta.connect import base_pb2 as delta_dot_connect_dot_base__pb2
+from delta.connect.proto import base_pb2 as delta_dot_connect_dot_base__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
