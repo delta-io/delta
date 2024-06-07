@@ -785,18 +785,7 @@ trait ClusteredTableDDLSuiteBase
   test("validate RESTORE on clustered table") {
     val tableIdentifier = TableIdentifier(testTable)
     // Scenario 1: restore clustered table to unclustered version.
-    withTable(testTable) {
-      sql(s"CREATE TABLE $testTable (a INT, b STRING) USING delta")
-      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
-      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
-
-      sql(s"ALTER TABLE $testTable CLUSTER BY (a)")
-      verifyClusteringColumns(tableIdentifier, "a")
-
-      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
-      verifyClusteringColumns(tableIdentifier, "")
-    }
+    // Skipped because we don't support in-place migration from unclustered to clustered tables.
 
     // Scenario 2: restore clustered table to previous clustering columns.
     withClusteredTable(testTable, "a INT, b STRING", "a") {
