@@ -71,7 +71,7 @@ Make sure you are using Java 17!
 
 ```bash
 cs launch --jvm zulu:17.0.11 --scala 2.13.13 -r \
-m2Local com.lihaoyi:::ammonite:3.0.0-M2 org.apache.spark::spark-connect-client-jvm:4.0.0-preview1 io.delta:delta-connect-client_2.13:4.0.0-preview1 io.delta:delta-connect-common_2.13:4.0.0-preview1 org.tpolecat::typename::1.1.0 com.google.protobuf:protobuf-java:3.25.1 \
+m2Local com.lihaoyi:::ammonite:3.0.0-M2 org.apache.spark::spark-connect-client-jvm:4.0.0-preview1 io.delta:delta-connect-client_2.13:4.0.0-preview1 io.delta:delta-connect-common_2.13:4.0.0-preview1 com.google.protobuf:protobuf-java:3.25.1 \
 --java-opt --add-opens=java.base/java.nio=ALL-UNNAMED \
 -M org.apache.spark.sql.application.ConnectRepl
 ```
