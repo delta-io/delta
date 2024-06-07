@@ -1,10 +1,10 @@
 ---
-description: Learn about Delta Connect - Spark Connect in Delta.
+description: Learn about Delta Connect - Spark Connect Support in Delta.
 ---
 
-# Delta Connect (or Spark Connect in Delta)
+# Delta Connect (or Spark Connect Support in Delta)
 
-.. note:: This feature is available in preview in <Delta> 4.0 and above.
+.. note:: This feature is available in preview in <Delta> 4.0.
 
 <Delta> Connect adds [Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html) support to Scala and Python APIs of <Delta> Lake for Apache Spark. Spark Connect is a new project released in Apache Spark 4.0 that adds a decoupled client-server infrastructure which allows remote connectivity from Spark from everywhere. <Delta> Connect makes the `DeltaTable` interfaces compatible with the new Spark Connect protocol.
 
