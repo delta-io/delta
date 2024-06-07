@@ -16,20 +16,26 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.actions.{Action, DomainMetadata, Protocol}
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
-object DomainMetadataUtils extends DeltaLogging {
+/**
+ * Domain metadata utility functions.
+ */
+trait DomainMetadataUtilsBase extends DeltaLogging {
   // List of metadata domains that will be removed for the REPLACE TABLE operation.
-  private val METADATA_DOMAINS_TO_REMOVE_FOR_REPLACE_TABLE: Set[String] = Set(
-  )
+  protected val METADATA_DOMAINS_TO_REMOVE_FOR_REPLACE_TABLE: Set[String] = Set(
+    ClusteringMetadataDomain.domainName)
+
   // List of metadata domains that will be copied from the table we are restoring to.
-  private val METADATA_DOMAIN_TO_COPY_FOR_RESTORE_TABLE =
-    METADATA_DOMAINS_TO_REMOVE_FOR_REPLACE_TABLE
+  // Note that ClusteringMetadataDomain are recreated in handleDomainMetadataForRestoreTable
+  // instead of being blindly copied over.
+  protected val METADATA_DOMAIN_TO_COPY_FOR_RESTORE_TABLE: Set[String] = Set.empty
 
   // List of metadata domains that will be copied from the table on a CLONE operation.
-  private val METADATA_DOMAIN_TO_COPY_FOR_CLONE_TABLE: Set[String] = Set(
+  protected val METADATA_DOMAIN_TO_COPY_FOR_CLONE_TABLE: Set[String] = Set(
     ClusteringMetadataDomain.domainName)
 
   /**
@@ -91,15 +97,44 @@ object DomainMetadataUtils extends DeltaLogging {
 
   /**
    * Generates a new sequence of DomainMetadata to commits for RESTORE TABLE.
-   *  - Source (table to restore to) domains will be copied if they appear in the pre-defined
+   *  - Domains in the toSnapshot will be copied if they appear in the pre-defined
    *    "copy" list (e.g., table features require some specific domains to be copied).
-   *  - All other domains not in the list are "retained".
+   *  - All other domains not in the list are dropped from the "toSnapshot".
+   *
+   * For clustering metadata domain, it overwrites the existing domain metadata in the
+   * fromSnapshot with the following clustering columns.
+   * 1. If toSnapshot is not a clustered table or missing domain metadata, use empty clustering
+   *    columns.
+   * 2. If toSnapshot is a clustered table, use the clustering columns from toSnapshot.
+   *
+   * @param toSnapshot    The snapshot being restored to, which is referred as "source" table.
+   * @param fromSnapshot  The snapshot being restored from, which is the current state.
    */
   def handleDomainMetadataForRestoreTable(
-      sourceDomainMetadatas: Seq[DomainMetadata]): Seq[DomainMetadata] = {
-    sourceDomainMetadatas.filter { m =>
+      toSnapshot: Snapshot,
+      fromSnapshot: Snapshot): Seq[DomainMetadata] = {
+    val filteredDomainMetadata = toSnapshot.domainMetadata.filter { m =>
       METADATA_DOMAIN_TO_COPY_FOR_RESTORE_TABLE.contains(m.domain)
     }
+    val clusteringColumnsToRestore = ClusteredTableUtils.getClusteringColumnsOptional(toSnapshot)
+
+    val isRestoringToClusteredTable =
+      ClusteredTableUtils.isSupported(toSnapshot.protocol) && clusteringColumnsToRestore.nonEmpty
+    val clusteringColumns = if (isRestoringToClusteredTable) {
+      // We overwrite the clustering columns in the fromSnapshot with the clustering columns
+      // in the toSnapshot.
+      clusteringColumnsToRestore.get
+    } else {
+      // toSnapshot is not a clustered table or missing domain metadata, so we write domain
+      // metadata with empty clustering columns.
+      Seq.empty
+    }
+
+    val matchingMetadataDomain =
+      ClusteredTableUtils.getMatchingMetadataDomain(
+        clusteringColumns,
+        fromSnapshot.domainMetadata)
+    filteredDomainMetadata ++ matchingMetadataDomain.clusteringDomainOpt
   }
 
   /**
@@ -112,3 +147,5 @@ object DomainMetadataUtils extends DeltaLogging {
     }
   }
 }
+
+object DomainMetadataUtils extends DomainMetadataUtilsBase
