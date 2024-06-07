@@ -31,9 +31,7 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -140,6 +138,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         case ">=":
         case "<":
         case "<=":
+        case "IS NOT DISTINCT FROM":
           return new ExpressionTransformResult(
               transformBinaryComparator(predicate), BooleanType.BOOLEAN);
         default:
@@ -452,6 +451,11 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               argResults.leftResult,
               argResults.rightResult,
               (compareResult) -> (compareResult <= 0));
+        case "IS NOT DISTINCT FROM":
+          return nullSafeComparatorVector(
+              argResults.leftResult,
+              argResults.rightResult,
+              (compareResult) -> (compareResult == 0));
         default:
           // We should never reach this based on the ExpressionVisitor
           throw new IllegalStateException(
