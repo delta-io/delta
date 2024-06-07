@@ -57,6 +57,8 @@ deltaTable.update(
 
 ## How to use the Scala Spark Connect Client with Delta
 
+.. note:: These set of steps are going to be simplified with final Spark 4.0 and Delta 4.0
+
 Make sure you are using Java 17!
 
 1. `export SPARK_REMOTE="sc://localhost:15002"`
