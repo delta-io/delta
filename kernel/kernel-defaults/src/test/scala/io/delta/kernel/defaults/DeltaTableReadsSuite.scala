@@ -184,6 +184,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test(s"end to end: reading decimal-various-scale-precision") {
+    val tablePath = goldenTablePath("decimal-various-scale-precision")
+    val expResults = spark.sql(s"SELECT * FROM delta.`$tablePath`")
+      .collect()
+      .map(TestRow(_))
+
+    checkTable(
+      path = goldenTablePath("decimal-various-scale-precision"),
+      expectedAnswer = expResults
+    )
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Table/Snapshot tests
   //////////////////////////////////////////////////////////////////////////////////
