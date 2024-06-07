@@ -197,8 +197,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   private def metadataToMap[T <: Map[_, _]](metadata: SparkMetadata)(implicit m: Manifest[T]): T = {
     implicit val formats: DefaultFormats.type = DefaultFormats
-    val keyValuePairs = parse(metadata.json).extract[T]
-    keyValuePairs
+    parse(metadata.json).extract[T]
   }
 
   def hasPhysicalName(field: StructField): Boolean =
