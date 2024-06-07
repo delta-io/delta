@@ -6,47 +6,16 @@ description: Learn about Delta Connect - Spark Connect Support in Delta.
 
 .. note:: This feature is available in preview in <Delta> 4.0.
 
-<Delta> Connect adds [Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html) support to Scala and Python APIs of <Delta> Lake for Apache Spark. Spark Connect is a new project released in Apache Spark 4.0 that adds a decoupled client-server infrastructure which allows remote connectivity from Spark from everywhere. <Delta> Connect makes the `DeltaTable` interfaces compatible with the new Spark Connect protocol.
-
+Delta Connect adds [Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html) support to Delta Lake for Apache Spark. Spark Connect is a new initiative that adds a decoupled client-server infrastructure which allows remote connectivity from Spark from everywhere. Delta Connect allows all Delta Lake operations to work in your application running as a client connected to the Spark server.
 ## Motivation
 
-<Delta> Connect is expected to bring the same benefits as Spark Connect:
+Delta Connect is expected to bring the same benefits as Spark Connect:
 
 1. Easier upgrading to more recent versions of Spark and <Delta>, as the client interface is completely decoupled from the server.
 2. Simpler integration of Spark and <Delta> with developer tooling. IDEs no longer have to integrate with the full Spark and <Delta> implementation, and instead can integrate with a thin-client.
 3. Support for languages other than Java/Scala and Python. Clients "merely" have to generate Protocol Buffers and therefore become simpler to implement.
 4. Spark and <Delta> will become more stable, as user code is no longer running in the same JVM as Spark's driver.
 5. Remote connectivity. Code can run anywhere now, as there is a gRPC layer between the user interface and the driver.
-
-## Supported Delta Connect operations
-
-The feature introduces a limited set of supported operations in <Delta> 4.0 preview and expands it in <Delta> 4.0 and above.
-
-.. csv-table::
-:header: "Supported operations - Delta 4.0 preview", "Supported operations - Delta 4.0 release"
-
-"`forPath`","`forPath`"
-"`forName`","`forName`"
-"`alias`","`alias`"
-"`toDF`","`toDF`"
-,"`generate`"
-,"`vacuum`"
-,"`delete`"
-,"`update`"
-,"`merge`"
-,"`history`"
-,"`detail`"
-,"`convertToDelta`"
-,"`create`"
-,"`createIfNotExists`"
-,"`replace`"
-,"`createOrReplace`"
-,"`isDeltaTable`"
-,"`upgradeTableProtocol`"
-,"`restoreToVersion`"
-,"`restoreToTimestamp`"
-,"`optimize`"
-,"`clone`"
 
 ## How to start the Spark Server with Delta
 
@@ -119,3 +88,30 @@ set = Map("id" -> expr("id + 100")))
 ```
 
 In the future, when [spark-connect-repl](https://spark.apache.org/docs/4.0.0-preview1/spark-connect-overview.html#use-spark-connect-for-interactive-analysis) moves to Spark 4.0 and above, we will use `spark-connect-repl` instead of `cs`.
+
+## Preview Limitations
+
+The feature introduces a limited set of supported operations in <Delta> 4.0 preview and expands it in <Delta> 4.0 and above.
+
+.. csv-table::
+:header: "Supported operations - Delta 4.0 preview", "Supported operations - Delta 4.0 release"
+
+"`forPath`","`forPath`"
+"`forName`","`forName`"
+,"`alias`"
+,"`toDF`"
+,"`generate`"
+,"`vacuum`"
+,"`delete`"
+,"`update`"
+,"`merge`"
+,"`history`"
+,"`detail`"
+,"`convertToDelta`"
+,"`create`"
+,"`replace`"
+,"`isDeltaTable`"
+,"`upgradeTableProtocol`"
+,"`restore`"
+,"`optimize`"
+,"`clone`"
