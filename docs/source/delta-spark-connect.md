@@ -1,8 +1,8 @@
 ---
-description: Learn about Spark Connect in Delta.
+description: Learn about Delta Connect - Spark Connect in Delta.
 ---
 
-# Delta Connect (or Delta over Spark Connect)
+# Delta Connect (or Spark Connect in Delta)
 
 .. note:: This feature is available in preview in <Delta> 4.0 and above.
 
