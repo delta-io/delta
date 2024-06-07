@@ -87,10 +87,14 @@ else:
 # By table name
 spark.range(5).write.format("delta").saveAsTable(tableName)
 assert_dataframe_equals(DeltaTable.forName(spark, tableName).toDF(), spark.range(5))
+assert_dataframe_equals(spark.read.format("delta").table(tableName), spark.range(5))
+assert_dataframe_equals(spark.sql(f"SELECT * FROM {tableName}"), spark.range(5))
 
 # By table path
 spark.range(10).write.format("delta").save(filePath)
 assert_dataframe_equals(DeltaTable.forPath(spark, filePath).toDF(), spark.range(10))
+assert_dataframe_equals(spark.read.format("delta").load(filePath), spark.range(10))
+assert_dataframe_equals(spark.sql(f"SELECT * FROM delta.`{filePath}`"), spark.range(10))
 
 # ---------------------------------- Clean up ----------------------------------------
 cleanup(spark)
