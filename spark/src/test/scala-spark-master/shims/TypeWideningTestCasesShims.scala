@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.typewidening
 
 import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types._
@@ -25,7 +25,7 @@ import org.apache.spark.sql.types._
  * accordingly for delta on Spark 4.0.
  */
 trait TypeWideningTestCasesShims {
-  self: DeltaTypeWideningTestCases with SQLTestUtils =>
+  self: TypeWideningTestCases with SQLTestUtils =>
 
   import testImplicits._
 
