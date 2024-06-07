@@ -34,6 +34,7 @@ object Variant {
 
     // Create and insert variant values.
     try {
+      spark.sql(s"DROP TABLE IF EXISTS $tableName")
       spark.sql(s"CREATE TABLE $tableName(v VARIANT) USING DELTA")
       spark.sql(s"INSERT INTO $tableName VALUES (parse_json('1'))")
       spark.sql(s"""INSERT INTO $tableName SELECT parse_json(format_string('{\"k\": %s}', id))
@@ -58,6 +59,7 @@ object Variant {
     
     // Convert Parquet table with variant values to Delta.
     try {
+      spark.sql(s"DROP TABLE IF EXISTS $tableName")
       spark.sql("""CREATE TABLE tbl USING PARQUET AS (
         SELECT parse_json(format_string('%s', id)) v FROM range(0, 10))""")
       spark.sql(s"CONVERT TO DELTA $tableName")
@@ -73,6 +75,7 @@ object Variant {
 
     // DeltaTable create with variant Scala API.
     try {
+      spark.sql(s"DROP TABLE IF EXISTS $tableName")
       val table = io.delta.tables.DeltaTable.create()
         .tableName(tableName)
         .addColumn("v", "VARIANT")
@@ -97,6 +100,7 @@ object Variant {
       assert(insertedVals == expected)
     } finally {
       spark.sql(s"DROP TABLE IF EXISTS $tableName")
+      spark.stop()
     }
   }
 }
