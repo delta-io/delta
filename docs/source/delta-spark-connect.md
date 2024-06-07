@@ -8,7 +8,7 @@ description: Learn about Delta Connect - Spark Connect in Delta.
 
 <Delta> Connect adds [Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html) support to Scala and Python APIs of <Delta> Lake for Apache Spark. Spark Connect is a new project released in Apache Spark 4.0 that adds a decoupled client-server infrastructure which allows remote connectivity from Spark from everywhere. <Delta> Connect makes the `DeltaTable` interfaces compatible with the new Spark Connect protocol.
 
-# Motivation
+## Motivation
 
 <Delta> Connect is expected to bring the same benefits as Spark Connect:
 
@@ -18,7 +18,7 @@ description: Learn about Delta Connect - Spark Connect in Delta.
 4. Spark and <Delta> will become more stable, as user code is no longer running in the same JVM as Spark's driver.
 5. Remote connectivity. Code can run anywhere now, as there is a gRPC layer between the user interface and the driver.
 
-# Supported Delta Connect operations
+## Supported Delta Connect operations
 
 The feature introduces a limited set of supported operations in <Delta> 4.0 preview and expands it in <Delta> 4.0 and above.
 
@@ -48,7 +48,7 @@ The feature introduces a limited set of supported operations in <Delta> 4.0 prev
 ,"`optimize`"
 ,"`clone`"
 
-# How to start the Delta Connect Server
+## How to start the Delta Connect Server
 
 1. Download `spark-4.0.0-preview1-bin-hadoop3.tgz` from [Spark 4.0.0 First Preview](https://archive.apache.org/dist/spark/spark-4.0.0-preview1).
 
@@ -63,7 +63,7 @@ sbin/start-connect-server.sh \
   --conf "spark.connect.extensions.command.classes=org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
 ```
 
-# How to use the Delta Connect Python Client
+## How to use the Delta Connect Python Client
 
 The <Delta> Connect Python client is included in the same PyPi package as <Delta> Spark.
 
@@ -86,7 +86,7 @@ deltaTable.update(
   set = Map("id" -> expr("id + 100")))
 ```
 
-# How to use the Delta Connect Scala Client
+## How to use the Delta Connect Scala Client
 
 Make sure you are using Java 17!
 
