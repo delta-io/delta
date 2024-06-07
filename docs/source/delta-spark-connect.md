@@ -94,7 +94,9 @@ Make sure you are using Java 17!
 
 2. `export _JAVA_OPTIONS="--add-opens=java.base/ALL-UNNAMED"`
 
-3. Start the Spark Connect client version 4.0.0 First Preview:
+3. Download and install the [Coursier CLI](https://get-coursier.io/docs/cli-installation)
+
+4. Start the Spark Connect client version 4.0.0 First Preview:
 
 ```bash
 cs launch --jvm zulu:17.0.11 --scala 2.13.13 -r \
@@ -115,3 +117,5 @@ deltaTable.update(
 condition = expr("id % 2 == 0"),
 set = Map("id" -> expr("id + 100")))
 ```
+
+In the future, when [spark-connect-repl](https://spark.apache.org/docs/4.0.0-preview1/spark-connect-overview.html#use-spark-connect-for-interactive-analysis) moves to Spark 4.0 and above, we will use `spark-connect-repl` instead of `cs`.
