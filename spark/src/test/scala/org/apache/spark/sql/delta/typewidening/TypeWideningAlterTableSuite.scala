@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.typewidening
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -149,27 +150,42 @@ trait TypeWideningAlterTableTests
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))
   }
 
+  def withTimestampNTZDisabled(f: => Unit): Unit = {
+    val timestampNTZKey = TableFeatureProtocolUtils.defaultPropertyKey(TimestampNTZTableFeature)
+    conf.unsetConf(timestampNTZKey)
+    if (!conf.contains(timestampNTZKey)) return f
+
+    val timestampNTZSupported = conf.getConfString(timestampNTZKey)
+    conf.unsetConf(timestampNTZKey)
+    try {
+      f
+    } finally {
+      conf.setConfString(timestampNTZKey, timestampNTZSupported)
+    }
+  }
+
   testSparkMasterOnly(
     "widening Date -> TimestampNTZ rejected when TimestampNTZ feature isn't supported") {
-    sql(s"CREATE TABLE delta.`$tempPath` (a date) USING DELTA")
-    sql(s"ALTER TABLE delta.`$tempPath` DROP FEATURE ${TimestampNTZTableFeature.name}")
-    val currentProtocol = deltaLog.unsafeVolatileSnapshot.protocol
-    val currentFeatures = currentProtocol.implicitlyAndExplicitlySupportedFeatures
-      .map(_.name)
-      .toSeq
-      .sorted
-      .mkString(", ")
+    withTimestampNTZDisabled {
+      sql(s"CREATE TABLE delta.`$tempPath` (a date) USING DELTA")
+      val currentProtocol = deltaLog.unsafeVolatileSnapshot.protocol
+      val currentFeatures = currentProtocol.implicitlyAndExplicitlySupportedFeatures
+        .map(_.name)
+        .toSeq
+        .sorted
+        .mkString(", ")
 
-    checkError(
-      exception = intercept[DeltaTableFeatureException] {
-         sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE TIMESTAMP_NTZ")
-      },
-      errorClass = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
-      parameters = Map(
+      checkError(
+        exception = intercept[DeltaTableFeatureException] {
+          sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE TIMESTAMP_NTZ")
+        },
+        errorClass = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
+        parameters = Map(
           "unsupportedFeatures" -> "timestampNtz",
           "supportedFeatures" -> currentFeatures
+        )
       )
-    )
+    }
   }
 
   test("type widening type change metrics") {
