@@ -14,7 +14,7 @@ description: Learn about Delta Connect - Spark Connect in Delta.
 
 1. Easier upgrading to more recent versions of Spark and <Delta>, as the client interface is completely decoupled from the server.
 2. Simpler integration of Spark and <Delta> with developer tooling. IDEs no longer have to integrate with the full Spark and <Delta> implementation, and instead can integrate with a thin-client.
-3. Support for languages other than <Java>/<Scala> and <Python>. Clients "merely" have to generate Protocol Buffers and therefore become simpler to implement.
+3. Support for languages other than Java/Scala and Python. Clients "merely" have to generate Protocol Buffers and therefore become simpler to implement.
 4. Spark and <Delta> will become more stable, as user code is no longer running in the same JVM as Spark's driver.
 5. Remote connectivity. Code can run anywhere now, as there is a gRPC layer between the user interface and the driver.
 
