@@ -48,7 +48,7 @@ The feature introduces a limited set of supported operations in <Delta> 4.0 prev
 ,"`optimize`"
 ,"`clone`"
 
-## How to start the Delta Connect Server
+## How to start the Spark Server with Delta
 
 1. Download `spark-4.0.0-preview1-bin-hadoop3.tgz` from [Spark 4.0.0 First Preview](https://archive.apache.org/dist/spark/spark-4.0.0-preview1).
 
@@ -63,7 +63,7 @@ sbin/start-connect-server.sh \
   --conf "spark.connect.extensions.command.classes=org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
 ```
 
-## How to use the Delta Connect Python Client
+## How to use the Python Spark Connect Client with Delta
 
 The <Delta> Connect Python client is included in the same PyPi package as <Delta> Spark.
 
@@ -86,7 +86,7 @@ deltaTable.update(
   set = Map("id" -> expr("id + 100")))
 ```
 
-## How to use the Delta Connect Scala Client
+## How to use the Scala Spark Connect Client with Delta
 
 Make sure you are using Java 17!
 
