@@ -32,7 +32,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 
 case class MatchingMetadataDomain(
-    clusteringDomain: Option[DomainMetadata]
+    clusteringDomainOpt: Option[DomainMetadata]
 )
 
 /**
@@ -153,8 +153,8 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
       Seq(createDomainMetadata(clusteringColumns))
     }.getOrElse {
       getMatchingMetadataDomain(
-        Seq.empty,
-        txn.snapshot.domainMetadata).clusteringDomain.toSeq
+        clusteringColumns = Seq.empty,
+        txn.snapshot.domainMetadata).clusteringDomainOpt.toSeq
     }
   }
 

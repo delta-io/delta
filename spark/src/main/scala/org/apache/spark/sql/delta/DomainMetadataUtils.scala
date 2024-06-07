@@ -134,7 +134,7 @@ trait DomainMetadataUtilsBase extends DeltaLogging {
       ClusteredTableUtils.getMatchingMetadataDomain(
         clusteringColumns,
         fromSnapshot.domainMetadata)
-    filteredDomainMetadata ++ matchingMetadataDomain.clusteringDomain
+    filteredDomainMetadata ++ matchingMetadataDomain.clusteringDomainOpt
   }
 
   /**
