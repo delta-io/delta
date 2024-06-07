@@ -152,7 +152,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
         } else {
           assertClusterByNotExist()
         }
-      case "WRITE" =>
+      case "WRITE" | "RESTORE" =>
+        // These are known operations from our tests that don't have clusterBy.
         doAssert(!lastOperationParameters.contains(CLUSTERING_PARAMETER_KEY))
       case _ =>
         // Other operations are not tested yet. If the test fails here, please check the expected
