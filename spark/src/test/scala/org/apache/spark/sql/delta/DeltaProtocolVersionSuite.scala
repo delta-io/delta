@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
-import org.apache.spark.sql.delta.managedcommit._
+import org.apache.spark.sql.delta.coordinatedcommits._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -3701,11 +3701,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   test("Removing VacuumProtocolCheckTableFeature should fail when dependent feature " +
-      "Managed Commit is enabled") {
+      "Coordinated Commits is enabled") {
     testRemoveVacuumProtocolCheckTableFeature(
       enableFeatureInitially = true,
       additionalTableProperties = Seq(
-        (s"$FEATURE_PROP_PREFIX${ManagedCommitTableFeature.name}", "supported")),
+        (s"$FEATURE_PROP_PREFIX${CoordinatedCommitTableFeature.name}", "supported")),
       downgradeFailsWithException = Some("DELTA_FEATURE_DROP_DEPENDENT_FEATURE"),
       featureExpectedAtTheEnd = true)
   }
@@ -3891,94 +3891,94 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  // ---- Managed Commit Drop Feature Tests ----
-  private def setUpManagedCommitTable(dir: File, mcBuilder: CommitOwnerBuilder): Unit = {
-    CommitOwnerProvider.clearNonDefaultBuilders()
-    CommitOwnerProvider.registerBuilder(mcBuilder)
+  // ---- Coordinated Commits Drop Feature Tests ----
+  private def setUpCoordinatedCommitTable(dir: File, mcBuilder: CommitCoordinatorBuilder): Unit = {
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
+    CommitCoordinatorProvider.registerBuilder(mcBuilder)
     val tablePath = dir.getAbsolutePath
     val log = DeltaLog.forTable(spark, tablePath)
     val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
-    val commitOwnerConf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> mcBuilder.getName)
-    val newMetadata = Metadata().copy(configuration = commitOwnerConf)
+    val commitCoordinatorConf = Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> mcBuilder.getName)
+    val newMetadata = Metadata().copy(configuration = commitCoordinatorConf)
     log.startTransaction().commitManually(newMetadata)
     assert(log.unsafeVolatileSnapshot.version === 0)
-    assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName === Some(mcBuilder.getName))
-    assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
-    assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
+    assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName === Some(mcBuilder.getName))
+    assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+    assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
     // upgrade commit always filesystem based
     assert(fs.exists(FileNames.unsafeDeltaFile(log.logPath, 0)))
 
-    // Do a couple of commits on the managed-commit table
+    // Do a couple of commits on the coordinated-commits table
     (1 to 2).foreach { version =>
       log.startTransaction()
         .commitManually(DeltaTestUtils.createTestAddFile(s"$version"))
       assert(log.unsafeVolatileSnapshot.version === version)
-      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
-      assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName.nonEmpty)
-      assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerConf === Map.empty)
-      assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorConf === Map.empty)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
     }
   }
 
-  private def validateManagedCommitDropLogs(
+  private def validateCoordinatedCommitDropLogs(
       usageLogs: Seq[UsageRecord],
       expectTablePropertiesPresent: Boolean,
       expectUnbackfilledCommitsPresent: Boolean,
       exceptionMessageOpt: Option[String] = None): Unit = {
     val dropFeatureBlob = usageLogs
-      .find(_.tags.get("opType").contains("delta.managedCommitFeatureRemovalMetrics"))
-      .getOrElse(fail("Expected a log for managedCommitFeatureRemovalMetrics"))
+      .find(_.tags.get("opType").contains("delta.coordinatedCommitsFeatureRemovalMetrics"))
+      .getOrElse(fail("Expected a log for coordinatedCommitsFeatureRemovalMetrics"))
     val blob = JsonUtils.fromJson[Map[String, String]](dropFeatureBlob.blob)
     assert(blob.contains("downgradeTimeMs"))
     val expectTraceRemovalNeeded = expectTablePropertiesPresent || expectUnbackfilledCommitsPresent
     assert(blob.get("traceRemovalNeeded").contains(expectTraceRemovalNeeded.toString))
     Seq(
-        DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key,
-        DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key).foreach { prop =>
+        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key,
+        DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key).foreach { prop =>
       assert(blob.get(prop).contains(expectTablePropertiesPresent.toString))
     }
-    // MANAGED_COMMIT_OWNER_CONF is not used by "in-memory" commit owner.
+    // COORDINATED_COMMITS_COORDINATOR_CONF is not used by "in-memory" commit coordinator.
     assert(blob
       .get("postDisablementUnbackfilledCommitsPresent")
       .contains(expectUnbackfilledCommitsPresent.toString))
     assert(
-      blob.get(DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key).contains("false"))
+      blob.get(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key).contains("false"))
     assert(blob.get("traceRemovalSuccess").contains(exceptionMessageOpt.isEmpty.toString))
     exceptionMessageOpt.foreach { exceptionMessage =>
       assert(blob.get("traceRemovalException").contains(exceptionMessage))
     }
   }
 
-  test("basic managed commit feature drop") {
+  test("basic coordinated commits feature drop") {
     withTempDir { dir =>
-      val mcBuilder = TrackingInMemoryCommitOwnerBuilder(batchSize = 1000)
-      setUpManagedCommitTable(dir, mcBuilder)
+      val mcBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1000)
+      setUpCoordinatedCommitTable(dir, mcBuilder)
       val log = DeltaLog.forTable(spark, dir)
       val usageLogs = Log4jUsageLogger.track {
         AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, log.dataPath),
-          ManagedCommitTableFeature.name)
+          CoordinatedCommitTableFeature.name)
           .run(spark)
       }
       val snapshot = log.update()
       assert(
-        !ManagedCommitUtils.TABLE_PROPERTY_KEYS.exists(snapshot.metadata.configuration.contains(_)))
-      assert(!snapshot.protocol.writerFeatures.exists(_.contains(ManagedCommitTableFeature.name)))
-      validateManagedCommitDropLogs(
+        !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(snapshot.metadata.configuration.contains(_)))
+      assert(!snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitTableFeature.name)))
+      validateCoordinatedCommitDropLogs(
         usageLogs, expectTablePropertiesPresent = true, expectUnbackfilledCommitsPresent = false)
     }
   }
 
-  test("backfill failure during managed commit feature drop") {
+  test("backfill failure during coordinated commits feature drop") {
     withTempDir { dir =>
       var shouldFailBackfill = true
       val alternatingFailureBackfillClient =
-        new TrackingCommitOwnerClient(new InMemoryCommitOwner(1000) {
+        new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(1000) {
           override def backfillToVersion(
             logStore: LogStore,
             hadoopConf: Configuration,
             logPath: Path,
-            managedCommitTableConf: Map[String, String],
+            coordinatedCommitsTableConf: Map[String, String],
             startVersion: Long,
             endVersionOpt: Option[Long]): Unit = {
             // Backfill fails on every other attempt.
@@ -3987,25 +3987,25 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               throw new IllegalStateException("backfill failed")
             } else {
               super.backfillToVersion(
-                logStore, hadoopConf, logPath, managedCommitTableConf, startVersion, endVersionOpt)
+                logStore, hadoopConf, logPath, coordinatedCommitsTableConf, startVersion, endVersionOpt)
             }
           }
         })
       val mcBuilder =
-        TrackingInMemoryCommitOwnerBuilder(100, Some(alternatingFailureBackfillClient))
-      setUpManagedCommitTable(dir, mcBuilder)
+        TrackingInMemoryCommitCoordinatorBuilder(100, Some(alternatingFailureBackfillClient))
+      setUpCoordinatedCommitTable(dir, mcBuilder)
       val log = DeltaLog.forTable(spark, dir)
       val usageLogs = Log4jUsageLogger.track {
         val e = intercept[IllegalStateException] {
           AlterTableDropFeatureDeltaCommand(
             DeltaTableV2(spark, log.dataPath),
-            ManagedCommitTableFeature.name)
+            CoordinatedCommitTableFeature.name)
             .run(spark)
         }
 
         assert(e.getMessage.contains("backfill failed"))
       }
-      validateManagedCommitDropLogs(
+      validateCoordinatedCommitDropLogs(
         usageLogs,
         expectTablePropertiesPresent = true,
         expectUnbackfilledCommitsPresent = false,
@@ -4014,20 +4014,20 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
         fs.exists(FileNames.unsafeDeltaFile(log.logPath, v))
       }
-      // Backfill of the commit which disables managed commits failed.
+      // Backfill of the commit which disables coordinated commits failed.
       assert(!backfilledCommitExists(3))
-      // The commit owner still tracks the commit that disables it.
-      val commitsFromCommitOwner =
-        log.snapshot.tableCommitOwnerClientOpt.get.getCommits(Some(3))
-      assert(commitsFromCommitOwner.getCommits.exists(_.getVersion == 3))
+      // The commit coordinator still tracks the commit that disables it.
+      val commitsFromCommitCoordinator =
+        log.snapshot.tableCommitCoordinatorClientOpt.get.getCommits(Some(3))
+      assert(commitsFromCommitCoordinator.getCommits.exists(_.getVersion == 3))
       // The next drop attempt will also trigger an explicit backfill.
       val usageLogs2 = Log4jUsageLogger.track {
         AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, log.dataPath),
-          ManagedCommitTableFeature.name)
+          CoordinatedCommitTableFeature.name)
           .run(spark)
       }
-      validateManagedCommitDropLogs(
+      validateCoordinatedCommitDropLogs(
         usageLogs2, expectTablePropertiesPresent = false, expectUnbackfilledCommitsPresent = true)
       val snapshot = log.update()
       assert(snapshot.version === 4)
@@ -4035,11 +4035,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // The protocol downgrade commit is performed through logstore directly.
       assert(backfilledCommitExists(4))
       assert(
-        !ManagedCommitUtils.TABLE_PROPERTY_KEYS.exists(snapshot.metadata.configuration.contains(_)))
-      assert(!snapshot.protocol.writerFeatures.exists(_.contains(ManagedCommitTableFeature.name)))
+        !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(snapshot.metadata.configuration.contains(_)))
+      assert(!snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitTableFeature.name)))
     }
   }
-  // ---- End Managed Commit Drop Feature Tests ----
+  // ---- End Coordinated Commits Drop Feature Tests ----
 
   // Create a table for testing that has an unsupported feature.
   private def withTestTableWithUnsupportedWriterFeature(

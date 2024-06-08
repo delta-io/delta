@@ -14,26 +14,26 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
-class ManagedCommitEnablementSuite
-  extends ManagedCommitBaseSuite
+class CoordinatedCommitEnablementSuite
+  extends CoordinatedCommitBaseSuite
     with DeltaSQLTestUtils
     with DeltaSQLCommandTest
-    with ManagedCommitTestUtils {
+    with CoordinatedCommitTestUtils {
 
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(3)
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(3)
 
   import testImplicits._
 
-  private def validateManagedCommitCompleteEnablement(
+  private def validateCoordinatedCommitCompleteEnablement(
       snapshot: Snapshot, expectEnabled: Boolean): Unit = {
-    assert(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(snapshot.metadata).isDefined
+    assert(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(snapshot.metadata).isDefined
       == expectEnabled)
-    Seq(ManagedCommitTableFeature, VacuumProtocolCheckTableFeature, InCommitTimestampTableFeature)
+    Seq(CoordinatedCommitTableFeature, VacuumProtocolCheckTableFeature, InCommitTimestampTableFeature)
       .foreach { feature =>
         assert(snapshot.protocol.writerFeatures.exists(_.contains(feature.name)) == expectEnabled)
       }
@@ -51,7 +51,7 @@ class ManagedCommitEnablementSuite
       val tablePath = tempDir.getAbsolutePath
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath)
       val log = DeltaLog.forTable(spark, tablePath)
-      validateManagedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
+      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
     }
   }
 
@@ -61,7 +61,7 @@ class ManagedCommitEnablementSuite
       val tablePath = tempDir.getAbsolutePath
       sql(s"CREATE TABLE delta.`$tablePath` (id LONG) USING delta")
       val log = DeltaLog.forTable(spark, tablePath)
-      validateManagedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
+      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
     }
   }
 
@@ -72,13 +72,13 @@ class ManagedCommitEnablementSuite
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath)
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath)
       val log = DeltaLog.forTable(spark, tablePath)
-      validateManagedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
+      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
     }
   }
   // ---- Tests END: Enablement at commit 0 ----
 
   // ---- Tests START: Enablement after commit 0 ----
-  testWithDefaultCommitOwnerUnset(
+  testWithDefaultCommitCoordinatorUnset(
     "enablement after commit 0: MC should enable ICT and VacuumProtocolCheck" +
       " --- update tblproperty") {
     withTempDir { tempDir =>
@@ -86,15 +86,15 @@ class ManagedCommitEnablementSuite
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 0
       Seq(1).toDF().write.format("delta").mode("append").save(tablePath) // commit 1
       val log = DeltaLog.forTable(spark, tablePath)
-      validateManagedCommitCompleteEnablement(log.snapshot, expectEnabled = false)
+      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = false)
       sql(s"ALTER TABLE delta.`$tablePath` SET " + // Enable MC
-        s"TBLPROPERTIES ('${DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key}' = 'tracking-in-memory')")
+        s"TBLPROPERTIES ('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory')")
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
-      validateManagedCommitCompleteEnablement(log.update(), expectEnabled = true)
+      validateCoordinatedCommitCompleteEnablement(log.update(), expectEnabled = true)
     }
   }
 
-  testWithDefaultCommitOwnerUnset(
+  testWithDefaultCommitCoordinatorUnset(
     "enablement after commit 0: MC should enable ICT and VacuumProtocolCheck" +
       " --- replace table") {
     withTempDir { tempDir =>
@@ -102,11 +102,11 @@ class ManagedCommitEnablementSuite
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 0
       Seq(1).toDF().write.format("delta").mode("append").save(tablePath) // commit 1
       val log = DeltaLog.forTable(spark, tablePath)
-      validateManagedCommitCompleteEnablement(log.snapshot, expectEnabled = false)
+      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = false)
       sql(s"REPLACE TABLE delta.`$tablePath` (value int) USING delta " + // Enable MC
-        s"TBLPROPERTIES ('${DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key}' = 'tracking-in-memory')")
+        s"TBLPROPERTIES ('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory')")
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
-      validateManagedCommitCompleteEnablement(log.update(), expectEnabled = true)
+      validateCoordinatedCommitCompleteEnablement(log.update(), expectEnabled = true)
     }
   }
   // ---- Tests END: Enablement after commit 0 ----

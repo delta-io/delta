@@ -37,7 +37,7 @@ object FileNames {
   /**
    * Returns the delta (json format) path for a given delta file.
    * WARNING: This API is unsafe and can resolve to incorrect paths if the table has
-   * Managed Commits.
+   * Coordinated Commits.
    * Use DeltaCommitFileProvider(snapshot).deltaFile instead to guarantee accurate paths.
    */
   def unsafeDeltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")

@@ -25,7 +25,7 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -49,7 +49,7 @@ class CheckpointsSuite
   with SharedSparkSession
   with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest
-  with ManagedCommitBaseSuite {
+  with CoordinatedCommitBaseSuite {
 
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
@@ -1063,15 +1063,15 @@ class FakeGCSFileSystemValidatingCommits extends FakeGCSFileSystemValidatingChec
   override protected def shouldValidateFilePattern(f: Path): Boolean = f.getName.contains(".json")
 }
 
-class CheckpointsWithManagedCommitBatch1Suite extends CheckpointsSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
+class CheckpointsWithCoordinatedCommitBatch1Suite extends CheckpointsSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class CheckpointsWithManagedCommitBatch2Suite extends CheckpointsSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(2)
+class CheckpointsWithCoordinatedCommitBatch2Suite extends CheckpointsSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class CheckpointsWithManagedCommitBatch100Suite extends CheckpointsSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(100)
+class CheckpointsWithCoordinatedCommitBatch100Suite extends CheckpointsSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
 

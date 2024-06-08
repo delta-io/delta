@@ -14,40 +14,40 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.hadoop.fs.Path
 
-abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClientImplSuiteBase {
+abstract class InMemoryCommitCoordinatorSuite(batchSize: Int) extends CommitCoordinatorClientImplSuiteBase {
 
-  override protected def createTableCommitOwnerClient(
-      deltaLog: DeltaLog): TableCommitOwnerClient = {
-    val cs = InMemoryCommitOwnerBuilder(batchSize).build(spark, Map.empty)
+  override protected def createTableCommitCoordinatorClient(
+      deltaLog: DeltaLog): TableCommitCoordinatorClient = {
+    val cs = InMemoryCommitCoordinatorBuilder(batchSize).build(spark, Map.empty)
     val conf = cs.registerTable(
       deltaLog.logPath,
       currentVersion = -1L,
       initMetadata,
       Protocol(1, 1))
-    TableCommitOwnerClient(cs, deltaLog, conf)
+    TableCommitCoordinatorClient(cs, deltaLog, conf)
   }
 
   override protected def registerBackfillOp(
-      tableCommitOwnerClient: TableCommitOwnerClient,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       deltaLog: DeltaLog,
       version: Long): Unit = {
-    val commitOwnerClient = tableCommitOwnerClient.commitOwnerClient
-    val inMemoryCS = commitOwnerClient.asInstanceOf[InMemoryCommitOwner]
+    val commitCoordinatorClient = tableCommitCoordinatorClient.commitCoordinatorClient
+    val inMemoryCS = commitCoordinatorClient.asInstanceOf[InMemoryCommitCoordinator]
     inMemoryCS.registerBackfill(deltaLog.logPath, version)
   }
 
   override protected def validateBackfillStrategy(
-      tableCommitOwnerClient: TableCommitOwnerClient,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       logPath: Path,
       version: Long): Unit = {
     val lastExpectedBackfilledVersion = (version - (version % batchSize)).toInt
-    val unbackfilledCommitVersionsAll = tableCommitOwnerClient
+    val unbackfilledCommitVersionsAll = tableCommitCoordinatorClient
       .getCommits().getCommits.map(_.getVersion)
     val expectedVersions = lastExpectedBackfilledVersion + 1 to version.toInt
 
@@ -69,26 +69,26 @@ abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClien
     assert(result.getLatestTableVersion == maxVersion)
   }
 
-  test("InMemoryCommitOwnerBuilder works as expected") {
-    val builder1 = InMemoryCommitOwnerBuilder(5)
+  test("InMemoryCommitCoordinatorBuilder works as expected") {
+    val builder1 = InMemoryCommitCoordinatorBuilder(5)
     val cs1 = builder1.build(spark, Map.empty)
-    assert(cs1.isInstanceOf[InMemoryCommitOwner])
-    assert(cs1.asInstanceOf[InMemoryCommitOwner].batchSize == 5)
+    assert(cs1.isInstanceOf[InMemoryCommitCoordinator])
+    assert(cs1.asInstanceOf[InMemoryCommitCoordinator].batchSize == 5)
 
     val cs1_again = builder1.build(spark, Map.empty)
-    assert(cs1_again.isInstanceOf[InMemoryCommitOwner])
+    assert(cs1_again.isInstanceOf[InMemoryCommitCoordinator])
     assert(cs1 == cs1_again)
 
-    val builder2 = InMemoryCommitOwnerBuilder(10)
+    val builder2 = InMemoryCommitCoordinatorBuilder(10)
     val cs2 = builder2.build(spark, Map.empty)
-    assert(cs2.isInstanceOf[InMemoryCommitOwner])
-    assert(cs2.asInstanceOf[InMemoryCommitOwner].batchSize == 10)
+    assert(cs2.isInstanceOf[InMemoryCommitCoordinator])
+    assert(cs2.asInstanceOf[InMemoryCommitCoordinator].batchSize == 10)
     assert(cs2 ne cs1)
 
-    val builder3 = InMemoryCommitOwnerBuilder(10)
+    val builder3 = InMemoryCommitCoordinatorBuilder(10)
     val cs3 = builder3.build(spark, Map.empty)
-    assert(cs3.isInstanceOf[InMemoryCommitOwner])
-    assert(cs3.asInstanceOf[InMemoryCommitOwner].batchSize == 10)
+    assert(cs3.isInstanceOf[InMemoryCommitCoordinator])
+    assert(cs3.asInstanceOf[InMemoryCommitCoordinator].batchSize == 10)
     assert(cs3 ne cs2)
   }
 
@@ -96,15 +96,15 @@ abstract class InMemoryCommitOwnerSuite(batchSize: Int) extends CommitOwnerClien
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
-      val tcs = createTableCommitOwnerClient(log)
+      val tcs = createTableCommitCoordinatorClient(log)
 
       // Anything other than version-0 or version-1 should be rejected as the first commit
-      // version-0 will be directly backfilled and won't be recorded in InMemoryCommitOwner.
-      // version-1 is what commit-owner is accepting.
+      // version-0 will be directly backfilled and won't be recorded in InMemoryCommitCoordinator.
+      // version-1 is what commit-coordinator is accepting.
       assertCommitFail(2, 1, retryable = false, commit(2, 0, tcs))
     }
   }
 }
 
-class InMemoryCommitOwner1Suite extends InMemoryCommitOwnerSuite(1)
-class InMemoryCommitOwner5Suite extends InMemoryCommitOwnerSuite(5)
+class InMemoryCommitCoordinator1Suite extends InMemoryCommitCoordinatorSuite(1)
+class InMemoryCommitCoordinator5Suite extends InMemoryCommitCoordinatorSuite(5)
