@@ -946,7 +946,8 @@ class CoordinatedCommitsSuite
             Some(oldProtocol.readerFeatures.getOrElse(Set.empty) + V2CheckpointTableFeature.name),
           writerFeatures =
             Some(
-              oldProtocol.writerFeatures.getOrElse(Set.empty) + CoordinatedCommitsTableFeature.name))
+              oldProtocol.writerFeatures.getOrElse(Set.empty) + CoordinatedCommitsTableFeature.name)
+        )
       assert(cs.numRegisterTableCalled.get === 0)
       assert(cs.numCommitsCalled.get === 0)
 
