@@ -138,7 +138,8 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
     extends CommitCoordinatorBuilder {
   lazy val trackingInMemoryCommitCoordinatorClient =
     defaultCommitCoordinatorClientOpt.getOrElse {
-      new TrackingCommitCoordinatorClient(new PredictableUuidInMemoryCommitCoordinatorClient(batchSize))
+      new TrackingCommitCoordinatorClient(
+        new PredictableUuidInMemoryCommitCoordinatorClient(batchSize))
     }
 
   override def getName: String = "tracking-in-memory"

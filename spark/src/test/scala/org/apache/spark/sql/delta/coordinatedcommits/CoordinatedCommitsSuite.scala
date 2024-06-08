@@ -699,8 +699,8 @@ class CoordinatedCommitSuite
           }
         }
     )
-    val builder =
-      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10, Some(trackingCommitCoordinatorClient))
+    val builder = TrackingInMemoryCommitCoordinatorBuilder(
+      batchSize = 10, Some(trackingCommitCoordinatorClient))
     CommitCoordinatorProvider.registerBuilder(builder)
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath

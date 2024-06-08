@@ -213,7 +213,8 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
           other.asInstanceOf[TestCommitCoordinatorClient].key == key
     }
     object Builder1 extends CommitCoordinatorBuilder {
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
         new TestCommitCoordinatorClient(conf("key"))
       }
       override def getName: String = "cs-name"
