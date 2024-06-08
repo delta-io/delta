@@ -55,7 +55,7 @@ public class CoordinatedCommitsUtils {
         return new Path(logPath, String.format("%020d.json", version));
     }
 
-    private static String getCoordinatedCommitCoordinator(AbstractMetadata metadata) {
+    private static String getCoordinatedCommitsCoordinator(AbstractMetadata metadata) {
         return metadata
             .getConfiguration()
             .get(COORDINATED_COMMITS_COORDINATOR_CONF_KEY)
@@ -65,13 +65,13 @@ public class CoordinatedCommitsUtils {
     /**
      * Returns true if the commit is a coordinated commits to filesystem conversion.
      */
-    public static boolean isCoordinatedCommitToFSConversion(
+    public static boolean isCoordinatedCommitsToFSConversion(
             Long commitVersion,
             UpdatedActions updatedActions) {
-        boolean oldMetadataHasCoordinatedCommit =
-                !getCoordinatedCommitCoordinator(updatedActions.getOldMetadata()).isEmpty();
-        boolean newMetadataHasCoordinatedCommit =
-                !getCoordinatedCommitCoordinator(updatedActions.getNewMetadata()).isEmpty();
-        return oldMetadataHasCoordinatedCommit && !newMetadataHasCoordinatedCommit && commitVersion > 0;
+        boolean oldMetadataHasCoordinatedCommits =
+                !getCoordinatedCommitsCoordinator(updatedActions.getOldMetadata()).isEmpty();
+        boolean newMetadataHasCoordinatedCommits =
+                !getCoordinatedCommitsCoordinator(updatedActions.getNewMetadata()).isEmpty();
+        return oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits && commitVersion > 0;
     }
 }

@@ -19,23 +19,23 @@ package org.apache.spark.sql.delta.coordinatedcommits
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
-class CoordinatedCommitEnablementSuite
-  extends CoordinatedCommitBaseSuite
+class CoordinatedCommitsEnablementSuite
+  extends CoordinatedCommitsBaseSuite
     with DeltaSQLTestUtils
     with DeltaSQLCommandTest
-    with CoordinatedCommitTestUtils {
+    with CoordinatedCommitsTestUtils {
 
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(3)
 
   import testImplicits._
 
-  private def validateCoordinatedCommitCompleteEnablement(
+  private def validateCoordinatedCommitsCompleteEnablement(
       snapshot: Snapshot, expectEnabled: Boolean): Unit = {
     assert(
       DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(snapshot.metadata).isDefined
         == expectEnabled)
     Seq(
-      CoordinatedCommitTableFeature, VacuumProtocolCheckTableFeature, InCommitTimestampTableFeature)
+      CoordinatedCommitsTableFeature, VacuumProtocolCheckTableFeature, InCommitTimestampTableFeature)
       .foreach { feature =>
         assert(snapshot.protocol.writerFeatures.exists(_.contains(feature.name)) == expectEnabled)
       }
@@ -53,7 +53,7 @@ class CoordinatedCommitEnablementSuite
       val tablePath = tempDir.getAbsolutePath
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath)
       val log = DeltaLog.forTable(spark, tablePath)
-      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
+      validateCoordinatedCommitsCompleteEnablement(log.snapshot, expectEnabled = true)
     }
   }
 
@@ -63,7 +63,7 @@ class CoordinatedCommitEnablementSuite
       val tablePath = tempDir.getAbsolutePath
       sql(s"CREATE TABLE delta.`$tablePath` (id LONG) USING delta")
       val log = DeltaLog.forTable(spark, tablePath)
-      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
+      validateCoordinatedCommitsCompleteEnablement(log.snapshot, expectEnabled = true)
     }
   }
 
@@ -74,7 +74,7 @@ class CoordinatedCommitEnablementSuite
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath)
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath)
       val log = DeltaLog.forTable(spark, tablePath)
-      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = true)
+      validateCoordinatedCommitsCompleteEnablement(log.snapshot, expectEnabled = true)
     }
   }
   // ---- Tests END: Enablement at commit 0 ----
@@ -88,12 +88,12 @@ class CoordinatedCommitEnablementSuite
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 0
       Seq(1).toDF().write.format("delta").mode("append").save(tablePath) // commit 1
       val log = DeltaLog.forTable(spark, tablePath)
-      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = false)
+      validateCoordinatedCommitsCompleteEnablement(log.snapshot, expectEnabled = false)
       sql(s"ALTER TABLE delta.`$tablePath` SET " + // Enable MC
         s"TBLPROPERTIES ('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' " +
           s"= 'tracking-in-memory')")
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
-      validateCoordinatedCommitCompleteEnablement(log.update(), expectEnabled = true)
+      validateCoordinatedCommitsCompleteEnablement(log.update(), expectEnabled = true)
     }
   }
 
@@ -105,12 +105,12 @@ class CoordinatedCommitEnablementSuite
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 0
       Seq(1).toDF().write.format("delta").mode("append").save(tablePath) // commit 1
       val log = DeltaLog.forTable(spark, tablePath)
-      validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = false)
+      validateCoordinatedCommitsCompleteEnablement(log.snapshot, expectEnabled = false)
       sql(s"REPLACE TABLE delta.`$tablePath` (value int) USING delta " + // Enable MC
         s"TBLPROPERTIES ('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' " +
           s"= 'tracking-in-memory')")
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
-      validateCoordinatedCommitCompleteEnablement(log.update(), expectEnabled = true)
+      validateCoordinatedCommitsCompleteEnablement(log.update(), expectEnabled = true)
     }
   }
   // ---- Tests END: Enablement after commit 0 ----

@@ -3705,7 +3705,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     testRemoveVacuumProtocolCheckTableFeature(
       enableFeatureInitially = true,
       additionalTableProperties = Seq(
-        (s"$FEATURE_PROP_PREFIX${CoordinatedCommitTableFeature.name}", "supported")),
+        (s"$FEATURE_PROP_PREFIX${CoordinatedCommitsTableFeature.name}", "supported")),
       downgradeFailsWithException = Some("DELTA_FEATURE_DROP_DEPENDENT_FEATURE"),
       featureExpectedAtTheEnd = true)
   }
@@ -3892,7 +3892,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   // ---- Coordinated Commits Drop Feature Tests ----
-  private def setUpCoordinatedCommitTable(dir: File, mcBuilder: CommitCoordinatorBuilder): Unit = {
+  private def setUpCoordinatedCommitsTable(dir: File, mcBuilder: CommitCoordinatorBuilder): Unit = {
     CommitCoordinatorProvider.clearNonDefaultBuilders()
     CommitCoordinatorProvider.registerBuilder(mcBuilder)
     val tablePath = dir.getAbsolutePath
@@ -3922,7 +3922,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  private def validateCoordinatedCommitDropLogs(
+  private def validateCoordinatedCommitsDropLogs(
       usageLogs: Seq[UsageRecord],
       expectTablePropertiesPresent: Boolean,
       expectUnbackfilledCommitsPresent: Boolean,
@@ -3954,12 +3954,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   test("basic coordinated commits feature drop") {
     withTempDir { dir =>
       val mcBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1000)
-      setUpCoordinatedCommitTable(dir, mcBuilder)
+      setUpCoordinatedCommitsTable(dir, mcBuilder)
       val log = DeltaLog.forTable(spark, dir)
       val usageLogs = Log4jUsageLogger.track {
         AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, log.dataPath),
-          CoordinatedCommitTableFeature.name)
+          CoordinatedCommitsTableFeature.name)
           .run(spark)
       }
       val snapshot = log.update()
@@ -3967,8 +3967,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(
           snapshot.metadata.configuration.contains(_)))
       assert(
-        !snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitTableFeature.name)))
-      validateCoordinatedCommitDropLogs(
+        !snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitsTableFeature.name)))
+      validateCoordinatedCommitsDropLogs(
         usageLogs, expectTablePropertiesPresent = true, expectUnbackfilledCommitsPresent = false)
     }
   }
@@ -4002,19 +4002,19 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         })
       val mcBuilder =
         TrackingInMemoryCommitCoordinatorBuilder(100, Some(alternatingFailureBackfillClient))
-      setUpCoordinatedCommitTable(dir, mcBuilder)
+      setUpCoordinatedCommitsTable(dir, mcBuilder)
       val log = DeltaLog.forTable(spark, dir)
       val usageLogs = Log4jUsageLogger.track {
         val e = intercept[IllegalStateException] {
           AlterTableDropFeatureDeltaCommand(
             DeltaTableV2(spark, log.dataPath),
-            CoordinatedCommitTableFeature.name)
+            CoordinatedCommitsTableFeature.name)
             .run(spark)
         }
 
         assert(e.getMessage.contains("backfill failed"))
       }
-      validateCoordinatedCommitDropLogs(
+      validateCoordinatedCommitsDropLogs(
         usageLogs,
         expectTablePropertiesPresent = true,
         expectUnbackfilledCommitsPresent = false,
@@ -4033,10 +4033,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val usageLogs2 = Log4jUsageLogger.track {
         AlterTableDropFeatureDeltaCommand(
           DeltaTableV2(spark, log.dataPath),
-          CoordinatedCommitTableFeature.name)
+          CoordinatedCommitsTableFeature.name)
           .run(spark)
       }
-      validateCoordinatedCommitDropLogs(
+      validateCoordinatedCommitsDropLogs(
         usageLogs2, expectTablePropertiesPresent = false, expectUnbackfilledCommitsPresent = true)
       val snapshot = log.update()
       assert(snapshot.version === 4)
@@ -4047,7 +4047,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(
           snapshot.metadata.configuration.contains(_)))
       assert(
-        !snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitTableFeature.name)))
+        !snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitsTableFeature.name)))
     }
   }
   // ---- End Coordinated Commits Drop Feature Tests ----

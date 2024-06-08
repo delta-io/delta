@@ -39,7 +39,7 @@ import org.apache.spark.util.{ThreadUtils, Utils}
 trait CommitCoordinatorClientImplSuiteBase extends QueryTest
     with SharedSparkSession
     with LogStoreProvider
-    with CoordinatedCommitTestUtils
+    with CoordinatedCommitsTestUtils
     with DeltaSQLTestUtils
     with DeltaSQLCommandTest {
 

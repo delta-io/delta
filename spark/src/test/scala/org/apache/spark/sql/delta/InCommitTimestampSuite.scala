@@ -25,7 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitBaseSuite, CoordinatedCommitTestUtils, TrackingInMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -40,7 +40,7 @@ class InCommitTimestampSuite
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaTestUtilsBase
-    with CoordinatedCommitTestUtils {
+    with CoordinatedCommitsTestUtils {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -988,9 +988,9 @@ class InCommitTimestampSuite
   }
 }
 
-class InCommitTimestampWithCoordinatedCommitSuite
+class InCommitTimestampWithCoordinatedCommitsSuite
   extends InCommitTimestampSuite
-    with CoordinatedCommitBaseSuite {
+    with CoordinatedCommitsBaseSuite {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")

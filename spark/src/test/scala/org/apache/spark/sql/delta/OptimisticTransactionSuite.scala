@@ -918,9 +918,9 @@ class OptimisticTransactionSuite
         val failureRecord = filterUsageRecords(records, "delta.commitLarge.failure")
         assert(failureRecord.size == 1)
         val data = JsonUtils.fromJson[Map[String, Any]](failureRecord.head.blob)
-        assert(data("fromCoordinatedCommit") == true)
-        assert(data("fromCoordinatedCommitConflict") == conflict)
-        assert(data("fromCoordinatedCommitRetryable") == true)
+        assert(data("fromCoordinatedCommits") == true)
+        assert(data("fromCoordinatedCommitsConflict") == conflict)
+        assert(data("fromCoordinatedCommitsRetryable") == true)
       }
     }
   }

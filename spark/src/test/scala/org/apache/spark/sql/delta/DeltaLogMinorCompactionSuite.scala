@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -34,7 +34,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CoordinatedCommitBaseSuite {
+  with CoordinatedCommitsBaseSuite {
 
   /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
   private def minorCompactDeltaLog(
@@ -440,15 +440,15 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   }
 }
 
-class DeltaLogMinorCompactionWithCoordinatedCommitBatch1Suite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch1Suite extends DeltaLogMinorCompactionSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaLogMinorCompactionWithCoordinatedCommitBatch2Suite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch2Suite extends DeltaLogMinorCompactionSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaLogMinorCompactionWithCoordinatedCommitBatch100Suite
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch100Suite
     extends DeltaLogMinorCompactionSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

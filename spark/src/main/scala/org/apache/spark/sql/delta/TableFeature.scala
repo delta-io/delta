@@ -344,7 +344,7 @@ object TableFeature {
       RowTrackingFeature,
       InCommitTimestampTableFeature,
       VariantTypeTableFeature,
-      CoordinatedCommitTableFeature)
+      CoordinatedCommitsTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -673,7 +673,7 @@ object V2CheckpointTableFeature
 }
 
 /** Table feature to represent tables whose commits are managed by separate commit-coordinator */
-object CoordinatedCommitTableFeature
+object CoordinatedCommitsTableFeature
   extends WriterFeature(name = "coordinatedCommits-preview")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {
@@ -690,7 +690,7 @@ object CoordinatedCommitTableFeature
     Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
 
   override def preDowngradeCommand(table: DeltaTableV2)
-      : PreDowngradeTableFeatureCommand = CoordinatedCommitPreDowngradeCommand(table)
+      : PreDowngradeTableFeatureCommand = CoordinatedCommitsPreDowngradeCommand(table)
 
   override def validateRemoval(snapshot: Snapshot): Boolean = {
     !CoordinatedCommitsUtils.tablePropertiesPresent(snapshot.metadata) &&

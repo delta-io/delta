@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -56,7 +56,7 @@ trait DeltaTimeTravelTests extends QueryTest
     with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils
-    with CoordinatedCommitBaseSuite {
+    with CoordinatedCommitsBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -667,14 +667,14 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
   }
 }
 
-class DeltaHistoryManagerWithCoordinatedCommitBatch1Suite extends DeltaHistoryManagerSuite {
+class DeltaHistoryManagerWithCoordinatedCommitsBatch1Suite extends DeltaHistoryManagerSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaHistoryManagerWithCoordinatedCommitBatch2Suite extends DeltaHistoryManagerSuite {
+class DeltaHistoryManagerWithCoordinatedCommitsBatch2Suite extends DeltaHistoryManagerSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaHistoryManagerWithCoordinatedCommitBatch100Suite extends DeltaHistoryManagerSuite {
+class DeltaHistoryManagerWithCoordinatedCommitsBatch100Suite extends DeltaHistoryManagerSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

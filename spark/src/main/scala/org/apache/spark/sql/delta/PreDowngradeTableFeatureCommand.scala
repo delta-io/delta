@@ -206,7 +206,7 @@ case class VacuumProtocolCheckPreDowngradeCommand(table: DeltaTableV2)
   override def removeFeatureTracesIfNeeded(): Boolean = false
 }
 
-case class CoordinatedCommitPreDowngradeCommand(table: DeltaTableV2)
+case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
 
@@ -249,7 +249,7 @@ case class CoordinatedCommitPreDowngradeCommand(table: DeltaTableV2)
       if (postDisablementUnbackfilledCommitsPresent) {
         traceRemovalNeeded = true
         // Managed commits have already been disabled but there are unbackfilled commits.
-        CoordinatedCommitsUtils.backfillWhenCoordinatedCommitDisabled(snapshotAfterDisabling)
+        CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshotAfterDisabling)
       }
     }
     recordDeltaEvent(

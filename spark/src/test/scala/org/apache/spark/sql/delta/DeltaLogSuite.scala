@@ -25,7 +25,7 @@ import scala.language.postfixOps
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitBaseSuite, TrackingCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, TrackingCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -49,7 +49,7 @@ import org.apache.spark.util.Utils
 class DeltaLogSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with CoordinatedCommitBaseSuite
+  with CoordinatedCommitsBaseSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLTestUtils {
 
@@ -773,14 +773,14 @@ class DeltaLogSuite extends QueryTest
 
 }
 
-class CoordinatedCommitBatchBackfill1DeltaLogSuite extends DeltaLogSuite {
+class CoordinatedCommitsBatchBackfill1DeltaLogSuite extends DeltaLogSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class CoordinatedCommitBatchBackfill2DeltaLogSuite extends DeltaLogSuite {
+class CoordinatedCommitsBatchBackfill2DeltaLogSuite extends DeltaLogSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class CoordinatedCommitBatchBackfill100DeltaLogSuite extends DeltaLogSuite {
+class CoordinatedCommitsBatchBackfill100DeltaLogSuite extends DeltaLogSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

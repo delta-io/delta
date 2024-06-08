@@ -1156,9 +1156,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         txnId = Some(txnId))
 
       val firstAttemptVersion = getFirstAttemptVersion
-      val metadataUpdatedWithCoordinatedCommitInfo = updateMetadataWithCoordinatedCommitConfs()
+      val metadataUpdatedWithCoordinatedCommitsInfo = updateMetadataWithCoordinatedCommitsConfs()
       val metadataUpdatedWithIctInfo = updateMetadataWithInCommitTimestamp(commitInfo)
-      if (metadataUpdatedWithIctInfo || metadataUpdatedWithCoordinatedCommitInfo) {
+      if (metadataUpdatedWithIctInfo || metadataUpdatedWithCoordinatedCommitsInfo) {
         preparedActions = preparedActions.map {
           case _: Metadata => metadata
           case other => other
@@ -1244,17 +1244,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * @return A boolean which represents whether we have updated the table Metadata with
    *         coordinated-commits information. If no changed were made, returns false.
    */
-  protected def updateMetadataWithCoordinatedCommitConfs(): Boolean = {
-    validateCoordinatedCommitConfInMetadata(newMetadata)
-    val newCoordinatedCommitTableConfOpt =
-      registerTableForCoordinatedCommitIfNeeded(metadata, protocol)
-    val newCoordinatedCommitTableConf = newCoordinatedCommitTableConfOpt.getOrElse {
+  protected def updateMetadataWithCoordinatedCommitsConfs(): Boolean = {
+    validateCoordinatedCommitsConfInMetadata(newMetadata)
+    val newCoordinatedCommitsTableConfOpt =
+      registerTableForCoordinatedCommitsIfNeeded(metadata, protocol)
+    val newCoordinatedCommitsTableConf = newCoordinatedCommitsTableConfOpt.getOrElse {
       return false
     }
 
     // FS to MC conversion
     val finalMetadata = metadata
-    val coordinatedCommitsTableConfJson = JsonUtils.toJson(newCoordinatedCommitTableConf)
+    val coordinatedCommitsTableConfJson = JsonUtils.toJson(newCoordinatedCommitsTableConf)
     val extraKVConf =
       DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key -> coordinatedCommitsTableConfJson
     newMetadata = Some(finalMetadata.copy(
@@ -1262,16 +1262,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     true
   }
 
-  protected def validateCoordinatedCommitConfInMetadata(newMetadataOpt: Option[Metadata]): Unit = {
+  protected def validateCoordinatedCommitsConfInMetadata(newMetadataOpt: Option[Metadata]): Unit = {
     // Validate that the [[DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF]] is json parse-able.
     // Also do this validation if this table property has changed.
     newMetadataOpt
       .filter { newMetadata =>
-        val newCoordinatedCommitConf =
+        val newCoordinatedCommitsConf =
           newMetadata.configuration.get(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key)
-        val oldCoordinatedCommitConf =
+        val oldCoordinatedCommitsConf =
           snapshot.metadata.configuration.get(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key)
-        newCoordinatedCommitConf != oldCoordinatedCommitConf
+        newCoordinatedCommitsConf != oldCoordinatedCommitsConf
       }.foreach(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.fromMetaData)
   }
 
@@ -1331,10 +1331,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val data = Map(
         "exception" -> Utils.exceptionString(ex),
         "operation" -> op.name,
-        "fromCoordinatedCommit" -> coordinatedCommitsExceptionOpt.isDefined,
-        "fromCoordinatedCommitConflict" ->
+        "fromCoordinatedCommits" -> coordinatedCommitsExceptionOpt.isDefined,
+        "fromCoordinatedCommitsConflict" ->
           coordinatedCommitsExceptionOpt.map(_.getConflict).getOrElse(""),
-        "fromCoordinatedCommitRetryable" ->
+        "fromCoordinatedCommitsRetryable" ->
           coordinatedCommitsExceptionOpt.map(_.getRetryable).getOrElse(""))
       recordDeltaEvent(deltaLog, "delta.commitLarge.failure", data = data)
     }
@@ -1370,7 +1370,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
-      updateMetadataWithCoordinatedCommitConfs()
+      updateMetadataWithCoordinatedCommitsConfs()
       updateMetadataWithInCommitTimestamp(commitInfo)
 
       var allActions =
@@ -1521,12 +1521,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    *         This metadata should be added to the [[Metadata.configuration]] before doing the
    *         commit.
    */
-  protected def registerTableForCoordinatedCommitIfNeeded(
+  protected def registerTableForCoordinatedCommitsIfNeeded(
       finalMetadata: Metadata,
       finalProtocol: Protocol): Option[Map[String, String]] = {
     val (oldOwnerName, oldOwnerConf) =
-      CoordinatedCommitsUtils.getCoordinatedCommitConfs(snapshot.metadata)
-    var newCoordinatedCommitTableConf: Option[Map[String, String]] = None
+      CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
+    var newCoordinatedCommitsTableConf: Option[Map[String, String]] = None
     if (finalMetadata.configuration != snapshot.metadata.configuration || snapshot.version == -1L) {
       val newCommitCoordinatorClientOpt =
         CoordinatedCommitsUtils.getCommitCoordinatorClient(spark, finalMetadata, finalProtocol)
@@ -1534,16 +1534,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         case (Some(newCommitCoordinatorClient), None) =>
           // FS -> MC conversion
           val (commitCoordinatorName, commitCoordinatorConf) =
-            CoordinatedCommitsUtils.getCoordinatedCommitConfs(finalMetadata)
+            CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
           logInfo(s"Table ${deltaLog.logPath} transitioning from file-system based table to " +
             s"coordinated-commits table: [commit-coordinator: $commitCoordinatorName, " +
             s"conf: $commitCoordinatorConf]")
-          newCoordinatedCommitTableConf = Some(newCommitCoordinatorClient.registerTable(
+          newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
             deltaLog.logPath, readVersion, finalMetadata, protocol))
         case (None, Some(readCommitCoordinatorClient)) =>
           // MC -> FS conversion
           val (newOwnerName, newOwnerConf) =
-            CoordinatedCommitsUtils.getCoordinatedCommitConfs(snapshot.metadata)
+            CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
           logInfo(s"Table ${deltaLog.logPath} transitioning from coordinated-commits table to " +
             s"file-system table: [commit-coordinator: $newOwnerName, conf: $newOwnerConf]")
         case (Some(newCommitCoordinatorClient), Some(readCommitCoordinatorClient))
@@ -1553,7 +1553,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           // table from current commit-coordinator to filesystem first and then filesystem to
           // the commit-coordinator.
           val (newOwnerName, newOwnerConf) =
-            CoordinatedCommitsUtils.getCoordinatedCommitConfs(finalMetadata)
+            CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
           val message = s"Transition of table ${deltaLog.logPath} from one commit-coordinator to" +
             s" another commit-coordinator is not allowed: [old commit-coordinator: $oldOwnerName," +
             s" new commit-coordinator: $newOwnerName, old commit-coordinator conf: $oldOwnerConf," +
@@ -1564,7 +1564,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           ()
       }
     }
-    newCoordinatedCommitTableConf
+    newCoordinatedCommitsTableConf
   }
 
   /** Update the table now that the commit has been made, and write a checkpoint. */
@@ -2418,5 +2418,5 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   // Backfill any unbackfilled commits if coordinated commits are disabled -- in the Optimistic
   // Transaction constructor.
-  CoordinatedCommitsUtils.backfillWhenCoordinatedCommitDisabled(snapshot)
+  CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshot)
 }

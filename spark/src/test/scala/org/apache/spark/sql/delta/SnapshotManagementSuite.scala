@@ -46,7 +46,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
 class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
-  with DeltaSQLCommandTest with CoordinatedCommitBaseSuite {
+  with DeltaSQLCommandTest with CoordinatedCommitsBaseSuite {
 
 
   /**
@@ -519,15 +519,15 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
   }
 }
 
-class SnapshotManagementWithCoordinatedCommitBatch1Suite extends SnapshotManagementSuite {
+class SnapshotManagementWithCoordinatedCommitsBatch1Suite extends SnapshotManagementSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class SnapshotManagementWithCoordinatedCommitBatch2Suite extends SnapshotManagementSuite {
+class SnapshotManagementWithCoordinatedCommitsBatch2Suite extends SnapshotManagementSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class SnapshotManagementWithCoordinatedCommitBatch100Suite extends SnapshotManagementSuite {
+class SnapshotManagementWithCoordinatedCommitsBatch100Suite extends SnapshotManagementSuite {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
 

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, CoordinatedCommitTableFeature, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, CoordinatedCommitsTableFeature, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
@@ -119,7 +119,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       metadata: Metadata,
       protocol: Protocol): Option[CommitCoordinatorClient] = {
     metadata.coordinatedCommitsCoordinatorName.map { commitCoordinatorStr =>
-      assert(protocol.isFeatureSupported(CoordinatedCommitTableFeature))
+      assert(protocol.isFeatureSupported(CoordinatedCommitsTableFeature))
       CommitCoordinatorProvider.getCommitCoordinatorClient(
         commitCoordinatorStr, metadata.coordinatedCommitsCoordinatorConf, spark)
     }
@@ -141,7 +141,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     }
   }
 
-  def getCoordinatedCommitConfs(metadata: Metadata): (Option[String], Map[String, String]) = {
+  def getCoordinatedCommitsConfs(metadata: Metadata): (Option[String], Map[String, String]) = {
     metadata.coordinatedCommitsCoordinatorName match {
       case Some(name) => (Some(name), metadata.coordinatedCommitsCoordinatorConf)
       case None => (None, Map.empty)
@@ -157,7 +157,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key)
 
   /**
-   * Returns true if any CoordinatedCommit-related table properties is present in the metadata.
+   * Returns true if any CoordinatedCommits-related table properties is present in the metadata.
    */
   def tablePropertiesPresent(metadata: Metadata): Boolean = {
     val coordinatedCommitsProperties = Seq(
@@ -185,7 +185,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * backfill it. This method must be invoked before doing the next commit as otherwise there will
    * be a gap in the backfilled commit sequence.
    */
-  def backfillWhenCoordinatedCommitDisabled(snapshot: Snapshot): Unit = {
+  def backfillWhenCoordinatedCommitsDisabled(snapshot: Snapshot): Unit = {
     if (snapshot.tableCommitCoordinatorClientOpt.nonEmpty) {
       // Managed commits is enabled on the table. Don't backfill as backfills are managed by
       // commit-coordinators.
@@ -220,7 +220,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     }
     recordDeltaEvent(
       deltaLog,
-      opType = "delta.coordinatedCommits.backfillWhenCoordinatedCommitSupportedAndDisabled",
+      opType = "delta.coordinatedCommits.backfillWhenCoordinatedCommitsSupportedAndDisabled",
       data = Map(
         "numUnbackfilledFiles" -> unbackfilledFilesAndVersions.size,
         "unbackfilledFiles" -> unbackfilledFilesAndVersions.map(_._1.getPath.toString),

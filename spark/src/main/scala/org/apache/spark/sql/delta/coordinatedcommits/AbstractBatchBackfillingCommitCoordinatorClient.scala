@@ -99,7 +99,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorC
         fileStatus,
         commitTimestamp)
 
-    val mcToFsConversion = isCoordinatedCommitToFSConversion(commitVersion, updatedActions)
+    val mcToFsConversion = isCoordinatedCommitsToFSConversion(commitVersion, updatedActions)
     // Backfill if needed
     executionObserver.beginBackfill()
     if (batchSize <= 1) {
@@ -123,14 +123,14 @@ trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorC
     commitResponse
   }
 
-  private def isCoordinatedCommitToFSConversion(
+  private def isCoordinatedCommitsToFSConversion(
       commitVersion: Long,
       updatedActions: UpdatedActions): Boolean = {
-    val oldMetadataHasCoordinatedCommit = updatedActions.getOldMetadata.asInstanceOf[Metadata]
+    val oldMetadataHasCoordinatedCommits = updatedActions.getOldMetadata.asInstanceOf[Metadata]
       .coordinatedCommitsCoordinatorName.nonEmpty
-    val newMetadataHasCoordinatedCommit = updatedActions.getNewMetadata.asInstanceOf[Metadata]
+    val newMetadataHasCoordinatedCommits = updatedActions.getNewMetadata.asInstanceOf[Metadata]
       .coordinatedCommitsCoordinatorName.nonEmpty
-    oldMetadataHasCoordinatedCommit && !newMetadataHasCoordinatedCommit && commitVersion > 0
+    oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits && commitVersion > 0
   }
 
   protected def generateUUID(): String = UUID.randomUUID().toString

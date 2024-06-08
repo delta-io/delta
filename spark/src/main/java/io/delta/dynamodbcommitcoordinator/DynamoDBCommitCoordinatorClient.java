@@ -370,7 +370,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
             FileStatus commitFileStatus = fs.getFileStatus(commitPath);
             long inCommitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
             boolean isMCtoFSConversion =
-                    CoordinatedCommitsUtils.isCoordinatedCommitToFSConversion(commitVersion, updatedActions);
+                    CoordinatedCommitsUtils.isCoordinatedCommitsToFSConversion(commitVersion, updatedActions);
 
             LOG.info("Committing version {} with UUID delta file {} to DynamoDB.",
                     commitVersion, commitPath);

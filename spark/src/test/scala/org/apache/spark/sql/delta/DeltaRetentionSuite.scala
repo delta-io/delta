@@ -507,7 +507,7 @@ class DeltaRetentionSuite extends QueryTest
   }
 }
 
-class DeltaRetentionWithCoordinatedCommitBatch1Suite extends DeltaRetentionSuite {
+class DeltaRetentionWithCoordinatedCommitsBatch1Suite extends DeltaRetentionSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
@@ -517,7 +517,7 @@ class DeltaRetentionWithCoordinatedCommitBatch1Suite extends DeltaRetentionSuite
  * files. However, in this suite, delta files might be backfilled asynchronously, which means
  * setting the modification time will not work as expected.
  */
-class DeltaRetentionWithCoordinatedCommitBatch2Suite extends QueryTest
+class DeltaRetentionWithCoordinatedCommitsBatch2Suite extends QueryTest
     with DeltaSQLCommandTest
     with DeltaRetentionSuiteBase {
   override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)

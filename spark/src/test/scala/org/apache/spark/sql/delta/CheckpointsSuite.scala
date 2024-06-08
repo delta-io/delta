@@ -25,7 +25,7 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -49,7 +49,7 @@ class CheckpointsSuite
   with SharedSparkSession
   with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest
-  with CoordinatedCommitBaseSuite {
+  with CoordinatedCommitsBaseSuite {
 
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
@@ -1063,15 +1063,15 @@ class FakeGCSFileSystemValidatingCommits extends FakeGCSFileSystemValidatingChec
   override protected def shouldValidateFilePattern(f: Path): Boolean = f.getName.contains(".json")
 }
 
-class CheckpointsWithCoordinatedCommitBatch1Suite extends CheckpointsSuite {
+class CheckpointsWithCoordinatedCommitsBatch1Suite extends CheckpointsSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class CheckpointsWithCoordinatedCommitBatch2Suite extends CheckpointsSuite {
+class CheckpointsWithCoordinatedCommitsBatch2Suite extends CheckpointsSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class CheckpointsWithCoordinatedCommitBatch100Suite extends CheckpointsSuite {
+class CheckpointsWithCoordinatedCommitsBatch100Suite extends CheckpointsSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
 

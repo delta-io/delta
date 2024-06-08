@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import scala.reflect.runtime.universe._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, CoordinatedCommitTableFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, CoordinatedCommitsTableFeature}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -200,9 +200,9 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
         log.update().protocol.writerFeatures.getOrElse(Set.empty)
       }
 
-      assert(!getWriterFeatures(deltaLog).contains(CoordinatedCommitTableFeature.name))
+      assert(!getWriterFeatures(deltaLog).contains(CoordinatedCommitsTableFeature.name))
       deltaLog.startTransaction().commit(Seq(metadata), DeltaOperations.ManualUpdate)
-      assert(getWriterFeatures(deltaLog).contains(CoordinatedCommitTableFeature.name))
+      assert(getWriterFeatures(deltaLog).contains(CoordinatedCommitsTableFeature.name))
     }
   }
 

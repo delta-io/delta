@@ -21,7 +21,7 @@ import java.io.File
 import scala.collection.mutable.ArrayBuffer
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta.{DeltaOperations, CoordinatedCommitTableFeature, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.{DeltaOperations, CoordinatedCommitsTableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CommitCoordinatorGetCommitsFailedException
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaLog
@@ -44,12 +44,12 @@ import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
 
-class CoordinatedCommitSuite
+class CoordinatedCommitsSuite
     extends QueryTest
     with DeltaSQLTestUtils
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with CoordinatedCommitTestUtils {
+    with CoordinatedCommitsTestUtils {
 
   import testImplicits._
 
@@ -169,7 +169,7 @@ class CoordinatedCommitSuite
 
       // Add new commit to convert FS table to coordinated-commits table
       val deltaLog2 = DeltaLog.forTable(spark, tablePath)
-      enableCoordinatedCommit(deltaLog2, commitCoordinator = "tracking-in-memory")
+      enableCoordinatedCommits(deltaLog2, commitCoordinator = "tracking-in-memory")
       deltaLog2.startTransaction().commitManually(createTestAddFile("f2"))
       deltaLog2.startTransaction().commitManually()
       val snapshotV5 = deltaLog2.unsafeVolatileSnapshot
@@ -594,7 +594,7 @@ class CoordinatedCommitSuite
       // Part-2: Validate getSnapshotAt API works as expected for coordinated commits tables when
       // the switch is made
       // commit 3
-      enableCoordinatedCommit(DeltaLog.forTable(spark, tablePath), "tracking-in-memory")
+      enableCoordinatedCommits(DeltaLog.forTable(spark, tablePath), "tracking-in-memory")
       // commit 4
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
       // the old deltaLog objects still points to version 2
@@ -637,7 +637,7 @@ class CoordinatedCommitSuite
     }
   }
 
-  private def enableCoordinatedCommit(deltaLog: DeltaLog, commitCoordinator: String): Unit = {
+  private def enableCoordinatedCommits(deltaLog: DeltaLog, commitCoordinator: String): Unit = {
     val oldMetadata = deltaLog.update().metadata
     val commitCoordinatorConf = (COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinator)
     val newMetadata =
@@ -725,7 +725,7 @@ class CoordinatedCommitSuite
   for (upgradeExistingTable <- BOOLEAN_DOMAIN)
   testWithDifferentBackfillInterval("upgrade + downgrade [FS -> MC1 -> FS -> MC2]," +
       s" upgradeExistingTable = $upgradeExistingTable") { backfillInterval =>
-    withoutCoordinatedCommitDefaultTableProperties {
+    withoutCoordinatedCommitsDefaultTableProperties {
       CommitCoordinatorProvider.clearNonDefaultBuilders()
       val builder1 = TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillInterval)
       val builder2 = new TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillInterval) {
@@ -946,7 +946,7 @@ class CoordinatedCommitSuite
             Some(oldProtocol.readerFeatures.getOrElse(Set.empty) + V2CheckpointTableFeature.name),
           writerFeatures =
             Some(
-              oldProtocol.writerFeatures.getOrElse(Set.empty) + CoordinatedCommitTableFeature.name))
+              oldProtocol.writerFeatures.getOrElse(Set.empty) + CoordinatedCommitsTableFeature.name))
       assert(cs.numRegisterTableCalled.get === 0)
       assert(cs.numCommitsCalled.get === 0)
 
@@ -964,7 +964,7 @@ class CoordinatedCommitSuite
       assert(cs.numCommitsCalled.get === 0)
       assert(log.unsafeVolatileSnapshot.version === 2L)
 
-      Seq(V2CheckpointTableFeature, CoordinatedCommitTableFeature).foreach { feature =>
+      Seq(V2CheckpointTableFeature, CoordinatedCommitsTableFeature).foreach { feature =>
         assert(log.unsafeVolatileSnapshot.protocol.isFeatureSupported(feature))
       }
 
@@ -1027,7 +1027,7 @@ class CoordinatedCommitSuite
         Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
       }
       val filteredUsageLogs = filterUsageRecords(
-        records, "delta.coordinatedCommits.backfillWhenCoordinatedCommitSupportedAndDisabled")
+        records, "delta.coordinatedCommits.backfillWhenCoordinatedCommitsSupportedAndDisabled")
       assert(filteredUsageLogs.size === 1)
       val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredUsageLogs.head.blob)
       assert(usageObj("numUnbackfilledFiles").asInstanceOf[Int] === 3)
@@ -1041,7 +1041,7 @@ class CoordinatedCommitSuite
 
   /**
    * Helper method which generates a delta table with `totalCommits`.
-   * The `upgradeToCoordinatedCommitVersion`th commit version upgrades this table to coordinated
+   * The `upgradeToCoordinatedCommitsVersion`th commit version upgrades this table to coordinated
    * commits and it uses `backfillInterval` for backfilling.
    * This method returns a mapping of version to DeltaLog for the versions in
    * `requiredDeltaLogVersions`. Each of this deltaLog object has a Snapshot as per what is
@@ -1050,7 +1050,7 @@ class CoordinatedCommitSuite
   private def generateDataForGetChangeLogFilesTest(
       dir: File,
       totalCommits: Int,
-      upgradeToCoordinatedCommitVersion: Int,
+      upgradeToCoordinatedCommitsVersion: Int,
       backfillInterval: Int,
       requiredDeltaLogVersions: Set[Int]): Map[Int, DeltaLog] = {
     val commitCoordinatorClient =
@@ -1064,7 +1064,7 @@ class CoordinatedCommitSuite
       val tablePath = dir.getAbsolutePath
 
       (0 to totalCommits).foreach { v =>
-        if (v === upgradeToCoordinatedCommitVersion) {
+        if (v === upgradeToCoordinatedCommitsVersion) {
           val deltaLog = DeltaLog.forTable(spark, tablePath)
           val oldMetadata = deltaLog.unsafeVolatileSnapshot.metadata
           val commitCoordinator = (COORDINATED_COMMITS_COORDINATOR_NAME.key -> "tracking-in-memory")
@@ -1118,7 +1118,7 @@ class CoordinatedCommitSuite
       val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
         dir,
         totalCommits = 4,
-        upgradeToCoordinatedCommitVersion = -1,
+        upgradeToCoordinatedCommitsVersion = -1,
         backfillInterval = -1,
         requiredDeltaLogVersions = Set(2, 4))
 
@@ -1162,7 +1162,7 @@ class CoordinatedCommitSuite
       val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
         dir,
         totalCommits = 4,
-        upgradeToCoordinatedCommitVersion = 2,
+        upgradeToCoordinatedCommitsVersion = 2,
         backfillInterval = 1,
         requiredDeltaLogVersions = Set(0, 2, 4))
 
@@ -1217,7 +1217,7 @@ class CoordinatedCommitSuite
       val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
         dir,
         totalCommits = 8,
-        upgradeToCoordinatedCommitVersion = 2,
+        upgradeToCoordinatedCommitsVersion = 2,
         backfillInterval = 10,
         requiredDeltaLogVersions = Set(2, 3, 4, 8))
 

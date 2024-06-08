@@ -30,7 +30,7 @@ import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 
-trait CoordinatedCommitTestUtils
+trait CoordinatedCommitsTestUtils
   extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
 
   /**
@@ -39,7 +39,7 @@ trait CoordinatedCommitTestUtils
    */
   def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit): Unit = {
     test(testName) {
-      withoutCoordinatedCommitDefaultTableProperties {
+      withoutCoordinatedCommitsDefaultTableProperties {
         f
       }
     }
@@ -49,7 +49,7 @@ trait CoordinatedCommitTestUtils
    * Runs the function `f` with coordinated commits default properties unset.
    * Any table created in function `f`` won't have coordinated commits enabled by default.
    */
-  def withoutCoordinatedCommitDefaultTableProperties[T](f: => T): T = {
+  def withoutCoordinatedCommitsDefaultTableProperties[T](f: => T): T = {
     val commitCoordinatorKey = COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey
     val oldCommitCoordinatorValue = spark.conf.getOption(commitCoordinatorKey)
     spark.conf.unset(commitCoordinatorKey)
@@ -78,7 +78,7 @@ trait CoordinatedCommitTestUtils
    * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
    * `batchBackfillSize`
    */
-  def testWithCoordinatedCommit(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
+  def testWithCoordinatedCommits(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
     test(s"$testName [Backfill batch size: $backfillBatchSize]") {
       CommitCoordinatorProvider.clearNonDefaultBuilders()
       CommitCoordinatorProvider.registerBuilder(
@@ -263,7 +263,7 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
  * A helper class which enables coordinated-commits for the test suite based on the given
  * `coordinatedCommitsBackfillBatchSize` conf.
  */
-trait CoordinatedCommitBaseSuite extends SparkFunSuite with SharedSparkSession {
+trait CoordinatedCommitsBaseSuite extends SparkFunSuite with SharedSparkSession {
 
   // If this config is not overridden, coordinated commits are disabled.
   def coordinatedCommitsBackfillBatchSize: Option[Int] = None

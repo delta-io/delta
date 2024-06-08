@@ -24,7 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{CheckpointMetadata, Metadata, SidecarFile}
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
@@ -41,7 +41,7 @@ import org.apache.spark.util.ManualClock
 
 trait DeltaRetentionSuiteBase extends QueryTest
   with SharedSparkSession
-  with CoordinatedCommitBaseSuite {
+  with CoordinatedCommitsBaseSuite {
   protected val testOp = Truncate()
 
   protected override def sparkConf: SparkConf = super.sparkConf
