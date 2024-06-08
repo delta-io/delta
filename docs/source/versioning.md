@@ -110,7 +110,7 @@ The following table shows minimum protocol versions required for <Delta> feature
    V2 Checkpoints,7,3,[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
    Vacuum Protocol Check,7,3,[Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check)
    Type widening (Preview),7,3,[_](/delta-type-widening.md)
-   Managed Commit (Preview),7,3,[_](/delta-managed-commit.md)
+   Coordinated Commits (Preview),7,3,[_](/delta-coordinated-commits.md)
 
 <a id="upgrade"></a>
 
