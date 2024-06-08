@@ -454,7 +454,7 @@ class CheckConstraintsSuite extends QueryTest
         errorClass = "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
         parameters = Map(
           "value" -> "a very long string",
-          "expr" -> "(isnull('value) OR (length('value) <= 12))"
+          "expr" -> "((value IS NULL) OR (length(value) <= 12))"
         )
       )
     }

@@ -287,7 +287,7 @@ trait DeltaErrorsSuiteBase
       }
       checkErrorMessage(e, Some("DELTA_EXCEED_CHAR_VARCHAR_LIMIT"), Some("22001"),
         Some("Value \"Hello World\" exceeds char/varchar type length limitation. " +
-          "Failed check: (length('col) <= 5)."))
+          "Failed check: (length(col) <= 5)."))
     }
     {
       val e = intercept[DeltaInvariantViolationException] {
