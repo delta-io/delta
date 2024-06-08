@@ -299,7 +299,8 @@ class InCommitTimestampSuite
   }
 
   // Coordinated Commits will also automatically enable ICT.
-  testWithDefaultCommitCoordinatorUnset("Enablement tracking works when ICT is enabled post commit 0") {
+  testWithDefaultCommitCoordinatorUnset("Enablement tracking works when ICT is enabled post " +
+    "commit 0") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {

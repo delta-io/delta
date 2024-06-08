@@ -3898,11 +3898,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     val tablePath = dir.getAbsolutePath
     val log = DeltaLog.forTable(spark, tablePath)
     val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
-    val commitCoordinatorConf = Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> mcBuilder.getName)
+    val commitCoordinatorConf =
+      Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> mcBuilder.getName)
     val newMetadata = Metadata().copy(configuration = commitCoordinatorConf)
     log.startTransaction().commitManually(newMetadata)
     assert(log.unsafeVolatileSnapshot.version === 0)
-    assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName === Some(mcBuilder.getName))
+    assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName ===
+      Some(mcBuilder.getName))
     assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
     assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
     // upgrade commit always filesystem based
@@ -3962,8 +3964,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
       val snapshot = log.update()
       assert(
-        !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(snapshot.metadata.configuration.contains(_)))
-      assert(!snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitTableFeature.name)))
+        !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(
+          snapshot.metadata.configuration.contains(_)))
+      assert(
+        !snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitTableFeature.name)))
       validateCoordinatedCommitDropLogs(
         usageLogs, expectTablePropertiesPresent = true, expectUnbackfilledCommitsPresent = false)
     }
@@ -3987,7 +3991,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               throw new IllegalStateException("backfill failed")
             } else {
               super.backfillToVersion(
-                logStore, hadoopConf, logPath, coordinatedCommitsTableConf, startVersion, endVersionOpt)
+                logStore,
+                hadoopConf,
+                logPath,
+                coordinatedCommitsTableConf,
+                startVersion,
+                endVersionOpt)
             }
           }
         })
@@ -4035,8 +4044,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // The protocol downgrade commit is performed through logstore directly.
       assert(backfilledCommitExists(4))
       assert(
-        !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(snapshot.metadata.configuration.contains(_)))
-      assert(!snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitTableFeature.name)))
+        !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(
+          snapshot.metadata.configuration.contains(_)))
+      assert(
+        !snapshot.protocol.writerFeatures.exists(_.contains(CoordinatedCommitTableFeature.name)))
     }
   }
   // ---- End Coordinated Commits Drop Feature Tests ----

@@ -20,7 +20,8 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.hadoop.fs.Path
 
-abstract class InMemoryCommitCoordinatorSuite(batchSize: Int) extends CommitCoordinatorClientImplSuiteBase {
+abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
+  extends CommitCoordinatorClientImplSuiteBase {
 
   override protected def createTableCommitCoordinatorClient(
       deltaLog: DeltaLog): TableCommitCoordinatorClient = {

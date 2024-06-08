@@ -141,12 +141,13 @@ class InMemoryDynamoDBClient extends AbstractAmazonDynamoDB {
 
 case class TestDynamoDBCommitCoordinatorBuilder(batchSize: Long) extends CommitCoordinatorBuilder {
     override def getName: String = "test-dynamodb"
-    override def build(spark: SparkSession, config: Map[String, String]): CommitCoordinatorClient = {
-        new DynamoDBCommitCoordinatorClient(
-          "testTable",
-          "test-endpoint",
-          new InMemoryDynamoDBClient(),
-          batchSize)
+    override def build(
+        spark: SparkSession, config: Map[String, String]): CommitCoordinatorClient = {
+      new DynamoDBCommitCoordinatorClient(
+        "testTable",
+        "test-endpoint",
+        new InMemoryDynamoDBClient(),
+        batchSize)
     }
 }
 
@@ -280,8 +281,10 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
       "dynamoDBEndpoint" -> "endpoint-1224"
     ))
     withSQLConf(
-        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey -> "dynamodb-test",
-        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey -> commitCoordinatorConf,
+        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
+          "dynamodb-test",
+        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
+          commitCoordinatorConf,
         DeltaSQLConf.COORDINATED_COMMITS_DDB_AWS_CREDENTIALS_PROVIDER_NAME.key -> "creds-1225",
         DeltaSQLConf.COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK.key -> "true",
         DeltaSQLConf.COORDINATED_COMMITS_DDB_READ_CAPACITY_UNITS.key -> "1226",
@@ -294,7 +297,9 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
         spark.range(1).write.format("delta").mode("overwrite").save(tablePath)
         val log = DeltaLog.forTable(spark, tempDir.toString)
         val tableCommitCoordinatorClient = log.snapshot.tableCommitCoordinatorClientOpt.get
-        assert(tableCommitCoordinatorClient.commitCoordinatorClient.isInstanceOf[DynamoDBCommitCoordinatorClient])
+        assert(tableCommitCoordinatorClient
+          .commitCoordinatorClient
+          .isInstanceOf[DynamoDBCommitCoordinatorClient])
         assert(tableCommitCoordinatorClient.tableConf.contains("tableId"))
       }
     }

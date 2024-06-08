@@ -72,15 +72,18 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
 
   test("registering multiple commit-coordinator builders with same name") {
     object Builder1 extends CommitCoordinatorBuilder {
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = null
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = null
       override def getName: String = "builder-1"
     }
     object BuilderWithSameName extends CommitCoordinatorBuilder {
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = null
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = null
       override def getName: String = "builder-1"
     }
     object Builder3 extends CommitCoordinatorBuilder {
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = null
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = null
       override def getName: String = "builder-3"
     }
     CommitCoordinatorProvider.registerBuilder(Builder1)
@@ -94,7 +97,8 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
     object Builder1 extends CommitCoordinatorBuilder {
       val cs1 = new TestCommitCoordinatorClient1()
       val cs2 = new TestCommitCoordinatorClient2()
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
         conf.getOrElse("url", "") match {
           case "url1" => cs1
           case "url2" => cs2
@@ -104,12 +108,14 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
       override def getName: String = "cs-x"
     }
     CommitCoordinatorProvider.registerBuilder(Builder1)
-    val cs1 = CommitCoordinatorProvider.getCommitCoordinatorClient("cs-x", Map("url" -> "url1"), spark)
+    val cs1 =
+      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-x", Map("url" -> "url1"), spark)
     assert(cs1.isInstanceOf[TestCommitCoordinatorClient1])
-    val cs1_again = CommitCoordinatorProvider.getCommitCoordinatorClient("cs-x", Map("url" -> "url1"), spark)
+    val cs1_again =
+      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-x", Map("url" -> "url1"), spark)
     assert(cs1 eq cs1_again)
-    val cs2 =
-      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-x", Map("url" -> "url2", "a" -> "b"), spark)
+    val cs2 = CommitCoordinatorProvider.getCommitCoordinatorClient(
+      "cs-x", Map("url" -> "url2", "a" -> "b"), spark)
     assert(cs2.isInstanceOf[TestCommitCoordinatorClient2])
     // If builder receives a config which doesn't have expected params, then it can throw exception.
     intercept[IllegalArgumentException] {
@@ -119,7 +125,8 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
 
   test("getCommitCoordinatorClient - builder returns new object each time") {
     object Builder1 extends CommitCoordinatorBuilder {
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
         conf.getOrElse("url", "") match {
           case "url1" => new TestCommitCoordinatorClient1()
           case _ => throw new IllegalArgumentException("Invalid url")
@@ -128,9 +135,11 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
       override def getName: String = "cs-name"
     }
     CommitCoordinatorProvider.registerBuilder(Builder1)
-    val cs1 = CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("url" -> "url1"), spark)
+    val cs1 =
+      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("url" -> "url1"), spark)
     assert(cs1.isInstanceOf[TestCommitCoordinatorClient1])
-    val cs1_again = CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("url" -> "url1"), spark)
+    val cs1_again =
+      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("url" -> "url1"), spark)
     assert(cs1 ne cs1_again)
   }
 
@@ -178,12 +187,13 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
     }
   }
 
-  test("Adding COORDINATED_COMMITS_PROVIDER_NAME table property automatically upgrades the Protocol") {
+  test("Adding COORDINATED_COMMITS_PROVIDER_NAME table property " +
+    "automatically upgrades the Protocol") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
       spark.range(10).write.format("delta").mode("append").save(path)
-      val metadata =
-        Metadata(configuration = Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> "in-memory"))
+      val metadata = Metadata(
+        configuration = Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> "in-memory"))
       val deltaLog = DeltaLog.forTable(spark, path)
 
       def getWriterFeatures(log: DeltaLog): Set[String] = {
@@ -211,13 +221,16 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
     CommitCoordinatorProvider.registerBuilder(Builder1)
 
     // Different CommitCoordinator with same keys should be semantically equal.
-    val obj1 = CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("key" -> "url1"), spark)
-    val obj2 = CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("key" -> "url1"), spark)
+    val obj1 =
+      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("key" -> "url1"), spark)
+    val obj2 =
+      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("key" -> "url1"), spark)
     assert(obj1 != obj2)
     assert(obj1.semanticEquals(obj2))
 
     // Different CommitCoordinator with different keys should be semantically unequal.
-    val obj3 = CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("key" -> "url2"), spark)
+    val obj3 =
+      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("key" -> "url2"), spark)
     assert(obj1 != obj3)
     assert(!obj1.semanticEquals(obj3))
   }
@@ -244,8 +257,8 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
    * based on the spec of the commit coordinator.
    *
    * This test case ensures that any new field added in the Protocol action is also accessible in
-   * the CommitCoordinatorClient via the getter. If the new field is something which we do not expect to
-   * be passed to the CommitCoordinatorClient, the test needs to be modified accordingly.
+   * the CommitCoordinatorClient via the getter. If the new field is something which we do not
+   * expect to be passed to the CommitCoordinatorClient, the test needs to be modified accordingly.
    */
   test("AbstractProtocol should have getter methods for all fields in Protocol") {
     val missingFields = checkMissing[AbstractProtocol, Protocol]()
@@ -262,8 +275,8 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
    * based on the spec of the commit coordinator.
    *
    * This test case ensures that any new field added in the Metadata action is also accessible in
-   * the CommitCoordinatorClient via the getter. If the new field is something which we do not expect to
-   * be passed to the CommitCoordinatorClient, the test needs to be modified accordingly.
+   * the CommitCoordinatorClient via the getter. If the new field is something which we do not
+   * expect to be passed to the CommitCoordinatorClient, the test needs to be modified accordingly.
    */
   test("BaseMetadata should have getter methods for all fields in Metadata") {
     val missingFields = checkMissing[AbstractMetadata, Metadata]()

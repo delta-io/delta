@@ -520,7 +520,8 @@ class OptimisticTransactionSuite
         }
       }
       override def build(
-          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
+          spark: SparkSession,
+          conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
     }
 
     CommitCoordinatorProvider.registerBuilder(RetryableNonConflictCommitCoordinatorBuilder$)
@@ -530,7 +531,8 @@ class OptimisticTransactionSuite
         DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> numNonConflictRetries) {
       withTempDir { tempDir =>
         val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val conf = Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
+        val conf =
+          Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
         log.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
         val testTxn = log.startTransaction()
         intercept[CommitFailedException] { testTxn.commit(Seq.empty, ManualUpdate) }
@@ -570,7 +572,8 @@ class OptimisticTransactionSuite
         }
       }
       override def build(
-          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
+          spark: SparkSession,
+          conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
     }
 
     CommitCoordinatorProvider.registerBuilder(FileAlreadyExistsCommitCoordinatorBuilder)
@@ -580,7 +583,8 @@ class OptimisticTransactionSuite
         DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> "10") {
       withTempDir { tempDir =>
         val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val conf = Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
+        val conf =
+          Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
         log.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
         val testTxn = log.startTransaction()
         intercept[FileAlreadyExistsException] { testTxn.commit(Seq.empty, ManualUpdate) }
@@ -858,7 +862,8 @@ class OptimisticTransactionSuite
       withTempDir { tempDir =>
         val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
         val commitCoordinatorName = "retryable-conflict-commit-coordinator"
-        class RetryableConflictCommitCoordinatorClient extends InMemoryCommitCoordinator(batchSize = 5) {
+        class RetryableConflictCommitCoordinatorClient
+          extends InMemoryCommitCoordinator(batchSize = 5) {
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
@@ -880,10 +885,12 @@ class OptimisticTransactionSuite
           lazy val commitCoordinatorClient = new RetryableConflictCommitCoordinatorClient()
           override def getName: String = commitCoordinatorName
           override def build(
-              spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
+              spark: SparkSession,
+              conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
         }
         CommitCoordinatorProvider.registerBuilder(RetryableConflictCommitCoordinatorBuilder$)
-        val conf = Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
+        val conf =
+          Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
         deltaLog.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
         deltaLog.startTransaction().commit(addA :: Nil, ManualUpdate)
         val records = Log4jUsageLogger.track {

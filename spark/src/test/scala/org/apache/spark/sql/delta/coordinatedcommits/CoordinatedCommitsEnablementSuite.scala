@@ -31,9 +31,11 @@ class CoordinatedCommitEnablementSuite
 
   private def validateCoordinatedCommitCompleteEnablement(
       snapshot: Snapshot, expectEnabled: Boolean): Unit = {
-    assert(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(snapshot.metadata).isDefined
-      == expectEnabled)
-    Seq(CoordinatedCommitTableFeature, VacuumProtocolCheckTableFeature, InCommitTimestampTableFeature)
+    assert(
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(snapshot.metadata).isDefined
+        == expectEnabled)
+    Seq(
+      CoordinatedCommitTableFeature, VacuumProtocolCheckTableFeature, InCommitTimestampTableFeature)
       .foreach { feature =>
         assert(snapshot.protocol.writerFeatures.exists(_.contains(feature.name)) == expectEnabled)
       }
@@ -88,7 +90,8 @@ class CoordinatedCommitEnablementSuite
       val log = DeltaLog.forTable(spark, tablePath)
       validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = false)
       sql(s"ALTER TABLE delta.`$tablePath` SET " + // Enable MC
-        s"TBLPROPERTIES ('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory')")
+        s"TBLPROPERTIES ('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' " +
+          s"= 'tracking-in-memory')")
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
       validateCoordinatedCommitCompleteEnablement(log.update(), expectEnabled = true)
     }
@@ -104,7 +107,8 @@ class CoordinatedCommitEnablementSuite
       val log = DeltaLog.forTable(spark, tablePath)
       validateCoordinatedCommitCompleteEnablement(log.snapshot, expectEnabled = false)
       sql(s"REPLACE TABLE delta.`$tablePath` (value int) USING delta " + // Enable MC
-        s"TBLPROPERTIES ('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory')")
+        s"TBLPROPERTIES ('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' " +
+          s"= 'tracking-in-memory')")
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
       validateCoordinatedCommitCompleteEnablement(log.update(), expectEnabled = true)
     }

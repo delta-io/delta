@@ -603,11 +603,12 @@ object ConcurrentBackfillCommitCoordinatorBuilder extends CommitCoordinatorBuild
  *
  * Step 1: LogStore retrieves delta files for versions [0, 2] from the file system.
  * Step 2: Wait on the latch to ensure step (1) is completed before step (3) begins.
- * Step 3: Backfill commits [3, 5] from CommitCoordinatorClient to LogStore using deferredBackfills map.
+ * Step 3: Backfill commits [3, 5] from CommitCoordinatorClient to LogStore using deferredBackfills
+ * map.
  * Step 4: CommitCoordinatorClient returns commits [6, ...] (if valid).
  *
- * Test that the code correctly handles the gap in the LogStore and CommitCoordinatorClient listings by
- * making an additional call to LogStore to fetch versions [3, 5].
+ * Test that the code correctly handles the gap in the LogStore and CommitCoordinatorClient listings
+ * by making an additional call to LogStore to fetch versions [3, 5].
  */
 class SnapshotManagementParallelListingSuite extends QueryTest
     with SharedSparkSession

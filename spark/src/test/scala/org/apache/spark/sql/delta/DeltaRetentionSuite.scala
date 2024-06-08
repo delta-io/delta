@@ -528,8 +528,8 @@ class DeltaRetentionWithCoordinatedCommitBatch2Suite extends QueryTest
   /**
    * This test verifies that unbackfilled versions, i.e., versions for which backfilled deltas do
    * not exist yet, are never considered for deletion, even if they fall outside the retention
-   * window. The primary reason for not deleting these versions is that the CommitCoordinator might be
-   * actively tracking those files, and currently, MetadataCleanup does not communicate with the
+   * window. The primary reason for not deleting these versions is that the CommitCoordinator might
+   * be actively tracking those files, and currently, MetadataCleanup does not communicate with the
    * CommitCoordinator.
    *
    * Although the fact that they are unbackfilled is somewhat redundant since these versions are
