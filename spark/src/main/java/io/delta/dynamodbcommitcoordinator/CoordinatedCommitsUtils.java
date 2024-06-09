@@ -14,24 +14,24 @@
  * limitations under the License.
  */
 
-package io.delta.dynamodbcommitstore;
+package io.delta.dynamodbcommitcoordinator;
 
-import org.apache.spark.sql.delta.managedcommit.AbstractMetadata;
-import org.apache.spark.sql.delta.managedcommit.UpdatedActions;
+import org.apache.spark.sql.delta.coordinatedcommits.AbstractMetadata;
+import org.apache.spark.sql.delta.coordinatedcommits.UpdatedActions;
 import org.apache.hadoop.fs.Path;
 
 import java.util.UUID;
 
-public class ManagedCommitUtils {
+public class CoordinatedCommitsUtils {
 
-    private ManagedCommitUtils() {}
+    private CoordinatedCommitsUtils() {}
 
     /** The subdirectory in which to store the unbackfilled commit files. */
     final static String COMMIT_SUBDIR = "_commits";
 
-    /** The configuration key for the managed commit owner. */
-    private static final String MANAGED_COMMIT_OWNER_CONF_KEY =
-            "delta.managedCommit.commitOwner-preview";
+    /** The configuration key for the coordinated commits owner. */
+    private static final String COORDINATED_COMMITS_COORDINATOR_CONF_KEY =
+            "delta.coordinatedCommits.commitCoordinator-preview";
 
     /**
      * Creates a new unbackfilled delta file path for the given commit version.
@@ -55,23 +55,23 @@ public class ManagedCommitUtils {
         return new Path(logPath, String.format("%020d.json", version));
     }
 
-    private static String getManagedCommitOwner(AbstractMetadata metadata) {
+    private static String getCoordinatedCommitsCoordinator(AbstractMetadata metadata) {
         return metadata
             .getConfiguration()
-            .get(MANAGED_COMMIT_OWNER_CONF_KEY)
+            .get(COORDINATED_COMMITS_COORDINATOR_CONF_KEY)
             .getOrElse(() -> "");
     }
 
     /**
-     * Returns true if the commit is a managed commit to filesystem conversion.
+     * Returns true if the commit is a coordinated commits to filesystem conversion.
      */
-    public static boolean isManagedCommitToFSConversion(
+    public static boolean isCoordinatedCommitsToFSConversion(
             Long commitVersion,
             UpdatedActions updatedActions) {
-        boolean oldMetadataHasManagedCommit =
-                !getManagedCommitOwner(updatedActions.getOldMetadata()).isEmpty();
-        boolean newMetadataHasManagedCommit =
-                !getManagedCommitOwner(updatedActions.getNewMetadata()).isEmpty();
-        return oldMetadataHasManagedCommit && !newMetadataHasManagedCommit && commitVersion > 0;
+        boolean oldMetadataHasCoordinatedCommits =
+                !getCoordinatedCommitsCoordinator(updatedActions.getOldMetadata()).isEmpty();
+        boolean newMetadataHasCoordinatedCommits =
+                !getCoordinatedCommitsCoordinator(updatedActions.getNewMetadata()).isEmpty();
+        return oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits && commitVersion > 0;
     }
 }

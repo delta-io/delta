@@ -21,7 +21,7 @@ import java.util.Locale
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -344,7 +344,7 @@ object TableFeature {
       RowTrackingFeature,
       InCommitTimestampTableFeature,
       VariantTypeTableFeature,
-      ManagedCommitTableFeature)
+      CoordinatedCommitsTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(
         TestLegacyWriterFeature,
@@ -672,9 +672,9 @@ object V2CheckpointTableFeature
     V2CheckpointPreDowngradeCommand(table)
 }
 
-/** Table feature to represent tables whose commits are managed by separate commit-owner */
-object ManagedCommitTableFeature
-  extends WriterFeature(name = "managedCommit-preview")
+/** Table feature to represent tables whose commits are managed by separate commit-coordinator */
+object CoordinatedCommitsTableFeature
+  extends WriterFeature(name = "coordinatedCommits-preview")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {
 
@@ -683,18 +683,18 @@ object ManagedCommitTableFeature
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = {
-    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).nonEmpty
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).nonEmpty
   }
 
   override def requiredFeatures: Set[TableFeature] =
     Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
 
   override def preDowngradeCommand(table: DeltaTableV2)
-      : PreDowngradeTableFeatureCommand = ManagedCommitPreDowngradeCommand(table)
+      : PreDowngradeTableFeatureCommand = CoordinatedCommitsPreDowngradeCommand(table)
 
   override def validateRemoval(snapshot: Snapshot): Boolean = {
-    !ManagedCommitUtils.tablePropertiesPresent(snapshot.metadata) &&
-      !ManagedCommitUtils.unbackfilledCommitsPresent(snapshot)
+    !CoordinatedCommitsUtils.tablePropertiesPresent(snapshot.metadata) &&
+      !CoordinatedCommitsUtils.unbackfilledCommitsPresent(snapshot)
   }
 
   // This is a writer feature, so it should directly return false.

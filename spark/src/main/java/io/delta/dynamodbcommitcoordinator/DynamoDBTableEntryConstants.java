@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.dynamodbcommitstore;
+package io.delta.dynamodbcommitcoordinator;
 
 /**
  * Defines the field names used in the DynamoDB table entry.
@@ -28,14 +28,14 @@ final class DynamoDBTableEntryConstants {
     public static final String TABLE_LATEST_VERSION = "tableVersion";
     /** The inCommitTimestamp of the latest commit in the corresponding Delta table. */
     public static final String TABLE_LATEST_TIMESTAMP = "tableTimestamp";
-    /** Whether this commit owner is accepting more commits for the corresponding Delta table. */
+    /** Whether this commit coordinator is accepting more commits for the corresponding Delta table. */
     public static final String ACCEPTING_COMMITS = "acceptingCommits";
     /** The path of the corresponding Delta table. */
     public static final String TABLE_PATH = "path";
     /** The schema version of this DynamoDB table entry. */
     public static final String SCHEMA_VERSION = "schemaVersion";
     /**
-     * Whether this commit owner has accepted any commits after `registerTable`.
+     * Whether this commit coordinator has accepted any commits after `registerTable`.
      */
     public static final String HAS_ACCEPTED_COMMITS = "hasAcceptedCommits";
     /** The name of the field used to store unbackfilled commits. */

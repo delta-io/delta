@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -56,7 +56,7 @@ trait DeltaTimeTravelTests extends QueryTest
     with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils
-    with ManagedCommitBaseSuite {
+    with CoordinatedCommitsBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -370,7 +370,7 @@ trait DeltaTimeTravelTests extends QueryTest
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        if (managedCommitBackfillBatchSize.exists(_ > 2)) {
+        if (coordinatedCommitsBackfillBatchSize.exists(_ > 2)) {
           assert(e2.getMessage.contains("No commits found at"))
         } else {
           assert(e2.getMessage.contains("No recreatable commits found at"))
@@ -667,14 +667,14 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
   }
 }
 
-class DeltaHistoryManagerWithManagedCommitBatch1Suite extends DeltaHistoryManagerSuite {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
+class DeltaHistoryManagerWithCoordinatedCommitsBatch1Suite extends DeltaHistoryManagerSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaHistoryManagerWithManagedCommitBatch2Suite extends DeltaHistoryManagerSuite {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(2)
+class DeltaHistoryManagerWithCoordinatedCommitsBatch2Suite extends DeltaHistoryManagerSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaHistoryManagerWithManagedCommitBatch100Suite extends DeltaHistoryManagerSuite {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(100)
+class DeltaHistoryManagerWithCoordinatedCommitsBatch100Suite extends DeltaHistoryManagerSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

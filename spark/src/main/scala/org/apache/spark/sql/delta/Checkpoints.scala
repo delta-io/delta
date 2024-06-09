@@ -345,11 +345,11 @@ trait Checkpoints extends DeltaLogging {
   }
 
   protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): LastCheckpointInfo = {
-    // With Managed-Commits, commit files are not guaranteed to be backfilled immediately in the
+    // With Coordinated-Commits, commit files are not guaranteed to be backfilled immediately in the
     // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
     // writing the checkpoint file in the log directory before backfilling the relevant commits
     // will leave gaps in the dir structure. This can cause issues for readers that are not
-    // communicating with the commit-owner.
+    // communicating with the commit-coordinator.
     //
     // Sample directory structure with a gap if we don't backfill commit files:
     // _delta_log/

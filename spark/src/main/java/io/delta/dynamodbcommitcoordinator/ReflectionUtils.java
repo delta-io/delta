@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.dynamodbcommitstore;
+package io.delta.dynamodbcommitcoordinator;
 
 import com.amazonaws.auth.AWSCredentialsProvider;
 import org.apache.hadoop.conf.Configuration;
