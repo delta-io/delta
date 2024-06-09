@@ -527,7 +527,9 @@ private[internal] class OptimisticTransactionImpl(
   private def shouldCheckpoint(committedVersion: Long): Boolean = {
     val checkpointingEnabled =
       deltaLog.hadoopConf.getBoolean(StandaloneHadoopConf.CHECKPOINTING_ENABLED, true)
-    checkpointingEnabled && committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
+    checkpointingEnabled &&
+      committedVersion != 0 &&
+      committedVersion % deltaLog.checkpointInterval == 0
   }
 
   /** Returns the next attempt version given the last attempted version */
