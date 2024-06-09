@@ -35,7 +35,9 @@ class CoordinatedCommitsEnablementSuite
       DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(snapshot.metadata).isDefined
         == expectEnabled)
     Seq(
-      CoordinatedCommitsTableFeature, VacuumProtocolCheckTableFeature, InCommitTimestampTableFeature)
+      CoordinatedCommitsTableFeature,
+      VacuumProtocolCheckTableFeature,
+      InCommitTimestampTableFeature)
       .foreach { feature =>
         assert(snapshot.protocol.writerFeatures.exists(_.contains(feature.name)) == expectEnabled)
       }

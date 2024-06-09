@@ -440,11 +440,13 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   }
 }
 
-class DeltaLogMinorCompactionWithCoordinatedCommitsBatch1Suite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch1Suite
+  extends DeltaLogMinorCompactionSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaLogMinorCompactionWithCoordinatedCommitsBatch2Suite extends DeltaLogMinorCompactionSuite {
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch2Suite
+  extends DeltaLogMinorCompactionSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
