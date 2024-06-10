@@ -7,11 +7,12 @@ description: Learn about Delta Connect - Spark Connect Support in Delta.
 .. note:: This feature is available in preview in <Delta> 4.0.
 
 Delta Connect adds [Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html) support to Delta Lake for Apache Spark. Spark Connect is a new initiative that adds a decoupled client-server infrastructure which allows remote connectivity from Spark from everywhere. Delta Connect allows all Delta Lake operations to work in your application running as a client connected to the Spark server.
+
 ## Motivation
 
 Delta Connect is expected to bring the same benefits as Spark Connect:
 
-1. Easier upgrading to more recent versions of Spark and <Delta>, as the client interface is completely decoupled from the server.
+1. Upgrading to more recent versions of Spark and <Delta> is now easier because the client interface is being completely decoupled from the server.
 2. Simpler integration of Spark and <Delta> with developer tooling. IDEs no longer have to integrate with the full Spark and <Delta> implementation, and instead can integrate with a thin-client.
 3. Support for languages other than Java/Scala and Python. Clients "merely" have to generate Protocol Buffers and therefore become simpler to implement.
 4. Spark and <Delta> will become more stable, as user code is no longer running in the same JVM as Spark's driver.
@@ -40,7 +41,7 @@ The <Delta> Connect Python client is included in the same PyPi package as <Delta
 
 2. `pip install delta-spark==4.0.0`
 
-3. There is no difference in usage compared to the classic way. We just need to pass in a remote `SparkSession` (instead of a local one) to the `DeltaTable` API.
+3. The usage is the same as Spark Connect. We just need to pass in a remote `SparkSession` (instead of a local one) to the `DeltaTable` API.
 
 An example:
 
