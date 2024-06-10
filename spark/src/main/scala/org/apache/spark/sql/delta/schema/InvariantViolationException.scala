@@ -90,7 +90,7 @@ object DeltaInvariantViolationException {
       values: Map[String, Any]): DeltaInvariantViolationException = {
     if (constraint.name == CharVarcharConstraint.INVARIANT_NAME) {
       return getCharVarcharLengthInvariantViolationException(
-        exprStr = constraint.expression.toString,
+        exprStr = constraint.expression.sql,
         valueStr = values.head._2.toString)
     }
 
