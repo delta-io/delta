@@ -57,7 +57,7 @@ abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaComman
    * - validates that we already collect stats for all the columns used in `unresolvedZOrderByCols`
    *
    * @param spark [[SparkSession]] to use
-   * @param txn the [[OptimisticTransaction]] being used to optimize
+   * @param snapshot the [[Snapshot]] being used to optimize from
    * @param unresolvedZOrderByCols Seq of [[UnresolvedAttribute]] corresponding to zOrderBy columns
    */
   def validateZorderByColumns(

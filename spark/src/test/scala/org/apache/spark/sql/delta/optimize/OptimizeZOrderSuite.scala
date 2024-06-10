@@ -226,7 +226,6 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
         val commits = deltaLog.history.getHistory(None)
         assert(commits.filter(_.operation == "OPTIMIZE").length == expectedCommits)
 
-        val part = "part".phy(deltaLog)
         val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
         for ((part, fileCount) <- partitionFileCount) {
           assert(files(("part", part)).length == fileCount)
