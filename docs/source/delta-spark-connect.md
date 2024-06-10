@@ -51,6 +51,7 @@ import org.apache.spark.sql.functions._
 
 val deltaTable = DeltaTable.forName(spark, "my_table")
 
+# Update will only be supported in the final release of Delta 4.0.
 deltaTable.update(
   condition = expr("id % 2 == 0"),
   set = Map("id" -> expr("id + 100")))
@@ -85,6 +86,7 @@ import org.apache.spark.sql.functions._
 
 val deltaTable = DeltaTable.forName(spark, "my_table")
 
+// Update will only be supported in the final release of Delta 4.0.
 deltaTable.update(
 condition = expr("id % 2 == 0"),
 set = Map("id" -> expr("id + 100")))
@@ -101,8 +103,8 @@ The feature introduces a limited set of supported operations in <Delta> 4.0 prev
 
 "`forPath`","`forPath`"
 "`forName`","`forName`"
+"`toDF`","`toDF`"
 ,"`alias`"
-,"`toDF`"
 ,"`generate`"
 ,"`vacuum`"
 ,"`delete`"
