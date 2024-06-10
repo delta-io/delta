@@ -52,7 +52,7 @@ import org.apache.spark.sql.functions._
 val deltaTable = DeltaTable.forName(spark, "my_table")
 deltaTable.toDF().show()
 
-// Update will not be supported in the first of Delta 4.0.
+# Update will not be supported in the first preview of Delta 4.0.
 deltaTable.update(
   condition = expr("id % 2 == 0"),
   set = Map("id" -> expr("id + 100")))
@@ -88,7 +88,7 @@ import org.apache.spark.sql.functions._
 val deltaTable = DeltaTable.forName(spark, "my_table")
 deltaTable.toDF.show()
 
-// Update will not be supported in the first of Delta 4.0.
+// Update will not be supported in the first preview of Delta 4.0.
 deltaTable.update(
 condition = expr("id % 2 == 0"),
 set = Map("id" -> expr("id + 100")))
@@ -99,6 +99,8 @@ In the future, when [spark-connect-repl](https://spark.apache.org/docs/4.0.0-pre
 ## Preview Limitations
 
 The feature introduces a limited set of supported operations in <Delta> 4.0 preview and expands it in <Delta> 4.0 and above.
+
+With `forPath`, `forName` and `toDF`, users can perform Delta Scan over Spark Connect already in <Delta> 4.0 preview.
 
 .. csv-table::
 :header: "Supported operations - Delta 4.0 preview", "Supported operations - Delta 4.0 release"
