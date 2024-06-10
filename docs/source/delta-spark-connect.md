@@ -50,8 +50,9 @@ import io.delta.tables._
 import org.apache.spark.sql.functions._
 
 val deltaTable = DeltaTable.forName(spark, "my_table")
+val df = deltaTable.toDF()
 
-# Update will only be supported in the final release of Delta 4.0.
+// Update will not be supported in the first of Delta 4.0.
 deltaTable.update(
   condition = expr("id % 2 == 0"),
   set = Map("id" -> expr("id + 100")))
@@ -85,8 +86,9 @@ import io.delta.tables._
 import org.apache.spark.sql.functions._
 
 val deltaTable = DeltaTable.forName(spark, "my_table")
+val df = deltaTable.toDF
 
-// Update will only be supported in the final release of Delta 4.0.
+// Update will not be supported in the first of Delta 4.0.
 deltaTable.update(
 condition = expr("id % 2 == 0"),
 set = Map("id" -> expr("id + 100")))
