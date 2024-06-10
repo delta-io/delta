@@ -184,6 +184,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test(s"end to end: reading decimal-various-scale-precision") {
+    val tablePath = goldenTablePath("decimal-various-scale-precision")
+    val expResults = spark.sql(s"SELECT * FROM delta.`$tablePath`")
+      .collect()
+      .map(TestRow(_))
+
+    checkTable(
+      path = goldenTablePath("decimal-various-scale-precision"),
+      expectedAnswer = expResults
+    )
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Table/Snapshot tests
   //////////////////////////////////////////////////////////////////////////////////
@@ -598,6 +610,19 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e.getMessage.contains(
         "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))
+    }
+  }
+
+  test("read a shallow cloned table") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath
+      val source = goldenTablePath("data-reader-partition-values")
+      spark.sql(s"CREATE TABLE delta.`$target` SHALLOW CLONE delta.`$source`")
+
+      val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
+
+      assert(expAnswer.size == 3)
+      checkTable(target, expAnswer)
     }
   }
 

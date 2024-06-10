@@ -539,7 +539,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(20)
 
   val MANAGED_COMMIT_GET_COMMITS_THREAD_POOL_SIZE =
-    buildStaticConf("managedCommits.getCommits.threadPoolSize")
+    buildStaticConf("managedCommit.getCommits.threadPoolSize")
       .internal()
       .doc("The size of the thread pool for listing files from the commit-owner.")
       .intConf
@@ -551,7 +551,7 @@ trait DeltaSQLConfBase {
   /////////////////////////////////////////////
 
   val MANAGED_COMMIT_DDB_AWS_CREDENTIALS_PROVIDER_NAME =
-    buildConf("managedCommits.commitOwner.ddb.awsCredentialsProviderName")
+    buildConf("managedCommit.commitOwner.dynamodb.awsCredentialsProviderName")
       .internal()
       .doc("The fully qualified class name of the AWS credentials provider to use for " +
         "interacting with DynamoDB in the DynamoDB Commit Owner Client. e.g. " +
@@ -560,7 +560,7 @@ trait DeltaSQLConfBase {
       .createWithDefault("com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
 
   val MANAGED_COMMIT_DDB_SKIP_PATH_CHECK =
-    buildConf("managedCommits.commitOwner.ddb.skipPathCheck.enabled")
+    buildConf("managedCommit.commitOwner.dynamodb.skipPathCheckEnabled")
       .internal()
       .doc("When enabled, the DynamoDB Commit Owner will not enforce that the table path of the " +
         "current Delta table matches the stored in the corresponding DynamoDB table. This " +
@@ -572,7 +572,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val MANAGED_COMMIT_DDB_READ_CAPACITY_UNITS =
-    buildConf("managedCommits.commitOwner.ddb.readCapacityUnits")
+    buildConf("managedCommit.commitOwner.dynamodb.readCapacityUnits")
       .internal()
       .doc("Controls the provisioned read capacity units for the DynamoDB table backing the " +
         "DynamoDB Commit Owner. This configuration is only used when the DynamoDB table is first " +
@@ -581,7 +581,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(5)
 
   val MANAGED_COMMIT_DDB_WRITE_CAPACITY_UNITS =
-    buildConf("managedCommits.commitOwner.ddb.writeCapacityUnits")
+    buildConf("managedCommit.commitOwner.dynamodb.writeCapacityUnits")
       .internal()
       .doc("Controls the provisioned write capacity units for the DynamoDB table backing the " +
         "DynamoDB Commit Owner. This configuration is only used when the DynamoDB table is first " +
@@ -973,6 +973,17 @@ trait DeltaSQLConfBase {
              |ignored like what the old version does.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS =
+    buildConf("workAroundColonsInHadoopPaths.enabled")
+      .internal()
+      .doc("""
+             |When enabled, Delta will work around to allow colons in file paths. Normally Hadoop
+             |does not support colons in file paths due to ambiguity, but some file systems like
+             |S3 allow them.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val REPLACEWHERE_DATACOLUMNS_ENABLED =
     buildConf("replaceWhere.dataColumns.enabled")

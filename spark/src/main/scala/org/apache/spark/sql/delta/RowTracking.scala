@@ -65,11 +65,13 @@ object RowTracking {
   }
 
   /**
-   * Returns the Row Tracking metadata fields for the file's _metadata when Row Tracking
-   * is enabled.
+   * @return the Row Tracking metadata fields for the file's _metadata
+   *         when Row Tracking is enabled.
    */
-  def createMetadataStructFields(protocol: Protocol, metadata: Metadata, nullable: Boolean)
-      : Iterable[StructField] = {
+  def createMetadataStructFields(
+      protocol: Protocol,
+      metadata: Metadata,
+      nullable: Boolean): Iterable[StructField] = {
     RowId.createRowIdField(protocol, metadata, nullable) ++
       RowId.createBaseRowIdField(protocol, metadata) ++
       DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata) ++
@@ -77,12 +79,13 @@ object RowTracking {
   }
 
   /**
-   * Return a copy of tagsMap with the [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag added
-   * or replaced with the new value.
+   * @param preserved The value of [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag
+   * @return A copy of ``tagsMap`` with the [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag added
+   *         or replaced with the new value.
    */
   private def addPreservedRowTrackingTag(
       tagsMap: Map[String, String],
-      preserved: Boolean): Map[String, String] = {
+      preserved: Boolean = true): Map[String, String] = {
     tagsMap + (DeltaCommitTag.PreservedRowTrackingTag.key -> preserved.toString)
   }
 
@@ -99,11 +102,12 @@ object RowTracking {
       tagsMap.contains(PreservedRowTrackingTag.key)) {
       return tagsMap
     }
-    addPreservedRowTrackingTag(tagsMap, preserved = true)
+    addPreservedRowTrackingTag(tagsMap)
   }
 
   def preserveRowTrackingColumns(
-      dfWithoutRowTrackingColumns: DataFrame, snapshot: SnapshotDescriptor): DataFrame = {
+      dfWithoutRowTrackingColumns: DataFrame,
+      snapshot: SnapshotDescriptor): DataFrame = {
     val dfWithRowIds = RowId.preserveRowIds(dfWithoutRowTrackingColumns, snapshot)
     RowCommitVersion.preserveRowCommitVersions(dfWithRowIds, snapshot)
   }

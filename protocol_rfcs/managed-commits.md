@@ -1,7 +1,7 @@
 # Managed Commits
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2598**
 
-This RFC proposes a new table feature `managedCommits` which changes the way Delta Lake performs commits.
+This RFC proposes a new table feature `managedCommit` which changes the way Delta Lake performs commits.
 
 Today’s Delta commit protocol relies on the filesystem to provide commit atomicity. This feature request is to allow Delta tables which gets commit atomicity using an external commit-owner and not
 the filesystem (s3, abfs etc). This allows us to deal with various limitations of Delta:
@@ -324,13 +324,13 @@ the seemingly-extra files might think the table metadata was corrupted.
 
 The managed-commit feature is supported and active when:
 - The table must be on Writer Version 7.
-- The table has a `protocol` action with `writerFeatures` containing the feature `managedCommits`.
-- The table has a metadata property `delta.managedCommits.commitOwner` in the [change-metadata](#change-metadata)'s configuration.
-- The table may have a metadata property `delta.managedCommits.commitOwnerConf` in the [change-metadata](#change-metadata)'s configuration. The value of this property is a json-coded string-to-string map.
+- The table has a `protocol` action with `writerFeatures` containing the feature `managedCommit`.
+- The table has a metadata property `delta.managedCommit.commitOwner` in the [change-metadata](#change-metadata)'s configuration.
+- The table may have a metadata property `delta.managedCommit.commitOwnerConf` in the [change-metadata](#change-metadata)'s configuration. The value of this property is a json-coded string-to-string map.
     - A commit-owner can store additional information (e.g. configuration information such as service endpoints) in this field, for use by the commit-owner client (it is opaque to the Delta client).
     - This field should never include secrets such as auth tokens or credentials, because any reader with access to the table's storage location can see them.
 
-Note that a table is in invalid state if the change-metadata contains the `delta.managedCommits.commitOwner` property but the table does not have the `managedCommits` feature in the `protocol` action (or vice versa).
+Note that a table is in invalid state if the change-metadata contains the `delta.managedCommit.commitOwner` property but the table does not have the `managedCommit` feature in the `protocol` action (or vice versa).
 
 E.g.
 ```json
@@ -342,8 +342,8 @@ E.g.
       "partitionColumns":[],
       "configuration":{
          "appendOnly": "true",
-         "delta.managedCommits.commitOwner": "commit-owner-1",
-         "delta.managedCommits.commitOwnerConf":
+         "delta.managedCommit.commitOwner": "commit-owner-1",
+         "delta.managedCommit.commitOwnerConf":
              "{\"endpoint\":\"http://sample-url.com/commit\", \"authenticationMode\":\"oauth2\"}"
       }
    }

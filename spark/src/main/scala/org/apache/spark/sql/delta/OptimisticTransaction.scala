@@ -399,7 +399,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
     None
   } else {
-    Some(NANOSECONDS.toMillis((commitEndNano - txnStartNano)))
+    Some(NANOSECONDS.toMillis(commitEndNano - txnStartNano))
   }
 
   /** Gets the stats collector for the table at the snapshot this transaction has. */
@@ -1104,8 +1104,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       actions: Seq[Action],
       op: DeltaOperations.Operation,
       canSkipEmptyCommits: Boolean,
-      tags: Map[String, String]
-  ): Option[Long] = recordDeltaOperation(deltaLog, "delta.commit") {
+      tags: Map[String, String]): Option[Long] = recordDeltaOperation(deltaLog, "delta.commit") {
     commitStartNano = System.nanoTime()
 
     val (version, postCommitSnapshot, actualCommittedActions) = try {
@@ -1246,7 +1245,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   protected def updateMetadataWithManagedCommitConfs(): Boolean = {
     validateManagedCommitConfInMetadata(newMetadata)
-    val newManagedCommitTableConfOpt = registerTableForManagedCommitsIfNeeded(metadata, protocol)
+    val newManagedCommitTableConfOpt = registerTableForManagedCommitIfNeeded(metadata, protocol)
     val newManagedCommitTableConf = newManagedCommitTableConfOpt.getOrElse {
       return false
     }
@@ -1516,7 +1515,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    *         This metadata should be added to the [[Metadata.configuration]] before doing the
    *         commit.
    */
-  protected def registerTableForManagedCommitsIfNeeded(
+  protected def registerTableForManagedCommitIfNeeded(
       finalMetadata: Metadata,
       finalProtocol: Protocol): Option[Map[String, String]] = {
     val (oldOwnerName, oldOwnerConf) = ManagedCommitUtils.getManagedCommitConfs(snapshot.metadata)

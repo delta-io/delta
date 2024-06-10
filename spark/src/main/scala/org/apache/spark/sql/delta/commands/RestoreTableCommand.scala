@@ -21,7 +21,7 @@ import java.sql.Timestamp
 import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DomainMetadataUtils, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -205,9 +205,12 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           sourceProtocol.merge(targetProtocol)
         }
 
+        val actions = addActions ++ removeActions ++
+          DomainMetadataUtils.handleDomainMetadataForRestoreTable(snapshotToRestore, latestSnapshot)
+
         txn.commitLarge(
           spark,
-          addActions ++ removeActions,
+          actions,
           Some(newProtocol),
           DeltaOperations.Restore(version, timestamp),
           Map.empty,

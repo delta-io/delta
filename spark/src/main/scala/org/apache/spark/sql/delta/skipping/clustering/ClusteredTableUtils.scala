@@ -31,6 +31,10 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 
+case class MatchingMetadataDomain(
+    clusteringDomainOpt: Option[DomainMetadata]
+)
+
 /**
  * Clustered table utility functions.
  */
@@ -146,14 +150,33 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
         txn.protocol, txn.metadata, clusterBy)
       val clusteringColumns =
         clusterBy.columnNames.map(_.toString).map(ClusteringColumn(txn.metadata.schema, _))
-       Some(createDomainMetadata(clusteringColumns)).toSeq
+      Seq(createDomainMetadata(clusteringColumns))
     }.getOrElse {
-      if (txn.snapshot.domainMetadata.exists(_.domain == ClusteringMetadataDomain.domainName)) {
-        Some(createDomainMetadata(Seq.empty)).toSeq
-      } else {
-        None.toSeq
-      }
+      getMatchingMetadataDomain(
+        clusteringColumns = Seq.empty,
+        txn.snapshot.domainMetadata).clusteringDomainOpt.toSeq
     }
+  }
+
+  /**
+   * Returns a sequence of [[DomainMetadata]] actions to update the existing domain metadata with
+   * the given clustering columns.
+   *
+   * This is mainly used for REPLACE TABLE and RESTORE TABLE.
+   */
+  def getMatchingMetadataDomain(
+      clusteringColumns: Seq[ClusteringColumn],
+      existingDomainMetadata: Seq[DomainMetadata]): MatchingMetadataDomain = {
+    val clusteringMetadataDomainOpt =
+      if (existingDomainMetadata.exists(_.domain == ClusteringMetadataDomain.domainName)) {
+        Some(ClusteringMetadataDomain.fromClusteringColumns(clusteringColumns).toDomainMetadata)
+      } else {
+        None
+      }
+
+    MatchingMetadataDomain(
+      clusteringMetadataDomainOpt
+    )
   }
 
   /**
