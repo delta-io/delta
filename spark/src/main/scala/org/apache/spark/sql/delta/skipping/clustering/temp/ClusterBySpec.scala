@@ -66,6 +66,10 @@ object ClusterBySpec {
   def toProperty(clusterBySpec: ClusterBySpec): (String, String) = {
     ClusteredTableUtils.PROP_CLUSTERING_COLUMNS -> clusterBySpec.toJson
   }
+
+  def fromColumnNames(names: Seq[String]): ClusterBySpec = {
+    ClusterBySpec(names.map(FieldReference(_)))
+  }
 }
 
 /**

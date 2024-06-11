@@ -655,6 +655,17 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING" : {
+    "message" : [
+      "The specified clustering columns do not match the existing clustering columns at <path>.",
+      "== Specified ==",
+      "<specifiedColumns>",
+      "== Existing ==",
+      "<existingColumns>",
+      ""
+    ],
+    "sqlState" : "42KD7"
+  },
   "DELTA_CREATE_TABLE_WITH_DIFFERENT_PARTITIONING" : {
     "message" : [
       "The specified partitioning does not match the existing partitioning at <path>.",
