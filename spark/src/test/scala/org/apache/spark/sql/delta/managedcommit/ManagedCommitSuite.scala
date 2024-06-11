@@ -21,12 +21,13 @@ import java.io.File
 import scala.collection.mutable.ArrayBuffer
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta.{DeltaOperations, ManagedCommitTableFeature, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.{CommitStats, DeltaOperations, ManagedCommitStats, ManagedCommitTableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CommitOwnerGetCommitsFailedException
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME, MANAGED_COMMIT_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.InitialSnapshot
+import org.apache.spark.sql.delta.ManagedCommitType._
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -131,7 +132,17 @@ class ManagedCommitSuite
       val tablePath = tempDir.getAbsolutePath
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 0
       DeltaLog.clearCache()
-      checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1)))
+      val usageLogs1 = Log4jUsageLogger.track {
+        checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1)))
+      }
+      val getCommitsUsageLogs1 =
+        filterUsageRecords(usageLogs1, ManagedCommitUsageLogs.COMMIT_OWNER_CLIENT_GET_COMMITS)
+      val getCommitsEventData1 = JsonUtils.fromJson[Map[String, Any]](getCommitsUsageLogs1(0).blob)
+      assert(getCommitsEventData1("startVersion") === 0)
+      assert(getCommitsEventData1("versionToLoad") === -1)
+      assert(getCommitsEventData1("async") === "true")
+      assert(getCommitsEventData1("responseCommitsSize") === 0)
+      assert(getCommitsEventData1("responseLatestTableVersion") === -1)
 
       Seq(2).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 1
       Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
@@ -744,7 +755,9 @@ class ManagedCommitSuite
         // [upgradeExistingTable = true] Commit-2
         val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder1.getName)
         val newMetadata = Metadata().copy(configuration = commitOwnerConf)
-        log.startTransaction().commitManually(newMetadata)
+        val usageLogs1 = Log4jUsageLogger.track {
+          log.startTransaction().commitManually(newMetadata)
+        }
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion)
         assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName ===
           Some(builder1.getName))
@@ -754,13 +767,20 @@ class ManagedCommitSuite
         assert(fs.exists(FileNames.unsafeDeltaFile(log.logPath, upgradeStartVersion)))
         assert(Seq(cs1, cs2).map(_.numCommitsCalled.get) == Seq(0, 0))
         assert(Seq(cs1, cs2).map(_.numRegisterTableCalled.get) == Seq(1, 0))
+        // Check usage logs for upgrade commit
+        val commitStatsUsageLogs1 = filterUsageRecords(usageLogs1, "delta.commit.stats")
+        val commitStats1 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs1.head.blob)
+        assert(commitStats1.managedCommitInfo ===
+          ManagedCommitStats(FS_TO_MC_UPGRADE_COMMIT.toString, builder1.getName, Map.empty))
 
         // Do couple of commits on the managed-commit table
         // [upgradeExistingTable = false] Commit-1/2
         // [upgradeExistingTable = true] Commit-3/4
         (1 to 2).foreach { versionOffset =>
           val version = upgradeStartVersion + versionOffset
-          log.startTransaction().commitManually(createTestAddFile(s"$versionOffset"))
+          val usageLogs2 = Log4jUsageLogger.track {
+            log.startTransaction().commitManually(createTestAddFile(s"$versionOffset"))
+          }
           assert(log.unsafeVolatileSnapshot.version === version)
           assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
           assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName.nonEmpty)
@@ -769,6 +789,11 @@ class ManagedCommitSuite
           assert(cs1.numCommitsCalled.get === versionOffset)
           val backfillExpected = if (version % backfillInterval == 0) true else false
           assert(fs.exists(FileNames.unsafeDeltaFile(log.logPath, version)) == backfillExpected)
+          // Check usage logs for INSERT commits on this managed-commit table.
+          val commitStatsUsageLogs2 = filterUsageRecords(usageLogs2, "delta.commit.stats")
+          val commitStats2 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs2.head.blob)
+          assert(commitStats2.managedCommitInfo ===
+            ManagedCommitStats(MC_COMMIT.toString, builder1.getName, Map.empty))
         }
 
         // Downgrade the table
@@ -782,7 +807,9 @@ class ManagedCommitSuite
         val newConfig = log.snapshot.metadata.configuration
           .filterKeys(!commitOwnerConfKeys.contains(_)) ++ Map("downgraded_at" -> "v2")
         val newMetadata2 = log.snapshot.metadata.copy(configuration = newConfig.toMap)
-        log.startTransaction().commitManually(newMetadata2)
+        val usageLogs3 = Log4jUsageLogger.track {
+          log.startTransaction().commitManually(newMetadata2)
+        }
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 3)
         assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
         assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName.isEmpty)
@@ -795,11 +822,19 @@ class ManagedCommitSuite
         (0 to 3).foreach { version =>
           assert(fs.exists(FileNames.unsafeDeltaFile(log.logPath, version)))
         }
+        // Check usage logs for downgrade commit
+        val commitStatsUsageLogs3 = filterUsageRecords(usageLogs3, "delta.commit.stats")
+        val commitStats3 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs3.head.blob)
+        assert(commitStats3.managedCommitInfo ===
+          ManagedCommitStats(MC_TO_FS_DOWNGRADE_COMMIT.toString, builder1.getName, Map.empty))
+
 
         // Do commit after downgrade is over
         // [upgradeExistingTable = false] Commit-4
         // [upgradeExistingTable = true] Commit-6
-        log.startTransaction().commitManually(createTestAddFile("post-upgrade-file"))
+        val usageLogs4 = Log4jUsageLogger.track {
+          log.startTransaction().commitManually(createTestAddFile("post-upgrade-file"))
+        }
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 4)
         // no commit-owner after downgrade
         assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
@@ -816,6 +851,11 @@ class ManagedCommitSuite
         assert(Seq(cs1, cs2).map(_.numRegisterTableCalled.get) == Seq(1, 0))
         // 4th file is directly written to FS in backfilled way.
         assert(fs.exists(FileNames.unsafeDeltaFile(log.logPath, upgradeStartVersion + 4)))
+        // Check usage logs for normal FS commit
+        val commitStatsUsageLogs4 = filterUsageRecords(usageLogs4, "delta.commit.stats")
+        val commitStats4 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs4.head.blob)
+        assert(commitStats4.managedCommitInfo ===
+          ManagedCommitStats(FS_COMMIT.toString, "", Map.empty))
 
         // Now transfer the table to another commit-owner
         // [upgradeExistingTable = false] Commit-5
@@ -824,7 +864,9 @@ class ManagedCommitSuite
         val oldMetadata3 = log.unsafeVolatileSnapshot.metadata
         val newMetadata3 = oldMetadata3.copy(
           configuration = oldMetadata3.configuration ++ commitOwnerConf2)
-        log.startTransaction().commitManually(newMetadata3, createTestAddFile("upgrade-2-file"))
+        val usageLogs5 = Log4jUsageLogger.track {
+          log.startTransaction().commitManually(newMetadata3, createTestAddFile("upgrade-2-file"))
+        }
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 5)
         assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
         assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName ===
@@ -836,6 +878,11 @@ class ManagedCommitSuite
           expectedFileNames.map(name => createTestAddFile(name, dataChange = false)))
         assert(Seq(cs1, cs2).map(_.numCommitsCalled.get) == Seq(3, 0))
         assert(Seq(cs1, cs2).map(_.numRegisterTableCalled.get) == Seq(1, 1))
+        // Check usage logs for 2nd upgrade commit
+        val commitStatsUsageLogs5 = filterUsageRecords(usageLogs5, "delta.commit.stats")
+        val commitStats5 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs5.head.blob)
+        assert(commitStats5.managedCommitInfo ===
+          ManagedCommitStats(FS_TO_MC_UPGRADE_COMMIT.toString, builder2.getName, Map.empty))
 
         // Make 1 more commit, this should go to new owner
         log.startTransaction().commitManually(newMetadata3, createTestAddFile("4"))
