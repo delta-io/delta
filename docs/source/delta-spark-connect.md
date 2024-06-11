@@ -110,7 +110,7 @@ With `forPath`, `forName` and `toDF`, users can perform Delta Scan over Spark Co
 "`forPath`","`forPath`"
 "`forName`","`forName`"
 "`toDF`","`toDF`"
-,"`alias`"
+"`alias`","`alias`"
 ,"`generate`"
 ,"`vacuum`"
 ,"`delete`"
