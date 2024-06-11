@@ -20,6 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
@@ -477,7 +478,8 @@ trait ClusteredTableDDLWithColumnMapping
     "validate dropping clustering column is not allowed: single clustering column",
     "validate dropping clustering column is not allowed: multiple clustering columns",
     "validate dropping clustering column is not allowed: clustering column + " +
-      "non-clustering column"
+      "non-clustering column",
+    "validate RESTORE on clustered table"
   )
 
   test("validate dropping clustering column is not allowed: single clustering column") {
@@ -777,6 +779,61 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(TableIdentifier(dstTable3), "")
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot3, Seq.empty)
 
+    }
+  }
+
+  test("validate RESTORE on clustered table") {
+    val tableIdentifier = TableIdentifier(testTable)
+    // Scenario 1: restore clustered table to unclustered version.
+    // Skipped because we don't support in-place migration from unclustered to clustered tables.
+
+    // Scenario 2: restore clustered table to previous clustering columns.
+    withClusteredTable(testTable, "a INT, b STRING", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY (b)")
+      verifyClusteringColumns(tableIdentifier, "b")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 3: restore from table with clustering columns to non-empty clustering columns
+    withClusteredTable(testTable, "a int", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+      verifyClusteringColumns(tableIdentifier, "")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 4: restore to start version.
+    withClusteredTable(testTable, "a int", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"INSERT INTO $testTable VALUES (1)")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 5: restore unclustered table to unclustered table.
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT) USING delta")
+      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
+      assert(!startingSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
+
+      sql(s"INSERT INTO $testTable VALUES (1)")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0").collect
+      val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(currentSnapshot.protocol))
+      assert(!currentSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
     }
   }
 }
