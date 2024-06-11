@@ -68,7 +68,7 @@ Make sure you are using Java 17!
 
 1. `export SPARK_REMOTE="sc://localhost"`
 
-2. `export _JAVA_OPTIONS="--add-opens=java.base/ALL-UNNAMED"`
+2. `export _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED"`
 
 3. Download and install the [Coursier CLI](https://get-coursier.io/docs/cli-installation)
 
