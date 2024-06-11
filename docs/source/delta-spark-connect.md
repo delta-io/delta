@@ -47,8 +47,9 @@ We just need to pass in a remote `SparkSession` (instead of a local one) to the 
 An example:
 
 ```python
-import io.delta.tables._
-import org.apache.spark.sql.functions._
+from delta.tables import DeltaTable
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
 
 val deltaTable = DeltaTable.forName(spark, "my_table")
 deltaTable.toDF().show()
@@ -65,7 +66,7 @@ deltaTable.update(
 
 Make sure you are using Java 17!
 
-1. `export SPARK_REMOTE="sc://localhost:15002"`
+1. `export SPARK_REMOTE="sc://localhost"`
 
 2. `export _JAVA_OPTIONS="--add-opens=java.base/ALL-UNNAMED"`
 
