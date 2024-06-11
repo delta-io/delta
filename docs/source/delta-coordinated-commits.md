@@ -84,7 +84,7 @@ ALTER TABLE <table-name> DROP FEATURE 'coordinatedCommits-preview' [TRUNCATE HIS
 ## Compatibility
 
 Coordinated Commits is a writer table feature, so only clients that recognize the feature can write to these tables.
-Older clients which do not understand this table feature can still read a coordinated commits table. However, the read may give stale results depending on table's [commit coordinator backfill policy](https://github.com/delta-io/delta/blob/branch-4.0-preview1/protocol_rfcs/coorindated-commits.md#commit-backfills). Note that the DynamoDB Commit Coordinator tries to backfill all commits immediately.
+Older clients which do not understand this table feature can still read a coordinated commits table. However, the read may give stale results depending on table's [commit coordinator backfill policy](https://github.com/delta-io/delta/blob/branch-4.0-preview1/protocol_rfcs/coordinated-commits.md#commit-backfills). Note that the DynamoDB Commit Coordinator tries to backfill all commits immediately.
 
 
 ## Dependencies
