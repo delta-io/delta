@@ -16,12 +16,13 @@
 
 package org.apache.spark.sql.delta
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.CheckpointInstance.Format
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -68,6 +69,18 @@ class FindLastCompleteCheckpointSuite
     versions.map { version => pathToFileStatus(FileNames.checksumFile(logPath, version)) }
   }
 
+  def getLastCompleteCheckpointUsageLog(f: => Unit): Map[String, String] = {
+    val usageRecords = Log4jUsageLogger.track {
+      f
+    }
+    val opType = "delta.findLastCompleteCheckpointBefore"
+    val records = usageRecords.filter { r =>
+      r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
+    }
+    assert(records.size === 1)
+    JsonUtils.fromJson[Map[String, String]](records.head.blob)
+  }
+
   test("findLastCompleteCheckpoint without any argument") {
     withTempDir { dir =>
       val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
@@ -79,14 +92,20 @@ class FindLastCompleteCheckpointSuite
         commitFiles(logPath, 0L to 3000) ++
           singleCheckpointFiles(logPath, Seq(100, 200, 1000, 2000))
       )
-      assert(log.findLastCompleteCheckpointBefore().contains(CheckpointInstance(version = 2000)))
+      val eventData1 = getLastCompleteCheckpointUsageLog {
+        assert(log.findLastCompleteCheckpointBefore().contains(CheckpointInstance(version = 2000)))
+      }
+      assert(!eventData1.contains("iterations"))
       assert(logStore.listFromCount == 1)
       assert(logStore.elementsConsumedFromListFromIter == 3005)
       logStore.reset()
 
       // Case-2: No checkpoint exists in table dir
       logStore.customListingResult = Some(commitFiles(logPath, 0L to 3000))
-      assert(log.findLastCompleteCheckpointBefore().isEmpty)
+      val eventData2 = getLastCompleteCheckpointUsageLog {
+        assert(log.findLastCompleteCheckpointBefore().isEmpty)
+      }
+      assert(!eventData2.contains("iterations"))
       assert(logStore.listFromCount == 1)
       assert(logStore.elementsConsumedFromListFromIter == 3001)
       logStore.reset()
@@ -97,8 +116,11 @@ class FindLastCompleteCheckpointSuite
           singleCheckpointFiles(logPath, Seq(100, 200, 1000, 2000)) ++
           multipartCheckpointFiles(logPath, Seq(300, 2000), numParts = 4)
       )
-      assert(log.findLastCompleteCheckpointBefore().contains(
-        CheckpointInstance(version = 2000, Format.WITH_PARTS, numParts = Some(4))))
+      val eventData3 = getLastCompleteCheckpointUsageLog {
+        assert(log.findLastCompleteCheckpointBefore().contains(
+          CheckpointInstance(version = 2000, Format.WITH_PARTS, numParts = Some(4))))
+      }
+      assert(!eventData2.contains("iterations"))
       assert(logStore.listFromCount == 1)
       assert(logStore.elementsConsumedFromListFromIter == 3013)
       logStore.reset()
@@ -117,11 +139,15 @@ class FindLastCompleteCheckpointSuite
         commitFiles(logPath, 0L to 3000) ++
           singleCheckpointFiles(logPath, Seq(100, 200, 1000, 2000))
       )
-      assert(
-        log.findLastCompleteCheckpointBefore(Some(CheckpointInstance(version = 2000)))
-          .contains(CheckpointInstance(version = 1000)))
+      val eventData1 = getLastCompleteCheckpointUsageLog {
+        assert(
+          log.findLastCompleteCheckpointBefore(Some(CheckpointInstance(version = 2000)))
+            .contains(CheckpointInstance(version = 1000)))
+      }
       assert(logStore.listFromCount == 1)
       assert(logStore.elementsConsumedFromListFromIter == 1002 + 2) // commits + checkpoint
+      assert(eventData1("iterations") == "1")
+      assert(eventData1("numFilesScanned") == "1004")
       logStore.reset()
 
       // Case-2: The exact upperBound (a multi-part checkpoint) doesn't exist but another single
@@ -132,10 +158,14 @@ class FindLastCompleteCheckpointSuite
       )
       var sentinelCheckpoint =
         CheckpointInstance(version = 2000, Format.WITH_PARTS, numParts = Some(4))
-      assert(log.findLastCompleteCheckpointBefore(Some(sentinelCheckpoint))
-        .contains(CheckpointInstance(version = 2000)))
+      val eventData2 = getLastCompleteCheckpointUsageLog {
+        assert(log.findLastCompleteCheckpointBefore(Some(sentinelCheckpoint))
+          .contains(CheckpointInstance(version = 2000)))
+      }
       assert(logStore.listFromCount == 1)
       assert(logStore.elementsConsumedFromListFromIter == 1002 + 2) // commits + checkpoint
+      assert(eventData2("iterations") == "1")
+      assert(eventData2("numFilesScanned") == "1004")
       logStore.reset()
 
       // Case-3: The last complete checkpoint doesn't exist in last 1000 elements and needs
@@ -144,14 +174,17 @@ class FindLastCompleteCheckpointSuite
         commitFiles(logPath, 0L to 2500) ++
           singleCheckpointFiles(logPath, Seq(100, 150))
       )
-      assert(
-        log.findLastCompleteCheckpointBefore(2200)
-          .contains(CheckpointInstance(version = 150)))
+      val eventData3 = getLastCompleteCheckpointUsageLog {
+        assert(
+          log.findLastCompleteCheckpointBefore(2200).contains(CheckpointInstance(version = 150)))
+      }
       assert(logStore.listFromCount == 3)
       // the first listing will consume 1000 elements from 1200 to 2201 => 1002 commits
       // the second listing will consume 1000 elements from 200 to 1201 => 1002 commits
       // the third listing will consume 501 elements from 0 to 201 => 202 commits + 2 checkpoints
       assert(logStore.elementsConsumedFromListFromIter == 2208) // commits + checkpoint
+      assert(eventData3("iterations") == "3")
+      assert(eventData3("numFilesScanned") == "2208")
       logStore.reset()
     }
   }
@@ -186,12 +219,22 @@ class FindLastCompleteCheckpointSuite
         commitFiles(logPath, 0L to lastCommitVersion) ++
         singleCheckpointFiles(logPath, Seq(100), length = 20) ++
         singleCheckpointFiles(logPath, Seq(200), length = 0))
-      assert(
-        log.findLastCompleteCheckpointBefore(sentinelInstance)
-          .contains(CheckpointInstance(version = 100)))
+      val eventData1 = getLastCompleteCheckpointUsageLog {
+        assert(
+          log.findLastCompleteCheckpointBefore(sentinelInstance)
+            .contains(CheckpointInstance(version = 100)))
+      }
       assert(logStore.listFromCount == expectedListCount)
       assert(logStore.elementsConsumedFromListFromIter ===
         getExpectedFileCount(filesPerCheckpoint = 1))
+      if (passSentinelInstance) {
+        assert(eventData1("iterations") == expectedListCount.toString)
+        assert(eventData1("numFilesScanned") ==
+          getExpectedFileCount(filesPerCheckpoint = 1).toString)
+      } else {
+        assert(Seq("iterations", "numFilesScanned").forall(!eventData1.contains(_)))
+      }
+
       logStore.reset()
 
       // Case-2: `findLastCompleteCheckpointBefore` invoked with upperBound, with a multi-part
@@ -206,8 +249,17 @@ class FindLastCompleteCheckpointSuite
         multipartCheckpointFiles(logPath, Seq(100), numParts = 4) ++
         badCheckpointV200
       )
-      assert(log.findLastCompleteCheckpointBefore(sentinelInstance)
-        .contains(CheckpointInstance(version = 100, Format.WITH_PARTS, numParts = Some(4))))
+      val eventData2 = getLastCompleteCheckpointUsageLog {
+        assert(log.findLastCompleteCheckpointBefore(sentinelInstance)
+          .contains(CheckpointInstance(version = 100, Format.WITH_PARTS, numParts = Some(4))))
+      }
+      if (passSentinelInstance) {
+        assert(eventData2("iterations") == expectedListCount.toString)
+        assert(eventData2("numFilesScanned") ==
+          getExpectedFileCount(filesPerCheckpoint = 4).toString)
+      } else {
+        assert(Seq("iterations", "numFilesScanned").forall(!eventData2.contains(_)))
+      }
       assert(logStore.listFromCount == expectedListCount)
       assert(logStore.elementsConsumedFromListFromIter ===
         getExpectedFileCount(filesPerCheckpoint = 4))
@@ -245,16 +297,50 @@ class FindLastCompleteCheckpointSuite
         commitFiles(logPath, 0L to lastCommitVersion) ++
           multipartCheckpointFiles(logPath, Seq(100), numParts = 4, length = 20) ++
           multipartCheckpointFiles(logPath, Seq(200), numParts = 4, length = 20).take(3))
-      assert(
-        log.findLastCompleteCheckpointBefore(sentinelInstance)
-          .contains(CheckpointInstance(100, Format.WITH_PARTS, numParts = Some(4))))
+      val eventData1 = getLastCompleteCheckpointUsageLog {
+        assert(
+          log.findLastCompleteCheckpointBefore(sentinelInstance)
+            .contains(CheckpointInstance(100, Format.WITH_PARTS, numParts = Some(4))))
+      }
       assert(logStore.listFromCount == expectedListCount)
       assert(logStore.elementsConsumedFromListFromIter ===
         getExpectedFileCount(fileInCheckpointV200 = 3, filesInCheckpointV100 = 4))
+      if (passSentinelInstance) {
+        assert(eventData1("iterations") == expectedListCount.toString)
+        assert(eventData1("numFilesScanned") ==
+          getExpectedFileCount(fileInCheckpointV200 = 3, filesInCheckpointV100 = 4).toString)
+      } else {
+        assert(Seq("iterations", "numFilesScanned").forall(!eventData1.contains(_)))
+      }
+
       logStore.reset()
     }
   }
 
+  test("findLastCompleteCheckpoint with CheckpointInstance.MAX value") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
+      val logPath = log.logPath
+      val logStore = log.store.asInstanceOf[CustomListingLogStore]
+      logStore.reset()
+
+      logStore.customListingResult = Some(
+        commitFiles(logPath, 0L to 3000) ++
+          singleCheckpointFiles(logPath, Seq(100, 200, 1000, 1200))
+      )
+      val eventData = getLastCompleteCheckpointUsageLog {
+        assert(
+          log.findLastCompleteCheckpointBefore(Some(CheckpointInstance.MaxValue))
+            .contains(CheckpointInstance(version = 1200)))
+      }
+      assert(!eventData.contains("iterations"))
+      assert(!eventData.contains("upperBoundVersion"))
+      assert(eventData("totalTimeTakenMs").toLong > 0)
+      assert(logStore.listFromCount == 1)
+      assert(logStore.elementsConsumedFromListFromIter == 3001 + 4) // commits + checkpoint
+      logStore.reset()
+    }
+  }
 }
 
 /**

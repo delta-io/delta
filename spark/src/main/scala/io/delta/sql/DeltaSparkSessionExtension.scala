@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.PreprocessTimeTravel
@@ -80,14 +81,14 @@ import org.apache.spark.sql.internal.SQLConf
  */
 class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
-    extensions.injectParser { (session, parser) =>
+    extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
       ResolveDeltaPathTable(session)
     }
     extensions.injectResolutionRule { session =>
-      new PreprocessTimeTravel(session)
+      PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support
@@ -103,7 +104,7 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new CheckUnresolvedRelationTimeTravel(session)
     }
     extensions.injectCheckRule { session =>
-      new DeltaUnsupportedOperationsCheck(session)
+      DeltaUnsupportedOperationsCheck(session)
     }
     // Rule for rewriting the place holder for range_partition_id to manually construct the
     // `RangePartitioner` (which requires an RDD to be sampled in order to determine
@@ -112,13 +113,13 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new RangePartitionIdRewrite(session)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableUpdate(session.sessionState.conf)
+      PreprocessTableUpdate(session.sessionState.conf)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableMerge(session.sessionState.conf)
+      PreprocessTableMerge(session.sessionState.conf)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableDelete(session.sessionState.conf)
+      PreprocessTableDelete(session.sessionState.conf)
     }
     // Resolve new UpCast expressions that might have been introduced by [[PreprocessTableUpdate]]
     // and [[PreprocessTableMerge]].
@@ -128,12 +129,12 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
 
     extensions.injectPlanNormalizationRule { _ => GenerateRowIDs }
 
-    // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
-    // `PrepareDeltaScan`.
-    // For example, `ConstantFolding` will break unit tests in `OptimizeGeneratedColumnSuite`.
     extensions.injectPreCBORule { session =>
       new PrepareDeltaScan(session)
     }
+    // Fold constants that may have been introduced by PrepareDeltaScan. This is only useful with
+    // Spark 3.5 as later versions apply constant folding after pre-CBO rules.
+    extensions.injectPreCBORule { _ => ConstantFolding }
 
     // Add skip row column and filter.
     extensions.injectPlannerStrategy(PreprocessTableWithDVsStrategy)

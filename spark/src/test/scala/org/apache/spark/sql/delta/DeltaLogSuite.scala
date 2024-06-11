@@ -499,11 +499,11 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-      if (managedCommitsEnabledInTests) {
+      if (managedCommitEnabledInTests) {
         // For Managed Commit table with a commit that is not backfilled, we can't use
         // 00000000002.json yet. Contact commit store to get uuid file path to malform json file.
         val oc = CommitOwnerProvider.getCommitOwnerClient(
-          "tracking-in-memory", Map.empty[String, String])
+          "tracking-in-memory", Map.empty[String, String], spark)
         val commitResponse = oc.getCommits(deltaLog.logPath, Map.empty, Some(2))
         if (!commitResponse.getCommits.isEmpty) {
           val path = commitResponse.getCommits.last.getFileStatus.getPath
@@ -598,11 +598,11 @@ class DeltaLogSuite extends QueryTest
 
       val log = DeltaLog.forTable(spark, path)
       var commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
-      if (managedCommitsEnabledInTests) {
+      if (managedCommitEnabledInTests) {
         // For Managed Commit table with a commit that is not backfilled, we can't use
         // 00000000001.json yet. Contact commit store to get uuid file path to malform json file.
         val oc = CommitOwnerProvider.getCommitOwnerClient(
-          "tracking-in-memory", Map.empty[String, String])
+          "tracking-in-memory", Map.empty[String, String], spark)
         val commitResponse = oc.getCommits(log.logPath, Map.empty, Some(1))
         if (!commitResponse.getCommits.isEmpty) {
           commitFilePath = commitResponse.getCommits.head.getFileStatus.getPath

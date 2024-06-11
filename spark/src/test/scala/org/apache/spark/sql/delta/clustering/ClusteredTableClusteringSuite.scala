@@ -79,4 +79,28 @@ class ClusteredTableClusteringSuite extends SparkFunSuite
       }
     }
   }
+
+  test("cluster by 1 column") {
+    withSQLConf(SQLConf.MAX_RECORDS_PER_FILE.key -> "2") {
+      withClusteredTable(
+        table = table,
+        schema = "col1 int, col2 int",
+        clusterBy = "col1") {
+        addFiles(table, numFiles = 4)
+        val files0 = getFiles(table)
+        assert(files0.size === 4)
+        assertNotClustered(files0)
+
+        // Optimize should cluster the data into two 2 files since MAX_RECORDS_PER_FILE is 2.
+        runOptimize(table) { metrics =>
+          assert(metrics.numFilesRemoved == 4)
+          assert(metrics.numFilesAdded == 2)
+        }
+
+        val files1 = getFiles(table)
+        assert(files1.size == 2)
+        assertClustered(files1)
+      }
+    }
+  }
 }

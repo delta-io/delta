@@ -14,19 +14,30 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.typewidening
 
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types._
 
 /**
- * Suite covering the[[TypeWideningMetadata]] and [[TypeChange]] classes used to handle the metadata
- * recorded by the Type Widening table feature in the table schema.
+ * Suite that covers recording type change metadata in the table schema.
  */
-class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest {
+class TypeWideningMetadataSuite
+  extends QueryTest
+    with TypeWideningTestMixin
+    with TypeWideningMetadataTests
+    with TypeWideningMetadataEndToEndTests
+
+/**
+ * Tests covering the [[TypeWideningMetadata]] and [[TypeChange]] classes used to handle the
+ * metadata recorded by the Type Widening table feature in the table schema.
+ */
+trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
   private val testTableName: String = "delta_type_widening_metadata_test"
 
   /** A dummy transaction to be used by tests covering `addTypeWideningMetadata`. */
@@ -534,4 +545,162 @@ class DeltaTypeWideningMetadataSuite extends QueryTest with DeltaSQLCommandTest 
       TypeWideningMetadata.updateTypeChangeVersion(schema, 3, 4) === schema
     )
   }
+}
+
+/**
+ * Tests that covers recording type change information as metadata in the table schema. For
+ * lower-level tests, see [[TypeWideningMetadataTests]].
+ */
+trait TypeWideningMetadataEndToEndTests {
+  self: QueryTest with TypeWideningTestMixin =>
+
+  def testTypeWideningMetadata(name: String)(
+      initialSchema: String,
+      typeChanges: Seq[(String, String)],
+      expectedJsonSchema: String): Unit =
+    test(name) {
+      sql(s"CREATE TABLE delta.`$tempPath` ($initialSchema) USING DELTA")
+      typeChanges.foreach { case (fieldName, newType) =>
+        sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN $fieldName TYPE $newType")
+      }
+
+      // Parse the schemas as JSON to ignore whitespaces and field order.
+      val actualSchema = JsonUtils.fromJson[Map[String, Any]](readDeltaTable(tempPath).schema.json)
+      val expectedSchema = JsonUtils.fromJson[Map[String, Any]](expectedJsonSchema)
+      assert(actualSchema === expectedSchema,
+        s"${readDeltaTable(tempPath).schema.prettyJson} did not equal $expectedJsonSchema"
+      )
+    }
+
+  testTypeWideningMetadata("change top-level column type short->int")(
+    initialSchema = "a short",
+    typeChanges = Seq("a" -> "int"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": "integer",
+        "nullable": true,
+        "metadata": {
+          "delta.typeChanges": [{
+            "toType": "integer",
+            "fromType": "short",
+            "tableVersion": 1
+          }]
+        }
+      }]}""".stripMargin)
+
+  testTypeWideningMetadata("change top-level column type twice byte->short->int")(
+    initialSchema = "a byte",
+    typeChanges = Seq("a" -> "short", "a" -> "int"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": "integer",
+        "nullable": true,
+        "metadata": {
+          "delta.typeChanges": [{
+            "toType": "short",
+            "fromType": "byte",
+            "tableVersion": 1
+          },{
+            "toType": "integer",
+            "fromType": "short",
+            "tableVersion": 2
+          }]
+        }
+      }]}""".stripMargin)
+
+  testTypeWideningMetadata("change type in map key and in struct in map value")(
+    initialSchema = "a map<byte, struct<b: byte>>",
+    typeChanges = Seq("a.key" -> "int", "a.value.b" -> "short"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": {
+          "type": "map",
+          "keyType": "integer",
+          "valueType": {
+            "type": "struct",
+            "fields": [{
+              "name": "b",
+              "type": "short",
+              "nullable": true,
+              "metadata": {
+                "delta.typeChanges": [{
+                  "toType": "short",
+                  "fromType": "byte",
+                  "tableVersion": 2
+                }]
+              }
+            }]
+          },
+          "valueContainsNull": true
+        },
+        "nullable": true,
+        "metadata": {
+          "delta.typeChanges": [{
+            "toType": "integer",
+            "fromType": "byte",
+            "tableVersion": 1,
+            "fieldPath": "key"
+          }]
+        }
+      }
+    ]}""".stripMargin)
+
+
+  testTypeWideningMetadata("change type in array and in struct in array")(
+    initialSchema = "a array<byte>, b array<struct<c: short>>",
+    typeChanges = Seq("a.element" -> "short", "b.element.c" -> "int"),
+    expectedJsonSchema =
+      """{
+      "type": "struct",
+      "fields": [{
+        "name": "a",
+        "type": {
+          "type": "array",
+          "elementType": "short",
+          "containsNull": true
+        },
+        "nullable": true,
+        "metadata": {
+          "delta.typeChanges": [{
+            "toType": "short",
+            "fromType": "byte",
+            "tableVersion": 1,
+            "fieldPath": "element"
+          }]
+        }
+      },
+      {
+        "name": "b",
+        "type": {
+          "type": "array",
+          "elementType":{
+            "type": "struct",
+            "fields": [{
+              "name": "c",
+              "type": "integer",
+              "nullable": true,
+              "metadata": {
+                "delta.typeChanges": [{
+                  "toType": "integer",
+                  "fromType": "short",
+                  "tableVersion": 2
+                }]
+              }
+            }]
+          },
+          "containsNull": true
+        },
+        "nullable": true,
+        "metadata": { }
+      }
+    ]}""".stripMargin)
 }

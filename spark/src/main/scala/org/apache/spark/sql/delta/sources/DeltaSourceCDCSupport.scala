@@ -195,29 +195,28 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       startIndex: Long,
       isInitialSnapshot: Boolean,
       endOffset: DeltaSourceOffset): DataFrame = {
-    val changes: Iterator[(Long, Iterator[IndexedFile])] =
-      getFileChangesForCDC(startVersion, startIndex, isInitialSnapshot, None, Some(endOffset))
+    val changes = getFileChangesForCDC(
+      startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
-    val groupedFileActions: Iterator[(Long, Seq[FileAction])] =
+    val groupedFileActions =
       changes.map { case (v, indexFiles) =>
-        (v, indexFiles.filter(_.hasFileAction).map { _.getFileAction }.toSeq)
+        (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq)
       }
 
     val (result, duration) = Utils.timeTakenMs {
-      val cdcInfo = CDCReader.changesToDF(
-        readSnapshotDescriptor,
-        startVersion,
-        endOffset.reservoirVersion,
-        groupedFileActions,
-        spark,
-        isStreaming = true
-      )
-
-      cdcInfo.fileChangeDf
+      CDCReader
+        .changesToDF(
+          readSnapshotDescriptor,
+          startVersion,
+          endOffset.reservoirVersion,
+          groupedFileActions,
+          spark,
+          isStreaming = true)
+        .fileChangeDf
     }
     logInfo(s"Getting CDC dataFrame for delta_log_path=${deltaLog.logPath} with " +
-      s"startVersion=$startVersion, startIndex=$startIndex, isInitialSnapshot=$isInitialSnapshot " +
-      s"took timeMs=$duration ms")
+      s"startVersion=$startVersion, startIndex=$startIndex, " +
+      s"isInitialSnapshot=$isInitialSnapshot, endOffset=$endOffset took timeMs=$duration ms")
     result
   }
 
@@ -277,6 +276,16 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       }
     }
 
+    /** Verifies that provided version is <= endOffset version, if defined. */
+    def versionLessThanEndOffset(version: Long, endOffset: Option[DeltaSourceOffset]): Boolean = {
+      endOffset match {
+        case Some(eo) =>
+          version <= eo.reservoirVersion
+        case None =>
+          true
+      }
+    }
+
     val (result, duration) = Utils.timeTakenMs {
       val iter: Iterator[(Long, IndexedChangeFileSeq)] = if (isInitialSnapshot) {
         // If we are reading change data from the start of the table we need to
@@ -301,9 +310,11 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       }
 
       // In this case, filterFiles will consume the available capacity. We use takeWhile
-      // to stop the iteration when we reach the limit which will save us from reading
-      // unnecessary log files.
-      iter.takeWhile(_ => limits.forall(_.hasCapacity)).map { case (version, indexItr) =>
+      // to stop the iteration when we reach the limit or if endOffset is specified and the
+      // endVersion is reached which will save us from reading unnecessary log files.
+      iter.takeWhile { case (version, _) =>
+        limits.forall(_.hasCapacity) && versionLessThanEndOffset(version, endOffset)
+      }.map { case (version, indexItr) =>
         (version, indexItr.filterFiles(fromVersion, fromIndex, limits, endOffset))
       }
     }

@@ -130,9 +130,10 @@ object OptimizeTableCommand {
 case class OptimizeTableCommand(
     override val child: LogicalPlan,
     userPartitionPredicates: Seq[String],
-    optimizeContext: DeltaOptimizeContext
-)(val zOrderBy: Seq[UnresolvedAttribute])
-  extends OptimizeTableCommandBase with RunnableCommand with UnaryNode {
+    optimizeContext: DeltaOptimizeContext)(
+    val zOrderBy: Seq[UnresolvedAttribute])
+  extends OptimizeTableCommandBase
+  with UnaryNode {
 
   override val otherCopyArgs: Seq[AnyRef] = zOrderBy :: Nil
 
@@ -264,8 +265,10 @@ class OptimizeExecutor(
       val partitionSchema = txn.metadata.partitionSchema
 
       val filesToProcess = optimizeContext.reorg match {
-        case Some(reorgOperation) => reorgOperation.filterFilesToReorg(txn.snapshot, candidateFiles)
-        case None => filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
+        case Some(reorgOperation) =>
+          reorgOperation.filterFilesToReorg(sparkSession, txn.snapshot, candidateFiles)
+        case None =>
+          filterCandidateFileList(minFileSize, maxDeletedRowsRatio, candidateFiles)
       }
       val partitionsToCompact = filesToProcess.groupBy(_.partitionValues).toSeq
 
@@ -294,7 +297,7 @@ class OptimizeExecutor(
             true
           } else {
             val deleted = candidateSetOld -- candidateSetNew
-            logWarning(s"The following compacted files were delete " +
+            logWarning(s"The following compacted files were deleted " +
               s"during checkpoint ${deleted.mkString(",")}. Aborting the compaction.")
             false
           }

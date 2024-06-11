@@ -17,12 +17,13 @@
 package io.delta.golden
 
 import java.io.File
-import java.math.{BigDecimal => JBigDecimal}
+import java.math.{BigInteger, BigDecimal => JBigDecimal}
 import java.sql.Timestamp
 import java.time.ZoneOffset.UTC
 import java.time.LocalDateTime
-import java.util.{Locale, TimeZone}
+import java.util.{Locale, Random, TimeZone}
 
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
@@ -299,7 +300,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
       val file = AddFile("abc", Map.empty, 1, 1, true)
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0L),
+        FileNames.unsafeDeltaFile(log.logPath, 0L),
         Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)))
     }
   }
@@ -365,8 +366,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     val metadata = Metadata(
       schemaString = new StructType().add("id", IntegerType).json
     )
-    log.store.write(
-      FileNames.deltaFile(log.logPath, 0L),
+    log.store.write(FileNames.unsafeDeltaFile(log.logPath, 0L),
 
       // Protocol reader version explicitly set too high
       // Also include a Metadata
@@ -402,7 +402,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val addFile = AddFile("abc", Map.empty, 1, 1, true)
     log.store.write(
-      FileNames.deltaFile(log.logPath, 0L),
+      FileNames.unsafeDeltaFile(log.logPath, 0L),
       Iterator(Metadata(), Protocol(), commitInfoFile, addFile).map(a => JsonUtils.toJson(a.wrap)))
   }
 
@@ -474,7 +474,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
       file.setLastModified(ts)
       startVersion += 1
     }
@@ -1233,6 +1233,53 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     withSQLConf(("spark.sql.parquet.writeLegacyFormat", "true")) {
       writeBasicDecimalTable(tablePath)
     }
+  }
+
+  generateGoldenTable("decimal-various-scale-precision") { tablePath =>
+    val fields = ArrayBuffer[StructField]()
+    Seq(0, 4, 7, 12, 15, 18, 25, 35, 38).foreach { precision =>
+      Seq.range(start = 0, end = precision, step = 6).foreach { scale =>
+        fields.append(
+          StructField(s"decimal_${precision}_${scale}", DecimalType(precision, scale)))
+      }
+    }
+
+    val schema = StructType(fields)
+
+    val random = new Random(27 /* seed */)
+    def generateRandomBigDecimal(precision: Int, scale: Int): JBigDecimal = {
+      // Generate a random BigInteger with the specified precision
+      val unscaledValue = new BigInteger(precision, random)
+
+      // Create a BigDecimal with the unscaled value and the specified scale
+      new JBigDecimal(unscaledValue, scale)
+    }
+
+    val rows = ArrayBuffer[Row]()
+    Seq.range(start = 0, end = 3).foreach { i =>
+      val rowValues = ArrayBuffer[BigDecimal]()
+      Seq(0, 4, 7, 12, 15, 18, 25, 35, 38).foreach { precision =>
+        Seq.range(start = 0, end = precision, step = 3).foreach { scale =>
+          i match {
+            case 0 =>
+              rowValues.append(null)
+            case 1 =>
+              // Generate a positive random BigDecimal with the specified precision and scale
+              rowValues.append(generateRandomBigDecimal(precision, scale))
+            case 2 =>
+              // Generate a negative random BigDecimal with the specified precision and scale
+              rowValues.append(generateRandomBigDecimal(precision, scale).negate())
+          }
+        }
+      }
+      rows.append(Row(rowValues: _*))
+    }
+
+    spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+      .repartition(1)
+      .write
+      .format("delta")
+      .save(tablePath)
   }
 
   for (parquetFormat <- Seq("v1", "v2")) {

@@ -27,6 +27,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait ManagedCommitTestUtils
@@ -38,7 +39,7 @@ trait ManagedCommitTestUtils
    */
   def testWithDefaultCommitOwnerUnset(testName: String)(f: => Unit): Unit = {
     test(testName) {
-      withoutManagedCommitsDefaultTableProperties {
+      withoutManagedCommitDefaultTableProperties {
         f
       }
     }
@@ -48,7 +49,7 @@ trait ManagedCommitTestUtils
    * Runs the function `f` with managed commits default properties unset.
    * Any table created in function `f`` won't have managed commits enabled by default.
    */
-  def withoutManagedCommitsDefaultTableProperties[T](f: => T): T = {
+  def withoutManagedCommitDefaultTableProperties[T](f: => T): T = {
     val commitOwnerKey = MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey
     val oldCommitOwnerValue = spark.conf.getOption(commitOwnerKey)
     spark.conf.unset(commitOwnerKey)
@@ -67,6 +68,25 @@ trait ManagedCommitTestUtils
         CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(backfillBatchSize))
         CommitOwnerProvider.registerBuilder(InMemoryCommitOwnerBuilder(backfillBatchSize))
         f(backfillBatchSize)
+      }
+    }
+  }
+
+  /**
+   * Run the test against a [[TrackingCommitOwnerClient]] with backfill batch size =
+   * `batchBackfillSize`
+   */
+  def testWithManagedCommit(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
+    test(s"$testName [Backfill batch size: $backfillBatchSize]") {
+      CommitOwnerProvider.clearNonDefaultBuilders()
+      CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(backfillBatchSize))
+      val managedCommitOwnerConf = Map("randomConf" -> "randomConfValue")
+      val managedCommitOwnerJson = JsonUtils.toJson(managedCommitOwnerConf)
+      withSQLConf(
+          DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "tracking-in-memory",
+          DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey ->
+            managedCommitOwnerJson) {
+        f
       }
     }
   }
@@ -116,7 +136,7 @@ case class TrackingInMemoryCommitOwnerBuilder(
     }
 
   override def getName: String = "tracking-in-memory"
-  override def build(conf: Map[String, String]): CommitOwnerClient = {
+  override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
     trackingInMemoryCommitOwnerClient
   }
 }
@@ -230,7 +250,7 @@ trait ManagedCommitBaseSuite extends SparkFunSuite with SharedSparkSession {
   // If this config is not overridden, managed commits are disabled.
   def managedCommitBackfillBatchSize: Option[Int] = None
 
-  final def managedCommitsEnabledInTests: Boolean = managedCommitBackfillBatchSize.nonEmpty
+  final def managedCommitEnabledInTests: Boolean = managedCommitBackfillBatchSize.nonEmpty
 
   override protected def sparkConf: SparkConf = {
     if (managedCommitBackfillBatchSize.nonEmpty) {

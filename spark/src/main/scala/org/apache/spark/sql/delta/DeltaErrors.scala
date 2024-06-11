@@ -3415,6 +3415,12 @@ trait DeltaErrorsBase
       messageParameters = Array(
         UnresolvedAttribute(columnPath).name, schema.treeString, extraErrMsg))
   }
+
+  def alterTableClusterByOnPartitionedTableException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED",
+      messageParameters = Array.empty)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

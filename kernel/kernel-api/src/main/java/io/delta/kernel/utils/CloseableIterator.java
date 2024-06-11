@@ -23,6 +23,9 @@ import java.util.NoSuchElementException;
 import java.util.function.Function;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelEngineException;
+import io.delta.kernel.exceptions.KernelException;
 
 import io.delta.kernel.internal.util.Utils;
 
@@ -34,6 +37,41 @@ import io.delta.kernel.internal.util.Utils;
  */
 @Evolving
 public interface CloseableIterator<T> extends Iterator<T>, Closeable {
+
+    /**
+     * Returns true if the iteration has more elements. (In other words, returns true if next would
+     * return an element rather than throwing an exception.)
+     *
+     * @return true if the iteration has more elements
+     * @throws KernelEngineException For any underlying exception occurs in {@link Engine} while
+     *                               trying to execute the operation. The original exception is (if
+     *                               any) wrapped in this exception as cause. E.g.
+     *                               {@link IOException} thrown while trying to read from a Delta
+     *                               log file. It will be wrapped in this exception as cause.
+     * @throws KernelException       When encountered an operation or state that is invalid or
+     *                               unsupported.
+     */
+    @Override
+    boolean hasNext();
+
+    /**
+     * Returns the next element in the iteration.
+     *
+     * @return the next element in the iteration
+     * @throws NoSuchElementException if the iteration has no more elements
+     * @throws KernelEngineException  For any underlying exception occurs in {@link Engine} while
+     *                                trying to execute the operation. The original exception is (if
+     *                                any) wrapped in this exception as cause. E.g.
+     *                                {@link IOException} thrown while trying to read from a Delta
+     *                                log file. It will be wrapped in this exception as cause.
+     * @throws KernelException        When encountered an operation or state that is invalid or
+     *                                unsupported in Kernel. For example, trying to read from a
+     *                                Delta table that has advanced features which are not yet
+     *                                supported by Kernel.
+     */
+    @Override
+    T next();
+
     default <U> CloseableIterator<U> map(Function<T, U> mapper) {
         CloseableIterator<T> delegate = this;
         return new CloseableIterator<U>() {

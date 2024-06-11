@@ -66,11 +66,19 @@ trait DeltaTimeTravelTests extends QueryTest
   protected val timeFormatter = new SimpleDateFormat("yyyyMMddHHmmssSSS")
 
   protected def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
-    file.setLastModified(ts)
+    val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
-    if (crc.exists()) {
-      crc.setLastModified(ts)
+    if (isICTEnabledForNewTables) {
+      InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
+      if (crc.exists()) {
+        InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(ts))
+      }
+    } else {
+      val file = new File(filePath.toUri)
+      file.setLastModified(ts)
+      if (crc.exists()) {
+        crc.setLastModified(ts)
+      }
     }
   }
 
@@ -131,26 +139,14 @@ trait DeltaTimeTravelTests extends QueryTest
           .saveAsTable(table)
       }
       val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(table))
-      val filePath = FileNames.unsafeDeltaFile(deltaLog.logPath, 0)
-      if (isICTEnabledForNewTables) {
-        InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, commits.headOption)
-      } else {
-        val file = new File(filePath.toUri)
-        file.setLastModified(commits.head)
-      }
+      modifyCommitTimestamp(deltaLog, 0, commitList.head)
       commitList = commits.slice(1, commits.length) // we already wrote the first commit here
       var startVersion = deltaLog.snapshot.version + 1
       commitList.foreach { ts =>
         val rangeStart = startVersion * 10
         val rangeEnd = rangeStart + 10
         spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").saveAsTable(table)
-        val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
-        if (isICTEnabledForNewTables) {
-          InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
-        } else {
-          val file = new File(filePath.toUri)
-          file.setLastModified(ts)
-        }
+        modifyCommitTimestamp(deltaLog, startVersion, ts)
         startVersion += 1
       }
     }

@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.deletionvectors
 import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
@@ -46,7 +46,8 @@ class DeletionVectorsSuite extends QueryTest
   with DeltaSQLCommandTest
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews
-  with DeltaExceptionTestUtils {
+  with DeltaExceptionTestUtils
+  with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
   override def beforeAll(): Unit = {
@@ -270,7 +271,7 @@ class DeletionVectorsSuite extends QueryTest
     }
   }
 
-  Seq("name", "id").foreach(mode =>
+  Seq("name", "id").foreach { mode =>
     test(s"DELETE with DVs with column mapping mode=$mode") {
       withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> mode) {
         withTempDir { dirName =>
@@ -286,7 +287,26 @@ class DeletionVectorsSuite extends QueryTest
         }
       }
     }
-  )
+
+    testSparkMasterOnly(s"variant types DELETE with DVs with column mapping mode=$mode") {
+      withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> mode) {
+        withTempDir { dirName =>
+          val path = dirName.getAbsolutePath
+          val df = spark.range(0, 50).selectExpr(
+            "id % 10 as part",
+            "id",
+            "parse_json(cast(id as string)) as v"
+          )
+          df.write.format("delta").partitionBy("part").save(path)
+          val tableLog = DeltaLog.forTable(spark, path)
+          enableDeletionVectorsInTable(tableLog, true)
+          spark.sql(s"DELETE FROM delta.`$path` WHERE v::int = 2")
+          checkAnswer(spark.sql(s"select * from delta.`$path` WHERE v::int = 2"), Seq())
+          verifyDVsExist(tableLog, 1)
+        }
+      }
+    }
+  }
 
   test("DELETE with DVs - existing table already has DVs") {
     withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {

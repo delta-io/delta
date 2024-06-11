@@ -737,7 +737,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean.")
 
   val MANAGED_COMMIT_OWNER_NAME = buildConfig[Option[String]](
-    "managedCommits.commitOwner-dev",
+    "managedCommit.commitOwner-preview",
     null,
     v => Option(v),
     _ => true,
@@ -748,14 +748,14 @@ trait DeltaConfigsBase extends DeltaLogging {
       |""".stripMargin)
 
   val MANAGED_COMMIT_OWNER_CONF = buildConfig[Map[String, String]](
-    "managedCommits.commitOwnerConf-dev",
+    "managedCommit.commitOwnerConf-preview",
     null,
     v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
     _ => true,
     "A string-to-string map of configuration properties for the managed commit-owner.")
 
   val MANAGED_COMMIT_TABLE_CONF = buildConfig[Map[String, String]](
-    "managedCommits.tableConf-dev",
+    "managedCommit.tableConf-preview",
     null,
     v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
     _ => true,

@@ -181,7 +181,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       clusterBySpecOpt: Option[ClusterBySpec] = None): Seq[DomainMetadata] = {
     if (canUpdateMetadata && (!txn.deltaLog.tableExists || isReplacingTable)) {
       val newDomainMetadata = Seq.empty[DomainMetadata] ++
-        ClusteredTableUtils.getDomainMetadataOptional(clusterBySpecOpt, txn)
+        ClusteredTableUtils.getDomainMetadataFromTransaction(clusterBySpecOpt, txn)
       if (!txn.deltaLog.tableExists) {
         newDomainMetadata
       } else {

@@ -18,11 +18,14 @@ package org.apache.spark.sql.delta.skipping.clustering
 
 import java.io.File
 
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -30,8 +33,9 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructType}
 
-trait ClusteredTableCreateOrReplaceDDLSuiteBase
-  extends QueryTest with SharedSparkSession with ClusteredTableTestUtils {
+trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
+  with SharedSparkSession
+  with ClusteredTableTestUtils {
 
   protected val testTable: String = "test_ddl_table"
   protected val sourceTable: String = "test_ddl_source"
@@ -398,6 +402,66 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase
     }
   }
 
+  test("Replace clustered table with non-clustered table") {
+    import testImplicits._
+    withTable(sourceTable) {
+      sql(s"CREATE TABLE $sourceTable(i int, s string) USING delta")
+      spark.range(1000)
+        .map(i => (i.intValue(), "string col"))
+        .toDF("i", "s")
+        .write
+        .format("delta")
+        .mode("append")
+        .saveAsTable(sourceTable)
+
+      // Validate REPLACE TABLE (AS SELECT).
+      Seq("REPLACE", "CREATE OR REPLACE").foreach { clause =>
+        withClusteredTable(testTable, "a int", "a") {
+          verifyClusteringColumns(TableIdentifier(testTable), "a")
+
+          Seq(true, false).foreach { isRTAS =>
+            val testQuery = if (isRTAS) {
+              s"$clause TABLE $testTable USING delta AS SELECT * FROM $sourceTable"
+            } else {
+              sql(s"$clause TABLE $testTable (i int, s string) USING delta")
+              s"INSERT INTO $testTable SELECT * FROM $sourceTable"
+            }
+            sql(testQuery)
+            // Note that clustering table feature are still retained after REPLACE TABLE.
+            verifyClusteringColumns(TableIdentifier(testTable), "")
+          }
+        }
+      }
+    }
+  }
+
+  test("Replace clustered table with non-clustered table - dataframe writer") {
+    import testImplicits._
+    withTable(sourceTable) {
+      sql(s"CREATE TABLE $sourceTable(i int, s string) USING delta")
+      spark.range(1000)
+        .map(i => (i.intValue(), "string col"))
+        .toDF("i", "s")
+        .write
+        .format("delta")
+        .mode("append")
+        .saveAsTable(sourceTable)
+
+      withClusteredTable(testTable, "a int", "a") {
+        verifyClusteringColumns(TableIdentifier(testTable), "a")
+
+        spark.table(sourceTable)
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option("overwriteSchema", "true")
+          .saveAsTable(testTable)
+        // Note that clustering table feature are still retained after REPLACE TABLE.
+        verifyClusteringColumns(TableIdentifier(testTable), "")
+      }
+    }
+  }
+
   protected def withTempDirIfNecessary(f: Option[String] => Unit): Unit = {
     if (isPathBased) {
       withTempDir { dir =>
@@ -417,7 +481,8 @@ trait ClusteredTableDDLWithColumnMapping
     "validate dropping clustering column is not allowed: single clustering column",
     "validate dropping clustering column is not allowed: multiple clustering columns",
     "validate dropping clustering column is not allowed: clustering column + " +
-      "non-clustering column"
+      "non-clustering column",
+    "validate RESTORE on clustered table"
   )
 
   test("validate dropping clustering column is not allowed: single clustering column") {
@@ -718,6 +783,113 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(TableIdentifier(dstTable3), "")
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot3, Seq.empty)
 
+    }
+  }
+
+  test("alter table cluster by none is a no-op on non-clustered tables") {
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT, b STRING) USING delta")
+      val tableIdentifier = TableIdentifier(testTable)
+      val (_, initialSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+
+      // Verify that ALTER TABLE CLUSTER BY NONE does not enable clustering and is a no-op.
+      val clusterByLogs = Log4jUsageLogger.track {
+        sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+      }.filter { e =>
+        e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+          e.tags.get("opType").contains("delta.ddl.alter.clusterBy")
+      }
+      assert(clusterByLogs.nonEmpty)
+      val clusterByLogJson = JsonUtils.fromJson[Map[String, Any]](clusterByLogs.head.blob)
+      assert(clusterByLogJson("isClusterByNoneSkipped").asInstanceOf[Boolean])
+      val (_, finalSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(finalSnapshot.protocol))
+
+      // Snapshot equality shows that no table features can be changed.
+      assert(initialSnapshot.version == finalSnapshot.version)
+      assert(initialSnapshot.protocol.readerAndWriterFeatureNames ==
+        finalSnapshot.protocol.readerAndWriterFeatureNames)
+    }
+  }
+
+  test("alter table set tbl properties not allowed for clusteringColumns") {
+    withClusteredTable(testTable, "a INT, b STRING", "a") {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        sql(s"""
+           |ALTER TABLE $testTable SET TBLPROPERTIES
+           |('${ClusteredTableUtils.PROP_CLUSTERING_COLUMNS}' = '[[\"b\"]]')
+           |""".stripMargin)
+      }
+      checkError(
+        e,
+        errorClass = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        parameters = Map("prop" -> "clusteringColumns"))
+    }
+  }
+
+  test("validate RESTORE on clustered table") {
+    val tableIdentifier = TableIdentifier(testTable)
+    // Scenario 1: restore clustered table to unclustered version.
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT, b STRING) USING delta")
+      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY (a)")
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      verifyClusteringColumns(tableIdentifier, "")
+    }
+
+    // Scenario 2: restore clustered table to previous clustering columns.
+    withClusteredTable(testTable, "a INT, b STRING", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY (b)")
+      verifyClusteringColumns(tableIdentifier, "b")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 3: restore from table with clustering columns to non-empty clustering columns
+    withClusteredTable(testTable, "a int", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+      verifyClusteringColumns(tableIdentifier, "")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 4: restore to start version.
+    withClusteredTable(testTable, "a int", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"INSERT INTO $testTable VALUES (1)")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 5: restore unclustered table to unclustered table.
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT) USING delta")
+      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
+      assert(!startingSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
+
+      sql(s"INSERT INTO $testTable VALUES (1)")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0").collect
+      val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(currentSnapshot.protocol))
+      assert(!currentSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
     }
   }
 

@@ -106,8 +106,8 @@ public class SnapshotImpl implements Snapshot {
      * @return Last transaction version or {@link Optional#empty()} if no transaction identifier
      * exists for this application.
      */
-    public Optional<Long> getLatestTransactionVersion(String applicationId) {
-        return logReplay.getLatestTransactionIdentifier(applicationId);
+    public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
+        return logReplay.getLatestTransactionIdentifier(engine, applicationId);
     }
 
     public LogSegment getLogSegment() {

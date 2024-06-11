@@ -41,6 +41,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.storage.StorageLevel
 
@@ -304,7 +305,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       // Delete delta files
       new File(tempDir, "_delta_log").listFiles().filter(_.getName.endsWith(".json"))
         .foreach(_.delete())
-      if (managedCommitsEnabledInTests) {
+      if (managedCommitEnabledInTests) {
         new File(new File(tempDir, "_delta_log"), "_commits")
           .listFiles()
           .filter(_.getName.endsWith(".json"))
@@ -587,7 +588,7 @@ object ConcurrentBackfillCommitOwnerBuilder extends CommitOwnerBuilder {
   private lazy val concurrentBackfillCommitOwnerClient =
     ConcurrentBackfillCommitOwnerClient(synchronousBackfillThreshold = 2, batchSize)
   override def getName: String = "awaiting-commit-owner"
-  override def build(conf: Map[String, String]): CommitOwnerClient = {
+  override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
     concurrentBackfillCommitOwnerClient
   }
 }

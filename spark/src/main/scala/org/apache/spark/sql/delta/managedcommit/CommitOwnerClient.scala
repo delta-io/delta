@@ -19,8 +19,11 @@ package org.apache.spark.sql.delta.managedcommit
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.storage.LogStore
+import io.delta.dynamodbcommitstore.DynamoDBCommitOwnerClientBuilder
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
+
+import org.apache.spark.sql.SparkSession
 
 /** Representation of a commit file */
 case class Commit(
@@ -43,7 +46,7 @@ case class Commit(
 case class CommitFailedException(
     private val retryable: Boolean,
     private val conflict: Boolean,
-    private val message: String) extends Exception(message) {
+    private val message: String) extends RuntimeException(message) {
   def getRetryable: Boolean = retryable
   def getConflict: Boolean = conflict
 }
@@ -199,7 +202,7 @@ trait CommitOwnerBuilder {
   def getName: String
 
   /** Returns a commit-owner client based on the given conf */
-  def build(conf: Map[String, String]): CommitOwnerClient
+  def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient
 }
 
 /** Factory to get the correct [[CommitOwnerClient]] for a table */
@@ -218,10 +221,12 @@ object CommitOwnerProvider {
     }
   }
 
-  /** Returns a [[CommitOwnerClient]] for the given `name` and `conf` */
+  /** Returns a [[CommitOwnerClient]] for the given `name`, `conf`, and `spark` */
   def getCommitOwnerClient(
-      name: String, conf: Map[String, String]): CommitOwnerClient = synchronized {
-    nameToBuilderMapping.get(name).map(_.build(conf)).getOrElse {
+      name: String,
+      conf: Map[String, String],
+      spark: SparkSession): CommitOwnerClient = synchronized {
+    nameToBuilderMapping.get(name).map(_.build(spark, conf)).getOrElse {
       throw new IllegalArgumentException(s"Unknown commit-owner: $name")
     }
   }
@@ -233,7 +238,7 @@ object CommitOwnerProvider {
   }
 
   private val initialCommitOwnerBuilders = Seq[CommitOwnerBuilder](
-    // Any new commit-owner builder will be registered here.
+    new DynamoDBCommitOwnerClientBuilder()
   )
   initialCommitOwnerBuilders.foreach(registerBuilder)
 }

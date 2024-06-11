@@ -31,8 +31,7 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.{Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.functions.lit
@@ -520,7 +519,8 @@ class OptimisticTransactionSuite
           }
         }
       }
-      override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
     }
 
     CommitOwnerProvider.registerBuilder(RetryableNonConflictCommitOwnerBuilder$)
@@ -569,7 +569,8 @@ class OptimisticTransactionSuite
           }
         }
       }
-      override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
     }
 
     CommitOwnerProvider.registerBuilder(FileAlreadyExistsCommitOwnerBuilder)
@@ -878,7 +879,8 @@ class OptimisticTransactionSuite
         object RetryableConflictCommitOwnerBuilder$ extends CommitOwnerBuilder {
           lazy val commitOwnerClient = new RetryableConflictCommitOwnerClient()
           override def getName: String = commitOwnerName
-          override def build(conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+          override def build(
+              spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
         }
         CommitOwnerProvider.registerBuilder(RetryableConflictCommitOwnerBuilder$)
         val conf = Map(DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key -> commitOwnerName)

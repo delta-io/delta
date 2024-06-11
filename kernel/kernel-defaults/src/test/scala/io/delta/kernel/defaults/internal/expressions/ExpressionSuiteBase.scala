@@ -21,6 +21,8 @@ import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
 import io.delta.kernel.expressions._
 import io.delta.kernel.types._
 
+import scala.collection.JavaConverters._
+
 trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
   /** create a columnar batch of given `size` with zero columns in it. */
   protected def zeroColumnBatch(rowCount: Int): ColumnarBatch = {
@@ -33,6 +35,17 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
 
   protected def or(left: Predicate, right: Predicate): Or = {
     new Or(left, right)
+  }
+
+  protected def like(
+      left: Expression, right: Expression, escape: Option[Character] = None): Predicate = {
+    if (escape.isDefined && escape.get!=null) {
+      like(List(left, right, Literal.ofString(escape.get.toString)))
+    } else like(List(left, right))
+  }
+
+  protected def like(children: List[Expression]): Predicate = {
+    new Predicate("like", children.asJava)
   }
 
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {

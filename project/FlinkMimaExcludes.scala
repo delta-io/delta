@@ -24,6 +24,6 @@ object FlinkMimaExcludes {
 
   val ignoredABIProblems = Seq(
     // We can ignore internal changes
-    ProblemFilters.exclude[IncompatibleMethTypeProblem]("io.delta.standalone.internal.KernelDeltaLogDelegator.this")
+    ProblemFilters.exclude[Problem]("io.delta.standalone.internal.*")
   )
 }

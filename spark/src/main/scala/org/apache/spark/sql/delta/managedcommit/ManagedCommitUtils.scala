@@ -25,6 +25,8 @@ import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFi
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.sql.SparkSession
+
 object ManagedCommitUtils extends DeltaLogging {
 
   /**
@@ -111,16 +113,19 @@ object ManagedCommitUtils extends DeltaLogging {
    */
   def getTablePath(logPath: Path): Path = logPath.getParent
 
-  def getCommitOwnerClient(metadata: Metadata, protocol: Protocol): Option[CommitOwnerClient] = {
+  def getCommitOwnerClient(
+      spark: SparkSession, metadata: Metadata, protocol: Protocol): Option[CommitOwnerClient] = {
     metadata.managedCommitOwnerName.map { commitOwnerStr =>
       assert(protocol.isFeatureSupported(ManagedCommitTableFeature))
-      CommitOwnerProvider.getCommitOwnerClient(commitOwnerStr, metadata.managedCommitOwnerConf)
+      CommitOwnerProvider.getCommitOwnerClient(
+        commitOwnerStr, metadata.managedCommitOwnerConf, spark)
     }
   }
 
   def getTableCommitOwner(
+      spark: SparkSession,
       snapshotDescriptor: SnapshotDescriptor): Option[TableCommitOwnerClient] = {
-    getCommitOwnerClient(snapshotDescriptor.metadata, snapshotDescriptor.protocol).map {
+    getCommitOwnerClient(spark, snapshotDescriptor.metadata, snapshotDescriptor.protocol).map {
       commitOwner =>
         TableCommitOwnerClient(
           commitOwner,

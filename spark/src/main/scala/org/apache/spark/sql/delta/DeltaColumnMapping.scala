@@ -26,6 +26,8 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.json4s.DefaultFormats
+import org.json4s.jackson.JsonMethods._
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -188,6 +190,16 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def getNestedColumnIds(field: StructField): SparkMetadata =
     field.metadata.getMetadata(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
 
+  def getNestedColumnIdsAsLong(field: StructField): Iterable[Long] = {
+    val nestedColumnMetadata = getNestedColumnIds(field)
+    metadataToMap[Map[String, Long]](nestedColumnMetadata).values
+  }
+
+  private def metadataToMap[T <: Map[_, _]](metadata: SparkMetadata)(implicit m: Manifest[T]): T = {
+    implicit val formats: DefaultFormats.type = DefaultFormats
+    parse(metadata.json).extract[T]
+  }
+
   def hasPhysicalName(field: StructField): Boolean =
     field.metadata.contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
 
@@ -304,6 +316,10 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     SchemaMergingUtils.transformColumns(schema)((_, f, _) => {
       if (hasColumnId(f)) {
         maxId = maxId max getColumnId(f)
+        if (hasNestedColumnIds(f)) {
+          val nestedIds = getNestedColumnIdsAsLong(f)
+          maxId = maxId max (if (nestedIds.nonEmpty) nestedIds.max else 0)
+        }
       }
       f
     })

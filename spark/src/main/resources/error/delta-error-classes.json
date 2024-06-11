@@ -77,6 +77,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED" : {
+    "message" : [
+      "ALTER TABLE CLUSTER BY cannot be applied to a partitioned table."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED" : {
     "message" : [
       "Cannot enable <tableFeature> table feature using ALTER TABLE SET TBLPROPERTIES. Please use CREATE OR REPLACE TABLE CLUSTER BY to create a Delta table with clustering."
@@ -794,7 +800,7 @@
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
-      "Exceeds char/varchar type length limitation. Failed check: <expr>."
+      "Value \"<value>\" exceeds char/varchar type length limitation. Failed check: <expr>."
     ],
     "sqlState" : "22001"
   },

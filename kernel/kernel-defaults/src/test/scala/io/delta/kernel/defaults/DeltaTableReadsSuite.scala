@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.exceptions.TableNotFoundException
+import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
@@ -182,6 +182,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
       )
     }
+  }
+
+  test(s"end to end: reading decimal-various-scale-precision") {
+    val tablePath = goldenTablePath("decimal-various-scale-precision")
+    val expResults = spark.sql(s"SELECT * FROM delta.`$tablePath`")
+      .collect()
+      .map(TestRow(_))
+
+    checkTable(
+      path = goldenTablePath("decimal-various-scale-precision"),
+      expectedAnswer = expResults
+    )
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -589,6 +601,31 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
+  test("table with void type - throws KernelException") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
+      val e = intercept[KernelException] {
+        latestSnapshot(path)
+      }
+      assert(e.getMessage.contains(
+        "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))
+    }
+  }
+
+  test("read a shallow cloned table") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath
+      val source = goldenTablePath("data-reader-partition-values")
+      spark.sql(s"CREATE TABLE delta.`$target` SHALLOW CLONE delta.`$source`")
+
+      val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
+
+      assert(expAnswer.size == 3)
+      checkTable(target, expAnswer)
+    }
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // getSnapshotAtVersion end-to-end tests (log segment tests in SnapshotManagerSuite)
   //////////////////////////////////////////////////////////////////////////////////
@@ -645,9 +682,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       val log = org.apache.spark.sql.delta.DeltaLog.forTable(
         spark, new org.apache.hadoop.fs.Path(tablePath))
+      val deltaCommitFileProvider = org.apache.spark.sql.delta.util.DeltaCommitFileProvider(
+        log.unsafeVolatileSnapshot)
       // Delete the log files for versions 0-9, truncating the table history to version 10
       (0 to 9).foreach { i =>
-        val jsonFile = org.apache.spark.sql.delta.util.FileNames.deltaFile(log.logPath, i)
+        val jsonFile = deltaCommitFileProvider.deltaFile(i)
         new File(new org.apache.hadoop.fs.Path(log.logPath, jsonFile).toUri).delete()
       }
       // Create version 11 that overwrites the whole table
