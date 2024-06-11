@@ -51,7 +51,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 
-val deltaTable = DeltaTable.forName(spark, "my_table")
+deltaTable = DeltaTable.forName(spark, "my_table")
 deltaTable.toDF().show()
 
 # Update will not be supported in the first preview of Delta 4.0.
