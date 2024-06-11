@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.files.SQLMetricsReporting
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.BinPackingUtils
 
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext.SPARK_JOB_GROUP_ID
@@ -287,7 +288,12 @@ class OptimizeExecutor(
 
       val batchResults = batchSize match {
         case Some(size) =>
-          groupBinsIntoBatches(jobs, size).map(runOptimizeBatch(_, maxFileSize))
+          val batches = BinPackingUtils.binPackBySize[Bin, Bin](
+            jobs,
+            bin => bin.files.map(_.size).sum,
+            bin => bin,
+            size)
+          batches.map(batch => runOptimizeBatch(Batch(batch), maxFileSize))
         case None =>
           Seq(runOptimizeBatch(Batch(jobs), maxFileSize))
       }
@@ -395,40 +401,6 @@ class OptimizeExecutor(
           isMultiDimClustering // multi-clustering
         }.map(b => Bin(partition, b))
     }
-  }
-
-  /**
-   * Utility methods to group bins into batches for incremental progress.
-   *
-   * @param bins List of bins to group into batches
-   * @return Sequence of batches. Each batch contains one or more bins.
-   */
-  private def groupBinsIntoBatches(
-      bins: Seq[Bin],
-      batchSize: Long)
-  : Seq[Batch] = {
-    val batches = new ArrayBuffer[Batch]()
-
-    val currentBatch = new ArrayBuffer[Bin]()
-    var currentBatchSize = 0L
-
-    bins.foreach { bin =>
-      val binSize = bin.files.map(_.size).sum
-      currentBatch += bin
-      currentBatchSize += binSize
-
-      if (currentBatchSize > batchSize) {
-        batches += Batch(currentBatch.toVector)
-        currentBatch.clear()
-        currentBatchSize = 0
-      }
-    }
-
-    if (currentBatch.nonEmpty) {
-      batches += Batch(currentBatch.toVector)
-    }
-
-    batches.toSeq
   }
 
   private def runOptimizeBatch(
