@@ -60,6 +60,18 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
+   * Returns an optional [[ClusterBySpec]] from the given Snapshot.
+   */
+  def getClusterBySpecOptional(snapshot: Snapshot): Option[ClusterBySpec] = {
+    if (isSupported(snapshot.protocol)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+      Some(ClusterBySpec.fromColumnNames(clusteringColumns))
+    } else {
+      None
+    }
+  }
+
+  /**
    * Extract clustering columns from ClusterBySpec.
    *
    * @param maybeClusterBySpec optional ClusterBySpec. If it's empty, will return the
@@ -69,6 +81,14 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   def getClusteringColumnsAsProperty(
       maybeClusterBySpec: Option[ClusterBySpec]): Option[(String, String)] = {
     maybeClusterBySpec.map(ClusterBySpec.toProperty)
+  }
+
+  /**
+   * Extract clustering columns from a given snapshot.
+   */
+  def getClusteringColumnsAsProperty(snapshot: Snapshot): Option[(String, String)] = {
+    val clusterBySpec = getClusterBySpecOptional(snapshot)
+    getClusteringColumnsAsProperty(clusterBySpec)
   }
 
   /**
@@ -119,6 +139,19 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
       }
       throw DeltaErrors.clusterByInvalidNumColumnsException(numColumnsLimit, actualNumColumns)
     }
+  }
+
+  /**
+   * Remove clustered table internal table properties. These properties are never stored into
+   * [[Metadata.configuration]] such as table features.
+   */
+  def removeInternalTableProperties(
+      props: scala.collection.Map[String, String]): Map[String, String] = {
+    props.toMap --
+      // Clustering table feature and dependent table features
+      Seq(ClusteringTableFeature).flatMap { feature =>
+        (feature +: feature.requiredFeatures.toSeq).map(TableFeatureProtocolUtils.propertyKey)
+      }
   }
 
   /**
