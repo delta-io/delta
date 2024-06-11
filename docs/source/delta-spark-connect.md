@@ -37,11 +37,12 @@ sbin/start-connect-server.sh \
 
 The <Delta> Connect Python client is included in the same PyPi package as <Delta> Spark.
 
-1. `pip install pyspark==4.0.0`
+1. `pip install pyspark==4.0.0`.
 
-2. `pip install delta-spark==4.0.0`
+2. `pip install delta-spark==4.0.0`.
 
-3. The usage is the same as Spark Connect. We just need to pass in a remote `SparkSession` (instead of a local one) to the `DeltaTable` API.
+3. The usage is the same as Spark Connect (e.g. `./bin/pyspark --remote "sc://localhost"`).
+We just need to pass in a remote `SparkSession` (instead of a local one) to the `DeltaTable` API.
 
 An example:
 
