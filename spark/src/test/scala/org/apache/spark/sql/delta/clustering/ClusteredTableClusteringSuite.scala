@@ -92,7 +92,7 @@ class ClusteredTableClusteringSuite extends SparkFunSuite
         assert(files0.size === 4)
         assertNotClustered(files0)
 
-         // Optimize should cluster the data into two 2 files since MAX_RECORDS_PER_FILE is 2.
+        // Optimize should cluster the data into two 2 files since MAX_RECORDS_PER_FILE is 2.
         runOptimize(table) { metrics =>
           assert(metrics.numFilesRemoved == 4)
           assert(metrics.numFilesAdded == 2)

@@ -1236,7 +1236,7 @@ trait DeltaSQLConfBase {
             | progress.
             |""".stripMargin)
         .bytesConf(ByteUnit.BYTE)
-        .checkValue(_ >= 0, "batchSize has to be positive")
+        .checkValue(_ > 0, "batchSize has to be positive")
         .createOptional
 
   val DELTA_OPTIMIZE_REPARTITION_ENABLED =
