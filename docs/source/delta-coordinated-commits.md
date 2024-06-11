@@ -39,14 +39,14 @@ The DynamoDB Commit Coordinator requires a backend DynamoDB table to coordinate 
 
 ```bash
 bin/spark-shell \
---packages io.delta:delta-spark_2.13:4.0.0,org.apache.hadoop:hadoop-aws:3.3.4 \
---repositories https://oss.sonatype.org/content/repositories/iodelta-1147 \
+--packages io.delta:delta-spark_2.13:4.0.0,org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
+--repositories https://oss.sonatype.org/content/repositories/iodelta-1149 \
 --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
 --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
 --conf spark.databricks.delta.coordinatedCommits.commitCoordinator.ddb.awsCredentialsProviderName=<credentialsProviderName>
 ```
 
-`<credentialsProviderName>` must be the fully qualified class name of the [AWS Credentials Provider](https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/auth/AWSCredentialsProvider.html) (e.g. `com.amazonaws.auth.profile.ProfileCredentialsProvider`) which must be used for authenticating with the desired DynamoDB instance.
+`<credentialsProviderName>` must be the fully qualified class name of the [AWS Credentials Provider](https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/auth/AWSCredentialsProvider.html) (e.g. `com.amazonaws.auth.profile.ProfileCredentialsProvider`) which must be used for authenticating with the desired DynamoDB instance. The exact delta-spark package name and repository can vary depending on the release that you are trying to use.
 
 ### 3. Create a table with DynamoDB as the commit coordinator by running the following command:
 
