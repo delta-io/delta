@@ -4,7 +4,7 @@ description: Learn about Delta Coordinated Commits.
 
 # Delta Coordinated Commits
 
-.. warning:: This feature is available in preview in <Delta> 4.0.0 Preview. Since this feature is still in preview, it can undergo major changes. Furthermore, a table with this preview feature enabled cannot be written to by future Delta releases until the feature is manually removed from the table.
+.. warning:: This feature is available in preview in [Delta Lake 4.0.0 Preview](https://github.com/delta-io/delta/releases/tag/v4.0.0rc1). Since this feature is still in preview, it can undergo major changes. Furthermore, a table with this preview feature enabled cannot be written to by future Delta releases until the feature is manually removed from the table.
 
 [Coordinated Commits](https://github.com/delta-io/delta/issues/2598) is a new commit protocol which makes the commit process more flexible and pluggable by delegating control of the commit to an external commit coordinator. Each coordinated commits table has a designated "commit coordinator" and all the commits to the table must go via it.
 
