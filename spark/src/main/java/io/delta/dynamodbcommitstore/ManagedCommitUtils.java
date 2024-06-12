@@ -31,7 +31,7 @@ public class ManagedCommitUtils {
 
     /** The configuration key for the managed commit owner. */
     private static final String MANAGED_COMMIT_OWNER_CONF_KEY =
-            "delta.managedCommits.commitOwner-preview";
+            "delta.managedCommit.commitOwner-preview";
 
     /**
      * Creates a new unbackfilled delta file path for the given commit version.
@@ -68,10 +68,10 @@ public class ManagedCommitUtils {
     public static boolean isManagedCommitToFSConversion(
             Long commitVersion,
             UpdatedActions updatedActions) {
-        boolean oldMetadataHasManagedCommits =
+        boolean oldMetadataHasManagedCommit =
                 !getManagedCommitOwner(updatedActions.getOldMetadata()).isEmpty();
-        boolean newMetadataHasManagedCommits =
+        boolean newMetadataHasManagedCommit =
                 !getManagedCommitOwner(updatedActions.getNewMetadata()).isEmpty();
-        return oldMetadataHasManagedCommits && !newMetadataHasManagedCommits && commitVersion > 0;
+        return oldMetadataHasManagedCommit && !newMetadataHasManagedCommit && commitVersion > 0;
     }
 }

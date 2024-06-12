@@ -29,7 +29,7 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.managedcommit.{Commit, GetCommitsResponse, TableCommitOwnerClient}
+import org.apache.spark.sql.delta.managedcommit._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -171,23 +171,20 @@ trait SnapshotManagement { self: DeltaLog =>
 
     // Submit a potential async call to get commits from commit store if available
     val threadPool = SnapshotManagement.commitOwnerGetCommitsThreadPool
-    def getCommitsTask(async: Boolean): GetCommitsResponse = {
-      recordFrameProfile("DeltaLog", s"CommitStore.getCommits.async=$async") {
-        tableCommitOwnerClient.getCommits(Some(startVersion), endVersion = versionToLoad)
-      }
+    def getCommitsTask(isAsyncRequest: Boolean): GetCommitsResponse = {
+      ManagedCommitUtils.getCommitsFromCommitOwnerWithUsageLogs(
+        this, tableCommitOwnerClient, startVersion, versionToLoad, isAsyncRequest)
     }
     val unbackfilledCommitsResponseFuture =
       if (threadPool.getActiveCount < threadPool.getMaximumPoolSize) {
-        threadPool.submit[GetCommitsResponse](spark) { getCommitsTask(async = true) }
+        threadPool.submit[GetCommitsResponse](spark) { getCommitsTask(isAsyncRequest = true) }
       } else {
         // If the thread pool is full, we should not submit more tasks to it. Instead, we should
         // run the task in the current thread.
         logInfo("Getting un-backfilled commits from commit store in the same thread for table " +
           s"$dataPath")
-        recordDeltaEvent(
-          this,
-          "delta.listDeltaAndCheckpointFiles.synchronousCommitStoreGetCommits")
-        CompletableFuture.completedFuture(getCommitsTask(async = false))
+        recordDeltaEvent(this, ManagedCommitUsageLogs.COMMIT_OWNER_LISTING_THREADPOOL_FULL)
+        CompletableFuture.completedFuture(getCommitsTask(isAsyncRequest = false))
       }
 
     var maxDeltaVersionSeen = startVersion - 1
@@ -231,7 +228,7 @@ trait SnapshotManagement { self: DeltaLog =>
     val initialMaxDeltaVersionSeen = maxDeltaVersionSeen
     val (additionalLogTuplesFromFsListingOpt, additionalChecksumOpt) =
       if (requiresAdditionalListing()) {
-        recordDeltaEvent(this, "delta.listDeltaAndCheckpointFiles.requiresAdditionalFsListing")
+        recordDeltaEvent(this, ManagedCommitUsageLogs.COMMIT_OWNER_ADDITIONAL_LISTING_REQUIRED)
         listFromFileSystemInternal(
           startVersion = initialMaxDeltaVersionSeen + 1, versionToLoad, includeMinorCompactions)
       } else {
@@ -257,7 +254,7 @@ trait SnapshotManagement { self: DeltaLog =>
         "latestCommitVersion" -> unbackfilledCommitsResponse.getLatestTableVersion)
       recordDeltaEvent(
         deltaLog = this,
-        opType = "delta.listDeltaAndCheckpointFiles.unexpectedRequiresAdditionalFsListing",
+        opType = ManagedCommitUsageLogs.FS_COMMIT_OWNER_LISTING_UNEXPECTED_GAPS,
         data = eventData)
     }
 

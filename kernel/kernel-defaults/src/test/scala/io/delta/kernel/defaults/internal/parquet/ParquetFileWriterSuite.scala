@@ -153,6 +153,21 @@ class ParquetFileWriterSuite extends AnyFunSuite
           ),
           4 // how many columns have the stats collected from given list above
         )
+    },
+    // Decimal types with various precision and scales
+    Seq((10000, 1)).map {
+      case (targetFileSize, expParquetFileCount) =>
+        (
+          "write decimal various scales and precision (with stats)", // test name
+          "decimal-various-scale-precision",
+          targetFileSize,
+          expParquetFileCount,
+          3, /* expected number of rows written to Parquet files */
+          Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
+          leafLevelPrimitiveColumns(
+            Seq.empty, tableSchema(goldenTablePath("decimal-various-scale-precision"))),
+          29 // how many columns have the stats collected from given list above
+        )
     }
   ).flatten.foreach {
     case (name, input, fileSize, expFileCount, expRowCount, predicate, statsCols, expStatsColCnt) =>

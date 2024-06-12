@@ -3920,7 +3920,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  private def validateManagedCommitsDropLogs(
+  private def validateManagedCommitDropLogs(
       usageLogs: Seq[UsageRecord],
       expectTablePropertiesPresent: Boolean,
       expectUnbackfilledCommitsPresent: Boolean,
@@ -3964,7 +3964,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(
         !ManagedCommitUtils.TABLE_PROPERTY_KEYS.exists(snapshot.metadata.configuration.contains(_)))
       assert(!snapshot.protocol.writerFeatures.exists(_.contains(ManagedCommitTableFeature.name)))
-      validateManagedCommitsDropLogs(
+      validateManagedCommitDropLogs(
         usageLogs, expectTablePropertiesPresent = true, expectUnbackfilledCommitsPresent = false)
     }
   }
@@ -4005,7 +4005,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         assert(e.getMessage.contains("backfill failed"))
       }
-      validateManagedCommitsDropLogs(
+      validateManagedCommitDropLogs(
         usageLogs,
         expectTablePropertiesPresent = true,
         expectUnbackfilledCommitsPresent = false,
@@ -4027,7 +4027,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           ManagedCommitTableFeature.name)
           .run(spark)
       }
-      validateManagedCommitsDropLogs(
+      validateManagedCommitDropLogs(
         usageLogs2, expectTablePropertiesPresent = false, expectUnbackfilledCommitsPresent = true)
       val snapshot = log.update()
       assert(snapshot.version === 4)

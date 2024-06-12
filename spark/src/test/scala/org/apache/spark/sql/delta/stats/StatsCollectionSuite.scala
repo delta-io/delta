@@ -369,11 +369,14 @@ class StatsCollectionSuite
       (s"abcde�", s"abcde�"),
       (s"abcd�abcd", s"abcd�a�"),
       (s"�abcd", s"�abcd"),
-      (s"abcdef�", s"abcdef��"),
+      (s"abcdef�", s"abcdef�"),
       (s"abcdef-abcdef�", s"abcdef�"),
       (s"abcdef�abcdef", s"abcdef��"),
       (s"abcdef��abcdef", s"abcdef���"),
-      (s"abcdef�abcdef�abcdef�abcdef", s"abcdef��")
+      (s"abcdef�abcdef�abcdef�abcdef", s"abcdef��"),
+      (s"漢字仮名한글தமி", s"漢字仮名한글�"),
+      (s"漢字仮名한글��", s"漢字仮名한글��"),
+      (s"漢字仮名한글", s"漢字仮名한글")
     )
     inputToExpected.foreach {
       case (input, expected) =>

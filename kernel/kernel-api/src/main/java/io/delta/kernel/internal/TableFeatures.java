@@ -71,7 +71,8 @@ public class TableFeatures {
      * <ul>
      *     <li>protocol writer version 1.</li>
      *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
-     *     <li>protocol writer version 7 with "appendOnly" feature enabled.</li>
+     *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview}
+     *     feature enabled.</li>
      * </ul>
      *
      * @param protocol    Table protocol
@@ -109,6 +110,8 @@ public class TableFeatures {
                     switch (writerFeature) {
                         // Only supported writer features as of today in Kernel
                         case "appendOnly":
+                            break;
+                        case "inCommitTimestamp-preview":
                             break;
                         default:
                             throw unsupportedWriterFeature(tablePath, writerFeature);

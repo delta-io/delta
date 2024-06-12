@@ -81,14 +81,14 @@ import org.apache.spark.sql.internal.SQLConf
  */
 class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
-    extensions.injectParser { (session, parser) =>
+    extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
       ResolveDeltaPathTable(session)
     }
     extensions.injectResolutionRule { session =>
-      new PreprocessTimeTravel(session)
+      PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support
@@ -104,7 +104,7 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new CheckUnresolvedRelationTimeTravel(session)
     }
     extensions.injectCheckRule { session =>
-      new DeltaUnsupportedOperationsCheck(session)
+      DeltaUnsupportedOperationsCheck(session)
     }
     // Rule for rewriting the place holder for range_partition_id to manually construct the
     // `RangePartitioner` (which requires an RDD to be sampled in order to determine
@@ -113,13 +113,13 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new RangePartitionIdRewrite(session)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableUpdate(session.sessionState.conf)
+      PreprocessTableUpdate(session.sessionState.conf)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableMerge(session.sessionState.conf)
+      PreprocessTableMerge(session.sessionState.conf)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableDelete(session.sessionState.conf)
+      PreprocessTableDelete(session.sessionState.conf)
     }
     // Resolve new UpCast expressions that might have been introduced by [[PreprocessTableUpdate]]
     // and [[PreprocessTableMerge]].

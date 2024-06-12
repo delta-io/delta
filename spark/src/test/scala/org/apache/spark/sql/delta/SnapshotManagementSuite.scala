@@ -305,7 +305,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       // Delete delta files
       new File(tempDir, "_delta_log").listFiles().filter(_.getName.endsWith(".json"))
         .foreach(_.delete())
-      if (managedCommitsEnabledInTests) {
+      if (managedCommitEnabledInTests) {
         new File(new File(tempDir, "_delta_log"), "_commits")
           .listFiles()
           .filter(_.getName.endsWith(".json"))
@@ -641,9 +641,9 @@ class SnapshotManagementParallelListingSuite extends QueryTest
   private def verifyUsageRecords(
       records: Seq[UsageRecord],
       expectedNeedAdditionalFsListingCount: Int): Unit = {
-    val opType = "delta.listDeltaAndCheckpointFiles.requiresAdditionalFsListing"
-    assert(DeltaTestUtils.filterUsageRecords(records, opType).size ===
-      expectedNeedAdditionalFsListingCount)
+    val filteredLogs = DeltaTestUtils.filterUsageRecords(
+      records, ManagedCommitUsageLogs.COMMIT_OWNER_ADDITIONAL_LISTING_REQUIRED)
+    assert(filteredLogs.size === expectedNeedAdditionalFsListingCount)
   }
 
   private def verifySnapshotBackfills(snapshot: Snapshot, backfillUntilInclusive: Long): Unit = {

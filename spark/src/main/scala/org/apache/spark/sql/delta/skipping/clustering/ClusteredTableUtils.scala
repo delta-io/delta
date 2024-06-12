@@ -31,6 +31,10 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 
+case class MatchingMetadataDomain(
+    clusteringDomainOpt: Option[DomainMetadata]
+)
+
 /**
  * Clustered table utility functions.
  */
@@ -56,6 +60,18 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
+   * Returns an optional [[ClusterBySpec]] from the given Snapshot.
+   */
+  def getClusterBySpecOptional(snapshot: Snapshot): Option[ClusterBySpec] = {
+    if (isSupported(snapshot.protocol)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+      Some(ClusterBySpec.fromColumnNames(clusteringColumns))
+    } else {
+      None
+    }
+  }
+
+  /**
    * Extract clustering columns from ClusterBySpec.
    *
    * @param maybeClusterBySpec optional ClusterBySpec. If it's empty, will return the
@@ -65,6 +81,14 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   def getClusteringColumnsAsProperty(
       maybeClusterBySpec: Option[ClusterBySpec]): Option[(String, String)] = {
     maybeClusterBySpec.map(ClusterBySpec.toProperty)
+  }
+
+  /**
+   * Extract clustering columns from a given snapshot.
+   */
+  def getClusteringColumnsAsProperty(snapshot: Snapshot): Option[(String, String)] = {
+    val clusterBySpec = getClusterBySpecOptional(snapshot)
+    getClusteringColumnsAsProperty(clusterBySpec)
   }
 
   /**
@@ -118,6 +142,19 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
+   * Remove clustered table internal table properties. These properties are never stored into
+   * [[Metadata.configuration]] such as table features.
+   */
+  def removeInternalTableProperties(
+      props: scala.collection.Map[String, String]): Map[String, String] = {
+    props.toMap --
+      // Clustering table feature and dependent table features
+      Seq(ClusteringTableFeature).flatMap { feature =>
+        (feature +: feature.requiredFeatures.toSeq).map(TableFeatureProtocolUtils.propertyKey)
+      }
+  }
+
+  /**
    * Remove PROP_CLUSTERING_COLUMNS from metadata action.
    * Clustering columns should only exist in:
    * 1. CatalogTable.properties(PROP_CLUSTERING_COLUMNS)
@@ -146,14 +183,33 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
         txn.protocol, txn.metadata, clusterBy)
       val clusteringColumns =
         clusterBy.columnNames.map(_.toString).map(ClusteringColumn(txn.metadata.schema, _))
-       Some(createDomainMetadata(clusteringColumns)).toSeq
+      Seq(createDomainMetadata(clusteringColumns))
     }.getOrElse {
-      if (txn.snapshot.domainMetadata.exists(_.domain == ClusteringMetadataDomain.domainName)) {
-        Some(createDomainMetadata(Seq.empty)).toSeq
-      } else {
-        None.toSeq
-      }
+      getMatchingMetadataDomain(
+        clusteringColumns = Seq.empty,
+        txn.snapshot.domainMetadata).clusteringDomainOpt.toSeq
     }
+  }
+
+  /**
+   * Returns a sequence of [[DomainMetadata]] actions to update the existing domain metadata with
+   * the given clustering columns.
+   *
+   * This is mainly used for REPLACE TABLE and RESTORE TABLE.
+   */
+  def getMatchingMetadataDomain(
+      clusteringColumns: Seq[ClusteringColumn],
+      existingDomainMetadata: Seq[DomainMetadata]): MatchingMetadataDomain = {
+    val clusteringMetadataDomainOpt =
+      if (existingDomainMetadata.exists(_.domain == ClusteringMetadataDomain.domainName)) {
+        Some(ClusteringMetadataDomain.fromClusteringColumns(clusteringColumns).toDomainMetadata)
+      } else {
+        None
+      }
+
+    MatchingMetadataDomain(
+      clusteringMetadataDomainOpt
+    )
   }
 
   /**

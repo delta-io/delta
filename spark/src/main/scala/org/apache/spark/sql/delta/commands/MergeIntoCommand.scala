@@ -197,8 +197,8 @@ case class MergeIntoCommand(
       deltaTxn: OptimisticTransaction,
       mergeActions: Seq[FileAction],
       startTime: Long,
-      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
-    : Unit = {
+      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason
+  ): Unit = {
     checkNonDeterministicSource(spark)
 
     // Metrics should be recorded before commit (where they are written to delta logs).

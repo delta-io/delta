@@ -947,9 +947,9 @@ trait CDCReaderImpl extends DeltaLogging {
       isStreaming: Boolean = false): DataFrame = {
 
     val relation = HadoopFsRelation(
-      index,
-      index.partitionSchema,
-      cdcReadSchema(index.schema),
+      location = index,
+      partitionSchema = index.partitionSchema,
+      dataSchema = cdcReadSchema(index.schema),
       bucketSpec = None,
       new DeltaParquetFileFormat(index.protocol, index.metadata, isCDCRead = true),
       options = index.deltaLog.options)(spark)

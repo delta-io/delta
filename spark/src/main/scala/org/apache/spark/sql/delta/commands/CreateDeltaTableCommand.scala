@@ -485,15 +485,38 @@ case class CreateDeltaTableCommand(
           throw DeltaErrors.createTableWithDifferentPartitioningException(
             path, tableDesc.partitionColumnNames, existingMetadata.partitionColumns)
         }
+        // If schema is specified, we must make sure the clustering column matches (includes when
+        // clustering is not specified).
+        val specifiedClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(tableDesc)
+        val existingClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(txn.snapshot)
+        if (specifiedClusterBySpec != existingClusterBySpec) {
+          throw DeltaErrors.createTableWithDifferentClusteringException(
+            path,
+            specifiedClusterBySpec,
+            existingClusterBySpec)
+        }
       }
 
       if (tableDesc.properties.nonEmpty) {
         // When comparing properties of the existing table and the new table, remove some
         // internal column mapping properties for the sake of comparison.
-        val filteredTableProperties = filterColumnMappingProperties(
+        var filteredTableProperties = filterColumnMappingProperties(
           tableDesc.properties)
-        val filteredExistingProperties = filterColumnMappingProperties(
+        var filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
+        // Clustered table has internal table properties in Metadata configurations and they are
+        // never configured by the user so remove them before validation.
+        if (ClusteredTableUtils.isSupported(txn.protocol)) {
+          filteredExistingProperties =
+            ClusteredTableUtils.removeInternalTableProperties(filteredExistingProperties) ++
+              // Validate clustering columns in CatalogTable.PROP_CLUSTERING_COLUMNS
+              // are matched.
+              ClusteredTableUtils.getClusteringColumnsAsProperty(txn.snapshot)
+          // Note that clustering columns are already stored in the key
+          // CatalogTable.PROP_CLUSTERING_COLUMNS.
+          filteredTableProperties =
+            ClusteredTableUtils.removeInternalTableProperties(filteredTableProperties)
+        }
         if (filteredTableProperties != filteredExistingProperties) {
           throw DeltaErrors.createTableWithDifferentPropertiesException(
             path, filteredTableProperties, filteredExistingProperties)

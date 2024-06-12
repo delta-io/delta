@@ -21,6 +21,7 @@ import java.io.File
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
@@ -480,7 +481,8 @@ trait ClusteredTableDDLWithColumnMapping
     "validate dropping clustering column is not allowed: single clustering column",
     "validate dropping clustering column is not allowed: multiple clustering columns",
     "validate dropping clustering column is not allowed: clustering column + " +
-      "non-clustering column"
+      "non-clustering column",
+    "validate RESTORE on clustered table"
   )
 
   test("validate dropping clustering column is not allowed: single clustering column") {
@@ -825,6 +827,72 @@ trait ClusteredTableDDLSuiteBase
     }
   }
 
+  test("validate RESTORE on clustered table") {
+    val tableIdentifier = TableIdentifier(testTable)
+    // Scenario 1: restore clustered table to unclustered version.
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT, b STRING) USING delta")
+      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY (a)")
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      verifyClusteringColumns(tableIdentifier, "")
+    }
+
+    // Scenario 2: restore clustered table to previous clustering columns.
+    withClusteredTable(testTable, "a INT, b STRING", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY (b)")
+      verifyClusteringColumns(tableIdentifier, "b")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 3: restore from table with clustering columns to non-empty clustering columns
+    withClusteredTable(testTable, "a int", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
+      verifyClusteringColumns(tableIdentifier, "")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 4: restore to start version.
+    withClusteredTable(testTable, "a int", "a") {
+      verifyClusteringColumns(tableIdentifier, "a")
+
+      sql(s"INSERT INTO $testTable VALUES (1)")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+      verifyClusteringColumns(tableIdentifier, "a")
+    }
+
+    // Scenario 5: restore unclustered table to unclustered table.
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT) USING delta")
+      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
+      assert(!startingSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
+
+      sql(s"INSERT INTO $testTable VALUES (1)")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0").collect
+      val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(currentSnapshot.protocol))
+      assert(!currentSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
+    }
+  }
+
   testSparkMasterOnly("Variant is not supported") {
     val e = intercept[DeltaAnalysisException] {
       createOrReplaceClusteredTable("CREATE", testTable, "id long, v variant", "v")
@@ -976,7 +1044,116 @@ trait ClusteredTableDDLWithV2
 
 trait ClusteredTableDDLDataSourceV2SuiteBase
   extends ClusteredTableDDLWithV2
-    with ClusteredTableDDLSuite
+    with ClusteredTableDDLSuite {
+  test("Create clustered table from external location, " +
+    "location has clustered table, schema not specified, cluster by not specified") {
+    withTempDir { dir =>
+      // 1. Create a clustered table
+      sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta " +
+        "cluster by (col1)")
+
+      // 2. Create a clustered table from the external location.
+      withTable("clustered_table") {
+        // When schema is not specified, the schema of the table is inferred from the external
+        // table.
+        sql(s"CREATE EXTERNAL TABLE clustered_table USING delta LOCATION '${dir.getAbsolutePath}'")
+        verifyClusteringColumns(TableIdentifier("clustered_table"), "col1")
+      }
+    }
+  }
+
+  test("create external non-clustered table: location has clustered table, schema specified, " +
+    "cluster by not specified") {
+    val tableName = "clustered_table"
+    withTempDir { dir =>
+      // 1. Create a clustered table in the external location.
+      sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta " +
+        "cluster by (col1)")
+
+      // 2. Create a non-clustered table from the external location.
+      withTable(tableName) {
+        val e = intercept[DeltaAnalysisException] {
+          // When schema is specified, the schema has to match the schema of the external table.
+          sql(s"CREATE EXTERNAL TABLE $tableName (col1 INT, col2 STRING) USING delta " +
+            s"LOCATION '${dir.getAbsolutePath}'")
+        }
+        checkError(
+          e,
+          errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          parameters = Map(
+            "path" -> dir.toURI.toString.stripSuffix("/"),
+            "specifiedColumns" -> "",
+            "existingColumns" -> "col1"))
+      }
+    }
+  }
+
+  test("create external clustered table: location has clustered table, schema specified, " +
+    "cluster by specified with different clustering column") {
+    val tableName = "clustered_table"
+    withTempDir { dir =>
+      // 1. Create a clustered table in the external location.
+      sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta " +
+        "cluster by (col1)")
+
+      // 2. Create a clustered table from the external location.
+      withTable(tableName) {
+        val e = intercept[DeltaAnalysisException] {
+          sql(s"CREATE EXTERNAL TABLE $tableName (col1 INT, col2 STRING) USING delta " +
+            s"CLUSTER BY (col2) LOCATION '${dir.getAbsolutePath}'")
+        }
+        checkError(
+          e,
+          errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          parameters = Map(
+            "path" -> dir.toURI.toString.stripSuffix("/"),
+            "specifiedColumns" -> "col2",
+            "existingColumns" -> "col1"))
+      }
+    }
+  }
+
+  test("create external clustered table: location has clustered table, schema specified, " +
+    "cluster by specified with same clustering column") {
+    val tableName = "clustered_table"
+    withTempDir { dir =>
+      // 1. Create a clustered table in the external location.
+      sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta " +
+        "cluster by (col1)")
+
+      // 2. Create a clustered table from the external location.
+      withTable(tableName) {
+        sql(s"CREATE EXTERNAL TABLE $tableName (col1 INT, col2 STRING) USING delta " +
+          s"CLUSTER BY (col1) LOCATION '${dir.getAbsolutePath}'")
+        verifyClusteringColumns(TableIdentifier(tableName), "col1")
+      }
+    }
+  }
+
+  test("create external clustered table: location has non-clustered table, schema specified, " +
+    "cluster by specified") {
+    val tableName = "clustered_table"
+    withTempDir { dir =>
+      // 1. Create a non-clustered table in the external location.
+      sql(s"create table delta.`${dir.getAbsolutePath}` (col1 int, col2 string) using delta")
+
+      // 2. Create a clustered table from the external location.
+      withTable(tableName) {
+        val e = intercept[DeltaAnalysisException] {
+          sql(s"CREATE EXTERNAL TABLE $tableName (col1 INT, col2 STRING) USING delta " +
+            s"CLUSTER BY (col1) LOCATION '${dir.getAbsolutePath}'")
+        }
+        checkError(
+          e,
+          errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          parameters = Map(
+            "path" -> dir.toURI.toString.stripSuffix("/"),
+            "specifiedColumns" -> "col1",
+            "existingColumns" -> ""))
+      }
+    }
+  }
+}
 
 class ClusteredTableDDLDataSourceV2Suite
   extends ClusteredTableDDLDataSourceV2SuiteBase

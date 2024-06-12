@@ -484,7 +484,7 @@ object DeltaTableUtils extends PredicateHelper
    * which states that if an authority is defined, the path component needs to be either empty or
    * start with a '/'.
    *
-   * Issue 2:
+   * Issue 2 (only when [[DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS]] is `true`):
    * When the child path contains a special character ':', such as "aaaa:bbbb.csv".
    * This is valid in many file systems such as S3, but is actually ambiguous because it can be
    * parsed either as an absolute path with a scheme ("aaaa") and authority ("bbbb.csv"), or as
@@ -494,7 +494,17 @@ object DeltaTableUtils extends PredicateHelper
    * See [[https://issues.apache.org/jira/browse/HDFS-14762]] for more details.
    */
   def safeConcatPaths(basePath: Path, relativeChildPath: String): Path = {
-    Path.mergePaths(basePath, new Path(s"/$relativeChildPath"))
+    val useWorkaround = SparkSession.getActiveSession.map(_.sessionState.conf)
+      .exists(_.getConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS))
+    if (useWorkaround) {
+      Path.mergePaths(basePath, new Path(s"/$relativeChildPath"))
+    } else {
+      if (basePath.toUri.getPath.isEmpty) {
+        new Path(basePath, s"/$relativeChildPath")
+      } else {
+        new Path(basePath, relativeChildPath)
+      }
+    }
   }
 
   /**
