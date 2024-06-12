@@ -210,8 +210,21 @@ case class DeltaOptimizeContext(
   }
 }
 
+/**
+ * A bin represents a single set of files that are being re-written in a single Spark job.
+ * For compaction, this represents a single file being written. For clustering, this is
+ * an entire partition for Z-ordering, or an entire ZCube for liquid clustering.
+ *
+ * @param partitionValues The partition this set of files is in
+ * @param files The list of files being re-written
+ */
 case class Bin(partitionValues: Map[String, String], files: Seq[AddFile])
 
+/**
+ * A batch represents all the bins that will be processed and commited in a single transaction.
+ * 
+ * @param bins The set of bins to process in this transaction
+ */
 case class Batch(bins: Seq[Bin])
 
 /**
