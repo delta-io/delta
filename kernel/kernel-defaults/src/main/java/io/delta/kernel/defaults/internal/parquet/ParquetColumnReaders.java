@@ -84,11 +84,13 @@ class ParquetColumnReaders {
             return createTimestampConverter(initialBatchSize, typeFromFile,
                     TimestampNTZType.TIMESTAMP_NTZ);
         } else if (typeFromClient instanceof VariantType) {
+            // TODO(r.chen): Is converting the typeFromFile to the readSchea ok?
+            // We lose the field metadata from the client.
             return new RowColumnReader(
                 initialBatchSize,
-                new StructType()
-                    .add("value", BinaryType.BINARY, false)
-                    .add("metadata", BinaryType.BINARY, false),
+                // The physical schema representing variants can be different per file so we must
+                // infer the read schema from the type from file.
+                (StructType) ParquetSchemaUtils.toKernelType(typeFromFile),
                 (GroupType) typeFromFile);
         }
 
