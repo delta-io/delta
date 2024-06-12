@@ -422,8 +422,7 @@ case class DeltaFormatSharingSource(
         limit = None,
         versionAsOf = Some(startingOffset.reservoirVersion),
         timestampAsOf = None,
-        jsonPredicateHints = None,
-        refreshToken = None
+        jsonPredicateHints = None
       )
       logInfo(
         s"Fetched ${tableFiles.lines.size} lines for table version ${tableFiles.version} from" +
