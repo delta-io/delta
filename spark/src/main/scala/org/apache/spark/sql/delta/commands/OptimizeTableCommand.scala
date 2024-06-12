@@ -222,7 +222,7 @@ case class Bin(partitionValues: Map[String, String], files: Seq[AddFile])
 
 /**
  * A batch represents all the bins that will be processed and commited in a single transaction.
- * 
+ *
  * @param bins The set of bins to process in this transaction
  */
 case class Batch(bins: Seq[Bin])
