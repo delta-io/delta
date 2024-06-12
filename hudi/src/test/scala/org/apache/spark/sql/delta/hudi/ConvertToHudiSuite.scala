@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.hudiShaded
+package org.apache.spark.sql.delta.hudi
 
 import java.io.File
 import java.time.Instant
@@ -31,15 +31,15 @@ import org.scalatest.time.SpanSugar._
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
-import shadedForDelta.org.apache.hudi.common.config.HoodieMetadataConfig
-import shadedForDelta.org.apache.hudi.common.engine.HoodieLocalEngineContext
-import shadedForDelta.org.apache.hudi.common.fs.FSUtils
-import shadedForDelta.org.apache.hudi.common.model.HoodieBaseFile
-import shadedForDelta.org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
-import shadedForDelta.org.apache.hudi.metadata.HoodieMetadataFileSystemView
-import shadedForDelta.org.apache.hudi.storage.hadoop.HadoopStorageConfiguration
-import shadedForDelta.org.apache.hudi.storage.hadoop.HoodieHadoopStorage
-import shadedForDelta.org.apache.hudi.storage.StorageConfiguration
+import org.apache.hudi.common.config.HoodieMetadataConfig
+import org.apache.hudi.common.engine.HoodieLocalEngineContext
+import org.apache.hudi.common.fs.FSUtils
+import org.apache.hudi.common.model.HoodieBaseFile
+import org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
+import org.apache.hudi.metadata.HoodieMetadataFileSystemView
+import org.apache.hudi.storage.hadoop.HadoopStorageConfiguration
+import org.apache.hudi.storage.hadoop.HoodieHadoopStorage
+import org.apache.hudi.storage.StorageConfiguration
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.avro.SchemaConverters

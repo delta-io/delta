@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.hudiShaded
+package org.apache.spark.sql.delta.hudi
 
 import java.util
 

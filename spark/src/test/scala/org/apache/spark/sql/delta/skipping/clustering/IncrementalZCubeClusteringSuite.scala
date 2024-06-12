@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.skipping.clustering
+package org.apache.spark.sql.delta.liquid
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtilsBase

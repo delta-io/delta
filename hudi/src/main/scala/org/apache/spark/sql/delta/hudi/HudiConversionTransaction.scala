@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.hudiShaded
+package org.apache.spark.sql.delta.hudi
 
 import java.io.{IOException, UncheckedIOException}
 import java.time.{Instant, LocalDateTime, ZoneId}
@@ -33,36 +33,36 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 
 import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.hudiShaded.HudiSchemaUtils._
-import org.apache.spark.sql.delta.hudiShaded.HudiTransactionUtils._
+import org.apache.spark.sql.delta.hudi.HudiSchemaUtils._
+import org.apache.spark.sql.delta.hudi.HudiTransactionUtils._
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import shadedForDelta.org.apache.hudi.avro.model.HoodieActionInstant
-import shadedForDelta.org.apache.hudi.avro.model.HoodieActionInstant
-import shadedForDelta.org.apache.hudi.avro.model.HoodieCleanerPlan
-import shadedForDelta.org.apache.hudi.avro.model.HoodieCleanFileInfo
-import shadedForDelta.org.apache.hudi.client.HoodieJavaWriteClient
-import shadedForDelta.org.apache.hudi.client.HoodieTimelineArchiver
-import shadedForDelta.org.apache.hudi.client.WriteStatus
-import shadedForDelta.org.apache.hudi.client.common.HoodieJavaEngineContext
-import shadedForDelta.org.apache.hudi.common.HoodieCleanStat
-import shadedForDelta.org.apache.hudi.common.config.HoodieMetadataConfig
-import shadedForDelta.org.apache.hudi.common.engine.HoodieEngineContext
-import shadedForDelta.org.apache.hudi.common.model.{HoodieAvroPayload, HoodieBaseFile, HoodieCleaningPolicy}
-import shadedForDelta.org.apache.hudi.common.table.HoodieTableMetaClient
-import shadedForDelta.org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieInstantTimeGenerator, HoodieTimeline, TimelineMetadataUtils}
-import shadedForDelta.org.apache.hudi.common.table.timeline.HoodieInstantTimeGenerator.{MILLIS_INSTANT_TIMESTAMP_FORMAT_LENGTH, SECS_INSTANT_ID_LENGTH, SECS_INSTANT_TIMESTAMP_FORMAT}
-import shadedForDelta.org.apache.hudi.common.util.CleanerUtils
-import shadedForDelta.org.apache.hudi.common.util.collection.Pair
-import shadedForDelta.org.apache.hudi.common.util.ExternalFilePathUtil
-import shadedForDelta.org.apache.hudi.common.util.{Option => HudiOption}
-import shadedForDelta.org.apache.hudi.config.HoodieArchivalConfig
-import shadedForDelta.org.apache.hudi.config.HoodieCleanConfig
-import shadedForDelta.org.apache.hudi.config.HoodieIndexConfig
-import shadedForDelta.org.apache.hudi.config.HoodieWriteConfig
-import shadedForDelta.org.apache.hudi.index.HoodieIndex.IndexType.INMEMORY
-import shadedForDelta.org.apache.hudi.table.HoodieJavaTable
-import shadedForDelta.org.apache.hudi.table.action.clean.CleanPlanner
+import org.apache.hudi.avro.model.HoodieActionInstant
+import org.apache.hudi.avro.model.HoodieActionInstant
+import org.apache.hudi.avro.model.HoodieCleanerPlan
+import org.apache.hudi.avro.model.HoodieCleanFileInfo
+import org.apache.hudi.client.HoodieJavaWriteClient
+import org.apache.hudi.client.HoodieTimelineArchiver
+import org.apache.hudi.client.WriteStatus
+import org.apache.hudi.client.common.HoodieJavaEngineContext
+import org.apache.hudi.common.HoodieCleanStat
+import org.apache.hudi.common.config.HoodieMetadataConfig
+import org.apache.hudi.common.engine.HoodieEngineContext
+import org.apache.hudi.common.model.{HoodieAvroPayload, HoodieBaseFile, HoodieCleaningPolicy}
+import org.apache.hudi.common.table.HoodieTableMetaClient
+import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieInstantTimeGenerator, HoodieTimeline, TimelineMetadataUtils}
+import org.apache.hudi.common.table.timeline.HoodieInstantTimeGenerator.{MILLIS_INSTANT_TIMESTAMP_FORMAT_LENGTH, SECS_INSTANT_ID_LENGTH, SECS_INSTANT_TIMESTAMP_FORMAT}
+import org.apache.hudi.common.util.CleanerUtils
+import org.apache.hudi.common.util.collection.Pair
+import org.apache.hudi.common.util.ExternalFilePathUtil
+import org.apache.hudi.common.util.{Option => HudiOption}
+import org.apache.hudi.config.HoodieArchivalConfig
+import org.apache.hudi.config.HoodieCleanConfig
+import org.apache.hudi.config.HoodieIndexConfig
+import org.apache.hudi.config.HoodieWriteConfig
+import org.apache.hudi.index.HoodieIndex.IndexType.INMEMORY
+import org.apache.hudi.table.HoodieJavaTable
+import org.apache.hudi.table.action.clean.CleanPlanner
 
 /**
  * Used to prepare (convert) and then commit a set of Delta actions into the Hudi table located

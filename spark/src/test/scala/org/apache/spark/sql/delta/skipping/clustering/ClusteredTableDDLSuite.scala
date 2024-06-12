@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.skipping.clustering
+package org.apache.spark.sql.delta.liquid
 
 import java.io.File
 
