@@ -22,8 +22,8 @@ import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.vectorized.ColumnVector
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector
+import org.apache.spark.sql.vectorized.ColumnVector
 
 /**
  * Base class for row index filters.
