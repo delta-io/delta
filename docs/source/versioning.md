@@ -27,7 +27,7 @@ The following <Delta> features break forward compatibility. Features are enabled
    Domain metadata, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[Domain Metadata Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata)
    Clustering, [Delta Lake 3.1.0](https://github.com/delta-io/delta/releases/tag/v3.1.0),[_](/delta-clustering.md)
    Type widening (Preview),[Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-type-widening.md)
-   Variant Type (Preview), [Delta Lake 4.0.0](https://github.com/delta-io/delta/releases/tag/v4.0.0),[Variant Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)
+   Variant Type (Preview), [Delta Lake 4.0.0 Preview](https://github.com/delta-io/delta/releases/tag/v4.0.0rc1),[Variant Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)
 
 <a id="table-protocol"></a>
 
