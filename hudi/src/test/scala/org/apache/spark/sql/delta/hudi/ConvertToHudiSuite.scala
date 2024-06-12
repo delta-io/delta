@@ -81,7 +81,6 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   }
 
   test("basic test - managed table created with SQL") {
-    // 'delta.universalFormat.enabledFormats' = 'hudi',
     _sparkSession.sql(
       s"""CREATE TABLE `$testTableName` (col1 INT) USING DELTA
          |LOCATION '$testTablePath'
@@ -296,9 +295,8 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     SparkSession.builder()
       .master("local[*]")
       .appName("UniformSession")
-      //.config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-      //.config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
       .getOrCreate()
   }
 }
