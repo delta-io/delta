@@ -16,35 +16,37 @@
 
 package org.apache.spark.sql.delta.hudiShaded
 
+import java.io.File
+import java.time.Instant
+import java.util.UUID
+import java.util.stream.Collectors
+
+import scala.collection.JavaConverters
+
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.hudi.storage.StorageConfiguration
-import shadedForDelta.org.apache.hudi.storage.hadoop.HadoopStorageConfiguration
 import org.apache.hadoop.fs.Path
+import org.scalatest.concurrent.Eventually
+import org.scalatest.time.SpanSugar._
+
+import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, OptimisticTransaction}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
 import shadedForDelta.org.apache.hudi.common.config.HoodieMetadataConfig
 import shadedForDelta.org.apache.hudi.common.engine.HoodieLocalEngineContext
 import shadedForDelta.org.apache.hudi.common.fs.FSUtils
 import shadedForDelta.org.apache.hudi.common.model.HoodieBaseFile
 import shadedForDelta.org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
 import shadedForDelta.org.apache.hudi.metadata.HoodieMetadataFileSystemView
+import shadedForDelta.org.apache.hudi.storage.hadoop.HadoopStorageConfiguration
 import shadedForDelta.org.apache.hudi.storage.hadoop.HoodieHadoopStorage
+import shadedForDelta.org.apache.hudi.storage.StorageConfiguration
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.avro.SchemaConverters
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{ManualClock, Utils}
-import org.scalatest.concurrent.Eventually
-import org.scalatest.time.SpanSugar._
 
-import java.io.File
-import java.time.Instant
-import java.util.UUID
-import java.util.stream.Collectors
-import scala.collection.JavaConverters
-
-class ConvertToHudiSuiteFromDelta extends QueryTest with Eventually {
+class ConvertToHudiSuite extends QueryTest with Eventually {
 
   private var _sparkSession: SparkSession = null
   private var TMP_DIR: String = ""
@@ -111,12 +113,12 @@ class ConvertToHudiSuiteFromDelta extends QueryTest with Eventually {
     test(s"validate multiple commits (partitioned = $isPartitioned)") {
       _sparkSession.sql(
         s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING, col3 STRING) USING DELTA
-           |${if (isPartitioned) "PARTITIONED BY (col3)" else ""}
-           |LOCATION '$testTablePath'
-           |TBLPROPERTIES (
-           |  'delta.universalFormat.enabledFormats' = 'hudi',
-           |  'delta.enableDeletionVectors' = false
-           |)""".stripMargin)
+         |${if (isPartitioned) "PARTITIONED BY (col3)" else ""}
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi',
+         |  'delta.enableDeletionVectors' = false
+         |)""".stripMargin)
       // perform some inserts
       _sparkSession.sql(
         s"INSERT INTO `$testTableName` VALUES (1, 'instant1', 'a'), (2, 'instant1', 'a')")
