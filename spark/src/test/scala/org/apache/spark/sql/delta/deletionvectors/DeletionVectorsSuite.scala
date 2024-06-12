@@ -59,6 +59,13 @@ class DeletionVectorsSuite extends QueryTest
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
+  protected def hadoopConf(): Configuration = {
+    // scalastyle:off hadoopconfiguration
+    // This is to generate a Parquet file with two row groups
+    spark.sparkContext.hadoopConfiguration
+    // scalastyle:on hadoopconfiguration
+  }
+
   test(s"read Delta table with deletion vectors") {
     def verifyVersion(version: Int, expectedData: Seq[Int]): Unit = {
       checkAnswer(
@@ -892,13 +899,6 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
   // ~4MBs. Should contain 2 row groups.
   val multiRowgroupTable = "multiRowgroupTable"
   val multiRowgroupTableRowsNum = 1000000
-
-  def hadoopConf(): Configuration = {
-    // scalastyle:off hadoopconfiguration
-    // This is to generate a Parquet file with two row groups
-    spark.sparkContext.hadoopConfiguration
-    // scalastyle:on hadoopconfiguration
-  }
 
   def assertParquetHasMultipleRowGroups(filePath: Path): Unit = {
     val parquetMetadata = ParquetFileReader.readFooter(
