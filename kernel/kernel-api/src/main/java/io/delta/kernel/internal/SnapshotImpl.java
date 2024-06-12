@@ -82,12 +82,10 @@ public class SnapshotImpl implements Snapshot {
         );
     }
 
-    @Override
     public Metadata getMetadata() {
         return metadata;
     }
 
-    @Override
     public long getTimestamp(Engine engine) {
         if (TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
             if (!inCommitTimestampOpt.isPresent()) {

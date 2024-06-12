@@ -17,6 +17,7 @@ package io.delta.kernel.internal.replay;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
@@ -92,7 +93,8 @@ public class ConflictChecker {
 
     public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
         List<FileStatus> winningCommits = getWinningCommitFiles(engine);
-        Optional<CommitInfo> winningCommitInfoOpt;
+        AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt = new AtomicReference<>(
+                Optional.empty());
 
         // no winning commits. why did we get the transaction conflict?
         checkState(!winningCommits.isEmpty(), "No winning commits found.");
@@ -103,19 +105,18 @@ public class ConflictChecker {
                 winningCommits,
                 CONFLICT_RESOLUTION_SCHEMA,
                 Optional.empty())) {
-            final ColumnarBatch[] lastBatch = new ColumnarBatch[1];
             actionsIterator.forEachRemaining(actionBatch -> {
                 checkArgument(!actionBatch.isFromCheckpoint());  // no checkpoints should be read
                 ColumnarBatch batch = actionBatch.getColumnarBatch();
-                lastBatch[0] = batch;
+                CommitInfo commitInfo = CommitInfo.fromColumnVector(
+                        batch.getColumnVector(COMMITINFO_ORDINAL),0, engine);
+                if (commitInfo != null) {
+                    winningCommitInfoOpt.set(Optional.of(commitInfo));
+                }
                 handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
                 handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
                 handleTxn(batch.getColumnVector(TXN_ORDINAL));
             });
-            winningCommitInfoOpt = Optional.ofNullable(
-                    CommitInfo.fromColumnVector(
-                            lastBatch[0].getColumnVector(COMMITINFO_ORDINAL), 0, engine));
-
         } catch (IOException ioe) {
             throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
         }
@@ -124,7 +125,7 @@ public class ConflictChecker {
         // against the winning transactions
         return new TransactionRebaseState(
                 getLastWinningTxnVersion(winningCommits),
-                getLastCommitTimestamp(engine, winningCommits, winningCommitInfoOpt));
+                getLastCommitTimestamp(engine, winningCommits, winningCommitInfoOpt.get()));
     }
 
     /**

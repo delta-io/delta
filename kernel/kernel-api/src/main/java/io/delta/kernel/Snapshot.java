@@ -19,7 +19,6 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.internal.actions.Metadata;
 
 /**
  * Represents the snapshot of a Delta table.
@@ -38,13 +37,6 @@ public interface Snapshot {
     long getVersion(Engine engine);
 
     /**
-     * Get the metadata of the table at this snapshot.
-     *
-     * @return Metadata of the Delta table at this snapshot.
-     */
-    Metadata getMetadata();
-
-    /**
      * Get the schema of the table at this snapshot.
      *
      * @param engine {@link Engine} instance to use in Delta Kernel.
@@ -59,16 +51,4 @@ public interface Snapshot {
      * @return an instance of {@link ScanBuilder}
      */
     ScanBuilder getScanBuilder(Engine engine);
-
-    /**
-     * Returns the timestamp of the latest commit of this snapshot.
-     * For an uninitialized snapshot, this returns -1.
-     * When InCommitTimestampTableFeature is enabled, the timestamp
-     * is retrieved from the CommitInfo of the latest commit which
-     * can result in an IO operation.
-     *
-     * @param engine {@link Engine} instance to use in Delta Kernel.
-     * @return the timestamp of the latest commit of this snapshot
-     */
-    long getTimestamp(Engine engine);
 }

@@ -18,12 +18,12 @@ package io.delta.kernel.exceptions;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Thrown when trying to create a Delta table at a location where a Delta table already exists.
+ * Thrown when CommitInfo action is missing.
  *
  * @since 3.2.0
  */
 @Evolving
-public class MissingCommitInfoException extends KernelException {
+public class MissingCommitInfoException extends IllegalStateException {
     private final String featureName;
     private final String commitVersion;
 

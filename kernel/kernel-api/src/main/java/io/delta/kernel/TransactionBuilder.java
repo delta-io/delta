@@ -74,9 +74,12 @@ public interface TransactionBuilder {
      * Set the table properties for the table.
      *
      * @param engine     {@link Engine} instance to use.
-     * @param properties The table properties to set.
+     * @param properties The table properties to set. These are key-value pairs that can be used to
+     *                   configure the table. And these properties are stored in the table metadata.
      *
      * @return updated {@link TransactionBuilder} instance.
+     *
+     * @since 3.2.0
      */
     TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties);
 

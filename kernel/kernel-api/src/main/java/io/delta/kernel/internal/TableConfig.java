@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -78,7 +80,7 @@ public class TableConfig<T> {
      */
     public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION =
             new TableConfig<>(
-                    "inCommitTimestampEnablementVersion-preview",
+                    "delta.inCommitTimestampEnablementVersion-preview",
                     null,
                     v -> Optional.ofNullable(v).map(Long::valueOf),
                     value -> true,
@@ -92,7 +94,7 @@ public class TableConfig<T> {
      */
     public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP =
             new TableConfig<>(
-                    "inCommitTimestampEnablementTimestamp-preview",
+                    "delta.inCommitTimestampEnablementTimestamp-preview",
                     null,
                     v -> Optional.ofNullable(v).map(Long::valueOf),
                     value -> true,
@@ -104,6 +106,17 @@ public class TableConfig<T> {
     private final Function<String, T> fromString;
     private final Predicate<T> validator;
     private final String helpMessage;
+    private static final HashMap<String, TableConfig> entries = new HashMap<>();
+
+    static {
+        entries.put(TOMBSTONE_RETENTION.getKey(), TOMBSTONE_RETENTION);
+        entries.put(CHECKPOINT_INTERVAL.getKey(), CHECKPOINT_INTERVAL);
+        entries.put(IN_COMMIT_TIMESTAMPS_ENABLED.getKey(), IN_COMMIT_TIMESTAMPS_ENABLED);
+        entries.put(IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(),
+                IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
+        entries.put(IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(),
+                IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
+    }
 
     private TableConfig(
             String key,
@@ -125,13 +138,9 @@ public class TableConfig<T> {
      * @return the value of the table property
      */
     public T fromMetadata(Metadata metadata) {
-        T value = fromString.apply(metadata.getConfiguration().getOrDefault(key, defaultValue));
-        if (!validator.test(value)) {
-            throw new IllegalArgumentException(
-                    String.format("Invalid value for table property '%s': '%s'. %s",
-                            key, value, helpMessage));
-        }
-        return value;
+        String value = metadata.getConfiguration().getOrDefault(key, defaultValue);
+        validate(value);
+        return fromString.apply(value);
     }
 
     /**
@@ -141,6 +150,39 @@ public class TableConfig<T> {
      */
     public String getKey() {
         return key;
+    }
+
+    /**
+     * Validates the given properties.
+     *
+     * @param configurations the properties to validate
+     *
+     * @throws IllegalArgumentException if any of the properties are invalid
+     */
+    public static void validateProperties(Map<String, String> configurations) {
+        for (Map.Entry<String, String> kv : configurations.entrySet()) {
+            String key = kv.getKey();
+            String value = kv.getValue();
+            if (key.startsWith("delta.")) {
+                TableConfig tableConfig = entries.get(key);
+                if (tableConfig != null) {
+                    tableConfig.validate(value);
+                } else {
+                    throw DeltaErrors.unknownConfigurationKeyException(key);
+                }
+            } else {
+                throw DeltaErrors.unknownConfigurationKeyException(key);
+            }
+        }
+    }
+
+    private void validate(String value) {
+        T parsedValue = fromString.apply(value);
+        if (!validator.test(parsedValue)) {
+            throw new IllegalArgumentException(
+                    String.format("Invalid value for table property '%s': '%s'. %s",
+                            key, value, helpMessage));
+        }
     }
 }
 

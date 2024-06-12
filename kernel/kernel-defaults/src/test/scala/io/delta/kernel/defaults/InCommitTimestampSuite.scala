@@ -23,7 +23,7 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.actions.SingleAction
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{Clock, FileNames, ManualClock, SystemClock}
-import io.delta.kernel.internal.{TableConfig, TableImpl}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types._
@@ -69,7 +69,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         .build(engine)
 
       txn.commit(engine, emptyIterable())
-      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0)
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
       assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver0Snapshot.getMetadata))
       assert(getInCommitTimestamp(engine, table, 0).get >= beforeCommitAttemptStartTime)
       assert(getInCommitTimestamp(engine, table, 0).get == ver0Snapshot.getTimestamp(engine))
@@ -87,7 +87,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       txn1.commit(engine, emptyIterable())
 
-      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0)
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
       assert(!TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver0Snapshot.getMetadata))
       assert(getInCommitTimestamp(engine, table, 0).isEmpty)
 
@@ -97,7 +97,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       txn2.commit(engine, emptyIterable())
 
-      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1)
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
       assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver1Snapshot.getMetadata))
       assert(ver1Snapshot.getTimestamp(engine) > ver0Snapshot.getTimestamp(engine))
       assert(getInCommitTimestamp(engine, table, 1).get == ver1Snapshot.getTimestamp(engine))
@@ -128,10 +128,10 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       )
 
       val table = Table.forPath(engine, tablePath)
-      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 0)
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
       val ver1Timestamp = ver1Snapshot.getTimestamp(engine)
       assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver1Snapshot.getMetadata))
-      val ver2Snapshot = table.getSnapshotAsOfVersion(engine, 1)
+      val ver2Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
       val ver2Timestamp = ver2Snapshot.getTimestamp(engine)
       assert(ver2Timestamp > ver1Timestamp)
     }
@@ -149,7 +149,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       txn.commit(engine, emptyIterable())
 
-      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0)
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
       assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver0Snapshot.getMetadata))
 
       val startTime = System.currentTimeMillis()
@@ -186,12 +186,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         .build(engine)
 
       txn.commit(engine, emptyIterable())
-      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0)
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
       assert(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver0Snapshot.getMetadata))
-      assert(TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
-        .fromMetadata(ver0Snapshot.getMetadata).isEmpty)
-      assert(TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
-        .fromMetadata(ver0Snapshot.getMetadata).isEmpty)
+      assert(!TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP
+        .fromMetadata(ver0Snapshot.getMetadata).isPresent)
+      assert(!TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION
+        .fromMetadata(ver0Snapshot.getMetadata).isPresent)
     }
   }
 
@@ -215,7 +215,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
       )
 
-      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1)
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
       val observedEnablementTimestamp =
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(ver1Snapshot.getMetadata)
       val observedEnablementVersion =
@@ -256,7 +256,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         clock = clock
       )
       commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
-      val ver2Snapshot = table.getSnapshotAsOfVersion(engine, 2)
+      val ver2Snapshot = table.getSnapshotAsOfVersion(engine, 2).asInstanceOf[SnapshotImpl]
       val observedEnablementTimestamp =
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(ver2Snapshot.getMetadata)
       val observedEnablementVersion =

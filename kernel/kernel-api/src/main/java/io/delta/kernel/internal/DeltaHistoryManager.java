@@ -172,6 +172,10 @@ public final class DeltaHistoryManager {
             Engine engine,
             Path logPath,
             long version) throws IOException {
+        CloseableIterator<FileStatus> files = listFrom(engine, logPath, version);
+        if (!files.hasNext()) {
+            return Optional.empty();
+        }
         final FileStatus file = listFrom(engine, logPath, version).next();
         final StructType COMMITINFO_READ_SCHEMA = new StructType()
                 .add("commitInfo", CommitInfo.FULL_SCHEMA);

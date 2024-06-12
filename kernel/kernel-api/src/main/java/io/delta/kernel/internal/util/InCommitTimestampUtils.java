@@ -19,8 +19,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
@@ -31,7 +31,7 @@ public class InCommitTimestampUtils {
     public static boolean didCurrentTransactionEnableICT(
             Engine engine,
             Metadata currentTransactionMetadata,
-            Snapshot readSnapshot) {
+            SnapshotImpl readSnapshot) {
         // If ICT is currently enabled, and the read snapshot did not have ICT enabled,
         // then the current transaction must have enabled it.
         // In case of a conflict, any winning transaction that enabled it after
@@ -61,7 +61,7 @@ public class InCommitTimestampUtils {
     public static Optional<Metadata> getUpdatedMetadataWithICTEnablementInfo(
             Engine engine,
             long inCommitTimestamp,
-            Snapshot readSnapshot,
+            SnapshotImpl readSnapshot,
             Metadata metadata,
             long commitVersion) {
         if (didCurrentTransactionEnableICT(engine, metadata, readSnapshot) && commitVersion != 0) {

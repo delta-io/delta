@@ -113,6 +113,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
         Metadata  metadata = snapshot.getMetadata().clone();
         if (tableProperties.isPresent()) {
+            TableConfig.validateProperties(tableProperties.get());
             Map<String, String> newConfiguration = new HashMap<>(metadata.getConfiguration());
             newConfiguration.putAll(tableProperties.get());
             metadata.setConfiguration(newConfiguration);

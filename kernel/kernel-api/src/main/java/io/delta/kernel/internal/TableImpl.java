@@ -31,6 +31,15 @@ public class TableImpl implements Table {
         return forPath(engine, path, new SystemClock());
     }
 
+    /**
+     * Instantiate a table object for the Delta Lake table at the given path.
+     *
+     * @param engine {@link Engine} instance to use in Delta Kernel.
+     * @param path location of the table.
+     * @param clock {@link Clock} instance to use for time-related operations.
+     *
+     * @return an instance of {@link Table} representing the Delta table at the given path
+     */
     public static Table forPath(Engine engine, String path, Clock clock) {
         String resolvedPath;
         try {

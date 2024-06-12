@@ -18,27 +18,20 @@ package io.delta.kernel.exceptions;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Thrown when commitTimestamp field has not been set in.
+ * Thrown when an unknown configuration key is specified.
  *
  * @since 3.2.0
  */
 @Evolving
-public class MissingCommitTimestampException extends IllegalStateException {
-    private final String featureName;
-    private final String commitVersion;
+public class UnknownConfigurationKeyException extends KernelException {
+    private final String confKey;
 
-    public MissingCommitTimestampException(String featureName, String commitVersion) {
-        this.featureName = featureName;
-        this.commitVersion = commitVersion;
+    public UnknownConfigurationKeyException(String confKey) {
+        this.confKey = confKey;
     }
 
     @Override
     public String getMessage() {
-        return String.format(
-                "This table has the feature %s enabled which requires the presence of " +
-                "commitTimestamp in the CommitInfo action. However, this field has not been set " +
-                "in commit version %s.",
-                featureName,
-                commitVersion);
+        return String.format("Unknown configuration was specified: %s", confKey);
     }
 }
