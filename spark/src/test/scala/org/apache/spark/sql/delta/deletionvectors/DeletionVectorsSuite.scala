@@ -912,7 +912,7 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
     super.beforeAll()
 
     // 2MB rowgroups.
-    hadoopConf().set("parquet.block.size", (2 * 1024 * 1024).toString
+    hadoopConf().set("parquet.block.size", (2 * 1024 * 1024).toString)
 
     spark.range(0, multiRowgroupTableRowsNum, 1, 1).toDF("id")
       .write
