@@ -2,9 +2,9 @@
 description: Learn about Delta Connect - Spark Connect Support in Delta.
 ---
 
-# Delta Connect (or Spark Connect Support in Delta)
+# Delta Connect (aka Spark Connect Support in Delta)
 
-.. note:: This feature is available in preview in <Delta> 4.0.
+.. note:: This feature is available in preview in <Delta> 4.0.0 Preview.
 
 Delta Connect adds [Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html) support to Delta Lake for Apache Spark. Spark Connect is a new initiative that adds a decoupled client-server infrastructure which allows remote connectivity from Spark from everywhere. Delta Connect allows all Delta Lake operations to work in your application running as a client connected to the Spark server.
 
@@ -26,7 +26,7 @@ Delta Connect is expected to bring the same benefits as Spark Connect:
 
 ```bash
 sbin/start-connect-server.sh \ 
-  --packages org.apache.spark:spark-connect_2.13:4.0.0-preview1,io.delta:delta-connect-server_2.13:4.0.0-preview1,io.delta:delta-connect-common_2.13:4.0.0-preview1,com.google.protobuf:protobuf-java:3.25.1 \ 
+  --packages org.apache.spark:spark-connect_2.13:4.0.0-preview1,io.delta:delta-connect-server_2.13:4.0.0rc1,io.delta:delta-connect-common_2.13:4.0.0rc1,com.google.protobuf:protobuf-java:3.25.1 \ 
   --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
   --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog" \
   --conf "spark.connect.extensions.relation.classes=org.apache.spark.sql.connect.delta.DeltaRelationPlugin" \
@@ -39,7 +39,7 @@ The <Delta> Connect Python client is included in the same PyPi package as <Delta
 
 1. `pip install pyspark==4.0.0`.
 
-2. `pip install delta-spark==4.0.0`.
+2. `pip install delta-spark==4.0.0rc1`.
 
 3. The usage is the same as Spark Connect (e.g. `./bin/pyspark --remote "sc://localhost"`).
 We just need to pass in a remote `SparkSession` (instead of a local one) to the `DeltaTable` API.
@@ -62,7 +62,7 @@ deltaTable.update(
 
 ## How to use the Scala Spark Connect Client with Delta
 
-.. note:: These steps are going to be simplified with final Spark 4.0 and Delta 4.0
+.. note:: These steps will be simplified with the final Spark 4.0 and Delta 4.0 releases.
 
 Make sure you are using Java 17!
 
@@ -76,7 +76,7 @@ Make sure you are using Java 17!
 
 ```bash
 cs launch --jvm zulu:17.0.11 --scala 2.13.13 -r \
-m2Local com.lihaoyi:::ammonite:3.0.0-M2 org.apache.spark::spark-connect-client-jvm:4.0.0-preview1 io.delta:delta-connect-client_2.13:4.0.0-preview1 io.delta:delta-connect-common_2.13:4.0.0-preview1 com.google.protobuf:protobuf-java:3.25.1 \
+m2Local com.lihaoyi:::ammonite:3.0.0-M2 org.apache.spark::spark-connect-client-jvm:4.0.0-preview1 io.delta:delta-connect-client_2.13:4.0.0rc1 io.delta:delta-connect-common_2.13:4.0.0rc1 com.google.protobuf:protobuf-java:3.25.1 \
 --java-opt --add-opens=java.base/java.nio=ALL-UNNAMED \
 -M org.apache.spark.sql.application.ConnectRepl
 ```
@@ -100,29 +100,31 @@ In the future, when [spark-connect-repl](https://spark.apache.org/docs/4.0.0-pre
 
 ## Preview Limitations
 
-The feature introduces a limited set of supported operations in <Delta> 4.0 preview and expands it in <Delta> 4.0 and above.
+The feature introduces a limited set of supported operations in <Delta> 4.0.0 Preview and expands it in <Delta> 4.0 and above.
 
-With `forPath`, `forName` and `toDF`, users can perform Delta Scan over Spark Connect already in <Delta> 4.0 preview.
+With `forPath`, `forName` and `toDF`, users can perform Delta Scan over Spark Connect in <Delta> 4.0.0 Preview.
 
 .. csv-table::
-:header: "Supported operations - Delta 4.0 preview", "Supported operations - Delta 4.0 release"
+    :header: "Supported operations - Delta 4.0.0 Preview", "Supported operations - Delta 4.0 release"
 
-"`forPath`","`forPath`"
-"`forName`","`forName`"
-"`toDF`","`toDF`"
-"`alias`","`alias`"
-,"`generate`"
-,"`vacuum`"
-,"`delete`"
-,"`update`"
-,"`merge`"
-,"`history`"
-,"`detail`"
-,"`convertToDelta`"
-,"`create`"
-,"`replace`"
-,"`isDeltaTable`"
-,"`upgradeTableProtocol`"
-,"`restore`"
-,"`optimize`"
-,"`clone`"
+    "`forPath`","`forPath`"
+    "`forName`","`forName`"
+    "`toDF`","`toDF`"
+    "`alias`","`alias`"
+    ,"`generate`"
+    ,"`vacuum`"
+    ,"`delete`"
+    ,"`update`"
+    ,"`merge`"
+    ,"`history`"
+    ,"`detail`"
+    ,"`convertToDelta`"
+    ,"`create`"
+    ,"`replace`"
+    ,"`isDeltaTable`"
+    ,"`upgradeTableProtocol`"
+    ,"`restore`"
+    ,"`optimize`"
+    ,"`clone`"
+
+.. include:: /shared/replacements.md
