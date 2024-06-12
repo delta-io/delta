@@ -4,14 +4,14 @@ description: Learn about Delta Coordinated Commits.
 
 # Delta Coordinated Commits
 
-.. warning:: This feature is available in preview in <Delta> 4.0-preview. Since this feature is still in preview, it can undergo major changes. Furthermore, a table with this preview feature enabled cannot be written to by future Delta releases until the feature is manually removed from the table.
+.. warning:: This feature is available in preview in <Delta> 4.0.0 Preview. Since this feature is still in preview, it can undergo major changes. Furthermore, a table with this preview feature enabled cannot be written to by future Delta releases until the feature is manually removed from the table.
 
 [Coordinated Commits](https://github.com/delta-io/delta/issues/2598) is a new commit protocol which makes the commit process more flexible and pluggable by delegating control of the commit to an external commit coordinator. Each coordinated commits table has a designated "commit coordinator" and all the commits to the table must go via it.
 
 
 # DynamoDB Commit Coordinator
 
-<Delta> 4.0-preview also introduces a DynamoDB backed Commit Coordinator implementation.
+<Delta> 4.0.0 Preview also introduces a DynamoDB backed Commit Coordinator implementation.
 
 ## Quickstart Guide
 
@@ -39,8 +39,7 @@ The DynamoDB Commit Coordinator requires a backend DynamoDB table to coordinate 
 
 ```bash
 bin/spark-shell \
---packages io.delta:delta-spark_2.13:4.0.0,org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
---repositories https://oss.sonatype.org/content/repositories/iodelta-1149 \
+--packages io.delta:delta-spark_2.13:4.0.0rc1,org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
 --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension \
 --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog \
 --conf spark.databricks.delta.coordinatedCommits.commitCoordinator.ddb.awsCredentialsProviderName=<credentialsProviderName>
