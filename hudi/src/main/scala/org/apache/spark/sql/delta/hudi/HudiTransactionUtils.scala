@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.hudi
+package org.apache.spark.sql.delta.hudiShaded
 
-import org.apache.hadoop.conf.Configuration
+import shadedForDelta.org.apache.hudi.storage.StorageConfiguration
 import org.apache.hadoop.fs.Path
-import org.apache.hudi.client.WriteStatus
-import org.apache.hudi.common.model.{HoodieAvroPayload, HoodieTableType, HoodieTimelineTimeZone, HoodieDeltaWriteStat}
-import org.apache.hudi.common.table.HoodieTableMetaClient
-import org.apache.hudi.common.util.ExternalFilePathUtil
-import org.apache.hudi.exception.TableNotFoundException
+import shadedForDelta.org.apache.hudi.client.WriteStatus
+import shadedForDelta.org.apache.hudi.common.model.{HoodieAvroPayload, HoodieTableType, HoodieTimelineTimeZone, HoodieDeltaWriteStat}
+import shadedForDelta.org.apache.hudi.common.table.HoodieTableMetaClient
+import shadedForDelta.org.apache.hudi.common.util.ExternalFilePathUtil
+import shadedForDelta.org.apache.hudi.exception.TableNotFoundException
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
@@ -86,7 +86,7 @@ object HudiTransactionUtils extends DeltaLogging {
   def loadTableMetaClient(tableDataPath: String,
                           tableName: Option[String],
                           partitionFields: Seq[String],
-                          conf: Configuration): HoodieTableMetaClient = {
+                          conf: StorageConfiguration[_]): HoodieTableMetaClient = {
     try HoodieTableMetaClient.builder
       .setBasePath(tableDataPath).setConf(conf)
       .setLoadActiveTimelineOnLoad(false)
@@ -102,40 +102,40 @@ object HudiTransactionUtils extends DeltaLogging {
     }
   }
 
-    /**
-     * Initializes a Hudi table with the provided properties
-     *
-     * @param tableDataPath the base path for the data files in the table
-     * @param tableName the name of the table
-     * @param partitionFields the fields used for partitioning
-     * @param conf the hadoop configuration
-     * @return {@link HoodieTableMetaClient} for the table that was created
-     */
-    private def initializeHudiTable(tableDataPath: String,
-                                    tableName: String,
-                                    partitionFields: Seq[String],
-                                    conf: Configuration): HoodieTableMetaClient = {
-      val keyGeneratorClass = getKeyGeneratorClass(partitionFields)
-      HoodieTableMetaClient
-        .withPropertyBuilder
-        .setCommitTimezone(HoodieTimelineTimeZone.UTC)
-        .setHiveStylePartitioningEnable(true)
-        .setTableType(HoodieTableType.COPY_ON_WRITE)
-        .setTableName(tableName)
-        .setPayloadClass(classOf[HoodieAvroPayload])
-        .setKeyGeneratorClassProp(keyGeneratorClass)
-        .setPopulateMetaFields(false)
-        .setPartitionFields(partitionFields.mkString(","))
-        .initTable(conf, tableDataPath)
-    }
+  /**
+   * Initializes a Hudi table with the provided properties
+   *
+   * @param tableDataPath the base path for the data files in the table
+   * @param tableName the name of the table
+   * @param partitionFields the fields used for partitioning
+   * @param conf the hadoop configuration
+   * @return {@link HoodieTableMetaClient} for the table that was created
+   */
+  private def initializeHudiTable(tableDataPath: String,
+                                  tableName: String,
+                                  partitionFields: Seq[String],
+                                  conf: StorageConfiguration[_]): HoodieTableMetaClient = {
+    val keyGeneratorClass = getKeyGeneratorClass(partitionFields)
+    HoodieTableMetaClient
+      .withPropertyBuilder
+      .setCommitTimezone(HoodieTimelineTimeZone.UTC)
+      .setHiveStylePartitioningEnable(true)
+      .setTableType(HoodieTableType.COPY_ON_WRITE)
+      .setTableName(tableName)
+      .setPayloadClass(classOf[HoodieAvroPayload])
+      .setKeyGeneratorClassProp(keyGeneratorClass)
+      .setPopulateMetaFields(false)
+      .setPartitionFields(partitionFields.mkString(","))
+      .initTable(conf, tableDataPath)
+  }
 
-    private def getKeyGeneratorClass(partitionFields: Seq[String]): String = {
-      if (partitionFields.isEmpty) {
-        "org.apache.hudi.keygen.NonpartitionedKeyGenerator"
-      } else if (partitionFields.size > 1) {
-        "org.apache.hudi.keygen.CustomKeyGenerator"
-      } else {
-        "org.apache.hudi.keygen.SimpleKeyGenerator"
-      }
+  private def getKeyGeneratorClass(partitionFields: Seq[String]): String = {
+    if (partitionFields.isEmpty) {
+      "org.apache.hudi.keygen.NonpartitionedKeyGenerator"
+    } else if (partitionFields.size > 1) {
+      "org.apache.hudi.keygen.CustomKeyGenerator"
+    } else {
+      "org.apache.hudi.keygen.SimpleKeyGenerator"
     }
+  }
 }

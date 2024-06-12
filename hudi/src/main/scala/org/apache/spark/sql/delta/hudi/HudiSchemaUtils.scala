@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.hudi
+package org.apache.spark.sql.delta.hudiShaded
 
 import org.apache.avro.{LogicalTypes, Schema}
 import org.apache.spark.sql.delta.metering.DeltaLogging

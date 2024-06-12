@@ -14,17 +14,21 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.hudi
+package org.apache.spark.sql.delta.hudiShaded
 
 import org.apache.commons.lang3.exception.ExceptionUtils
-import org.apache.hudi.common.model.{HoodieCommitMetadata, HoodieReplaceCommitMetadata}
-import org.apache.hudi.common.table.HoodieTableMetaClient
-import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieTimeline}
+import shadedForDelta.org.apache.hudi.common.model.{HoodieCommitMetadata, HoodieReplaceCommitMetadata}
+import shadedForDelta.org.apache.hudi.common.table.HoodieTableMetaClient
+import shadedForDelta.org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieTimeline}
+import shadedForDelta.org.apache.hudi.storage.hadoop.HadoopStorageConfiguration
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.UniversalFormatConverter
+import org.apache.spark.sql.delta.OptimisticTransactionImpl
 import org.apache.spark.sql.delta.hooks.HudiConverterHook
-import org.apache.spark.sql.delta.hudi.HudiTransactionUtils._
+import org.apache.spark.sql.delta.hudiShaded.HudiTransactionUtils._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta._
@@ -53,7 +57,7 @@ object HudiConverter {
  * This class manages the transformation of delta snapshots into their Hudi equivalent.
  */
 class HudiConverter(spark: SparkSession)
-    extends UniversalFormatConverter(spark)
+  extends UniversalFormatConverter(spark)
     with DeltaLogging {
 
   // Save an atomic reference of the snapshot being converted, and the txn that triggered
@@ -79,8 +83,8 @@ class HudiConverter(spark: SparkSession)
    *
    */
   override def enqueueSnapshotForConversion(
-      snapshotToConvert: Snapshot,
-      txn: OptimisticTransactionImpl): Unit = {
+                                             snapshotToConvert: Snapshot,
+                                             txn: OptimisticTransactionImpl): Unit = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return
     }
@@ -95,37 +99,37 @@ class HudiConverter(spark: SparkSession)
           setDaemon(true)
 
           override def run(): Unit =
-              try {
-                var snapshotAndTxn = getNextSnapshot
-                  while (snapshotAndTxn != null) {
-                    val snapshotVal = snapshotAndTxn._1
-                    val prevTxn = snapshotAndTxn._2
-                    try {
-                      logInfo(s"Converting Delta table [path=${log.logPath}, " +
-                        s"tableId=${log.tableId}, version=${snapshotVal.version}] into Hudi")
-                      convertSnapshot(snapshotVal, prevTxn)
-                    } catch {
-                      case NonFatal(e) =>
-                        logWarning(s"Error when writing Hudi metadata asynchronously", e)
-                        recordDeltaEvent(
-                          log,
-                          "delta.hudi.conversion.async.error",
-                          data = Map(
-                            "exception" -> ExceptionUtils.getMessage(e),
-                            "stackTrace" -> ExceptionUtils.getStackTrace(e)
-                          )
-                        )
-                    }
-                    currentConversion.set(null)
-                    // Pick next snapshot to convert if there's a new one
-                    snapshotAndTxn = getNextSnapshot
-                  }
-              } finally {
-                // shuttingdown thread
-                asyncThreadLock.synchronized {
-                  asyncConverterThreadActive = false
+            try {
+              var snapshotAndTxn = getNextSnapshot
+              while (snapshotAndTxn != null) {
+                val snapshotVal = snapshotAndTxn._1
+                val prevTxn = snapshotAndTxn._2
+                try {
+                  logInfo(s"Converting Delta table [path=${log.logPath}, " +
+                    s"tableId=${log.tableId}, version=${snapshotVal.version}] into Hudi")
+                  convertSnapshot(snapshotVal, prevTxn)
+                } catch {
+                  case NonFatal(e) =>
+                    logWarning(s"Error when writing Hudi metadata asynchronously", e)
+                    recordDeltaEvent(
+                      log,
+                      "delta.hudi.conversion.async.error",
+                      data = Map(
+                        "exception" -> ExceptionUtils.getMessage(e),
+                        "stackTrace" -> ExceptionUtils.getStackTrace(e)
+                      )
+                    )
                 }
+                currentConversion.set(null)
+                // Pick next snapshot to convert if there's a new one
+                snapshotAndTxn = getNextSnapshot
               }
+            } finally {
+              // shuttingdown thread
+              asyncThreadLock.synchronized {
+                asyncConverterThreadActive = false
+              }
+            }
 
           // Get a snapshot to convert from the hudiQueue. Sets the queue to null after.
           private def getNextSnapshot: (Snapshot, OptimisticTransactionImpl) =
@@ -163,7 +167,7 @@ class HudiConverter(spark: SparkSession)
    * @return Converted Delta version and commit timestamp
    */
   override def convertSnapshot(
-      snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)] = {
+                                snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)] = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
@@ -179,7 +183,7 @@ class HudiConverter(spark: SparkSession)
    * @return Converted Delta version and commit timestamp
    */
   override def convertSnapshot(
-      snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)] = {
+                                snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)] = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
@@ -196,108 +200,108 @@ class HudiConverter(spark: SparkSession)
    * @return Converted Delta version and commit timestamp
    */
   private def convertSnapshot(
-      snapshotToConvert: Snapshot,
-      txnOpt: Option[OptimisticTransactionImpl],
-      tableName: Option[String]): Option[(Long, Long)] =
-      recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
-    val log = snapshotToConvert.deltaLog
-    val metaClient = loadTableMetaClient(snapshotToConvert.deltaLog.dataPath.toString,
-      tableName, snapshotToConvert.metadata.partitionColumns,
-      log.newDeltaHadoopConf())
-    val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
-    val maxCommitsToConvert =
-      spark.sessionState.conf.getConf(DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT)
+                               snapshotToConvert: Snapshot,
+                               txnOpt: Option[OptimisticTransactionImpl],
+                               tableName: Option[String]): Option[(Long, Long)] =
+    recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
+      val log = snapshotToConvert.deltaLog
+      val metaClient = loadTableMetaClient(snapshotToConvert.deltaLog.dataPath.toString,
+        tableName, snapshotToConvert.metadata.partitionColumns,
+        new HadoopStorageConfiguration(log.newDeltaHadoopConf()))
+      val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
+      val maxCommitsToConvert =
+        spark.sessionState.conf.getConf(DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT)
 
-    // Nth to convert
-    if (lastDeltaVersionConverted.exists(_ == snapshotToConvert.version)) {
-      return None
-    }
+      // Nth to convert
+      if (lastDeltaVersionConverted.exists(_ == snapshotToConvert.version)) {
+        return None
+      }
 
-    // Get the most recently converted delta snapshot, if applicable
-    val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
-      case (Some(version), Some(txn)) if version == txn.snapshot.version =>
-        Some(txn.snapshot)
-      // Check how long it has been since we last converted to Hudi. If outside the threshold,
-      // fall back to state reconstruction to get the actions, to protect driver from OOMing.
-      case (Some(version), _) if snapshotToConvert.version - version <= maxCommitsToConvert =>
-        try {
-          // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
-          //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
-          Some(log.getSnapshotAt(version))
-        } catch {
-          // If we can't load the file since the last time Hudi was converted, it's likely that
-          // the commit file expired. Treat this like a new Hudi table conversion.
-          case _: DeltaFileNotFoundException => None
-        }
-      case (_, _) => None
-    }
-
-    val hudiTxn = new HudiConversionTransaction(log.newDeltaHadoopConf(),
-      snapshotToConvert, metaClient, lastDeltaVersionConverted)
-
-    // Write out the actions taken since the last conversion (or since table creation).
-    // This is done in batches, with each batch corresponding either to one delta file,
-    // or to the specified batch size.
-    val actionBatchSize =
-      spark.sessionState.conf.getConf(DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT)
-    prevConvertedSnapshotOpt match {
-      case Some(prevSnapshot) =>
-        // Read the actions directly from the delta json files.
-        // TODO: Run this as a spark job on executors
-        val deltaFiles = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
-          spark, log, prevSnapshot.version + 1, snapshotToConvert.version)
-
-        recordDeltaEvent(
-          snapshotToConvert.deltaLog,
-          "delta.hudi.conversion.deltaCommitRange",
-          data = Map(
-            "fromVersion" -> (prevSnapshot.version + 1),
-            "toVersion" -> snapshotToConvert.version,
-            "numDeltaFiles" -> deltaFiles.length
-          )
-        )
-
-        val actionsToConvert = DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(
-          log, spark, deltaFiles)
-        actionsToConvert.foreach { actionsIter =>
+      // Get the most recently converted delta snapshot, if applicable
+      val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
+        case (Some(version), Some(txn)) if version == txn.snapshot.version =>
+          Some(txn.snapshot)
+        // Check how long it has been since we last converted to Hudi. If outside the threshold,
+        // fall back to state reconstruction to get the actions, to protect driver from OOMing.
+        case (Some(version), _) if snapshotToConvert.version - version <= maxCommitsToConvert =>
           try {
-            actionsIter.grouped(actionBatchSize).foreach { actionStrs =>
-              runHudiConversionForActions(
-                hudiTxn,
-                actionStrs.map(Action.fromJson))
-            }
-          } finally {
-            actionsIter.close()
+            // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
+            //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
+            Some(log.getSnapshotAt(version))
+          } catch {
+            // If we can't load the file since the last time Hudi was converted, it's likely that
+            // the commit file expired. Treat this like a new Hudi table conversion.
+            case _: DeltaFileNotFoundException => None
           }
-        }
+        case (_, _) => None
+      }
 
-      // If we don't have a snapshot of the last converted version, get all the table addFiles
-      // (via state reconstruction).
-      case None =>
-        val actionsToConvert = snapshotToConvert.allFiles.toLocalIterator().asScala
+      val hudiTxn = new HudiConversionTransaction(log.newDeltaHadoopConf(),
+        snapshotToConvert, metaClient, lastDeltaVersionConverted)
 
-        recordDeltaEvent(
-          snapshotToConvert.deltaLog,
-          "delta.hudi.conversion.batch",
-          data = Map(
-            "version" -> snapshotToConvert.version,
-            "numDeltaFiles" -> snapshotToConvert.numOfFiles
+      // Write out the actions taken since the last conversion (or since table creation).
+      // This is done in batches, with each batch corresponding either to one delta file,
+      // or to the specified batch size.
+      val actionBatchSize =
+        spark.sessionState.conf.getConf(DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT)
+      prevConvertedSnapshotOpt match {
+        case Some(prevSnapshot) =>
+          // Read the actions directly from the delta json files.
+          // TODO: Run this as a spark job on executors
+          val deltaFiles = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
+            spark, log, prevSnapshot.version + 1, snapshotToConvert.version)
+
+          recordDeltaEvent(
+            snapshotToConvert.deltaLog,
+            "delta.hudi.conversion.deltaCommitRange",
+            data = Map(
+              "fromVersion" -> (prevSnapshot.version + 1),
+              "toVersion" -> snapshotToConvert.version,
+              "numDeltaFiles" -> deltaFiles.length
+            )
           )
-        )
 
-        actionsToConvert.grouped(actionBatchSize)
-          .foreach { actions =>
-            runHudiConversionForActions(hudiTxn, actions)
+          val actionsToConvert = DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(
+            log, spark, deltaFiles)
+          actionsToConvert.foreach { actionsIter =>
+            try {
+              actionsIter.grouped(actionBatchSize).foreach { actionStrs =>
+                runHudiConversionForActions(
+                  hudiTxn,
+                  actionStrs.map(Action.fromJson))
+              }
+            } finally {
+              actionsIter.close()
+            }
           }
+
+        // If we don't have a snapshot of the last converted version, get all the table addFiles
+        // (via state reconstruction).
+        case None =>
+          val actionsToConvert = snapshotToConvert.allFiles.toLocalIterator().asScala
+
+          recordDeltaEvent(
+            snapshotToConvert.deltaLog,
+            "delta.hudi.conversion.batch",
+            data = Map(
+              "version" -> snapshotToConvert.version,
+              "numDeltaFiles" -> snapshotToConvert.numOfFiles
+            )
+          )
+
+          actionsToConvert.grouped(actionBatchSize)
+            .foreach { actions =>
+              runHudiConversionForActions(hudiTxn, actions)
+            }
+      }
+      hudiTxn.commit()
+      Some(snapshotToConvert.version, snapshotToConvert.timestamp)
     }
-    hudiTxn.commit()
-    Some(snapshotToConvert.version, snapshotToConvert.timestamp)
-  }
 
   def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long] = {
     val metaClient = loadTableMetaClient(snapshot.deltaLog.dataPath.toString,
       Option.apply(table.identifier.table), snapshot.metadata.partitionColumns,
-      snapshot.deltaLog.newDeltaHadoopConf())
+      new HadoopStorageConfiguration(snapshot.deltaLog.newDeltaHadoopConf()))
     loadLastDeltaVersionConverted(metaClient)
   }
 
@@ -329,8 +333,8 @@ class HudiConverter(spark: SparkSession)
   }
 
   private[delta] def runHudiConversionForActions(
-      hudiTxn: HudiConversionTransaction,
-      actionsToCommit: Seq[Action]): Unit = {
+                                                  hudiTxn: HudiConversionTransaction,
+                                                  actionsToCommit: Seq[Action]): Unit = {
     hudiTxn.setCommitFileUpdates(actionsToCommit)
   }
 }
