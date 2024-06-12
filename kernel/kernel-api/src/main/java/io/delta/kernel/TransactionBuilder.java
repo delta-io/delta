@@ -16,6 +16,7 @@
 package io.delta.kernel;
 
 import java.util.List;
+import java.util.Map;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
@@ -68,6 +69,16 @@ public interface TransactionBuilder {
             Engine engine,
             String applicationId,
             long transactionVersion);
+
+    /**
+     * Set the table properties for the table.
+     *
+     * @param engine     {@link Engine} instance to use.
+     * @param properties The table properties to set.
+     *
+     * @return updated {@link TransactionBuilder} instance.
+     */
+    TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties);
 
     /**
      * Build the transaction. Also validates the given info to ensure that a valid transaction can

@@ -22,15 +22,20 @@ import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.fs.Path.getName;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 public final class DeltaHistoryManager {
 
@@ -159,6 +164,32 @@ public final class DeltaHistoryManager {
             }
         } catch (IOException e) {
             throw new RuntimeException("Could not close iterator", e);
+        }
+    }
+
+    /** Get the persisted commit info (if available) for the given delta file. */
+    public static Optional<CommitInfo> getCommitInfoOpt(
+            Engine engine,
+            Path logPath,
+            long version) throws IOException {
+        final FileStatus file = listFrom(engine, logPath, version).next();
+        final StructType COMMITINFO_READ_SCHEMA = new StructType()
+                .add("commitInfo", CommitInfo.FULL_SCHEMA);
+        final CloseableIterator<ColumnarBatch> columnarBatchIter = engine.getJsonHandler()
+                .readJsonFiles(
+                singletonCloseableIterator(file),
+                COMMITINFO_READ_SCHEMA,
+                Optional.empty());
+        if (!columnarBatchIter.hasNext()) {
+            return Optional.empty();
+        }
+        final ColumnarBatch columnarBatch = columnarBatchIter.next();
+        if (!columnarBatch.getSchema().equals(COMMITINFO_READ_SCHEMA)) {
+            return Optional.empty();
+        } else {
+            final ColumnVector commitInfoVector = columnarBatch.getColumnVector(0);
+            return Optional.ofNullable(
+                    CommitInfo.fromColumnVector(commitInfoVector, 0, engine));
         }
     }
 

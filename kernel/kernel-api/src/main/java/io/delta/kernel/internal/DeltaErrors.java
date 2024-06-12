@@ -208,6 +208,14 @@ public final class DeltaErrors {
                 "Failed to parse the schema. Encountered unsupported Delta data type: VOID");
     }
 
+    public static KernelException missingCommitInfo(String featureName, String commitVersion) {
+        return new MissingCommitInfoException(featureName, commitVersion);
+    }
+
+    public static KernelException missingCommitTimestamp(String featureName, String commitVersion) {
+        return new MissingCommitTimestampException(featureName, commitVersion);
+    }
+
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();

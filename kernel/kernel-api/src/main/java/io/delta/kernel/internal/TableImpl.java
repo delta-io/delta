@@ -23,26 +23,34 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.internal.util.SystemClock;
 
 public class TableImpl implements Table {
     public static Table forPath(Engine engine, String path) {
+        return forPath(engine, path, new SystemClock());
+    }
+
+    public static Table forPath(Engine engine, String path, Clock clock) {
         String resolvedPath;
         try {
             resolvedPath = engine.getFileSystemClient().resolvePath(path);
         } catch (IOException io) {
             throw new RuntimeException(io);
         }
-        return new TableImpl(resolvedPath);
+        return new TableImpl(resolvedPath, clock);
     }
 
     private final SnapshotManager snapshotManager;
     private final String tablePath;
+    private final Clock clock;
 
-    public TableImpl(String tablePath) {
+    public TableImpl(String tablePath, Clock clock) {
         this.tablePath = tablePath;
         final Path dataPath = new Path(tablePath);
         final Path logPath = new Path(dataPath, "_delta_log");
         this.snapshotManager = new SnapshotManager(logPath, dataPath);
+        this.clock = clock;
     }
 
     @Override
@@ -79,6 +87,10 @@ public class TableImpl implements Table {
             String engineInfo,
             Operation operation) {
         return new TransactionBuilderImpl(this, engineInfo, operation);
+    }
+
+    public Clock getClock() {
+        return clock;
     }
 
     protected Path getDataPath() {

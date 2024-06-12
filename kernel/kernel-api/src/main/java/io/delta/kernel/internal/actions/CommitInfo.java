@@ -19,10 +19,14 @@ import java.util.*;
 import java.util.stream.IntStream;
 import static java.util.stream.Collectors.toMap;
 
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.*;
 
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 
 /**
@@ -44,6 +48,30 @@ import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
  */
 public class CommitInfo {
 
+    public static CommitInfo fromColumnVector(
+            ColumnVector vector, int rowId, Engine engine) {
+        if (vector.isNullAt(rowId)) {
+            return null;
+        }
+
+        return new CommitInfo(
+                Optional.ofNullable(vector.getChild(0).isNullAt(rowId) ? null :
+                        vector.getChild(0).getLong(rowId)),
+                vector.getChild(1).isNullAt(rowId) ? null :
+                        vector.getChild(1).getLong(rowId),
+                vector.getChild(2).isNullAt(rowId) ? null :
+                        vector.getChild(2).getString(rowId),
+                vector.getChild(3).isNullAt(rowId) ? null :
+                        vector.getChild(3).getString(rowId),
+                vector.getChild(4).isNullAt(rowId) ? Collections.emptyMap() :
+                        VectorUtils.toJavaMap(vector.getChild(4).getMap(rowId)),
+                vector.getChild(5).isNullAt(rowId) ? null :
+                        vector.getChild(5).getBoolean(rowId),
+                vector.getChild(6).isNullAt(rowId) ? null :
+                        vector.getChild(6).getString(rowId)
+        );
+    }
+
     public static StructType FULL_SCHEMA = new StructType()
             .add("inCommitTimestamp", LongType.LONG, true /* nullable */)
             .add("timestamp", LongType.LONG)
@@ -54,12 +82,27 @@ public class CommitInfo {
             .add("isBlindAppend", BooleanType.BOOLEAN, true /* nullable */)
             .add("txnId", StringType.STRING);
 
+    /**
+     * Returns the `inCommitTimestamp` of the given `commitInfoOpt` if it is defined.
+     * Throws an exception if `commitInfoOpt` is empty or contains an empty `inCommitTimestamp`.
+     */
+    public static long getRequiredInCommitTimestamp(
+            Optional<CommitInfo> commitInfoOpt, String version) {
+        CommitInfo commitInfo = commitInfoOpt
+                .orElseThrow(() -> DeltaErrors.missingCommitInfo(
+                        "inCommitTimestamp-preview", version));
+        return commitInfo
+                .inCommitTimestamp
+                .orElseThrow(() -> DeltaErrors.missingCommitTimestamp(
+                        "inCommitTimestamp-preview", version));
+    }
+
     private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
             IntStream.range(0, FULL_SCHEMA.length())
                     .boxed()
                     .collect(toMap(i -> FULL_SCHEMA.at(i).getName(), i -> i));
 
-    private final Optional<Long> inCommitTimestamp;
+    private Optional<Long> inCommitTimestamp;
     private final long timestamp;
     private final String engineInfo;
     private final String operation;
@@ -86,6 +129,10 @@ public class CommitInfo {
 
     public Optional<Long> getInCommitTimestamp() {
         return inCommitTimestamp;
+    }
+
+    public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
+        this.inCommitTimestamp = inCommitTimestamp;
     }
 
     public long getTimestamp() {

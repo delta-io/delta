@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal;
 
+import java.io.IOException;
 import java.util.Optional;
 
 import io.delta.kernel.ScanBuilder;
@@ -22,6 +23,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
@@ -41,6 +43,7 @@ public class SnapshotImpl implements Snapshot {
     private final Protocol protocol;
     private final Metadata metadata;
     private final LogSegment logSegment;
+    private Optional<Long> inCommitTimestampOpt;
 
     public SnapshotImpl(
             Path dataPath,
@@ -55,6 +58,7 @@ public class SnapshotImpl implements Snapshot {
         this.logReplay = logReplay;
         this.protocol = protocol;
         this.metadata = metadata;
+        this.inCommitTimestampOpt = Optional.empty();
     }
 
     @Override
@@ -81,6 +85,25 @@ public class SnapshotImpl implements Snapshot {
     @Override
     public Metadata getMetadata() {
         return metadata;
+    }
+
+    @Override
+    public long getTimestamp(Engine engine) {
+        if (TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+            if (!inCommitTimestampOpt.isPresent()) {
+                try {
+                    Optional<CommitInfo> commitInfoOpt = DeltaHistoryManager.getCommitInfoOpt(
+                            engine, logPath, logSegment.version);
+                    inCommitTimestampOpt = Optional.of(CommitInfo.getRequiredInCommitTimestamp(
+                            commitInfoOpt, String.valueOf(logSegment.version)));
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to get inCommitTimestamp with IO", e);
+                }
+            }
+            return inCommitTimestampOpt.get();
+        } else {
+            return logSegment.lastCommitTimestamp;
+        }
     }
 
     public Protocol getProtocol() {

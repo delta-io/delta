@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -60,13 +61,42 @@ public class TableConfig<T> {
             "needs to be a positive integer."
     );
 
-    /** This table property is used to track the enablement of the inCommitTimestamps. */
+    /**
+     * This table property is used to track the enablement of the inCommitTimestamps.
+     */
     public static final TableConfig<Boolean> IN_COMMIT_TIMESTAMPS_ENABLED = new TableConfig<>(
             "delta.enableInCommitTimestamps-preview",
             "false",
             Boolean::valueOf,
             value -> true,
             "needs to be a boolean."
+    );
+
+    /**
+     * This table property is used to track the version of the table at which inCommitTimestamps
+     * were enabled.
+     */
+    public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION =
+            new TableConfig<>(
+                    "inCommitTimestampEnablementVersion-preview",
+                    null,
+                    v -> Optional.ofNullable(v).map(Long::valueOf),
+                    value -> true,
+                    "needs to be a long."
+    );
+
+    /**
+     * This table property is used to track the timestamp at which inCommitTimestamps were enabled.
+     * More specifically, it is the inCommitTimestamp of the commit with the version specified in
+     * [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
+     */
+    public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP =
+            new TableConfig<>(
+                    "inCommitTimestampEnablementTimestamp-preview",
+                    null,
+                    v -> Optional.ofNullable(v).map(Long::valueOf),
+                    value -> true,
+                    "needs to be a long."
     );
 
     private final String key;
@@ -102,6 +132,15 @@ public class TableConfig<T> {
                             key, value, helpMessage));
         }
         return value;
+    }
+
+    /**
+     * Returns the key of the table property.
+     *
+     * @return the key of the table property
+     */
+    public String getKey() {
+        return key;
     }
 }
 

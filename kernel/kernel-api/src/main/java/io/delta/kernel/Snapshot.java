@@ -59,4 +59,16 @@ public interface Snapshot {
      * @return an instance of {@link ScanBuilder}
      */
     ScanBuilder getScanBuilder(Engine engine);
+
+    /**
+     * Returns the timestamp of the latest commit of this snapshot.
+     * For an uninitialized snapshot, this returns -1.
+     * When InCommitTimestampTableFeature is enabled, the timestamp
+     * is retrieved from the CommitInfo of the latest commit which
+     * can result in an IO operation.
+     *
+     * @param engine {@link Engine} instance to use in Delta Kernel.
+     * @return the timestamp of the latest commit of this snapshot
+     */
+    long getTimestamp(Engine engine);
 }
