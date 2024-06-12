@@ -773,6 +773,7 @@ object StatisticsCollection extends DeltaCommand {
    * Helper method to truncate the input string `x` to the given `prefixLen` length, while also
    * appending the unicode max character to the end of the truncated string. This ensures that any
    * value in this column is less than or equal to the max.
+   * Note: Input string `x` must be properly encoded in UTF-8.
    */
   def truncateMaxStringAgg(prefixLen: Int)(x: String): String = {
     if (x == null || x.length <= prefixLen) {
@@ -783,7 +784,12 @@ object StatisticsCollection extends DeltaCommand {
       // condition holds, or we run off the end of the string.
       // scalastyle:off nonascii
       val tieBreaker = '\ufffd'
-      x.take(prefixLen) + x.substring(prefixLen).takeWhile(_ >= tieBreaker) + tieBreaker
+      var ans = x.take(prefixLen) + x.substring(prefixLen).takeWhile(_ >= tieBreaker)
+      // Append a tie-breaker only if we truncated any characters from input string `x`.
+      if (ans.length < x.length) {
+        ans = ans + tieBreaker
+      }
+      ans
       // scalastyle:off nonascii
     }
   }

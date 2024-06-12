@@ -156,8 +156,7 @@ object DeltaSharingUtils extends Logging {
       limit: Option[Long],
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
-      jsonPredicateHints: Option[String],
-      refreshToken: Option[String]): RefresherFunction = { (_: Option[String]) =>
+      jsonPredicateHints: Option[String]): RefresherFunction = { refreshTokenOpt =>
     {
       val tableFiles = client
         .getFiles(
@@ -167,7 +166,7 @@ object DeltaSharingUtils extends Logging {
           versionAsOf = versionAsOf,
           timestampAsOf = timestampAsOf,
           jsonPredicateHints = jsonPredicateHints,
-          refreshToken = refreshToken
+          refreshToken = refreshTokenOpt
         )
       getTableRefreshResult(tableFiles)
     }

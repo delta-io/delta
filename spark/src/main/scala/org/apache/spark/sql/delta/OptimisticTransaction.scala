@@ -56,6 +56,16 @@ import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColum
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
 
+object ManagedCommitType extends Enumeration {
+  type ManagedCommitType = Value
+  val FS_COMMIT, MC_COMMIT, FS_TO_MC_UPGRADE_COMMIT, MC_TO_FS_DOWNGRADE_COMMIT = Value
+}
+
+case class ManagedCommitStats(
+  managedCommitType: String,
+  commitOwnerName: String,
+  commitOwnerConf: Map[String, String])
+
 /** Record metrics about a successful commit. */
 case class CommitStats(
   /** The version read by the txn when it starts. */
@@ -96,6 +106,7 @@ case class CommitStats(
   numDistinctPartitionsInAdd: Int,
   numPartitionColumnsInTable: Int,
   isolationLevel: String,
+  managedCommitInfo: ManagedCommitStats,
   fileSizeHistogram: Option[FileSizeHistogram] = None,
   addFilesHistogram: Option[FileSizeHistogram] = None,
   removeFilesHistogram: Option[FileSizeHistogram] = None,
@@ -1472,6 +1483,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
         numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = Serializable.toString,
+        managedCommitInfo = createManagedCommitStats(),
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
 
@@ -1501,6 +1513,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             throw e
         }
     }
+  }
+
+  def createManagedCommitStats(): ManagedCommitStats = {
+    val (managedCommitType, metadataToUse) = snapshot.tableCommitOwnerClientOpt match {
+      case Some(_) if metadata.managedCommitOwnerName.isEmpty =>                   // MC -> FS
+        (ManagedCommitType.MC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
+      case None if metadata.managedCommitOwnerName.isDefined =>                   // FS -> MC
+        (ManagedCommitType.FS_TO_MC_UPGRADE_COMMIT, metadata)
+      case Some(_) =>                                                             // MC commit
+        (ManagedCommitType.MC_COMMIT, snapshot.metadata)
+      case None =>                                                                // FS commit
+        (ManagedCommitType.FS_COMMIT, snapshot.metadata)
+    }
+    ManagedCommitStats(
+      managedCommitType.toString,
+      metadataToUse.managedCommitOwnerName.getOrElse(""),
+      metadataToUse.managedCommitOwnerConf)
   }
 
   /**
@@ -2078,6 +2107,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numDistinctPartitionsInAdd = distinctPartitions.size,
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
+      managedCommitInfo = createManagedCommitStats(),
       numOfDomainMetadatas = numOfDomainMetadatas,
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)

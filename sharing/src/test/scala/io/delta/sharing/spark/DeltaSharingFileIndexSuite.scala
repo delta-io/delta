@@ -43,6 +43,7 @@ import org.apache.spark.sql.types.{FloatType, IntegerType}
 
 private object TestUtils {
   val paths = Seq("http://path1", "http://path2")
+  val refreshTokens = Seq("token1", "token2", "token3")
 
   val SparkConfForReturnExpTime = "spark.delta.sharing.fileindexsuite.returnexptime"
   val SparkConfForUrlExpirationMs = "spark.delta.sharing.fileindexsuite.urlExpirationMs"
@@ -146,6 +147,9 @@ class TestDeltaSharingClientForFileIndex(
     jsonPredicateHints.foreach(p => {
       savedJsonPredicateHints = savedJsonPredicateHints :+ p
     })
+    if (numGetFileCalls > 0 && refreshToken.isDefined) {
+      assert(refreshToken.get == refreshTokens(numGetFileCalls.min(2) - 1))
+    }
 
     DeltaTableFiles(
       version = 0,
@@ -155,6 +159,7 @@ class TestDeltaSharingClientForFileIndex(
         getAddFileStr1(paths(numGetFileCalls.min(1)), urlExpirationMsOpt),
         getAddFileStr2(urlExpirationMsOpt)
       ),
+      refreshToken = Some(refreshTokens(numGetFileCalls.min(2))),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
   }

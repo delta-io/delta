@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.managedcommit
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, ManagedCommitTableFeature, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -26,8 +28,50 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.util.Utils
 
 object ManagedCommitUtils extends DeltaLogging {
+
+  /**
+   * Returns the [[CommitOwnerClient.getCommits]] response for the given startVersion and
+   * versionToLoad.
+   */
+  def getCommitsFromCommitOwnerWithUsageLogs(
+      deltaLog: DeltaLog,
+      tableCommitOwnerClient: TableCommitOwnerClient,
+      startVersion: Long,
+      versionToLoad: Option[Long],
+      isAsyncRequest: Boolean): GetCommitsResponse = {
+    recordFrameProfile("DeltaLog", s"CommitOwnerClient.getCommits.async=$isAsyncRequest") {
+      val startTimeMs = System.currentTimeMillis()
+      def recordEvent(additionalData: Map[String, Any]): Unit = {
+        recordDeltaEvent(
+          deltaLog,
+          opType = ManagedCommitUsageLogs.COMMIT_OWNER_CLIENT_GET_COMMITS,
+          data = Map(
+            "startVersion" -> startVersion,
+            "versionToLoad" -> versionToLoad.getOrElse(-1L),
+            "async" -> isAsyncRequest.toString,
+            "durationMs" -> (System.currentTimeMillis() - startTimeMs).toString
+          ) ++ additionalData
+        )
+      }
+
+      try {
+        val response =
+          tableCommitOwnerClient.getCommits(Some(startVersion), endVersion = versionToLoad)
+        val additionalEventData = Map(
+          "responseCommitsSize" -> response.getCommits.size,
+          "responseLatestTableVersion" -> response.getLatestTableVersion)
+        recordEvent(additionalEventData)
+        response
+      } catch {
+        case NonFatal(e) =>
+          recordEvent(Map("exception" -> Utils.exceptionString(e)))
+          throw e
+      }
+    }
+  }
 
   /**
    * Returns an iterator of commit files starting from startVersion.
