@@ -20,7 +20,7 @@ Delta Connect is expected to bring the same benefits as Spark Connect:
 
 ## How to start the Spark Server with Delta
 
-1. Download `spark-4.0.0-preview1-bin-hadoop3.tgz` from [Spark 4.0.0 First Preview](https://archive.apache.org/dist/spark/spark-4.0.0-preview1).
+1. Download `spark-4.0.0-preview1-bin-hadoop3.tgz` from [Spark 4.0.0-preview1](https://archive.apache.org/dist/spark/spark-4.0.0-preview1).
 
 2. Start the Spark Connect server with the <Delta> Connect plugins:
 
@@ -37,7 +37,7 @@ sbin/start-connect-server.sh \
 
 The <Delta> Connect Python client is included in the same PyPi package as <Delta> Spark.
 
-1. `pip install pyspark==4.0.0`.
+1. `pip install pyspark==4.0.0.dev1`.
 
 2. `pip install delta-spark==4.0.0rc1`.
 
@@ -72,7 +72,7 @@ Make sure you are using Java 17!
 
 3. Download and install the [Coursier CLI](https://get-coursier.io/docs/cli-installation)
 
-4. Start the Spark Connect client version 4.0.0 First Preview:
+4. Start the Spark Connect client version `4.0.0-preview1`:
 
 ```bash
 cs launch --jvm zulu:17.0.11 --scala 2.13.13 -r \
