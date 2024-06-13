@@ -23,12 +23,12 @@ import io.delta.kernel.annotation.Evolving;
  * @since 3.2.0
  */
 @Evolving
-public class IllegalPropertyValueException extends KernelException {
+public class IllegalConfigurationValueException extends KernelException {
     private final String key;
     private final String value;
     private final String helpMessage;
 
-    public IllegalPropertyValueException(String key, String value, String helpMessage) {
+    public IllegalConfigurationValueException(String key, String value, String helpMessage) {
         this.key = key;
         this.value = value;
         this.helpMessage = helpMessage;

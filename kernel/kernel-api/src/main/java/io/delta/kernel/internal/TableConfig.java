@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
-import io.delta.kernel.exceptions.IllegalPropertyValueException;
+import io.delta.kernel.exceptions.IllegalConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationKeyException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.IntervalParserUtils;
@@ -65,7 +65,10 @@ public class TableConfig<T> {
             "needs to be a positive integer."
     );
 
-    private static final HashMap<String, TableConfig> entries = new HashMap<>();
+    /**
+     * All the legal properties that can be set on the table.
+     */
+    private static final HashMap<String, TableConfig> legalProperties = new HashMap<>();
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;
@@ -73,8 +76,10 @@ public class TableConfig<T> {
     private final String helpMessage;
 
     static {
-        entries.put(TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
-        entries.put(CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
+        legalProperties.put(
+                TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
+        legalProperties.put(
+                CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
     }
 
     private TableConfig(
@@ -112,10 +117,11 @@ public class TableConfig<T> {
     }
 
     /**
-     * Validates the given properties.
+     * Validates that the given properties have the delta prefix in the key name, and they are in
+     * the set of legal properties
      *
      * @param configurations the properties to validate
-     * @throws IllegalPropertyValueException if any of the properties are invalid
+     * @throws IllegalConfigurationValueException if any of the properties are invalid
      * @throws UnknownConfigurationKeyException if any of the properties are unknown
      */
     public static void validateProperties(Map<String, String> configurations) {
@@ -123,7 +129,7 @@ public class TableConfig<T> {
             String key = kv.getKey().toLowerCase(Locale.ROOT);
             String value = kv.getValue();
             if (key.startsWith("delta.")) {
-                TableConfig tableConfig = entries.get(key);
+                TableConfig tableConfig = legalProperties.get(key);
                 if (tableConfig != null) {
                     tableConfig.validate(value);
                 } else {
@@ -138,7 +144,7 @@ public class TableConfig<T> {
     private void validate(String value) {
         T parsedValue = fromString.apply(value);
         if (!validator.test(parsedValue)) {
-            throw DeltaErrors.illegalPropertyValueException(key, value, helpMessage);
+            throw DeltaErrors.illegalConfigurationValueException(key, value, helpMessage);
         }
     }
 }

@@ -189,6 +189,31 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("create table with properties and they should be retained") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txn = createTxn(
+        engine,
+        tablePath,
+        true,
+        testSchema,
+        Seq.empty, tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
+
+      txn.commit(engine, emptyIterable())
+
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
+      assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver0Snapshot.getMetadata) == 2)
+
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1)
+      )
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver1Snapshot.getMetadata) == 2)
+    }
+  }
+
   test("create table - invalid properties - expect failure") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex1 = intercept[UnknownConfigurationKeyException] {
@@ -196,7 +221,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       }
       assert(ex1.getMessage.contains("Unknown configuration was specified: invalid key"))
 
-      val ex2 = intercept[IllegalPropertyValueException] {
+      val ex2 = intercept[IllegalConfigurationValueException] {
         createTxn(
           engine,
           tablePath,

@@ -212,9 +212,9 @@ public final class DeltaErrors {
         return new UnknownConfigurationKeyException(confKey);
     }
 
-    public static KernelException illegalPropertyValueException(
+    public static KernelException illegalConfigurationValueException(
             String key, String value, String helpMessage) {
-        return new IllegalPropertyValueException(key, value, helpMessage);
+        return new IllegalConfigurationValueException(key, value, helpMessage);
     }
 
     /* ------------------------ HELPER METHODS ----------------------------- */
