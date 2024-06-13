@@ -19,7 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
@@ -30,6 +30,7 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -163,6 +164,59 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       verifyCommitInfo(tablePath = tablePath, version = 0)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
+    }
+  }
+
+  test("create table and set properties") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder1 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn1 = txnBuilder1
+        .withSchema(engine, testSchema)
+        .build(engine)
+
+      txn1.commit(engine, emptyIterable())
+
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
+      assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver0Snapshot.getMetadata) == 10)
+
+      val txnBuilder2 = table.createTransactionBuilder(engine, testEngineInfo, WRITE)
+      val txn2 = txnBuilder2
+        .withTableProperties(engine, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2").asJava)
+        .build(engine)
+
+      txn2.commit(engine, emptyIterable())
+
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver1Snapshot.getMetadata) == 2)
+    }
+  }
+
+  test("create table - invalid properties - expect failure") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val ex1 = intercept[UnknownConfigurationKeyException] {
+        txnBuilder
+          .withSchema(engine, testSchema)
+          .withTableProperties(engine, Map("invalid key" -> "10").asJava)
+          .build(engine)
+      }
+      assert(ex1.getMessage.contains("Unknown configuration was specified: invalid key"))
+
+      val ex2 = intercept[IllegalArgumentException] {
+        txnBuilder
+          .withSchema(engine, testSchema)
+          .withTableProperties(engine, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "-1").asJava)
+          .build(engine)
+      }
+      assert(
+        ex2.getMessage.contains(
+          String.format(
+            "Invalid value for table property '%s': '%s'. %s",
+            TableConfig.CHECKPOINT_INTERVAL.getKey, "-1", "needs to be a positive integer.")))
     }
   }
 

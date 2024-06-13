@@ -208,6 +208,10 @@ public final class DeltaErrors {
                 "Failed to parse the schema. Encountered unsupported Delta data type: VOID");
     }
 
+    public static KernelException unknownConfigurationKeyException(String confKey) {
+        return new UnknownConfigurationKeyException(confKey);
+    }
+
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
