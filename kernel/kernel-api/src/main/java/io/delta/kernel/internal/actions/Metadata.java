@@ -114,27 +114,20 @@ public class Metadata {
                 .collect(Collectors.toList())));
     }
 
-    public Metadata(Metadata other) {
-        this.id = other.id;
-        this.name = other.name;
-        this.description = other.description;
-        this.format = other.format;
-        this.schemaString = other.schemaString;
-        this.schema = other.schema;
-        this.partitionColumns = other.partitionColumns;
-        this.createdTime = other.createdTime;
-        Map<String, String> newConfiguration = new HashMap<>(other.getConfiguration());
-        this.setConfiguration(newConfiguration);
-        this.partitionColNames = new Lazy<>(() -> loadPartitionColNames());
-        this.dataSchema = new Lazy<>(() ->
-            new StructType(schema.fields().stream()
-                .filter(field ->
-                    !partitionColNames.get().contains(field.getName().toLowerCase(Locale.ROOT)))
-                .collect(Collectors.toList())));
-    }
-
-    public Metadata clone() {
-        return new Metadata(this);
+    public Metadata withNewConfiguration(Map<String, String> configuration) {
+        Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
+        newConfiguration.putAll(configuration);
+        return new Metadata(
+            this.id,
+            this.name,
+            this.description,
+            this.format,
+            this.schemaString,
+            this.schema,
+            this.partitionColumns,
+            this.createdTime,
+            VectorUtils.stringStringMapValue(newConfiguration)
+        );
     }
 
     public String getSchemaString() {
@@ -185,11 +178,6 @@ public class Metadata {
 
     public Map<String, String> getConfiguration() {
         return Collections.unmodifiableMap(configuration.get());
-    }
-
-    public void setConfiguration(Map<String, String> configuration) {
-        this.configurationMapValue = VectorUtils.stringStringMapValue(configuration);
-        this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(this.configurationMapValue));
     }
 
     /**

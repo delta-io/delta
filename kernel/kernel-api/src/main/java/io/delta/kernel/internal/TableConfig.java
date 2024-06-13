@@ -16,10 +16,13 @@
 package io.delta.kernel.internal;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
+import io.delta.kernel.exceptions.IllegalPropertyValueException;
+import io.delta.kernel.exceptions.UnknownConfigurationKeyException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.IntervalParserUtils;
 
@@ -62,16 +65,16 @@ public class TableConfig<T> {
             "needs to be a positive integer."
     );
 
+    private static final HashMap<String, TableConfig> entries = new HashMap<>();
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;
     private final Predicate<T> validator;
     private final String helpMessage;
-    private static final HashMap<String, TableConfig> entries = new HashMap<>();
 
     static {
-        entries.put(TOMBSTONE_RETENTION.getKey(), TOMBSTONE_RETENTION);
-        entries.put(CHECKPOINT_INTERVAL.getKey(), CHECKPOINT_INTERVAL);
+        entries.put(TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
+        entries.put(CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
     }
 
     private TableConfig(
@@ -112,12 +115,12 @@ public class TableConfig<T> {
      * Validates the given properties.
      *
      * @param configurations the properties to validate
-     *
-     * @throws IllegalArgumentException if any of the properties are invalid
+     * @throws IllegalPropertyValueException if any of the properties are invalid
+     * @throws UnknownConfigurationKeyException if any of the properties are unknown
      */
     public static void validateProperties(Map<String, String> configurations) {
         for (Map.Entry<String, String> kv : configurations.entrySet()) {
-            String key = kv.getKey();
+            String key = kv.getKey().toLowerCase(Locale.ROOT);
             String value = kv.getValue();
             if (key.startsWith("delta.")) {
                 TableConfig tableConfig = entries.get(key);
@@ -135,10 +138,7 @@ public class TableConfig<T> {
     private void validate(String value) {
         T parsedValue = fromString.apply(value);
         if (!validator.test(parsedValue)) {
-            throw new IllegalArgumentException(
-                    String.format("Invalid value for table property '%s': '%s'. %s",
-                            key, value, helpMessage));
+            throw DeltaErrors.illegalPropertyValueException(key, value, helpMessage);
         }
     }
 }
-

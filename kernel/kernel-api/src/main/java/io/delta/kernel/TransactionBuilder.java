@@ -71,7 +71,8 @@ public interface TransactionBuilder {
             long transactionVersion);
 
     /**
-     * Set the table properties for the table.
+     * Set the table properties for the table. When the table already contains the property with
+     * same key, it gets replaced.
      *
      * @param engine     {@link Engine} instance to use.
      * @param properties The table properties to set. These are key-value pairs that can be used to

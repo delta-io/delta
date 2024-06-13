@@ -170,21 +170,17 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   test("create table and set properties") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder1 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn1 = txnBuilder1
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn1 = createTxn(engine, tablePath, true, testSchema, Seq.empty)
 
       txn1.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
       assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver0Snapshot.getMetadata) == 10)
 
-      val txnBuilder2 = table.createTransactionBuilder(engine, testEngineInfo, WRITE)
-      val txn2 = txnBuilder2
-        .withTableProperties(engine, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2").asJava)
-        .build(engine)
+      val txn2 = createTxn(
+        engine,
+        tablePath,
+        tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
 
       txn2.commit(engine, emptyIterable())
 
@@ -195,22 +191,16 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("create table - invalid properties - expect failure") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
       val ex1 = intercept[UnknownConfigurationKeyException] {
-        txnBuilder
-          .withSchema(engine, testSchema)
-          .withTableProperties(engine, Map("invalid key" -> "10").asJava)
-          .build(engine)
+        createTxn(engine, tablePath, true, testSchema, Seq.empty, Map("invalid key" -> "10"))
       }
       assert(ex1.getMessage.contains("Unknown configuration was specified: invalid key"))
 
-      val ex2 = intercept[IllegalArgumentException] {
-        txnBuilder
-          .withSchema(engine, testSchema)
-          .withTableProperties(engine, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "-1").asJava)
-          .build(engine)
+      val ex2 = intercept[IllegalPropertyValueException] {
+        createTxn(
+          engine,
+          tablePath,
+          true, testSchema, Seq.empty, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "-1"))
       }
       assert(
         ex2.getMessage.contains(
@@ -1051,22 +1041,39 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
   }
 
-  def appendData(
+  def createTxn(
     engine: Engine = defaultEngine,
     tablePath: String,
     isNewTable: Boolean = false,
     schema: StructType = null,
     partCols: Seq[String] = null,
-    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+    tableProperties: Map[String, String] = null): Transaction = {
 
-    var txnBuilder = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+    var txnBuilder = createWriteTxnBuilder(
+      Table.forPath(engine, tablePath))
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
         .withPartitionColumns(engine, partCols.asJava)
     }
 
-    val txn = txnBuilder.build(engine)
+    if (tableProperties != null) {
+      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+
+    txnBuilder.build(engine)
+  }
+
+  def appendData(
+    engine: Engine = defaultEngine,
+    tablePath: String,
+    isNewTable: Boolean = false,
+    schema: StructType = null,
+    partCols: Seq[String] = null,
+    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
+    tableProperties: Map[String, String] = null): TransactionCommitResult = {
+
+    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties)
     val txnState = txn.getTransactionState(engine)
 
     val actions = data.map { case (partValues, partData) =>

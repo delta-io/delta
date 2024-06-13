@@ -111,12 +111,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         boolean isNewTable = snapshot.getVersion(engine) < 0;
         validate(engine, snapshot, isNewTable);
 
-        Metadata  metadata = snapshot.getMetadata().clone();
+        Metadata  metadata = snapshot.getMetadata();
         if (tableProperties.isPresent()) {
             TableConfig.validateProperties(tableProperties.get());
-            Map<String, String> newConfiguration = new HashMap<>(metadata.getConfiguration());
-            newConfiguration.putAll(tableProperties.get());
-            metadata.setConfiguration(newConfiguration);
+            metadata = metadata.withNewConfiguration(tableProperties.get());
         }
 
         return new TransactionImpl(

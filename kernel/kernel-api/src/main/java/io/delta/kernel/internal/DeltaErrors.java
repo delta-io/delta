@@ -212,6 +212,11 @@ public final class DeltaErrors {
         return new UnknownConfigurationKeyException(confKey);
     }
 
+    public static KernelException illegalPropertyValueException(
+            String key, String value, String helpMessage) {
+        return new IllegalPropertyValueException(key, value, helpMessage);
+    }
+
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
