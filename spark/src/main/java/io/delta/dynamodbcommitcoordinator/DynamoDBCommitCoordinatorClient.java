@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-package io.delta.dynamodbcommitstore;
+package io.delta.dynamodbcommitcoordinator;
 
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.model.*;
-import org.apache.spark.sql.delta.managedcommit.*;
+import org.apache.spark.sql.delta.coordinatedcommits.*;
 import org.apache.spark.sql.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -40,15 +40,15 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 /**
- * A commit owner client that uses DynamoDB as the commit owner. The table schema is as follows:
+ * A commit coordinator client that uses DynamoDB as the commit coordinator. The table schema is as follows:
  * tableId: String --- The unique identifier for the table. This is a UUID.
  * path: String --- The fully qualified path of the table in the file system. e.g. s3://bucket/path.
- * acceptingCommits: Boolean --- Whether the commit owner is accepting new commits. This will only
- *  be set to false when the table is converted from managed commits to file system commits.
+ * acceptingCommits: Boolean --- Whether the commit coordinator is accepting new commits. This will only
+ *  be set to false when the table is converted from coordinated commits to file system commits.
  * tableVersion: Number --- The version of the latest commit.
  * tableTimestamp: Number --- The inCommitTimestamp of the latest commit.
  * schemaVersion: Number --- The version of the schema used to store the data.
- * hasAcceptedCommits: Boolean --- Whether any actual commits have been accepted by this commit owner
+ * hasAcceptedCommits: Boolean --- Whether any actual commits have been accepted by this commit coordinator
  *  after `registerTable`.
  * commits: --- The list of unbackfilled commits.
  *  version: Number --- The version of the commit.
@@ -57,13 +57,13 @@ import java.util.HashMap;
  *  fsLength: Number --- The length of the unbackfilled file.
  *  fsTimestamp: Number --- The modification time of the unbackfilled file.
  */
-public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
-    private static final Logger LOG = LoggerFactory.getLogger(DynamoDBCommitOwnerClient.class);
+public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient {
+    private static final Logger LOG = LoggerFactory.getLogger(DynamoDBCommitCoordinatorClient.class);
 
     /**
      * The name of the DynamoDB table used to store unbackfilled commits.
      */
-    final String managedCommitTableName;
+    final String coordinatedCommitsTableName;
 
     /**
      * The DynamoDB client used to interact with the DynamoDB table.
@@ -100,7 +100,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
     final boolean skipPathCheck;
 
     /**
-     * The key used to store the tableId in the managed commit table configuration.
+     * The key used to store the tableId in the coordinated commits table configuration.
      */
     final static String TABLE_CONF_TABLE_ID_KEY = "tableId";
 
@@ -123,13 +123,13 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
     }
 
 
-    public DynamoDBCommitOwnerClient(
-            String managedCommitTableName,
+    public DynamoDBCommitCoordinatorClient(
+            String coordinatedCommitsTableName,
             String endpoint,
             AmazonDynamoDB client,
             long backfillBatchSize) throws IOException {
         this(
-            managedCommitTableName,
+            coordinatedCommitsTableName,
             endpoint,
             client,
             backfillBatchSize,
@@ -138,15 +138,15 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             false /* skipPathCheck */);
     }
 
-    public DynamoDBCommitOwnerClient(
-            String managedCommitTableName,
+    public DynamoDBCommitCoordinatorClient(
+            String coordinatedCommitsTableName,
             String endpoint,
             AmazonDynamoDB client,
             long backfillBatchSize,
             long readCapacityUnits,
             long writeCapacityUnits,
             boolean skipPathCheck) throws IOException {
-        this.managedCommitTableName = managedCommitTableName;
+        this.coordinatedCommitsTableName = coordinatedCommitsTableName;
         this.endpoint = endpoint;
         this.client = client;
         this.backfillBatchSize = backfillBatchSize;
@@ -156,29 +156,29 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
         tryEnsureTableExists();
     }
 
-    private String getTableId(Map<String, String> managedCommitTableConf) {
-        return managedCommitTableConf.get(TABLE_CONF_TABLE_ID_KEY).getOrElse(() -> {
+    private String getTableId(Map<String, String> coordinatedCommitsTableConf) {
+        return coordinatedCommitsTableConf.get(TABLE_CONF_TABLE_ID_KEY).getOrElse(() -> {
             throw new RuntimeException("tableId not found");
         });
     }
 
     /**
-     * Fetches the entry from the commit owner for the given table. Only the attributes defined
+     * Fetches the entry from the commit coordinator for the given table. Only the attributes defined
      * in attributesToGet will be fetched.
      */
-    private GetItemResult getEntryFromCommitOwner(
-            Map<String, String> managedCommitTableConf, String... attributesToGet) {
+    private GetItemResult getEntryFromCommitCoordinator(
+            Map<String, String> coordinatedCommitsTableConf, String... attributesToGet) {
         GetItemRequest request = new GetItemRequest()
-                .withTableName(managedCommitTableName)
+                .withTableName(coordinatedCommitsTableName)
                 .addKeyEntry(
                         DynamoDBTableEntryConstants.TABLE_ID,
-                        new AttributeValue().withS(getTableId(managedCommitTableConf)))
+                        new AttributeValue().withS(getTableId(coordinatedCommitsTableConf)))
                 .withAttributesToGet(attributesToGet);
         return client.getItem(request);
     }
 
     /**
-     * Commits the given file to the commit owner.
+     * Commits the given file to the commit coordinator.
      * A conditional write is performed to the DynamoDB table entry associated with this Delta
      * table.
      * If the conditional write goes through, the filestatus of the UUID delta file will be
@@ -188,8 +188,8 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
      * For the conditional write to go through, the following conditions must be met right before
      * the write is performed:
      * 1. The latest table version in DynamoDB is equal to attemptVersion - 1.
-     * 2. The commit owner is accepting new commits.
-     * 3. The schema version of the commit owner matches the schema version of the client.
+     * 2. The commit coordinator is accepting new commits.
+     * 3. The schema version of the commit coordinator matches the schema version of the client.
      * 4. The table path stored in DynamoDB matches the path of the table. This check is skipped
      * if `skipPathCheck` is set to true.
      * If the conditional write fails, we retrieve the current entry in DynamoDB to figure out
@@ -201,13 +201,13 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
      * If the retrieved latest table version is less than attemptVersion - 1, an unretryable
      * `CommitFailedException` will be thrown.
      */
-    protected CommitResponse commitToOwner(
+    protected CommitResponse commitToCoordinator(
             Path logPath,
-            Map<String, String> managedCommitTableConf,
+            Map<String, String> coordinatedCommitsTableConf,
             long attemptVersion,
             FileStatus commitFile,
             long inCommitTimestamp,
-            boolean isMCtoFSConversion) throws CommitFailedException {
+            boolean isCCtoFSConversion) throws CommitFailedException {
         // Add conditions for the conditional update.
         java.util.Map<String, ExpectedAttributeValue> expectedValuesBeforeUpdate = new HashMap<>();
         expectedValuesBeforeUpdate.put(
@@ -248,10 +248,10 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                 new AttributeValue().withN(Long.toString(commitFile.getModificationTime())));
 
         UpdateItemRequest request = new UpdateItemRequest()
-                .withTableName(managedCommitTableName)
+                .withTableName(coordinatedCommitsTableName)
                 .addKeyEntry(
                         DynamoDBTableEntryConstants.TABLE_ID,
-                        new AttributeValue().withS(getTableId(managedCommitTableConf)))
+                        new AttributeValue().withS(getTableId(coordinatedCommitsTableConf)))
                 .addAttributeUpdatesEntry(
                         DynamoDBTableEntryConstants.TABLE_LATEST_VERSION, new AttributeValueUpdate()
                             .withValue(new AttributeValue().withN(Long.toString(attemptVersion)))
@@ -278,8 +278,8 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                 )
                 .withExpected(expectedValuesBeforeUpdate);
 
-        if (isMCtoFSConversion) {
-            // If this table is being converted from managed commits to file system commits, we need
+        if (isCCtoFSConversion) {
+            // If this table is being converted from coordinated commits to file system commits, we need
             // to set acceptingCommits to false.
             request = request
                     .addAttributeUpdatesEntry(
@@ -296,8 +296,8 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             // Conditional check failed. The exception will not indicate which condition failed.
             // We need to check the conditions ourselves by fetching the item and checking the
             // values.
-            GetItemResult latestEntry = getEntryFromCommitOwner(
-                    managedCommitTableConf,
+            GetItemResult latestEntry = getEntryFromCommitCoordinator(
+                    coordinatedCommitsTableConf,
                     DynamoDBTableEntryConstants.TABLE_LATEST_VERSION,
                     DynamoDBTableEntryConstants.ACCEPTING_COMMITS,
                     DynamoDBTableEntryConstants.TABLE_PATH,
@@ -309,8 +309,8 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                 throw new CommitFailedException(
                         false /* retryable */,
                         false /* conflict */,
-                        "The schema version of the commit owner does not match the current" +
-                                "DynamoDBCommitOwnerClient version. The data schema version is " +
+                        "The schema version of the commit coordinator does not match the current" +
+                                "DynamoDBCommitCoordinatorClient version. The data schema version is " +
                                 " " + schemaVersion + " while the client version is " +
                                 CLIENT_VERSION + ". Make sure that the correct client is being " +
                                 "used to access this table." );
@@ -330,7 +330,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                 throw new CommitFailedException(
                         false /* retryable */,
                         false /* conflict */,
-                        "The commit owner is not accepting any new commits for this table.");
+                        "The commit coordinator is not accepting any new commits for this table.");
             }
             if (latestTableVersion != attemptVersion - 1) {
                 // The commit is only retryable if the conflict is due to someone else committing
@@ -352,7 +352,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             LogStore logStore,
             Configuration hadoopConf,
             Path logPath,
-            Map<String, String> managedCommitTableConf,
+            Map<String, String> coordinatedCommitsTableConf,
             long commitVersion,
             Iterator<String> actions,
             UpdatedActions updatedActions) {
@@ -365,37 +365,37 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
         try {
             FileSystem fs = logPath.getFileSystem(hadoopConf);
             Path commitPath =
-                    ManagedCommitUtils.generateUnbackfilledDeltaFilePath(logPath, commitVersion);
+                    CoordinatedCommitsUtils.generateUnbackfilledDeltaFilePath(logPath, commitVersion);
             logStore.write(commitPath, actions, true /* overwrite */, hadoopConf);
             FileStatus commitFileStatus = fs.getFileStatus(commitPath);
             long inCommitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
-            boolean isMCtoFSConversion =
-                    ManagedCommitUtils.isManagedCommitToFSConversion(commitVersion, updatedActions);
+            boolean isCCtoFSConversion =
+                    CoordinatedCommitsUtils.isCoordinatedCommitsToFSConversion(commitVersion, updatedActions);
 
             LOG.info("Committing version {} with UUID delta file {} to DynamoDB.",
                     commitVersion, commitPath);
-            CommitResponse res = commitToOwner(
+            CommitResponse res = commitToCoordinator(
                     logPath,
-                    managedCommitTableConf,
+                    coordinatedCommitsTableConf,
                     commitVersion,
                     commitFileStatus,
                     inCommitTimestamp,
-                    isMCtoFSConversion);
+                    isCCtoFSConversion);
 
             LOG.info("Commit {} was successful.", commitVersion);
 
             boolean shouldBackfillOnEveryCommit = backfillBatchSize <= 1;
             boolean isBatchBackfillDue = commitVersion % backfillBatchSize == 0;
             boolean shouldBackfill = shouldBackfillOnEveryCommit || isBatchBackfillDue ||
-                    // Always attempt a backfill for managed commit to filesystem conversion.
+                    // Always attempt a backfill for coordinated commits to filesystem conversion.
                     // Even if this fails, the next reader will attempt to backfill.
-                    isMCtoFSConversion;
+                    isCCtoFSConversion;
             if (shouldBackfill) {
                 backfillToVersion(
                     logStore,
                     hadoopConf,
                     logPath,
-                    managedCommitTableConf,
+                    coordinatedCommitsTableConf,
                     commitVersion,
                     Option.empty());
             }
@@ -410,7 +410,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             Map<String, String> tableConf,
             Option<Object> startVersion,
             Option<Object> endVersion) throws IOException {
-        GetItemResult latestEntry = getEntryFromCommitOwner(
+        GetItemResult latestEntry = getEntryFromCommitCoordinator(
                 tableConf,
                 DynamoDBTableEntryConstants.COMMITS,
                 DynamoDBTableEntryConstants.TABLE_LATEST_VERSION,
@@ -421,7 +421,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                 Long.parseLong(item.get(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION).getN());
         AttributeValue allStoredCommits = item.get(DynamoDBTableEntryConstants.COMMITS);
         ArrayList<Commit> commits = new ArrayList<>();
-        Path unbackfilledCommitsPath = new Path(logPath, ManagedCommitUtils.COMMIT_SUBDIR);
+        Path unbackfilledCommitsPath = new Path(logPath, CoordinatedCommitsUtils.COMMIT_SUBDIR);
         for(AttributeValue attr: allStoredCommits.getL()) {
             java.util.Map<String, AttributeValue> commitMap = attr.getM();
             long commitVersion =
@@ -458,16 +458,16 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
     @Override
     public GetCommitsResponse getCommits(
             Path logPath,
-            Map<String, String> managedCommitTableConf,
+            Map<String, String> coordinatedCommitsTableConf,
             Option<Object> startVersion,
             Option<Object> endVersion) {
         try {
             GetCommitsResultInternal res =
-                    getCommitsImpl(logPath, managedCommitTableConf, startVersion, endVersion);
+                    getCommitsImpl(logPath, coordinatedCommitsTableConf, startVersion, endVersion);
             long latestTableVersionToReturn = res.response.getLatestTableVersion();
             if (!res.hasAcceptedCommits) {
                 /*
-                 * If the commit owner has not accepted any commits after `registerTable`, we should
+                 * If the commit coordinator has not accepted any commits after `registerTable`, we should
                  * return -1 as the latest table version.
                  * ┌───────────────────────────────────┬─────────────────────────────────────────────────────┬────────────────────────────────┐
                  * │              Action               │                   Internal State                    │ Version returned on GetCommits │
@@ -498,7 +498,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             scala.collection.Iterator<String> actions,
             Configuration hadoopConf,
             boolean shouldOverwrite) throws FileAlreadyExistsException {
-        Path targetPath = ManagedCommitUtils.getBackfilledDeltaFilePath(logPath, version);
+        Path targetPath = CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, version);
         logStore.write(targetPath, actions, shouldOverwrite, hadoopConf);
     }
 
@@ -510,7 +510,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             }
             long version = (long) lastKnownBackfilledVersion.get();
             Path lastKnownBackfilledFile =
-                    ManagedCommitUtils.getBackfilledDeltaFilePath(logPath, version);
+                    CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, version);
             FileSystem fs = logPath.getFileSystem(hadoopConf);
             if (!fs.exists(lastKnownBackfilledFile)) {
                 throw new IllegalArgumentException(
@@ -523,11 +523,11 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
     }
 
     /**
-     * Backfills all the unbackfilled commits returned by the commit owner and notifies the commit
+     * Backfills all the unbackfilled commits returned by the commit coordinator and notifies the commit
      * owner of the backfills.
      * The version parameter is ignored in this implementation and all the unbackfilled commits
      * are backfilled. This method will not throw any exception if the physical backfill
-     * succeeds but the update to the commit owner fails.
+     * succeeds but the update to the commit coordinator fails.
      * @throws IllegalArgumentException if the requested backfill version is greater than the latest
      *  version for the table.
      */
@@ -536,7 +536,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             LogStore logStore,
             Configuration hadoopConf,
             Path logPath,
-            Map<String, String> managedCommitTableConf,
+            Map<String, String> coordinatedCommitsTableConf,
             long version,
             Option<Object> lastKnownBackfilledVersion) {
         LOG.info("Backfilling all unbackfilled commits.");
@@ -544,7 +544,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
         try {
             resp = getCommitsImpl(
                     logPath,
-                    managedCommitTableConf,
+                    coordinatedCommitsTableConf,
                     lastKnownBackfilledVersion,
                     Option.empty()).response;
         } catch (IOException e) {
@@ -579,10 +579,10 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             }
         }
         UpdateItemRequest request = new UpdateItemRequest()
-                .withTableName(managedCommitTableName)
+                .withTableName(coordinatedCommitsTableName)
                 .addKeyEntry(
                         DynamoDBTableEntryConstants.TABLE_ID,
-                        new AttributeValue().withS(getTableId(managedCommitTableConf)))
+                        new AttributeValue().withS(getTableId(coordinatedCommitsTableConf)))
                 .addAttributeUpdatesEntry(
                         DynamoDBTableEntryConstants.COMMITS,
                         new AttributeValueUpdate()
@@ -612,11 +612,11 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             client.updateItem(request);
         } catch (ConditionalCheckFailedException e) {
             // Ignore the exception. The backfill succeeded but the update to
-            // the commit owner failed. The main purpose of a backfill operation is to ensure that
+            // the commit coordinator failed. The main purpose of a backfill operation is to ensure that
             // UUID commit is physically copied to a standard commit file path. A failed update to
-            // the commit owner is not critical.
-            LOG.warn("Backfill succeeded but the update to the commit owner failed. This is probably" +
-                    " due to a concurrent update to the commit owner. This is not a critical error and " +
+            // the commit coordinator is not critical.
+            LOG.warn("Backfill succeeded but the update to the commit coordinator failed. This is probably" +
+                    " due to a concurrent update to the commit coordinator. This is not a critical error and " +
                     " should rectify itself.");
         }
     }
@@ -635,7 +635,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
         // We maintain the invariant that a commit will only succeed if the latestVersion stored
         // in the table is equal to attemptVersion - 1. To maintain this, even though the
         // filesystem-based commit after register table can fail, we still treat the attemptVersion
-        // at registration as a valid version. Since it is expected that the commit owner will
+        // at registration as a valid version. Since it is expected that the commit coordinator will
         // return -1 as the table version if no commits have been accepted after registration, we
         // use another attribute (HAS_ACCEPTED_COMMITS) to track whether any commits have been
         // accepted. This attribute is set to true whenever any commit is accepted.
@@ -644,7 +644,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
         item.put(
                 DynamoDBTableEntryConstants.TABLE_LATEST_VERSION,
                 new AttributeValue().withN(Long.toString(attemptVersion)));
-        // Used to indicate that no real commits have gone through the commit owner yet.
+        // Used to indicate that no real commits have gone through the commit coordinator yet.
         item.put(
                 DynamoDBTableEntryConstants.HAS_ACCEPTED_COMMITS,
                 new AttributeValue().withBOOL(false));
@@ -660,7 +660,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                 new AttributeValue().withN(Integer.toString(CLIENT_VERSION)));
 
         PutItemRequest request = new PutItemRequest()
-                .withTableName(managedCommitTableName)
+                .withTableName(coordinatedCommitsTableName)
                 .withItem(item)
                 .withConditionExpression(
                         String.format(
@@ -686,14 +686,14 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
         while(retries < 20) {
             String status = "CREATING";
             try {
-                DescribeTableResult result = client.describeTable(managedCommitTableName);
+                DescribeTableResult result = client.describeTable(coordinatedCommitsTableName);
                 TableDescription descr = result.getTable();
                 status = descr.getTableStatus();
             } catch (ResourceNotFoundException e) {
                 LOG.info(
                         "DynamoDB table `{}` for endpoint `{}` does not exist. " +
                         "Creating it now with provisioned throughput of {} RCUs and {} WCUs.",
-                        managedCommitTableName, endpoint, readCapacityUnits, writeCapacityUnits);
+                        coordinatedCommitsTableName, endpoint, readCapacityUnits, writeCapacityUnits);
                 try {
                     client.createTable(
                             // attributeDefinitions
@@ -702,7 +702,7 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
                                             DynamoDBTableEntryConstants.TABLE_ID,
                                             ScalarAttributeType.S)
                             ),
-                            managedCommitTableName,
+                            coordinatedCommitsTableName,
                             // keySchema
                             java.util.Collections.singletonList(
                                     new KeySchemaElement(
@@ -718,23 +718,23 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
             }
             if (status.equals("ACTIVE")) {
                 if (created) {
-                    LOG.info("Successfully created DynamoDB table `{}`", managedCommitTableName);
+                    LOG.info("Successfully created DynamoDB table `{}`", coordinatedCommitsTableName);
                 } else {
-                    LOG.info("Table `{}` already exists", managedCommitTableName);
+                    LOG.info("Table `{}` already exists", coordinatedCommitsTableName);
                 }
                 break;
             } else if (status.equals("CREATING")) {
                 retries += 1;
-                LOG.info("Waiting for `{}` table creation", managedCommitTableName);
+                LOG.info("Waiting for `{}` table creation", coordinatedCommitsTableName);
                 try {
                     Thread.sleep(1000);
                 } catch(InterruptedException e) {
                     throw new InterruptedIOException(e.getMessage());
                 }
             } else {
-                LOG.error("table `{}` status: {}", managedCommitTableName, status);
-                throw new RuntimeException("DynamoDBCommitOwnerCliet: Unable to create table with " +
-                        "name " + managedCommitTableName + " for endpoint " + endpoint + ". Ensure " +
+                LOG.error("table `{}` status: {}", coordinatedCommitsTableName, status);
+                throw new RuntimeException("DynamoDBCommitCoordinatorCliet: Unable to create table with " +
+                        "name " + coordinatedCommitsTableName + " for endpoint " + endpoint + ". Ensure " +
                         "that the credentials provided have the necessary permissions to create " +
                         "tables in DynamoDB. If the table already exists, ensure that the table " +
                         "is in the ACTIVE state.");
@@ -743,12 +743,12 @@ public class DynamoDBCommitOwnerClient implements CommitOwnerClient {
     }
 
     @Override
-    public boolean semanticEquals(CommitOwnerClient other) {
-        if (!(other instanceof DynamoDBCommitOwnerClient)) {
+    public boolean semanticEquals(CommitCoordinatorClient other) {
+        if (!(other instanceof DynamoDBCommitCoordinatorClient)) {
             return false;
         }
-        DynamoDBCommitOwnerClient otherStore = (DynamoDBCommitOwnerClient) other;
-        return this.managedCommitTableName.equals(otherStore.managedCommitTableName)
+        DynamoDBCommitCoordinatorClient otherStore = (DynamoDBCommitCoordinatorClient) other;
+        return this.coordinatedCommitsTableName.equals(otherStore.coordinatedCommitsTableName)
                 && this.endpoint.equals(otherStore.endpoint);
     }
 }

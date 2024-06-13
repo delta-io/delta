@@ -28,7 +28,7 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, SingleAction}
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -44,7 +44,7 @@ class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
-  with ManagedCommitBaseSuite {
+  with CoordinatedCommitsBaseSuite {
 
   import testImplicits._
 
@@ -795,6 +795,6 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 }
 
-class DeltaTimeTravelWithManagedCommitBatch1Suite extends DeltaTimeTravelSuite {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
+class DeltaTimeTravelWithCoordinatedCommitsBatch1Suite extends DeltaTimeTravelSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }

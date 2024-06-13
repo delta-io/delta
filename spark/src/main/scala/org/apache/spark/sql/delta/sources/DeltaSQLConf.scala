@@ -538,32 +538,32 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
-  val MANAGED_COMMIT_GET_COMMITS_THREAD_POOL_SIZE =
-    buildStaticConf("managedCommit.getCommits.threadPoolSize")
+  val COORDINATED_COMMITS_GET_COMMITS_THREAD_POOL_SIZE =
+    buildStaticConf("coordinatedCommits.getCommits.threadPoolSize")
       .internal()
-      .doc("The size of the thread pool for listing files from the commit-owner.")
+      .doc("The size of the thread pool for listing files from the commit-coordinator.")
       .intConf
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
 
   //////////////////////////////////////////////
-  // DynamoDB Commit Owner-specific configs
+  // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
 
-  val MANAGED_COMMIT_DDB_AWS_CREDENTIALS_PROVIDER_NAME =
-    buildConf("managedCommit.commitOwner.dynamodb.awsCredentialsProviderName")
+  val COORDINATED_COMMITS_DDB_AWS_CREDENTIALS_PROVIDER_NAME =
+    buildConf("coordinatedCommits.commitCoordinator.dynamodb.awsCredentialsProviderName")
       .internal()
       .doc("The fully qualified class name of the AWS credentials provider to use for " +
-        "interacting with DynamoDB in the DynamoDB Commit Owner Client. e.g. " +
+        "interacting with DynamoDB in the DynamoDB Commit Coordinator Client. e.g. " +
         "com.amazonaws.auth.DefaultAWSCredentialsProviderChain.")
       .stringConf
       .createWithDefault("com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
 
-  val MANAGED_COMMIT_DDB_SKIP_PATH_CHECK =
-    buildConf("managedCommit.commitOwner.dynamodb.skipPathCheckEnabled")
+  val COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK =
+    buildConf("coordinatedCommits.commitCoordinator.dynamodb.skipPathCheckEnabled")
       .internal()
-      .doc("When enabled, the DynamoDB Commit Owner will not enforce that the table path of the " +
-        "current Delta table matches the stored in the corresponding DynamoDB table. This " +
+      .doc("When enabled, the DynamoDB Commit Coordinator will not enforce that the table path " +
+        "of the current Delta table matches the stored in the corresponding DynamoDB table. This " +
         "should only be used when the observed table path for the same physical table varies " +
         "depending on how it is accessed (e.g. abfs://path1 vs abfss://path1). Leaving this " +
         "enabled can be dangerous as every physical copy of a Delta table with try to write to" +
@@ -571,26 +571,26 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val MANAGED_COMMIT_DDB_READ_CAPACITY_UNITS =
-    buildConf("managedCommit.commitOwner.dynamodb.readCapacityUnits")
+  val COORDINATED_COMMITS_DDB_READ_CAPACITY_UNITS =
+    buildConf("coordinatedCommits.commitCoordinator.dynamodb.readCapacityUnits")
       .internal()
       .doc("Controls the provisioned read capacity units for the DynamoDB table backing the " +
-        "DynamoDB Commit Owner. This configuration is only used when the DynamoDB table is first " +
-        "provisioned and cannot be used configure an existing table.")
+        "DynamoDB Commit Coordinator. This configuration is only used when the DynamoDB table " +
+        "is first provisioned and cannot be used configure an existing table.")
       .intConf
       .createWithDefault(5)
 
-  val MANAGED_COMMIT_DDB_WRITE_CAPACITY_UNITS =
-    buildConf("managedCommit.commitOwner.dynamodb.writeCapacityUnits")
+  val COORDINATED_COMMITS_DDB_WRITE_CAPACITY_UNITS =
+    buildConf("coordinatedCommits.commitCoordinator.dynamodb.writeCapacityUnits")
       .internal()
       .doc("Controls the provisioned write capacity units for the DynamoDB table backing the " +
-        "DynamoDB Commit Owner. This configuration is only used when the DynamoDB table is first " +
-        "provisioned and cannot be used configure an existing table.")
+        "DynamoDB Commit Coordinator. This configuration is only used when the DynamoDB table " +
+        "is first provisioned and cannot be used configure an existing table.")
       .intConf
       .createWithDefault(5)
 
   //////////////////////////////////////////////
-  // DynamoDB Commit Owner-specific configs end
+  // DynamoDB Commit Coordinator-specific configs end
   /////////////////////////////////////////////
 
   val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =

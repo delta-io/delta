@@ -22,7 +22,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
-import org.apache.spark.sql.delta.managedcommit.{CommitOwnerProvider, InMemoryCommitOwnerBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -472,7 +472,7 @@ class DeltaTableFeatureSuite
     }
   }
 
-  test("drop table feature works with managed commits") {
+  test("drop table feature works with coordinated commits") {
     val table = "tbl"
     withTable(table) {
       spark.range(0).write.format("delta").saveAsTable(table)
@@ -480,9 +480,10 @@ class DeltaTableFeatureSuite
       val featureName = TestRemovableReaderWriterFeature.name
       assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
 
-      // Add managed commit table feature to the table
-      CommitOwnerProvider.registerBuilder(InMemoryCommitOwnerBuilder(batchSize = 100))
-      val tblProperties1 = Seq(s"'${DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key}' = 'in-memory'")
+      // Add coordinated commits table feature to the table
+      CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(batchSize = 100))
+      val tblProperties1 =
+        Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'")
       sql(buildTablePropertyModifyingCommand(
         "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
 
