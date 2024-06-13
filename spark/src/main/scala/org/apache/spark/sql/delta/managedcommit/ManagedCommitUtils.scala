@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.managedcommit
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, ManagedCommitTableFeature, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, DeltaLog, ManagedCommitTableFeature, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
@@ -186,6 +186,41 @@ object ManagedCommitUtils extends DeltaLogging {
       case Some(name) => (Some(name), metadata.managedCommitOwnerConf)
       case None => (None, Map.empty)
     }
+  }
+
+  /**
+   * Helper method to recover the saved value of `deltaConfig` from `abstractMetadata`.
+   * If undefined, fall back to alternate keys, returning defaultValue if none match.
+   */
+  private[delta] def fromAbstractMetadataAndDeltaConfig[T](
+      abstractMetadata: AbstractMetadata,
+      deltaConfig: DeltaConfig[T]): T = {
+    val conf = abstractMetadata.getConfiguration
+    for (key <- deltaConfig.key +: deltaConfig.alternateKeys) {
+      conf.get(key).map { value => return deltaConfig.fromString(value) }
+    }
+    deltaConfig.fromString(deltaConfig.defaultValue)
+  }
+
+  /**
+   * Get the commit owner name from the provided abstract metadata.
+   */
+  def getManagedCommitOwnerName(abstractMetadata: AbstractMetadata): Option[String] = {
+    fromAbstractMetadataAndDeltaConfig(abstractMetadata, DeltaConfigs.MANAGED_COMMIT_OWNER_NAME)
+  }
+
+  /**
+   * Get the commit owner configuration from the provided abstract metadata.
+   */
+  def getManagedCommitOwnerConf(abstractMetadata: AbstractMetadata): Map[String, String] = {
+    fromAbstractMetadataAndDeltaConfig(abstractMetadata, DeltaConfigs.MANAGED_COMMIT_OWNER_CONF)
+  }
+
+  /**
+   * Get the managed commit table configuration from the provided abstract metadata.
+   */
+  def getManagedCommitTableConf(abstractMetadata: AbstractMetadata): Map[String, String] = {
+    fromAbstractMetadataAndDeltaConfig(abstractMetadata, DeltaConfigs.MANAGED_COMMIT_TABLE_CONF)
   }
 
   /**

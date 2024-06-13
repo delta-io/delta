@@ -66,6 +66,33 @@ class ManagedCommitSuite
     CommitOwnerProvider.clearNonDefaultBuilders()
   }
 
+  test("helper method that recovers config from abstract metadata works properly") {
+    val m1 = Metadata(
+      configuration = Map(MANAGED_COMMIT_OWNER_NAME.key -> "string_value")
+    )
+    assert(ManagedCommitUtils.fromAbstractMetadataAndDeltaConfig(m1, MANAGED_COMMIT_OWNER_NAME) ===
+      Some("string_value"))
+
+    val m2 = Metadata(
+      configuration = Map(MANAGED_COMMIT_OWNER_NAME.key -> "")
+    )
+    assert(ManagedCommitUtils.fromAbstractMetadataAndDeltaConfig(m2, MANAGED_COMMIT_OWNER_NAME) ===
+      Some(""))
+
+    val m3 = Metadata(
+      configuration = Map(
+        MANAGED_COMMIT_OWNER_CONF.key ->
+          """{"key1": "string_value", "key2Int": 2, "key3ComplexStr": "\"hello\""}""")
+    )
+    assert(ManagedCommitUtils.fromAbstractMetadataAndDeltaConfig(m3, MANAGED_COMMIT_OWNER_CONF) ===
+      Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\""))
+
+    val m4 = Metadata()
+    assert(ManagedCommitUtils.fromAbstractMetadataAndDeltaConfig(m4, MANAGED_COMMIT_TABLE_CONF) ===
+      Map.empty)
+  }
+
+
   test("0th commit happens via filesystem") {
     val commitOwnerName = "nobackfilling-commit-owner"
     object NoBackfillingCommitOwnerBuilder$ extends CommitOwnerBuilder {
