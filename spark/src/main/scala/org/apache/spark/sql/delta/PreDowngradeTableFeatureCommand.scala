@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand,
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.constraints.Constraints
-import org.apache.spark.sql.delta.managedcommit.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
