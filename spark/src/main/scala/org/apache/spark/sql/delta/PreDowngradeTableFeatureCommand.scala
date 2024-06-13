@@ -382,6 +382,16 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
 
 case class CheckConstraintsPreDowngradeTableFeatureCommand(table: DeltaTableV2)
     extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Throws an exception if the table has CHECK constraints, and returns false otherwise (as no
+   * action was required).
+   *
+   * We intentionally error out instead of removing the CHECK constraints here, as dropping a
+   * table feature should not never alter the logical representation of a table (only its physical
+   * representation). Instead, we ask the user to explicitly drop the constraints before the table
+   * feature can be dropped.
+   */
   override def removeFeatureTracesIfNeeded(): Boolean = {
     val checkConstraintNames = Constraints.getCheckConstraintNames(table.initialSnapshot.metadata)
     if (checkConstraintNames.isEmpty) return false

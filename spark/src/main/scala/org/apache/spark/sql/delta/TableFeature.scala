@@ -471,9 +471,9 @@ object CheckConstraintsTableFeature
   override def validateRemoval(snapshot: Snapshot): Boolean =
     Constraints.getCheckConstraintNames(snapshot.metadata).isEmpty
 
-  override def actionUsesFeature(action: Action): Boolean = action match {
-    case m: Metadata => Constraints.getCheckConstraintNames(m).nonEmpty
-    case _ => false
+  override def actionUsesFeature(action: Action): Boolean = {
+    // This method is never called, as it is only used for ReaderWriterFeatures.
+    throw new UnsupportedOperationException()
   }
 }
 
