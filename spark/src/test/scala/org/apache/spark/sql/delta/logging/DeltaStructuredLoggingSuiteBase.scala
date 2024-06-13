@@ -43,14 +43,13 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.regex.Pattern
 
-import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.logging.log4j.Level
-import org.scalatest.funsuite.AnyFunSuite // scalastyle:ignore funsuite
 
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.internal.{LogEntry, LoggingShims, LogKeyShims, MDC}
 
 trait DeltaStructuredLoggingSuiteBase
-  extends AnyFunSuite // scalastyle:ignore funsuite
+  extends SparkFunSuite
     with LoggingShims {
   def className: String
   def logFilePath: String
