@@ -336,6 +336,13 @@ trait DeltaErrorsBase
       messageParameters = Array.empty)
   }
 
+  def cannotDropCheckConstraintFeature(constraintNames: Seq[String]): AnalysisException = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+      messageParameters = Array(constraintNames.map(formatColumn).mkString(", "))
+    )
+  }
+
   def incorrectLogStoreImplementationException(
       sparkConf: SparkConf,
       cause: Throwable): Throwable = {

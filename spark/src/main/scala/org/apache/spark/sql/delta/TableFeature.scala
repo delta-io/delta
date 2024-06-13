@@ -457,11 +457,23 @@ object InvariantsTableFeature
 
 object CheckConstraintsTableFeature
   extends LegacyWriterFeature(name = "checkConstraints", minWriterVersion = 3)
-  with FeatureAutomaticallyEnabledByMetadata {
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
   override def metadataRequiresFeatureToBeEnabled(
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     Constraints.getCheckConstraints(metadata, spark).nonEmpty
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    CheckConstraintsPreDowngradeTableFeatureCommand(table)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    Constraints.getCheckConstraintNames(snapshot.metadata).isEmpty
+
+  override def actionUsesFeature(action: Action): Boolean = {
+    // This method is never called, as it is only used for ReaderWriterFeatures.
+    throw new UnsupportedOperationException()
   }
 }
 
