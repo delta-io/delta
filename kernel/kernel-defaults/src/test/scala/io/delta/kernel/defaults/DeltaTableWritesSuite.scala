@@ -30,7 +30,6 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
-import io.delta.kernel.internal.util.SystemClock
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.types.DateType.DATE

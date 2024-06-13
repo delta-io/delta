@@ -157,9 +157,9 @@ public class ConflictChecker {
         }
 
         /**
-         * Return the latest inCommitTimestamp of the table.
+         * Return the latest CommitTimestamp of the table.
          *
-         * @return latest inCommitTimestamp of the table.
+         * @return latest CommitTimestamp of the table.
          */
         public long getLatestCommitTimestamp() {
             return latestCommitTimestamp;

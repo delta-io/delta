@@ -23,11 +23,11 @@ import io.delta.kernel.annotation.Evolving;
  * @since 3.2.0
  */
 @Evolving
-public class MissingCommitTimestampException extends IllegalStateException {
+public class MissingInCommitTimestampException extends IllegalStateException {
     private final String featureName;
     private final String commitVersion;
 
-    public MissingCommitTimestampException(String featureName, String commitVersion) {
+    public MissingInCommitTimestampException(String featureName, String commitVersion) {
         this.featureName = featureName;
         this.commitVersion = commitVersion;
     }

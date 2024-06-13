@@ -213,9 +213,9 @@ public final class DeltaErrors {
         return new MissingCommitInfoException(featureName, commitVersion);
     }
 
-    public static IllegalStateException missingCommitTimestamp(
+    public static IllegalStateException missingInCommitTimestamp(
             String featureName, String commitVersion) {
-        return new MissingCommitTimestampException(featureName, commitVersion);
+        return new MissingInCommitTimestampException(featureName, commitVersion);
     }
 
     public static KernelException unknownConfigurationKeyException(String confKey) {

@@ -93,7 +93,7 @@ public class CommitInfo {
                         "inCommitTimestamp-preview", version));
         return commitInfo
                 .inCommitTimestamp
-                .orElseThrow(() -> DeltaErrors.missingCommitTimestamp(
+                .orElseThrow(() -> DeltaErrors.missingInCommitTimestamp(
                         "inCommitTimestamp-preview", version));
     }
 

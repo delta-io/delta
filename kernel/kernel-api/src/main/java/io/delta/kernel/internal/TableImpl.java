@@ -24,11 +24,10 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Clock;
-import io.delta.kernel.internal.util.SystemClock;
 
 public class TableImpl implements Table {
     public static Table forPath(Engine engine, String path) {
-        return forPath(engine, path, new SystemClock());
+        return forPath(engine, path, System::currentTimeMillis);
     }
 
     /**

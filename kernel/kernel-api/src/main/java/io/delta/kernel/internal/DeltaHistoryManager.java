@@ -172,7 +172,8 @@ public final class DeltaHistoryManager {
             Engine engine,
             Path logPath,
             long version) throws IOException {
-        CloseableIterator<FileStatus> files = listFrom(engine, logPath, version);
+        CloseableIterator<FileStatus> files = listFrom(engine, logPath, version)
+                .filter(fs -> FileNames.deltaFile(logPath, version).equals(fs.getPath()));
         if (!files.hasNext()) {
             return Optional.empty();
         }

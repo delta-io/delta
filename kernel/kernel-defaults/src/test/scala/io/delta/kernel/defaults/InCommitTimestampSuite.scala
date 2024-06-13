@@ -22,7 +22,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.actions.SingleAction
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.{Clock, FileNames, ManualClock, SystemClock}
+import io.delta.kernel.internal.util.{Clock, FileNames, ManualClock}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -139,7 +139,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Conflict resolution of timestamps") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath, new SystemClock)
+      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -177,7 +177,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Enablement tracking properties should not be added if ICT is enabled on commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath, new SystemClock)
+      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -197,7 +197,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Enablement tracking works when ICT is enabled post commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath, new SystemClock)
+      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -230,7 +230,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Conflict resolution of enablement version") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath, new SystemClock)
+      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder

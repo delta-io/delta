@@ -31,7 +31,6 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
-import io.delta.kernel.internal.util.SystemClock
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -237,7 +236,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     isNewTable: Boolean = false,
     schema: StructType = null,
     partCols: Seq[String] = null,
-    clock: Clock = new SystemClock,
+    clock: Clock = () => System.currentTimeMillis,
     tableProperties: Map[String, String] = null): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
@@ -277,7 +276,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     schema: StructType = null,
     partCols: Seq[String] = null,
     data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
-    clock: Clock = new SystemClock,
+    clock: Clock = () => System.currentTimeMillis,
     tableProperties: Map[String, String] = null): TransactionCommitResult = {
 
     val txn = generateTxn(engine, tablePath, isNewTable, schema, partCols, clock, tableProperties)
