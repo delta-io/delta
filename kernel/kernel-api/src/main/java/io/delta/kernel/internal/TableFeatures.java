@@ -16,7 +16,9 @@
 
 package io.delta.kernel.internal;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import io.delta.kernel.types.StructType;
 
@@ -29,6 +31,11 @@ import static io.delta.kernel.internal.DeltaErrors.*;
  * Contains utility methods related to the Delta table feature support in protocol.
  */
 public class TableFeatures {
+
+    public static Set<String> supportedWriterFeatures = new HashSet<String>() {{
+            add("appendOnly");
+            add("inCommitTimestamp-preview");
+        }};
 
     ////////////////////
     // Helper Methods //
@@ -120,6 +127,16 @@ public class TableFeatures {
                 break;
             default:
                 throw unsupportedWriterProtocol(tablePath, minWriterVersion);
+        }
+    }
+
+    public static boolean metadataRequiresWriterFeatureToBeEnabled(
+            Metadata metadata, String feature) {
+        switch (feature) {
+            case "inCommitTimestamp-preview":
+                return TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+            default:
+                return false;
         }
     }
 

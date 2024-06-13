@@ -38,8 +38,10 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -67,12 +69,13 @@ public class TransactionImpl
     private final Path dataPath;
     private final Path logPath;
     private final Protocol protocol;
-    private final Metadata metadata;
-    private final boolean shouldUpdateMetadata;
+    private Metadata metadata;
+    private boolean shouldUpdateMetadata;
     private final SnapshotImpl readSnapshot;
     private final Optional<SetTransaction> setTxnOpt;
 
     private boolean closed; // To avoid trying to commit the same transaction again.
+    private final boolean shouldUpdateProtocol;
 
     public TransactionImpl(
             boolean isNewTable,
@@ -84,7 +87,8 @@ public class TransactionImpl
             Protocol protocol,
             Metadata metadata,
             Optional<SetTransaction> setTxnOpt,
-            boolean shouldUpdateMetadata) {
+            boolean shouldUpdateMetadata,
+            boolean shouldUpdateProtocol) {
         this.isNewTable = isNewTable;
         this.dataPath = dataPath;
         this.logPath = logPath;
@@ -95,6 +99,7 @@ public class TransactionImpl
         this.metadata = metadata;
         this.setTxnOpt = setTxnOpt;
         this.shouldUpdateMetadata = shouldUpdateMetadata;
+        this.shouldUpdateProtocol = shouldUpdateProtocol;
     }
 
     @Override
@@ -120,11 +125,22 @@ public class TransactionImpl
                     "Transaction is already attempted to commit. Create a new transaction.");
 
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
+            CommitInfo attemptCommitInfo = generateCommitAction(engine);
+            if (attemptCommitInfo.getInCommitTimestamp().isPresent()) {
+                Optional<Metadata> metadataWithICTInfo =
+                        InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+                                engine,
+                                attemptCommitInfo.getInCommitTimestamp().get(),
+                                readSnapshot,
+                                metadata,
+                                readSnapshot.getVersion(engine) + 1L);
+                metadataWithICTInfo.ifPresent(this::updateMetadata);
+            }
             int numRetries = 0;
             do {
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
                 try {
-                    return doCommit(engine, commitAsVersion, dataActions);
+                    return doCommit(engine, commitAsVersion, attemptCommitInfo, dataActions);
                 } catch (FileAlreadyExistsException fnfe) {
                     logger.info("Concurrent write detected when committing as version = {}. " +
                             "Trying to resolve conflicts and retry commit.", commitAsVersion);
@@ -147,17 +163,23 @@ public class TransactionImpl
         throw new ConcurrentWriteException();
     }
 
+    private void updateMetadata(Metadata metadata) {
+        this.metadata = metadata;
+        this.shouldUpdateMetadata = true;
+    }
+
     private TransactionCommitResult doCommit(
             Engine engine,
             long commitAsVersion,
+            CommitInfo attemptCommitInfo,
             CloseableIterable<Row> dataActions)
             throws FileAlreadyExistsException {
         List<Row> metadataActions = new ArrayList<>();
-        metadataActions.add(createCommitInfoSingleAction(generateCommitAction()));
+        metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
         if (shouldUpdateMetadata || isNewTable) {
             metadataActions.add(createMetadataSingleAction(metadata.toRow()));
         }
-        if (isNewTable) {
+        if (shouldUpdateProtocol || isNewTable) {
             // In the future, we need to add metadata and action when there are any changes to them.
             metadataActions.add(createProtocolSingleAction(protocol.toRow()));
         }
@@ -203,15 +225,27 @@ public class TransactionImpl
         return setTxnOpt;
     }
 
-    private Row generateCommitAction() {
+    private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
+            Engine engine, long currentTimestamp) {
+        if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+            return Optional.of(currentTimestamp);
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    private CommitInfo generateCommitAction(Engine engine) {
+        long commitAttemptStartTime = System.currentTimeMillis();
         return new CommitInfo(
-                System.currentTimeMillis(), /* timestamp */
+                generateInCommitTimestampForFirstCommitAttempt(
+                        engine, commitAttemptStartTime),
+                commitAttemptStartTime, /* timestamp */
                 "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
                 operation.getDescription(), /* description */
                 getOperationParameters(), /* operationParameters */
                 isBlindAppend(), /* isBlindAppend */
                 txnId.toString() /* txnId */
-        ).toRow();
+        );
     }
 
     private boolean isReadyForCheckpoint(long newVersion) {

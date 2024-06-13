@@ -111,8 +111,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         boolean isNewTable = snapshot.getVersion(engine) < 0;
         validate(engine, snapshot, isNewTable);
 
-        Metadata  metadata = snapshot.getMetadata();
         boolean shouldUpdateMetadata = false;
+        boolean shouldUpdateProtocol = false;
+        Metadata metadata = snapshot.getMetadata();
+        Protocol protocol = snapshot.getProtocol();
         if (tableProperties.isPresent()) {
             Map<String, String> validatedProperties =
                     TableConfig.validateProperties(tableProperties.get());
@@ -121,6 +123,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             if (!newProperties.isEmpty()) {
                 shouldUpdateMetadata = true;
                 metadata = metadata.withNewConfiguration(newProperties);
+            }
+            Set<String> newWriterFeatures =
+                    protocol.extractAutomaticallyEnabledWriterFeatures(metadata);
+            if (!newWriterFeatures.isEmpty()) {
+                shouldUpdateProtocol = true;
+                protocol = protocol.withNewWriterFeatures(newWriterFeatures);
+                TableFeatures.validateWriteSupportedTable(
+                        protocol,
+                        metadata,
+                        metadata.getSchema(),
+                        table.getPath(engine));
             }
         }
 
@@ -131,10 +144,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 snapshot,
                 engineInfo,
                 operation,
-                snapshot.getProtocol(),
+                protocol,
                 metadata,
                 setTxnOpt,
-                shouldUpdateMetadata);
+                shouldUpdateMetadata,
+                shouldUpdateProtocol);
     }
 
     /**

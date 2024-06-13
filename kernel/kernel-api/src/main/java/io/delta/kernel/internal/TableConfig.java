@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -69,6 +70,45 @@ public class TableConfig<T> {
      * All the valid properties that can be set on the table.
      */
     private static final HashMap<String, TableConfig> validProperties = new HashMap<>();
+
+    /**
+     * This table property is used to track the enablement of the inCommitTimestamps.
+     */
+    public static final TableConfig<Boolean> IN_COMMIT_TIMESTAMPS_ENABLED = new TableConfig<>(
+            "delta.enableInCommitTimestamps-preview",
+            "false",
+            Boolean::valueOf,
+            value -> true,
+            "needs to be a boolean."
+    );
+
+    /**
+     * This table property is used to track the version of the table at which inCommitTimestamps
+     * were enabled.
+     */
+    public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION =
+            new TableConfig<>(
+                    "delta.inCommitTimestampEnablementVersion-preview",
+                    null,
+                    v -> Optional.ofNullable(v).map(Long::valueOf),
+                    value -> true,
+                    "needs to be a long."
+            );
+
+    /**
+     * This table property is used to track the timestamp at which inCommitTimestamps were enabled.
+     * More specifically, it is the inCommitTimestamp of the commit with the version specified in
+     * [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
+     */
+    public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP =
+            new TableConfig<>(
+                    "delta.inCommitTimestampEnablementTimestamp-preview",
+                    null,
+                    v -> Optional.ofNullable(v).map(Long::valueOf),
+                    value -> true,
+                    "needs to be a long."
+            );
+
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;
@@ -80,6 +120,15 @@ public class TableConfig<T> {
                 TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
         validProperties.put(
                 CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
+        validProperties.put(
+                IN_COMMIT_TIMESTAMPS_ENABLED.getKey().toLowerCase(Locale.ROOT),
+                IN_COMMIT_TIMESTAMPS_ENABLED);
+        validProperties.put(
+                IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey().toLowerCase(Locale.ROOT),
+                IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
+        validProperties.put(
+                IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey().toLowerCase(Locale.ROOT),
+                IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
     }
 
     private TableConfig(

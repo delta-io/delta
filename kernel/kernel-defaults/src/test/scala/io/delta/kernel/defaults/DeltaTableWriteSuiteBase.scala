@@ -15,18 +15,28 @@
  */
 package io.delta.kernel.defaults
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
-import io.delta.kernel.{Table, TransactionCommitResult}
 import io.delta.kernel.internal.actions.{Metadata, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.utils.FileStatus
+import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.Literal.ofInt
+import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.types.IntegerType.INTEGER
+import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import io.delta.kernel.utils.CloseableIterator
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -37,11 +47,40 @@ import java.io.File
 import java.nio.file.{Files, Paths}
 import java.util.Optional
 import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
 
 /**
  * Common utility methods for write test suites.
  */
 trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
+  val OBJ_MAPPER = new ObjectMapper()
+  val testEngineInfo = "test-engine"
+
+  /** Test table schemas and test */
+  val testSchema = new StructType().add("id", INTEGER)
+  val dataBatches1 = generateData(testSchema, Seq.empty, Map.empty, 200, 3)
+  val dataBatches2 = generateData(testSchema, Seq.empty, Map.empty, 400, 5)
+
+  val testPartitionColumns = Seq("part1", "part2")
+  val testPartitionSchema = new StructType()
+    .add("id", INTEGER)
+    .add("part1", INTEGER) // partition column
+    .add("part2", INTEGER) // partition column
+
+  val dataPartitionBatches1 = generateData(
+    testPartitionSchema,
+    testPartitionColumns,
+    Map("part1" -> ofInt(1), "part2" -> ofInt(2)),
+    batchSize = 237,
+    numBatches = 3)
+
+  val dataPartitionBatches2 = generateData(
+    testPartitionSchema,
+    testPartitionColumns,
+    Map("part1" -> ofInt(4), "part2" -> ofInt(5)),
+    batchSize = 876,
+    numBatches = 7)
+
   def withTempDirAndEngine(f: (String, Engine) => Unit): Unit = {
     val engine = DefaultEngine.create(new Configuration() {
       {
@@ -137,8 +176,125 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Optional.empty()
   }
 
+  def generateData(
+    schema: StructType,
+    partitionCols: Seq[String],
+    partitionValues: Map[String, Literal],
+    batchSize: Int,
+    numBatches: Int): Seq[FilteredColumnarBatch] = {
+    val partitionValuesSchemaCase =
+      casePreservingPartitionColNames(partitionCols.asJava, partitionValues.asJava)
+
+    var batches = Seq.empty[ColumnarBatch]
+    for (_ <- 0 until numBatches) {
+      var vectors = Seq.empty[ColumnVector]
+      schema.fields().forEach { field =>
+        val colType = field.getDataType
+        val partValue = partitionValuesSchemaCase.get(field.getName)
+        if (partValue != null) {
+          // handle the partition column by inserting a vector with single value
+          val vector = testSingleValueVector(colType, batchSize, partValue.getValue)
+          vectors = vectors :+ vector
+        } else {
+          // handle the regular columns
+          val vector = testColumnVector(batchSize, colType)
+          vectors = vectors :+ vector
+        }
+      }
+      batches = batches :+ new DefaultColumnarBatch(batchSize, schema, vectors.toArray)
+    }
+    batches.map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
+  }
+
+  def createWriteTxnBuilder(table: Table): TransactionBuilder = {
+    table.createTransactionBuilder(defaultEngine, testEngineInfo, Operation.WRITE)
+  }
+
+  def stageData(
+    state: Row,
+    partitionValues: Map[String, Literal],
+    data: Seq[FilteredColumnarBatch])
+  : CloseableIterator[Row] = {
+    val physicalDataIter = Transaction.transformLogicalData(
+      defaultEngine,
+      state,
+      toCloseableIterator(data.toIterator.asJava),
+      partitionValues.asJava)
+
+    val writeContext = Transaction.getWriteContext(defaultEngine, state, partitionValues.asJava)
+
+    val writeResultIter = defaultEngine
+      .getParquetHandler
+      .writeParquetFiles(
+        writeContext.getTargetDirectory,
+        physicalDataIter,
+        writeContext.getStatisticsColumns)
+
+    Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
+  }
+
+  def createTxn(
+    engine: Engine = defaultEngine,
+    tablePath: String,
+    isNewTable: Boolean = false,
+    schema: StructType = null,
+    partCols: Seq[String] = null,
+    tableProperties: Map[String, String] = null): Transaction = {
+
+    var txnBuilder = createWriteTxnBuilder(
+      Table.forPath(engine, tablePath))
+
+    if (isNewTable) {
+      txnBuilder = txnBuilder.withSchema(engine, schema)
+        .withPartitionColumns(engine, partCols.asJava)
+    }
+
+    if (tableProperties != null) {
+      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+
+    txnBuilder.build(engine)
+  }
+
+  def appendData(
+    engine: Engine = defaultEngine,
+    tablePath: String,
+    isNewTable: Boolean = false,
+    schema: StructType = null,
+    partCols: Seq[String] = null,
+    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
+    tableProperties: Map[String, String] = null): TransactionCommitResult = {
+
+    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties)
+    val txnState = txn.getTransactionState(engine)
+
+    val actions = data.map { case (partValues, partData) =>
+      stageData(txnState, partValues, partData)
+    }
+
+    val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
+    txn.commit(engine, combineActions)
+  }
+
   def assertMetadataProp(
     snapshot: SnapshotImpl, key: TableConfig[_ <: Any], expectedValue: Any): Unit = {
     assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
+  }
+
+  def setTablePropAndVerify(
+    engine: Engine,
+    tablePath: String,
+    isNewTable: Boolean = true,
+    key: TableConfig[_ <: Any], value: String, expectedValue: Any): Unit = {
+
+    val table = Table.forPath(engine, tablePath)
+
+    createTxn(
+      engine,
+      tablePath, isNewTable, testSchema, Seq.empty, tableProperties = Map(key.getKey -> value))
+      .commit(engine, emptyIterable())
+
+    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    assertMetadataProp(snapshot, key, expectedValue)
   }
 }

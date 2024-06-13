@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.actions;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 import io.delta.kernel.data.*;
 import io.delta.kernel.types.ArrayType;
@@ -23,6 +24,7 @@ import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
+import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
@@ -53,7 +55,7 @@ public class Protocol {
     private final int minReaderVersion;
     private final int minWriterVersion;
     private final List<String> readerFeatures;
-    private final List<String> writerFeatures;
+    private List<String> writerFeatures;
 
     public Protocol(
         int minReaderVersion,
@@ -106,5 +108,28 @@ public class Protocol {
         protocolMap.put(3, stringArrayValue(writerFeatures));
 
         return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
+    }
+
+    public Protocol withNewWriterFeatures(Set<String> writerFeatures) {
+        List<String> newWriterFeatures = new ArrayList<>(writerFeatures);
+        if (this.writerFeatures != null) {
+            newWriterFeatures.addAll(this.writerFeatures);
+        }
+        this.writerFeatures = newWriterFeatures;
+        return this;
+    }
+
+    /**
+     * Extract the writer features that should be enabled automatically based on the metadata which
+     * are not already enabled.
+     *
+     * @param metadata the metadata of the table
+     * @return the writer features that should be enabled automatically
+     */
+    public Set<String> extractAutomaticallyEnabledWriterFeatures(Metadata metadata) {
+        return TableFeatures.supportedWriterFeatures.stream()
+                .filter(f -> TableFeatures.metadataRequiresWriterFeatureToBeEnabled(metadata, f))
+                .filter(f -> writerFeatures == null || !writerFeatures.contains(f))
+                .collect(Collectors.toSet());
     }
 }
