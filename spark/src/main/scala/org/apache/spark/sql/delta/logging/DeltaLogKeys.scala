@@ -44,8 +44,10 @@ import org.apache.spark.internal.LogKeyShims
  * Various keys used for mapped diagnostic contexts(MDC) in logging. All structured logging keys
  * should be defined here for standardization.
  */
-object LogKeys {
+trait DeltaLogKeysBase {
   case object EXECUTOR_ID extends LogKeyShims
   case object MAX_SIZE extends LogKeyShims
   case object MIN_SIZE extends LogKeyShims
 }
+
+object DeltaLogKeys extends DeltaLogKeysBase

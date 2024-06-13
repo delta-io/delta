@@ -38,8 +38,6 @@
 
 package org.apache.spark.internal
 
-import java.util.Locale
-
 // LogKey is part of Spark's Structured Logging API and is not available in Spark 3.5.
 trait LogKeyShims {
   def name: String = ""

@@ -38,8 +38,6 @@
 
 package org.apache.spark.internal
 
-import org.apache.logging.log4j.CloseableThreadContext
-
 // MDC is part of Spark's Structured Logging API and is not available in Spark 3.5.
 case class MDC(key: LogKeyShims, value: Any) {
   require(!value.isInstanceOf[MessageWithContext],

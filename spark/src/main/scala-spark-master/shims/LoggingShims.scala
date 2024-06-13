@@ -49,7 +49,7 @@ package org.apache.spark.internal
  * This allows for structured logging and better log analysis.
  * <p>
  *
- * logInfo(log"Trying to recover app: ${MDC(LogKeys.APP_ID, app.id)}")
+ * logInfo(log"Trying to recover app: ${MDC(DeltaLogKeys.APP_ID, app.id)}")
  * <p>
  *
  * Constant String Messages:

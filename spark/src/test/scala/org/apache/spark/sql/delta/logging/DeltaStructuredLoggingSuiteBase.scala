@@ -43,12 +43,13 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.regex.Pattern
 
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.logging.log4j.Level
 import org.scalatest.funsuite.AnyFunSuite // scalastyle:ignore funsuite
 
 import org.apache.spark.internal.{LogEntry, LoggingShims, LogKeyShims, MDC}
 
-trait LoggingSuiteBase
+trait DeltaStructuredLoggingSuiteBase
   extends AnyFunSuite // scalastyle:ignore funsuite
     with LoggingShims {
   def className: String
@@ -74,14 +75,15 @@ trait LoggingSuiteBase
 
   def basicMsg: String = "This is a log message"
 
-  def msgWithMDC: LogEntry = log"Lost executor ${MDC(LogKeys.EXECUTOR_ID, "1")}."
+  def msgWithMDC: LogEntry = log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, "1")}."
 
-  def msgWithMDCValueIsNull: LogEntry = log"Lost executor ${MDC(LogKeys.EXECUTOR_ID, null)}."
+  def msgWithMDCValueIsNull: LogEntry = log"Lost executor ${MDC(DeltaLogKeys.EXECUTOR_ID, null)}."
 
-  def msgWithMDCAndException: LogEntry = log"Error in executor ${MDC(LogKeys.EXECUTOR_ID, "1")}."
+  def msgWithMDCAndException: LogEntry =
+    log"Error in executor ${MDC(DeltaLogKeys.EXECUTOR_ID, "1")}."
 
-  def msgWithConcat: LogEntry = log"Min Size: ${MDC(LogKeys.MIN_SIZE, "2")}, " +
-    log"Max Size: ${MDC(LogKeys.MAX_SIZE, "4")}. " +
+  def msgWithConcat: LogEntry = log"Min Size: ${MDC(DeltaLogKeys.MIN_SIZE, "2")}, " +
+    log"Max Size: ${MDC(DeltaLogKeys.MAX_SIZE, "4")}. " +
     log"Please double check."
 
   // test for basic message (without any mdc)

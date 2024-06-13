@@ -46,7 +46,7 @@ package org.apache.spark.internal
  * Follow these guidelines when adding a new LogKey:
  * <ul>
  *   <li>
- *     Define all structured logging keys in `LogKeys.scala`, and sort them alphabetically for
+ *     Define all structured logging keys in `DeltaLogKeys.scala`, and sort them alphabetically for
  *     ease of search.
  *   </li>
  *   <li>

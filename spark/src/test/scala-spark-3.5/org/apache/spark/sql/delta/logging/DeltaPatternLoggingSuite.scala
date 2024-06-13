@@ -42,7 +42,7 @@ import java.util.regex.Pattern
 
 import org.apache.logging.log4j.Level
 
-class DeltaPatternLoggingSuite extends LoggingSuiteBase {
+class DeltaPatternLoggingSuite extends DeltaStructuredLoggingSuiteBase {
   override def className: String = classOf[DeltaPatternLoggingSuite].getSimpleName
   override def logFilePath: String = "target/pattern.log"
 

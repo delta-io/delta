@@ -38,13 +38,13 @@
 
 package org.apache.spark.sql.delta.logging
 
+import java.util.regex.Pattern
+
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.apache.logging.log4j.Level
 
-import org.apache.spark.internal.MDC
-
-class DeltaStructuredLoggingSuite extends LoggingSuiteBase {
+class DeltaStructuredLoggingSuite extends DeltaStructuredLoggingSuiteBase {
   override def className: String = classOf[DeltaStructuredLoggingSuite].getSimpleName
   override def logFilePath: String = "target/structured.log"
 
@@ -171,6 +171,7 @@ class DeltaStructuredLoggingSuite extends LoggingSuiteBase {
           },
           "logger": "$className"
         }""")
-    assert(pattern1.r.matches(logOutput) || pattern2.r.matches(logOutput))
+    assert(Pattern.compile(pattern1).matcher(logOutput).matches() ||
+      Pattern.compile(pattern2).matcher(logOutput).matches())
   }
 }
