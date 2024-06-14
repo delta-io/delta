@@ -135,27 +135,27 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
         }
 
         // checkpointId is the checkpoint id that this data WILL be checkpointed into
-        if (lastSnapshottedCheckpointId != -1 && nextCheckpointId != lastSnapshottedCheckpointId + 1) {
-            LOG.info(
-                String.format(
-                    "Scott > DeltaSinkWriter[%s] > write :: weird state where nextCheckpointId=%s but lastSnapshottedCheckpointId=%s",
-                    writerId,
-                    nextCheckpointId,
-                    lastSnapshottedCheckpointId
-                )
-            );
-        }
-
-//        if (failCount < 1 && nextCheckpointId > 2 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 200 == 0) {
-//            failCount++;
-//
-//            int totalRowsBuffered = writerTasksByPartition.values().stream()
-//                .mapToInt(DeltaSinkWriterTask::getBufferSize)
-//                .sum();
-//            final String msg = String.format("RANDOM FAILURE ---- Scott > DeltaSinkWriter[%s] > write :: element=%s :: nextCheckpointId=%s, lastSnapshottedCheckpointId=%s, totalRowsBuffered=%s", writerId, element, nextCheckpointId, lastSnapshottedCheckpointId, totalRowsBuffered);
-//            LOG.info(msg);
-//            throw new RuntimeException("!!!!!" + msg);
+//        if (lastSnapshottedCheckpointId != -1 && nextCheckpointId != lastSnapshottedCheckpointId + 1) {
+//            LOG.info(
+//                String.format(
+//                    "Scott > DeltaSinkWriter[%s] > write :: weird state where nextCheckpointId=%s but lastSnapshottedCheckpointId=%s",
+//                    writerId,
+//                    nextCheckpointId,
+//                    lastSnapshottedCheckpointId
+//                )
+//            );
 //        }
+
+        if (failCount < 1 && nextCheckpointId > 2 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 200 == 0) {
+            failCount++;
+
+            int totalRowsBuffered = writerTasksByPartition.values().stream()
+                .mapToInt(DeltaSinkWriterTask::getBufferSize)
+                .sum();
+            final String msg = String.format("RANDOM FAILURE ---- Scott > DeltaSinkWriter[%s] > write :: element=%s :: nextCheckpointId=%s, lastSnapshottedCheckpointId=%s, totalRowsBuffered=%s", writerId, element, nextCheckpointId, lastSnapshottedCheckpointId, totalRowsBuffered);
+            LOG.info(msg);
+            throw new RuntimeException("!!!!!" + msg);
+        }
 
         final Map<String, Literal> partitionValues =
             DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, element, tablePartitionColumns);

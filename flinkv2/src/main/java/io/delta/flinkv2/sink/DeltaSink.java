@@ -120,7 +120,7 @@ public class DeltaSink implements Sink<RowData>,
                 context.getRestoredCheckpointId()
             )
         );
-        return new DeltaCommitter(tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
+        return new DeltaCommitter(appId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
     }
 
     /**
