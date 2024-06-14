@@ -284,7 +284,8 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
 }
 
 object UpdateCatalog {
-  private var tp: ExecutionContext = _
+  // Exposed for testing.
+  private[delta] var tp: ExecutionContext = _
 
   // This is the encoding of the database for the Hive MetaStore
   private val latin1 = Charset.forName("ISO-8859-1")

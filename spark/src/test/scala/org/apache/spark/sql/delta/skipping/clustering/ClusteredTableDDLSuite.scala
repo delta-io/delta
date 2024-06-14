@@ -22,9 +22,10 @@ import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
+import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
@@ -40,6 +41,16 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key, "true")
+  }
+
+  override def afterAll(): Unit = {
+    // Reset UpdateCatalog's thread pool to ensure it is re-initialized in the next test suite.
+    // This is necessary because the [[SparkThreadLocalForwardingThreadPoolExecutor]]
+    // retains a reference to the SparkContext. Without resetting, the new test suite would
+    // reuse the same SparkContext from the previous suite, despite it being stopped.
+    UpdateCatalog.tp = null
+
+    super.afterAll()
   }
 
   protected val testTable: String = "test_ddl_table"
@@ -479,11 +490,16 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
 }
 
 trait ClusteredTableDDLWithColumnMapping
-  extends QueryTest
-    with DeltaSQLCommandTest
-    with ClusteredTableTestUtils {
+  extends ClusteredTableCreateOrReplaceDDLSuite
+    with DeltaColumnMappingSelectedTestMixin {
 
-  protected val testTable: String = "test_column_mapping_table"
+  override protected def runOnlyTests: Seq[String] = Seq(
+    "validate dropping clustering column is not allowed: single clustering column",
+    "validate dropping clustering column is not allowed: multiple clustering columns",
+    "validate dropping clustering column is not allowed: clustering column + " +
+      "non-clustering column",
+    "validate RESTORE on clustered table"
+  )
 
   test("validate dropping clustering column is not allowed: single clustering column") {
     withClusteredTable(testTable, "col1 INT, col2 STRING, col3 LONG", "col1") {
@@ -923,8 +939,14 @@ trait ClusteredTableDDLSuiteBase
 
 trait ClusteredTableDDLSuite extends ClusteredTableDDLSuiteBase
 
+trait ClusteredTableDDLWithNameColumnMapping
+  extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableNameMode
+
+trait ClusteredTableDDLWithIdColumnMapping
+  extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableIdMode
+
 trait ClusteredTableDDLWithV2Base
-  extends ClusteredTableDDLSuite
+  extends ClusteredTableCreateOrReplaceDDLSuite
     with SharedSparkSession {
   override protected def supportedClauses: Seq[String] = Seq("CREATE", "REPLACE")
 
@@ -1165,23 +1187,13 @@ class ClusteredTableDDLDataSourceV2Suite
   extends ClusteredTableDDLDataSourceV2SuiteBase
 
 class ClusteredTableDDLDataSourceV2IdColumnMappingSuite
-  extends ClusteredTableDDLWithColumnMappingV2
-    with DeltaColumnMappingEnableIdMode {
-  override protected def runOnlyTests: Seq[String] = Seq(
-    "validate dropping clustering column is not allowed: single clustering column",
-    "validate dropping clustering column is not allowed: multiple clustering columns",
-    "validate dropping clustering column is not allowed: clustering column + " +
-    "non-clustering column"
-  )
-}
+  extends ClusteredTableDDLWithIdColumnMapping
+    with ClusteredTableDDLWithV2
+    with ClusteredTableDDLWithColumnMappingV2
+    with ClusteredTableDDLSuite
 
 class ClusteredTableDDLDataSourceV2NameColumnMappingSuite
-  extends ClusteredTableDDLWithColumnMappingV2
-    with DeltaColumnMappingEnableNameMode {
-  override protected def runOnlyTests: Seq[String] = Seq(
-    "validate dropping clustering column is not allowed: single clustering column",
-    "validate dropping clustering column is not allowed: multiple clustering columns",
-    "validate dropping clustering column is not allowed: clustering column + " +
-    "non-clustering column"
-  )
-}
+  extends ClusteredTableDDLWithNameColumnMapping
+    with ClusteredTableDDLWithV2
+    with ClusteredTableDDLWithColumnMappingV2
+    with ClusteredTableDDLSuite
