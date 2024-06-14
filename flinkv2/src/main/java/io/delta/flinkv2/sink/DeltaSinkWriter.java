@@ -23,8 +23,7 @@ import java.io.IOException;
 import java.util.*;
 
 // TODO: implement stateful sink writer
-public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommittable>,
-    StatefulSinkWriter<RowData, DeltaSinkWriterState> {
+public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommittable>, StatefulSinkWriter<RowData, DeltaSinkWriterState> {
     private static final Logger LOG = LoggerFactory.getLogger(DeltaSinkWriter.class);
     
     static int numWrittenElements = 0;
@@ -46,18 +45,25 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
 
     private Map<Map<String, Literal>, DeltaSinkWriterTask> writerTasksByPartition;
 
-    public static DeltaSinkWriter restoreWriter(String appId, String writerId, long checkpointId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns, OptionalLong restoredCheckpointId) {
-        return new DeltaSinkWriter(appId, writerId, checkpointId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, restoredCheckpointId);
+    public static DeltaSinkWriter restoreWriter(String appId, String writerId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns, OptionalLong restoredCheckpointId) {
+        return new DeltaSinkWriter(appId, writerId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, restoredCheckpointId);
     }
 
     public static DeltaSinkWriter createNewWriter(String appId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns, OptionalLong restoredCheckpointId) {
-        return new DeltaSinkWriter(appId, java.util.UUID.randomUUID().toString(), 1, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, restoredCheckpointId);
+        return new DeltaSinkWriter(appId, java.util.UUID.randomUUID().toString(), tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, restoredCheckpointId);
     }
 
-    private DeltaSinkWriter(String appId, String writerId, long nextCheckpointId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns, OptionalLong restoredCheckpointId) {
+    private DeltaSinkWriter(String appId, String writerId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns, OptionalLong restoredCheckpointId) {
+        if (restoredCheckpointId.isPresent()) {
+            // restoredCheckpointId is the last successful checkpointId that was checkpointed and committed
+            // thus, the *next* checkpointId is clearly 1 more than that
+            this.nextCheckpointId = restoredCheckpointId.getAsLong() + 1;
+        } else {
+            this.nextCheckpointId = 1;
+        }
+
         this.appId = appId;
         this.writerId = writerId;
-        this.nextCheckpointId = nextCheckpointId;
         this.engine = DefaultEngine.create(new Configuration());
         this.writeOperatorFlinkSchema = writeOperatorFlinkSchema;
         this.writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(writeOperatorFlinkSchema);
@@ -140,7 +146,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
             );
         }
 
-//        if (failCount < 2 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 200 == 0) {
+//        if (failCount < 1 && nextCheckpointId > 2 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 200 == 0) {
 //            failCount++;
 //
 //            int totalRowsBuffered = writerTasksByPartition.values().stream()
@@ -243,6 +249,7 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
 
         LOG.info(String.format("Scott > DeltaSinkWriter[%s] > snapshotState :: checkpointIdToSnapshot=%s, nextCheckpointId=%s, ---- %s", writerId, latestCheckpointId, nextCheckpointId, this));
 
+        // WE DONT NEED THIS INFO AT ALL
         // nextCheckpointId + 1 because:
         // we are checkpointing version N
         // nextCheckpointId is N + 1 (all future writes will be a part of checkpoint N + 1)

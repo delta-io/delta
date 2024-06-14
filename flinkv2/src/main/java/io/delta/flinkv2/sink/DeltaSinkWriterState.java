@@ -7,7 +7,7 @@ import java.io.*;
 public class DeltaSinkWriterState {
     private final String appId;
     private final String writerId;
-    private final long checkpointId;
+    private final long checkpointId; // we don't need this at all
 
     public DeltaSinkWriterState(String appId, String writerId, long checkpointId) {
         this.appId = appId;

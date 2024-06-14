@@ -178,7 +178,6 @@ public class DeltaSink implements Sink<RowData>,
             .map(DeltaSinkWriterState::getWriterId)
             .collect(Collectors.toSet());
 
-        LOG.info(String.format("Scott > DeltaSink > restoreWriter :: writerIds=%s, context.getRestoredCheckpointId=%s", writerIds, context.getRestoredCheckpointId()));
         if (writerIds.size() != 1) {
             String msg = String.format("ERROR: restoreWriter called with # writerIds != 1. writerIds=%s", writerIds);
             LOG.info(msg);
@@ -187,7 +186,9 @@ public class DeltaSink implements Sink<RowData>,
 
         DeltaSinkWriterState state = recoveredState.stream().findFirst().get();
 
-        return DeltaSinkWriter.restoreWriter(state.getAppId(), state.getWriterId(), state.getCheckpointId(), tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
+        LOG.info(String.format("Scott > DeltaSink > restoreWriter :: writerId=%s, context.getRestoredCheckpointId=%s, writerStateNextCheckpointId=%s", state.getWriterId(), context.getRestoredCheckpointId(), state.getCheckpointId()));
+
+        return DeltaSinkWriter.restoreWriter(state.getAppId(), state.getWriterId(), tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
     }
 
     @Override
