@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEna
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
-import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
@@ -36,6 +36,11 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructTy
 trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   with SharedSparkSession
   with ClusteredTableTestUtils {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key, "true")
+  }
 
   protected val testTable: String = "test_ddl_table"
   protected val sourceTable: String = "test_ddl_source"
@@ -474,16 +479,11 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
 }
 
 trait ClusteredTableDDLWithColumnMapping
-  extends ClusteredTableCreateOrReplaceDDLSuite
-    with DeltaColumnMappingSelectedTestMixin {
+  extends QueryTest
+    with DeltaSQLCommandTest
+    with ClusteredTableTestUtils {
 
-  override protected def runOnlyTests: Seq[String] = Seq(
-    "validate dropping clustering column is not allowed: single clustering column",
-    "validate dropping clustering column is not allowed: multiple clustering columns",
-    "validate dropping clustering column is not allowed: clustering column + " +
-      "non-clustering column",
-    "validate RESTORE on clustered table"
-  )
+  protected val testTable: String = "test_column_mapping_table"
 
   test("validate dropping clustering column is not allowed: single clustering column") {
     withClusteredTable(testTable, "col1 INT, col2 STRING, col3 LONG", "col1") {
@@ -602,6 +602,17 @@ trait ClusteredTableDDLSuiteBase
       // Nested column scenario.
       sql(s"ALTER TABLE $testTable CLUSTER BY (a.b, id)")
       verifyClusteringColumns(tableIdentifier, "a.b,id")
+    }
+  }
+
+  test("alter table cluster by - catalog reflects clustering columns when reordered") {
+    withClusteredTable(testTable, "id INT, a STRUCT<b INT, c STRING>, name STRING", "id, name") {
+      val tableIdentifier = TableIdentifier(testTable)
+      verifyClusteringColumns(tableIdentifier, "id,name")
+
+      // Re-order the clustering keys and validate the catalog sees the correctly reordered keys.
+      sql(s"ALTER TABLE $testTable CLUSTER BY (name, id)")
+      verifyClusteringColumns(tableIdentifier, "name,id")
     }
   }
 
@@ -840,7 +851,7 @@ trait ClusteredTableDDLSuiteBase
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
       val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
-      verifyClusteringColumns(tableIdentifier, "")
+      verifyClusteringColumns(tableIdentifier, "", skipCatalogCheck = true)
     }
 
     // Scenario 2: restore clustered table to previous clustering columns.
@@ -851,7 +862,7 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(tableIdentifier, "b")
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, "a")
+      verifyClusteringColumns(tableIdentifier, "a", skipCatalogCheck = true)
     }
 
     // Scenario 3: restore from table with clustering columns to non-empty clustering columns
@@ -862,7 +873,7 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(tableIdentifier, "")
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, "a")
+      verifyClusteringColumns(tableIdentifier, "a", skipCatalogCheck = true)
     }
 
     // Scenario 4: restore to start version.
@@ -872,7 +883,7 @@ trait ClusteredTableDDLSuiteBase
       sql(s"INSERT INTO $testTable VALUES (1)")
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, "a")
+      verifyClusteringColumns(tableIdentifier, "a", skipCatalogCheck = true)
     }
 
     // Scenario 5: restore unclustered table to unclustered table.
@@ -911,14 +922,9 @@ trait ClusteredTableDDLSuiteBase
 }
 
 trait ClusteredTableDDLSuite extends ClusteredTableDDLSuiteBase
-trait ClusteredTableDDLWithNameColumnMapping
-  extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableNameMode
-
-trait ClusteredTableDDLWithIdColumnMapping
-  extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableIdMode
 
 trait ClusteredTableDDLWithV2Base
-  extends ClusteredTableCreateOrReplaceDDLSuite
+  extends ClusteredTableDDLSuite
     with SharedSparkSession {
   override protected def supportedClauses: Seq[String] = Seq("CREATE", "REPLACE")
 
@@ -1159,13 +1165,23 @@ class ClusteredTableDDLDataSourceV2Suite
   extends ClusteredTableDDLDataSourceV2SuiteBase
 
 class ClusteredTableDDLDataSourceV2IdColumnMappingSuite
-  extends ClusteredTableDDLWithIdColumnMapping
-    with ClusteredTableDDLWithV2
-    with ClusteredTableDDLWithColumnMappingV2
-    with ClusteredTableDDLSuite
+  extends ClusteredTableDDLWithColumnMappingV2
+    with DeltaColumnMappingEnableIdMode {
+  override protected def runOnlyTests: Seq[String] = Seq(
+    "validate dropping clustering column is not allowed: single clustering column",
+    "validate dropping clustering column is not allowed: multiple clustering columns",
+    "validate dropping clustering column is not allowed: clustering column + " +
+    "non-clustering column"
+  )
+}
 
 class ClusteredTableDDLDataSourceV2NameColumnMappingSuite
-  extends ClusteredTableDDLWithNameColumnMapping
-    with ClusteredTableDDLWithV2
-    with ClusteredTableDDLWithColumnMappingV2
-    with ClusteredTableDDLSuite
+  extends ClusteredTableDDLWithColumnMappingV2
+    with DeltaColumnMappingEnableNameMode {
+  override protected def runOnlyTests: Seq[String] = Seq(
+    "validate dropping clustering column is not allowed: single clustering column",
+    "validate dropping clustering column is not allowed: multiple clustering columns",
+    "validate dropping clustering column is not allowed: clustering column + " +
+    "non-clustering column"
+  )
+}
