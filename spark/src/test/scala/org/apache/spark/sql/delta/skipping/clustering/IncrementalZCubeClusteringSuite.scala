@@ -240,7 +240,7 @@ class IncrementalZCubeClusteringSuite extends QueryTest
         assert(getZCubeIds(table).size == 2)
 
         sql(s"ALTER TABLE $table CLUSTER BY (col2, col1)")
-        verifyClusteringColumns(TableIdentifier(table), "col2, col1")
+        verifyClusteringColumns(TableIdentifier(table), Seq("col2", "col1"))
         // Incremental clustering won't touch those clustered files with different clustering
         // columns, so re-clustering should be a no-op.
         withSQLConf(
