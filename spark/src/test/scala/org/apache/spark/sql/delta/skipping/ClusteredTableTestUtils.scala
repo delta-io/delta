@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{CLUSTERING_PARAMETER_KEY, ZORDER_PARAMETER_KEY}
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.junit.Assert.assertEquals
 
@@ -232,6 +233,9 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
       return
     }
 
+    val updateCatalogEnabled = spark.conf.get(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)
+    assert(updateCatalogEnabled,
+      "need to enable [[DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED]] to verify catalog updates.")
     UpdateCatalog.awaitCompletion(10000)
     val catalog = spark.sessionState.catalog
     catalog.refreshTable(tableIdentifier)
