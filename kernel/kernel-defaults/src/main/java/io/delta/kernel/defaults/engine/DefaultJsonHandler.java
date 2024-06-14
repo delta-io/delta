@@ -90,8 +90,8 @@ public class DefaultJsonHandler implements JsonHandler {
             // JSON reader
             return DataTypeParser.parseSchema(defaultObjectReader.readTree(structTypeJson));
         } catch (JsonProcessingException ex) {
-            throw new RuntimeException(
-                format("Could not parse JSON: %s", structTypeJson), ex);
+            throw new KernelEngineException(
+                format("Could not parse schema given as JSON string: %s", structTypeJson), ex);
         }
     }
 

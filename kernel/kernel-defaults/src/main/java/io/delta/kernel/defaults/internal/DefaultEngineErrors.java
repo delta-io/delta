@@ -21,9 +21,11 @@ import io.delta.kernel.expressions.Expression;
 
 public class DefaultEngineErrors {
 
-    public static IllegalArgumentException canNotInstantiateLogStore(String logStoreClassName) {
-        return new IllegalArgumentException(
-                format("Can not instantiate `LogStore` class: %s", logStoreClassName));
+    public static IllegalArgumentException canNotInstantiateLogStore(
+            String logStoreClassName, String context, Exception cause) {
+        String msg =
+                format("Can not instantiate `LogStore` class (%s): %s", context, logStoreClassName);
+        return new IllegalArgumentException(msg, cause);
     }
 
     /**
