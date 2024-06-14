@@ -156,7 +156,6 @@ public class TransactionImpl
         metadataActions.add(createCommitInfoSingleAction(generateCommitAction()));
         if (shouldUpdateMetadata || isNewTable) {
             metadataActions.add(createMetadataSingleAction(metadata.toRow()));
-            shouldUpdateMetadata = false;
         }
         if (isNewTable) {
             // In the future, we need to add metadata and action when there are any changes to them.

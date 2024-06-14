@@ -21,7 +21,10 @@ import java.util.Map;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
+import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.internal.TableConfig;
 
 /**
  * Builder for creating a {@link Transaction} to mutate a Delta table.
@@ -72,11 +75,14 @@ public interface TransactionBuilder {
 
     /**
      * Set the table properties for the table. When the table already contains the property with
-     * same key, it gets replaced.
+     * same key, it gets replaced if it doesn't have the same value.
      *
      * @param engine     {@link Engine} instance to use.
      * @param properties The table properties to set. These are key-value pairs that can be used to
      *                   configure the table. And these properties are stored in the table metadata.
+     * @throws InvalidConfigurationValueException if the value of the property is invalid.
+     * @throws UnknownConfigurationException if any of the properties are unknown to
+     *                                      {@link TableConfig}.
      *
      * @return updated {@link TransactionBuilder} instance.
      *

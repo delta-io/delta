@@ -88,7 +88,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     @Override
     public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
-        this.tableProperties = Optional.of(properties);
+        this.tableProperties = Optional.of(new HashMap<>(properties));
         return this;
     }
 
@@ -112,9 +112,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         validate(engine, snapshot, isNewTable);
 
         Metadata  metadata = snapshot.getMetadata();
+        boolean shouldUpdateMetadata = false;
         if (tableProperties.isPresent()) {
             TableConfig.validateProperties(tableProperties.get());
-            metadata = metadata.withNewConfiguration(tableProperties.get());
+            Map<String, String> newProperties =
+                    metadata.filterOutUnchangedProperties(tableProperties.get());
+            if (!newProperties.isEmpty()) {
+                shouldUpdateMetadata = true;
+                metadata = metadata.withNewConfiguration(newProperties);
+            }
         }
 
         return new TransactionImpl(
@@ -127,7 +133,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 snapshot.getProtocol(),
                 metadata,
                 setTxnOpt,
-                tableProperties.isPresent());
+                shouldUpdateMetadata);
     }
 
     /**

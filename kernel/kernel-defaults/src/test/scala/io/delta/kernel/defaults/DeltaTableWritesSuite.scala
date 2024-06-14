@@ -170,12 +170,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   test("create table and set properties") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn1 = createTxn(engine, tablePath, true, testSchema, Seq.empty)
+      val txn1 = createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
 
       txn1.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
-      assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver0Snapshot.getMetadata) == 10)
+      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
       val txn2 = createTxn(
         engine,
@@ -185,7 +185,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       txn2.commit(engine, emptyIterable())
 
       val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
-      assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver1Snapshot.getMetadata) == 2)
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
 
@@ -195,14 +195,14 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txn = createTxn(
         engine,
         tablePath,
-        true,
+        isNewTable = true,
         testSchema,
         Seq.empty, tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
 
       txn.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
-      assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver0Snapshot.getMetadata) == 2)
+      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
 
       appendData(
         engine,
@@ -210,22 +210,52 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         data = Seq(Map.empty[String, Literal] -> dataBatches1)
       )
       val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
-      assert(TableConfig.CHECKPOINT_INTERVAL.fromMetadata(ver1Snapshot.getMetadata) == 2)
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+    }
+  }
+
+  test("create table and configure properties with retries") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table
+      val table = Table.forPath(engine, tablePath)
+      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+        .commit(engine, emptyIterable())
+      // Create txn1 with config changes
+      val txn1 = createTxn(
+        engine,
+        tablePath,
+        tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
+      // Create and commit txn2
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1)
+      )
+      // Try to commit txn1
+      txn1.commit(engine, emptyIterable())
+
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+
+      val ver2Snapshot = table.getSnapshotAsOfVersion(engine, 2).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
 
   test("create table - invalid properties - expect failure") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val ex1 = intercept[UnknownConfigurationKeyException] {
-        createTxn(engine, tablePath, true, testSchema, Seq.empty, Map("invalid key" -> "10"))
+      val ex1 = intercept[UnknownConfigurationException] {
+        createTxn(
+          engine, tablePath, isNewTable = true, testSchema, Seq.empty, Map("invalid key" -> "10"))
       }
       assert(ex1.getMessage.contains("Unknown configuration was specified: invalid key"))
 
-      val ex2 = intercept[IllegalConfigurationValueException] {
+      val ex2 = intercept[InvalidConfigurationValueException] {
         createTxn(
           engine,
           tablePath,
-          true, testSchema, Seq.empty, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "-1"))
+          isNewTable = true,
+          testSchema, Seq.empty, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "-1"))
       }
       assert(
         ex2.getMessage.contains(
@@ -916,6 +946,11 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         verifyWrittenContent(tablePath, testSchema, expData)
       }
     }
+  }
+
+  def assertMetadataProp(
+    snapshot: SnapshotImpl, key: TableConfig[_ <: Any], expectedValue: Any): Unit = {
+    assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
   }
 
   def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {

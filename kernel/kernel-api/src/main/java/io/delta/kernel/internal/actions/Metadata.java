@@ -79,8 +79,8 @@ public class Metadata {
     private final StructType schema;
     private final ArrayValue partitionColumns;
     private final Optional<Long> createdTime;
-    private MapValue configurationMapValue;
-    private Lazy<Map<String, String>> configuration;
+    private final MapValue configurationMapValue;
+    private final Lazy<Map<String, String>> configuration;
     // Partition column names in lower case.
     private final Lazy<Set<String>> partitionColNames;
     // Logical data schema excluding partition columns
@@ -178,6 +178,21 @@ public class Metadata {
 
     public Map<String, String> getConfiguration() {
         return Collections.unmodifiableMap(configuration.get());
+    }
+
+    /**
+     * Filter out the key-value pair matches exactly with the old properties.
+     *
+     * @param newProperties the new properties to be filtered
+     *
+     * @return the filtered properties
+     */
+    public Map<String, String> filterOutUnchangedProperties(Map<String, String> newProperties) {
+        Map<String, String> oldProperties = getConfiguration();
+        return newProperties.entrySet().stream()
+                .filter(entry -> !oldProperties.containsKey(entry.getKey()) ||
+                        !oldProperties.get(entry.getKey()).equals(entry.getValue()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     /**

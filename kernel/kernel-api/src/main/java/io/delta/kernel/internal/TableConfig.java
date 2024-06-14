@@ -21,8 +21,8 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
-import io.delta.kernel.exceptions.IllegalConfigurationValueException;
-import io.delta.kernel.exceptions.UnknownConfigurationKeyException;
+import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.IntervalParserUtils;
 
@@ -76,9 +76,9 @@ public class TableConfig<T> {
     private final String helpMessage;
 
     static {
-        legalProperties.put(
+        validProperties.put(
                 TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
-        legalProperties.put(
+        validProperties.put(
                 CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
     }
 
@@ -118,25 +118,25 @@ public class TableConfig<T> {
 
     /**
      * Validates that the given properties have the delta prefix in the key name, and they are in
-     * the set of legal properties
+     * the set of valid properties
      *
      * @param configurations the properties to validate
-     * @throws IllegalConfigurationValueException if any of the properties are invalid
-     * @throws UnknownConfigurationKeyException if any of the properties are unknown
+     * @throws InvalidConfigurationValueException if any of the properties are invalid
+     * @throws UnknownConfigurationException if any of the properties are unknown
      */
     public static void validateProperties(Map<String, String> configurations) {
         for (Map.Entry<String, String> kv : configurations.entrySet()) {
             String key = kv.getKey().toLowerCase(Locale.ROOT);
             String value = kv.getValue();
             if (key.startsWith("delta.")) {
-                TableConfig tableConfig = legalProperties.get(key);
+                TableConfig tableConfig = validProperties.get(key);
                 if (tableConfig != null) {
                     tableConfig.validate(value);
                 } else {
-                    throw DeltaErrors.unknownConfigurationKeyException(key);
+                    throw DeltaErrors.unknownConfigurationException(key);
                 }
             } else {
-                throw DeltaErrors.unknownConfigurationKeyException(key);
+                throw DeltaErrors.unknownConfigurationException(key);
             }
         }
     }
@@ -144,7 +144,7 @@ public class TableConfig<T> {
     private void validate(String value) {
         T parsedValue = fromString.apply(value);
         if (!validator.test(parsedValue)) {
-            throw DeltaErrors.illegalConfigurationValueException(key, value, helpMessage);
+            throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
         }
     }
 }

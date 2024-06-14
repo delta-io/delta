@@ -208,13 +208,13 @@ public final class DeltaErrors {
                 "Failed to parse the schema. Encountered unsupported Delta data type: VOID");
     }
 
-    public static KernelException unknownConfigurationKeyException(String confKey) {
-        return new UnknownConfigurationKeyException(confKey);
+    public static KernelException unknownConfigurationException(String confKey) {
+        return new UnknownConfigurationException(confKey);
     }
 
-    public static KernelException illegalConfigurationValueException(
+    public static KernelException invalidConfigurationValueException(
             String key, String value, String helpMessage) {
-        return new IllegalConfigurationValueException(key, value, helpMessage);
+        return new InvalidConfigurationValueException(key, value, helpMessage);
     }
 
     /* ------------------------ HELPER METHODS ----------------------------- */

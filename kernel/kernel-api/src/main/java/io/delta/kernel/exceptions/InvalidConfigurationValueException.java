@@ -23,20 +23,9 @@ import io.delta.kernel.annotation.Evolving;
  * @since 3.2.0
  */
 @Evolving
-public class IllegalConfigurationValueException extends KernelException {
-    private final String key;
-    private final String value;
-    private final String helpMessage;
-
-    public IllegalConfigurationValueException(String key, String value, String helpMessage) {
-        this.key = key;
-        this.value = value;
-        this.helpMessage = helpMessage;
-    }
-
-    @Override
-    public String getMessage() {
-        return String.format(
-                "Invalid value for table property '%s': '%s'. %s", key, value, helpMessage);
+public class InvalidConfigurationValueException extends KernelException {
+    public InvalidConfigurationValueException(String key, String value, String helpMessage) {
+        super(String.format(
+                "Invalid value for table property '%s': '%s'. %s", key, value, helpMessage));
     }
 }
