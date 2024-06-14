@@ -48,6 +48,20 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
     // This is necessary because the [[SparkThreadLocalForwardingThreadPoolExecutor]]
     // retains a reference to the SparkContext. Without resetting, the new test suite would
     // reuse the same SparkContext from the previous suite, despite it being stopped.
+    //
+    // This will force the UpdateCatalog's background thread to use the new SparkContext.
+    //
+    // scalastyle:off line.size.limit
+    // This is to avoid the following exception thrown from the UpdateCatalog's background thread:
+    //  java.lang.IllegalStateException: Cannot call methods on a stopped SparkContext.
+    //  This stopped SparkContext was created at:
+    //
+    //  org.apache.spark.sql.delta.skipping.clustering.ClusteredTableDDLDataSourceV2NameColumnMappingSuite.beforeAll
+    //
+    //  The currently active SparkContext was created at:
+    //
+    //  org.apache.spark.sql.delta.skipping.clustering.ClusteredTableDDLDataSourceV2Suite.beforeAll
+    // scalastyle:on line.size.limit
     UpdateCatalog.tp = null
 
     super.afterAll()
