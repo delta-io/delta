@@ -23,7 +23,7 @@ import io.delta.kernel.annotation.Evolving;
  * @since 3.2.0
  */
 @Evolving
-public class UnknownConfigurationKeyException extends KernelException {
+public class UnknownConfigurationException extends KernelException {
     private final String confKey;
 
     public UnknownConfigurationKeyException(String confKey) {
