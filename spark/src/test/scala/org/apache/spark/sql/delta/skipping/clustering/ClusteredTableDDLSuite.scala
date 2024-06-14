@@ -565,7 +565,7 @@ trait ClusteredTableDDLWithColumnMappingV2Base extends ClusteredTableDDLWithColu
     }
   }
 
-  test("validate create table commas in the column name") {
+  test("validate create table with commas in the column name") {
     withClusteredTable(testTable, "`col1,a` BIGINT", "`col1,a`") {
       verifyClusteringColumns(TableIdentifier(testTable), Seq("`col1,a`"))
     }
