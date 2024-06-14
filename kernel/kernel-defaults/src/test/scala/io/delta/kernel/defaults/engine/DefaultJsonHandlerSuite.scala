@@ -20,6 +20,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestRow, TestUtils}
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
 import org.apache.hadoop.conf.Configuration
@@ -335,7 +336,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
   }
 
   test("deserializeStructType: invalid JSON") {
-    val e = intercept[RuntimeException] {
+    val e = intercept[KernelException] {
       jsonHandler.deserializeStructType(
         """
           |{
@@ -345,7 +346,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
           |""".stripMargin
       )
     }
-    assert(e.getMessage.contains("Could not parse JSON"))
+    assert(e.getMessage.contains("Could not parse schema given as JSON string"))
   }
 
   test("read json files") {
