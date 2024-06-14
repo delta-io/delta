@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
@@ -31,10 +31,10 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.internal.Logging
 
 /**
- * An abstract [[CommitOwnerClient]] which triggers backfills every n commits.
+ * An abstract [[CommitCoordinatorClient]] which triggers backfills every n commits.
  * - every commit version which satisfies `commitVersion % batchSize == 0` will trigger a backfill.
  */
-trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with Logging {
+trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorClient with Logging {
 
   /**
    * Size of batch that should be backfilled. So every commit version which satisfies
@@ -50,7 +50,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      managedCommitTableConf: Map[String, String],
+      coordinatedCommitsTableConf: Map[String, String],
       commitVersion: Long,
       commitFile: FileStatus,
       commitTimestamp: Long): CommitResponse
@@ -59,12 +59,12 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      managedCommitTableConf: Map[String, String],
+      coordinatedCommitsTableConf: Map[String, String],
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
     val executionObserver = TransactionExecutionObserver.threadObserver.get()
-    val tablePath = ManagedCommitUtils.getTablePath(logPath)
+    val tablePath = CoordinatedCommitsUtils.getTablePath(logPath)
     if (commitVersion == 0) {
       throw CommitFailedException(
         retryable = false, conflict = false, message = "Commit version 0 must go via filesystem.")
@@ -79,12 +79,12 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
         logStore,
         hadoopConf,
         logPath,
-        managedCommitTableConf,
+        coordinatedCommitsTableConf,
         commitVersion - 1)
     }
 
     // Write new commit file in _commits directory
-    val fileStatus = ManagedCommitUtils.writeCommitFile(
+    val fileStatus = CoordinatedCommitsUtils.writeCommitFile(
       logStore, hadoopConf, logPath, commitVersion, actions, generateUUID())
 
     // Do the actual commit
@@ -94,12 +94,12 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
         logStore,
         hadoopConf,
         logPath,
-        managedCommitTableConf,
+        coordinatedCommitsTableConf,
         commitVersion,
         fileStatus,
         commitTimestamp)
 
-    val mcToFsConversion = isManagedCommitToFSConversion(commitVersion, updatedActions)
+    val mcToFsConversion = isCoordinatedCommitsToFSConversion(commitVersion, updatedActions)
     // Backfill if needed
     executionObserver.beginBackfill()
     if (batchSize <= 1) {
@@ -116,21 +116,21 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
         logStore,
         hadoopConf,
         logPath,
-        managedCommitTableConf,
+        coordinatedCommitsTableConf,
         commitVersion)
     }
     logInfo(s"Commit $commitVersion done successfully on table $tablePath")
     commitResponse
   }
 
-  private def isManagedCommitToFSConversion(
+  private def isCoordinatedCommitsToFSConversion(
       commitVersion: Long,
       updatedActions: UpdatedActions): Boolean = {
-    val oldMetadataHasManagedCommit =
-      ManagedCommitUtils.getManagedCommitOwnerName(updatedActions.getOldMetadata).nonEmpty
-    val newMetadataHasManagedCommit =
-      ManagedCommitUtils.getManagedCommitOwnerName(updatedActions.getNewMetadata).nonEmpty
-    oldMetadataHasManagedCommit && !newMetadataHasManagedCommit && commitVersion > 0
+    val oldMetadataHasCoordinatedCommits =
+      CoordinatedCommitsUtils.getCommitCoordinatorName(updatedActions.getOldMetadata).nonEmpty
+    val newMetadataHasCoordinatedCommits =
+      CoordinatedCommitsUtils.getCommitCoordinatorName(updatedActions.getNewMetadata).nonEmpty
+    oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits && commitVersion > 0
   }
 
   protected def generateUUID(): String = UUID.randomUUID().toString
@@ -139,7 +139,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      managedCommitTableConf: Map[String, String],
+      coordinatedCommitsTableConf: Map[String, String],
       version: Long,
       lastKnownBackfilledVersionOpt: Option[Long] = None): Unit = {
     // Confirm the last backfilled version by checking the backfilled delta file's existence.
@@ -148,7 +148,7 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
       fs.exists(FileNames.unsafeDeltaFile(logPath, version))
     }
     val startVersionOpt = validLastKnownBackfilledVersionOpt.map(_ + 1)
-    getCommits(logPath, managedCommitTableConf, startVersionOpt, Some(version))
+    getCommits(logPath, coordinatedCommitsTableConf, startVersionOpt, Some(version))
       .getCommits
       .foreach { commit =>
         backfill(logStore, hadoopConf, logPath, commit.getVersion, commit.getFileStatus)
@@ -180,7 +180,9 @@ trait AbstractBatchBackfillingCommitOwnerClient extends CommitOwnerClient with L
     }
   }
 
-  /** Callback to tell the CommitOwner that all commits <= `backfilledVersion` are backfilled. */
+  /**
+   * Callback to tell the CommitCoordinator that all commits <= `backfilledVersion` are backfilled.
+   */
   protected[delta] def registerBackfill(
       logPath: Path,
       backfilledVersion: Long): Unit

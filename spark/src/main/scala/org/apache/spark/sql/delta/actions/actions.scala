@@ -28,7 +28,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
-import org.apache.spark.sql.delta.managedcommit.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
+import org.apache.spark.sql.delta.coordinatedcommits.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
@@ -1040,22 +1040,22 @@ case class Metadata(
     GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
 
   /**
-   * The name of commit-owner which arbitrates the commits to the table. This must be available
-   * if this is a managed-commit table.
+   * The name of commit-coordinator which arbitrates the commits to the table. This must be
+   * available if this is a coordinated-commits table.
    */
   @JsonIgnore
-  lazy val managedCommitOwnerName: Option[String] =
-    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(this)
+  lazy val coordinatedCommitsCoordinatorName: Option[String] =
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(this)
 
-  /** The configuration to uniquely identify the commit-owner for managed-commit. */
+  /** The configuration to uniquely identify the commit-coordinator for coordinated-commits. */
   @JsonIgnore
-  lazy val managedCommitOwnerConf: Map[String, String] =
-    DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(this)
+  lazy val coordinatedCommitsCoordinatorConf: Map[String, String] =
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.fromMetaData(this)
 
-  /** The table specific configuration for managed-commit. */
+  /** The table specific configuration for coordinated-commits. */
   @JsonIgnore
-  lazy val managedCommitTableConf: Map[String, String] =
-    DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.fromMetaData(this)
+  lazy val coordinatedCommitsTableConf: Map[String, String] =
+    DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.fromMetaData(this)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 

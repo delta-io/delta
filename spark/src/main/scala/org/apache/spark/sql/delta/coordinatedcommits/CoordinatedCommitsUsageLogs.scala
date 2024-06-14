@@ -14,33 +14,33 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
-/** Class containing usage logs emitted by Managed Commit. */
-object ManagedCommitUsageLogs {
+/** Class containing usage logs emitted by Coordinated Commits. */
+object CoordinatedCommitsUsageLogs {
 
-  // Common prefix for all managed-commit usage logs.
-  private val PREFIX = "delta.managedCommit"
+  // Common prefix for all coordinated-commits usage logs.
+  private val PREFIX = "delta.coordinatedCommits"
 
-  // Usage log emitted as part of [[CommitOwnerClient.getCommits]] call.
-  val COMMIT_OWNER_CLIENT_GET_COMMITS = s"$PREFIX.commitOwnerClient.getCommits"
+  // Usage log emitted as part of [[CommitCoordinatorClient.getCommits]] call.
+  val COMMIT_COORDINATOR_CLIENT_GET_COMMITS = s"$PREFIX.commitCoordinatorClient.getCommits"
 
-  // Usage log emitted when listing files in CommitOwnerClient (i.e. getCommits) can't be done in
-  // separate thread because the thread pool is full.
-  val COMMIT_OWNER_LISTING_THREADPOOL_FULL =
+  // Usage log emitted when listing files in CommitCoordinatorClient (i.e. getCommits) can't be done
+  // in separate thread because the thread pool is full.
+  val COMMIT_COORDINATOR_LISTING_THREADPOOL_FULL =
     s"$PREFIX.listDeltaAndCheckpointFiles.GetCommitsThreadpoolFull"
 
   // Usage log emitted when we need a 2nd roundtrip to list files in FileSystem.
   // This happens when:
   // 1. FileSystem returns File 1/2/3
-  // 2. CommitOwnerClient returns File 5/6 -- 4 got backfilled by the time our request reached
-  //    CommitOwnerClient
+  // 2. CommitCoordinatorClient returns File 5/6 -- 4 got backfilled by the time our request reached
+  //    CommitCoordinatorClient
   // 3. We need to list again in FileSystem to get File 4.
-  val COMMIT_OWNER_ADDITIONAL_LISTING_REQUIRED =
+  val COMMIT_COORDINATOR_ADDITIONAL_LISTING_REQUIRED =
     s"$PREFIX.listDeltaAndCheckpointFiles.requiresAdditionalFsListing"
 
-  // Usage log emitted when listing files via FileSystem and CommitOwnerClient (i.e. getCommits)
-  // shows an unexpected gap.
-  val FS_COMMIT_OWNER_LISTING_UNEXPECTED_GAPS =
+  // Usage log emitted when listing files via FileSystem and CommitCoordinatorClient
+  // (i.e. getCommits) shows an unexpected gap.
+  val FS_COMMIT_COORDINATOR_LISTING_UNEXPECTED_GAPS =
     s"$PREFIX.listDeltaAndCheckpointFiles.unexpectedGapsInResults"
 }

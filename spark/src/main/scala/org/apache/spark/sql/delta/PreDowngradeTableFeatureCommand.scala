@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand,
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.constraints.Constraints
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
@@ -207,15 +207,15 @@ case class VacuumProtocolCheckPreDowngradeCommand(table: DeltaTableV2)
   override def removeFeatureTracesIfNeeded(): Boolean = false
 }
 
-case class ManagedCommitPreDowngradeCommand(table: DeltaTableV2)
+case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
 
   /**
    * We disable the feature by removing the following table properties:
-   *    1. DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key
-   *    2. DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key
-   *    3. DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key
+   *    1. DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key
+   *    2. DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key
+   *    3. DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key
    * If these properties have been removed but unbackfilled commits are still present, we
    * backfill them.
    *
@@ -228,14 +228,14 @@ case class ManagedCommitPreDowngradeCommand(table: DeltaTableV2)
 
     var traceRemovalNeeded = false
     var exceptionOpt = Option.empty[Throwable]
-    val propertyPresenceLogs = ManagedCommitUtils.TABLE_PROPERTY_KEYS.map( key =>
+    val propertyPresenceLogs = CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.map( key =>
       key -> table.initialSnapshot.metadata.configuration.contains(key).toString
     )
-    if (ManagedCommitUtils.tablePropertiesPresent(table.initialSnapshot.metadata)) {
+    if (CoordinatedCommitsUtils.tablePropertiesPresent(table.initialSnapshot.metadata)) {
       traceRemovalNeeded = true
       try {
         AlterTableUnsetPropertiesDeltaCommand(
-          table, ManagedCommitUtils.TABLE_PROPERTY_KEYS, ifExists = true).run(table.spark)
+          table, CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS, ifExists = true).run(table.spark)
       } catch {
         case NonFatal(e) =>
           exceptionOpt = Some(e)
@@ -244,18 +244,18 @@ case class ManagedCommitPreDowngradeCommand(table: DeltaTableV2)
     var postDisablementUnbackfilledCommitsPresent = false
     if (exceptionOpt.isEmpty) {
       val snapshotAfterDisabling = table.deltaLog.update()
-      assert(snapshotAfterDisabling.tableCommitOwnerClientOpt.isEmpty)
+      assert(snapshotAfterDisabling.tableCommitCoordinatorClientOpt.isEmpty)
       postDisablementUnbackfilledCommitsPresent =
-        ManagedCommitUtils.unbackfilledCommitsPresent(snapshotAfterDisabling)
+        CoordinatedCommitsUtils.unbackfilledCommitsPresent(snapshotAfterDisabling)
       if (postDisablementUnbackfilledCommitsPresent) {
         traceRemovalNeeded = true
-        // Managed commits have already been disabled but there are unbackfilled commits.
-        ManagedCommitUtils.backfillWhenManagedCommitDisabled(snapshotAfterDisabling)
+        // Coordinated commits have already been disabled but there are unbackfilled commits.
+        CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshotAfterDisabling)
       }
     }
     recordDeltaEvent(
       table.deltaLog,
-      opType = "delta.managedCommitFeatureRemovalMetrics",
+      opType = "delta.coordinatedCommitsFeatureRemovalMetrics",
       data = Map(
           "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
           "traceRemovalNeeded" -> traceRemovalNeeded.toString,

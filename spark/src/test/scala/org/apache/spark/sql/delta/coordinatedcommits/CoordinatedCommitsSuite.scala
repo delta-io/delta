@@ -14,20 +14,20 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
 
 import scala.collection.mutable.ArrayBuffer
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta.{CommitStats, DeltaOperations, ManagedCommitStats, ManagedCommitTableFeature, V2CheckpointTableFeature}
-import org.apache.spark.sql.delta.CommitOwnerGetCommitsFailedException
-import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, MANAGED_COMMIT_OWNER_CONF, MANAGED_COMMIT_OWNER_NAME, MANAGED_COMMIT_TABLE_CONF}
+import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.CommitCoordinatorGetCommitsFailedException
+import org.apache.spark.sql.delta.CoordinatedCommitType._
+import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.InitialSnapshot
-import org.apache.spark.sql.delta.ManagedCommitType._
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -45,67 +45,68 @@ import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
 
-class ManagedCommitSuite
+class CoordinatedCommitsSuite
     extends QueryTest
     with DeltaSQLTestUtils
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with ManagedCommitTestUtils {
+    with CoordinatedCommitsTestUtils {
 
   import testImplicits._
 
   override def sparkConf: SparkConf = {
-    // Make sure all new tables in tests use tracking-in-memory commit-owner by default.
+    // Make sure all new tables in tests use tracking-in-memory commit-coordinator by default.
     super.sparkConf
-      .set(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey, "tracking-in-memory")
-      .set(MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey, JsonUtils.toJson(Map()))
+      .set(COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey, "tracking-in-memory")
+      .set(COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey, JsonUtils.toJson(Map()))
   }
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    CommitOwnerProvider.clearNonDefaultBuilders()
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
   }
 
   test("helper method that recovers config from abstract metadata works properly") {
     val m1 = Metadata(
-      configuration = Map(MANAGED_COMMIT_OWNER_NAME.key -> "string_value")
+      configuration = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> "string_value")
     )
-    assert(ManagedCommitUtils.fromAbstractMetadataAndDeltaConfig(m1, MANAGED_COMMIT_OWNER_NAME) ===
-      Some("string_value"))
+    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
+      m1, COORDINATED_COMMITS_COORDINATOR_NAME) === Some("string_value"))
 
     val m2 = Metadata(
-      configuration = Map(MANAGED_COMMIT_OWNER_NAME.key -> "")
+      configuration = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> "")
     )
-    assert(ManagedCommitUtils.fromAbstractMetadataAndDeltaConfig(m2, MANAGED_COMMIT_OWNER_NAME) ===
-      Some(""))
+    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
+      m2, COORDINATED_COMMITS_COORDINATOR_NAME) === Some(""))
 
     val m3 = Metadata(
       configuration = Map(
-        MANAGED_COMMIT_OWNER_CONF.key ->
+        COORDINATED_COMMITS_COORDINATOR_CONF.key ->
           """{"key1": "string_value", "key2Int": 2, "key3ComplexStr": "\"hello\""}""")
     )
-    assert(ManagedCommitUtils.fromAbstractMetadataAndDeltaConfig(m3, MANAGED_COMMIT_OWNER_CONF) ===
+    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
+      m3, COORDINATED_COMMITS_COORDINATOR_CONF) ===
       Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\""))
 
     val m4 = Metadata()
-    assert(ManagedCommitUtils.fromAbstractMetadataAndDeltaConfig(m4, MANAGED_COMMIT_TABLE_CONF) ===
-      Map.empty)
+    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
+      m4, COORDINATED_COMMITS_TABLE_CONF) === Map.empty)
   }
 
 
   test("0th commit happens via filesystem") {
-    val commitOwnerName = "nobackfilling-commit-owner"
-    object NoBackfillingCommitOwnerBuilder$ extends CommitOwnerBuilder {
+    val commitCoordinatorName = "nobackfilling-commit-coordinator"
+    object NoBackfillingCommitCoordinatorBuilder$ extends CommitCoordinatorBuilder {
 
-      override def getName: String = commitOwnerName
+      override def getName: String = commitCoordinatorName
 
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient =
-        new InMemoryCommitOwner(batchSize = 5) {
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient =
+        new InMemoryCommitCoordinator(batchSize = 5) {
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
               logPath: Path,
-              managedCommitTableConf: Map[String, String],
+              coordinatedCommitsTableConf: Map[String, String],
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
@@ -114,8 +115,9 @@ class ManagedCommitSuite
         }
     }
 
-    CommitOwnerProvider.registerBuilder(NoBackfillingCommitOwnerBuilder$)
-    withSQLConf(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> commitOwnerName) {
+    CommitCoordinatorProvider.registerBuilder(NoBackfillingCommitCoordinatorBuilder$)
+    withSQLConf(
+      COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey -> commitCoordinatorName) {
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
         Seq(1).toDF.write.format("delta").save(tablePath)
@@ -128,7 +130,8 @@ class ManagedCommitSuite
   }
 
   test("basic write") {
-    CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(batchSize = 2))
+    CommitCoordinatorProvider.registerBuilder(
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 0
@@ -152,9 +155,10 @@ class ManagedCommitSuite
   }
 
   test("cold snapshot initialization") {
-    val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
-    val commitOwnerClient = builder.build(spark, Map.empty).asInstanceOf[TrackingCommitOwnerClient]
-    CommitOwnerProvider.registerBuilder(builder)
+    val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
+    val commitCoordinatorClient =
+      builder.build(spark, Map.empty).asInstanceOf[TrackingCommitCoordinatorClient]
+    CommitCoordinatorProvider.registerBuilder(builder)
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 0
@@ -162,8 +166,9 @@ class ManagedCommitSuite
       val usageLogs1 = Log4jUsageLogger.track {
         checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1)))
       }
-      val getCommitsUsageLogs1 =
-        filterUsageRecords(usageLogs1, ManagedCommitUsageLogs.COMMIT_OWNER_CLIENT_GET_COMMITS)
+      val getCommitsUsageLogs1 = filterUsageRecords(
+        usageLogs1,
+        CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_CLIENT_GET_COMMITS)
       val getCommitsEventData1 = JsonUtils.fromJson[Map[String, Any]](getCommitsUsageLogs1(0).blob)
       assert(getCommitsEventData1("startVersion") === 0)
       assert(getCommitsEventData1("versionToLoad") === -1)
@@ -174,21 +179,22 @@ class ManagedCommitSuite
       Seq(2).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 1
       Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
       DeltaLog.clearCache()
-      commitOwnerClient.numGetCommitsCalled.set(0)
+      commitCoordinatorClient.numGetCommitsCalled.set(0)
       import testImplicits._
       val result1 = sql(s"SELECT * FROM delta.`$tablePath`").collect()
       assert(result1.length === 2 && result1.toSet === Set(Row(2), Row(3)))
-      assert(commitOwnerClient.numGetCommitsCalled.get === 2)
+      assert(commitCoordinatorClient.numGetCommitsCalled.get === 2)
     }
   }
 
-  // Test commit-owner changed on concurrent cluster
-    testWithDefaultCommitOwnerUnset("snapshot is updated recursively when FS table is converted" +
-      " to commit-owner table on a concurrent cluster") {
-    val commitOwnerClient =
-      new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize = 10))
-    val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10, Some(commitOwnerClient))
-    CommitOwnerProvider.registerBuilder(builder)
+  // Test commit-coordinator changed on concurrent cluster
+    testWithDefaultCommitCoordinatorUnset("snapshot is updated recursively when FS table" +
+      " is converted to commit-coordinator table on a concurrent cluster") {
+    val commitCoordinatorClient =
+      new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize = 10))
+    val builder =
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10, Some(commitCoordinatorClient))
+    CommitCoordinatorProvider.registerBuilder(builder)
 
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
@@ -198,17 +204,17 @@ class ManagedCommitSuite
       deltaLog1.startTransaction().commitManually()
       val snapshotV2 = deltaLog1.update()
       assert(snapshotV2.version === 2)
-      assert(snapshotV2.tableCommitOwnerClientOpt.isEmpty)
+      assert(snapshotV2.tableCommitCoordinatorClientOpt.isEmpty)
       DeltaLog.clearCache()
 
-      // Add new commit to convert FS table to managed-commit table
+      // Add new commit to convert FS table to coordinated-commits table
       val deltaLog2 = DeltaLog.forTable(spark, tablePath)
-      enableManagedCommit(deltaLog2, commitOwner = "tracking-in-memory")
+      enableCoordinatedCommits(deltaLog2, commitCoordinator = "tracking-in-memory")
       deltaLog2.startTransaction().commitManually(createTestAddFile("f2"))
       deltaLog2.startTransaction().commitManually()
       val snapshotV5 = deltaLog2.unsafeVolatileSnapshot
       assert(snapshotV5.version === 5)
-      assert(snapshotV5.tableCommitOwnerClientOpt.nonEmpty)
+      assert(snapshotV5.tableCommitCoordinatorClientOpt.nonEmpty)
       // only delta 4/5 will be un-backfilled and should have two dots in filename (x.uuid.json)
       assert(snapshotV5.logSegment.deltas.count(_.getPath.getName.count(_ == '.') == 2) === 2)
 
@@ -222,13 +228,14 @@ class ManagedCommitSuite
   }
 
   test("update works correctly with InitialSnapshot") {
-    CommitOwnerProvider.registerBuilder(TrackingInMemoryCommitOwnerBuilder(batchSize = 2))
+    CommitCoordinatorProvider.registerBuilder(
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog.forTable(spark, new Path(tablePath), clock)
       assert(log.unsafeVolatileSnapshot.isInstanceOf[InitialSnapshot])
-      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
       assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
       clock.advance(500)
       log.update()
@@ -244,7 +251,7 @@ class ManagedCommitSuite
   // 3. Do cold read from table and confirm we can construct snapshot v3 automatically. This will
   //    need multiple snapshot update internally and both CS1 and CS2 will be contacted one
   //    after the other.
-  // 4. Write commit 4/5 using new commit-owner.
+  // 4. Write commit 4/5 using new commit-coordinator.
   // 5. Read the table again and make sure right APIs are called:
   //    a) If read query is run in scala, we do listing 2 times. So CS2.getCommits will be called
   //       twice. We should not be contacting CS1 anymore.
@@ -252,23 +259,24 @@ class ManagedCommitSuite
   //       only once.
   test("snapshot is updated properly when owner changes multiple times") {
     val batchSize = 10
-    val cs1 = new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize))
-    val cs2 = new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize))
+    val cs1 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize))
+    val cs2 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize))
 
-    case class TrackingInMemoryCommitOwnerBuilder(
+    case class TrackingInMemoryCommitCoordinatorBuilder(
         name: String,
-        commitOwnerClient: CommitOwnerClient) extends CommitOwnerBuilder {
+        commitCoordinatorClient: CommitCoordinatorClient) extends CommitCoordinatorBuilder {
       var numBuildCalled = 0
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
+      override def build(
+          spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
         numBuildCalled += 1
-        commitOwnerClient
+        commitCoordinatorClient
       }
 
       override def getName: String = name
     }
-    val builder1 = TrackingInMemoryCommitOwnerBuilder(name = "tracking-in-memory-1", cs1)
-    val builder2 = TrackingInMemoryCommitOwnerBuilder(name = "tracking-in-memory-2", cs2)
-    Seq(builder1, builder2).foreach(CommitOwnerProvider.registerBuilder)
+    val builder1 = TrackingInMemoryCommitCoordinatorBuilder(name = "tracking-in-memory-1", cs1)
+    val builder2 = TrackingInMemoryCommitCoordinatorBuilder(name = "tracking-in-memory-2", cs2)
+    Seq(builder1, builder2).foreach(CommitCoordinatorProvider.registerBuilder)
 
     def resetMetrics(): Unit = {
       Seq(builder1, builder2).foreach { b => b.numBuildCalled = 0 }
@@ -276,7 +284,7 @@ class ManagedCommitSuite
     }
 
     withSQLConf(
-        MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> builder1.name) {
+        COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey -> builder1.name) {
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
         // Step-1: Make 2 commits on the table with CS1 as owner.
@@ -288,7 +296,7 @@ class ManagedCommitSuite
         // Step-2: Add commit 2: change the table owner from "tracking-in-memory-1" to FS.
         //         Add commit 3: change the table owner from FS to "tracking-in-memory-2".
         // Both of these commits should be FS based as the spec mandates an atomic backfill when
-        // the commit-owner changes.
+        // the commit-coordinator changes.
         {
           val log = DeltaLog.forTable(spark, tablePath)
           val conf = log.newDeltaHadoopConf()
@@ -299,13 +307,15 @@ class ManagedCommitSuite
           val oldMetadata = log.unsafeVolatileMetadata
           val oldMetadataConf = oldMetadata.configuration
           val newMetadata1 = oldMetadata.copy(
-            configuration = oldMetadataConf - MANAGED_COMMIT_OWNER_NAME.key)
+            configuration = oldMetadataConf - COORDINATED_COMMITS_COORDINATOR_NAME.key)
           val newMetadata2 = oldMetadata.copy(
-            configuration = oldMetadataConf + (MANAGED_COMMIT_OWNER_NAME.key -> builder2.name))
+            configuration = oldMetadataConf + (
+              COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder2.name))
           log.startTransaction().commitManually(newMetadata1)
           log.startTransaction().commitManually(newMetadata2)
 
-          // Also backfill commit 0, 1 -- which the spec mandates when the commit-owner changes.
+          // Also backfill commit 0, 1 -- which the spec mandates when the commit-coordinator
+          // changes.
           // commit 0 should already be backfilled
           assert(segment.deltas(0).getPath.getName === "00000000000000000000.json")
           log.store.write(
@@ -324,7 +334,8 @@ class ManagedCommitSuite
         assert(builder1.numBuildCalled == 0)
         assert(builder2.numBuildCalled == 1)
         val snapshotV3 = DeltaLog.forTable(spark, tablePath).unsafeVolatileSnapshot
-        assert(snapshotV3.tableCommitOwnerClientOpt.map(_.commitOwnerClient) === Some(cs2))
+        assert(
+          snapshotV3.tableCommitCoordinatorClientOpt.map(_.commitCoordinatorClient) === Some(cs2))
         assert(snapshotV3.version === 3)
 
         // Step-4: Write more commits using new owner
@@ -339,7 +350,7 @@ class ManagedCommitSuite
         assert(
           sql(s"SELECT * FROM delta.`$tablePath`").collect().toSet === (0 to 3).map(Row(_)).toSet)
         // since this was hot query, so no new snapshot was created as part of this
-        // deltaLog.update() and so commit-owner is not initialized again.
+        // deltaLog.update() and so commit-coordinator is not initialized again.
         assert((builder1.numBuildCalled, builder2.numBuildCalled) === (0, 0))
         // Since this is dataframe read, so we invoke deltaLog.update() twice and so GetCommits API
         // is called twice.
@@ -361,13 +372,13 @@ class ManagedCommitSuite
   }
 
   // This test has the following setup:
-  // 1. Table is created with CS1 as commit-owner.
+  // 1. Table is created with CS1 as commit-coordinator.
   // 2. Do another commit (v1) on table.
   // 3. Take a reference to current DeltaLog and clear the cache. This deltaLog object currently
   //    points to the latest table snapshot i.e. v1.
   // 4. Do commit v2 on the table.
-  // 5. Do commit v3 on table. As part of this, change commit-owner to FS. Do v4 on table and change
-  //    owner to CS2.
+  // 5. Do commit v3 on table. As part of this, change commit-coordinator to FS. Do v4 on table and
+  //    change owner to CS2.
   // 6. Do commit v5 on table. This will happen via CS2.
   // 7. Invoke deltaLog.update() on the old deltaLog object which is still pointing to v1.
   //    - While doing this, we will inject failure in CS2 so that it fails twice when cs2.getCommits
@@ -380,32 +391,33 @@ class ManagedCommitSuite
   //    - the recorded timestamp for this should be clock timestamp.
   test("failures inside getCommits, correct timestamp is added in CapturedSnapshot") {
     val batchSize = 10
-    val cs1 = new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize))
-    val cs2 = new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize)) {
+    val cs1 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize))
+    val cs2 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize)) {
       var failAttempts = Set[Int]()
 
       override def getCommits(
         logPath: Path,
-        managedCommitTableConf: Map[String, String],
+        coordinatedCommitsTableConf: Map[String, String],
         startVersion: Option[Long],
         endVersion: Option[Long]): GetCommitsResponse = {
         if (failAttempts.contains(numGetCommitsCalled.get + 1)) {
           numGetCommitsCalled.incrementAndGet()
           throw new IllegalStateException("Injected failure")
         }
-        super.getCommits(logPath, managedCommitTableConf, startVersion, endVersion)
+        super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
       }
     }
-    case class TrackingInMemoryCommitOwnerClientBuilder(
+    case class TrackingInMemoryCommitCoordinatorClientBuilder(
         name: String,
-        commitOwnerClient: CommitOwnerClient) extends CommitOwnerBuilder {
+        commitCoordinatorClient: CommitCoordinatorClient) extends CommitCoordinatorBuilder {
       override def build(
-          spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = commitOwnerClient
+          spark: SparkSession,
+          conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
       override def getName: String = name
     }
-    val builder1 = TrackingInMemoryCommitOwnerClientBuilder(name = "in-memory-1", cs1)
-    val builder2 = TrackingInMemoryCommitOwnerClientBuilder(name = "in-memory-2", cs2)
-    Seq(builder1, builder2).foreach(CommitOwnerProvider.registerBuilder)
+    val builder1 = TrackingInMemoryCommitCoordinatorClientBuilder(name = "in-memory-1", cs1)
+    val builder2 = TrackingInMemoryCommitCoordinatorClientBuilder(name = "in-memory-2", cs2)
+    Seq(builder1, builder2).foreach(CommitCoordinatorProvider.registerBuilder)
 
     def resetMetrics(): Unit = {
       cs1.reset()
@@ -413,7 +425,7 @@ class ManagedCommitSuite
       cs2.failAttempts = Set()
     }
 
-    withSQLConf(MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "in-memory-1") {
+    withSQLConf(COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey -> "in-memory-1") {
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
         // Step-1
@@ -438,10 +450,11 @@ class ManagedCommitSuite
         assert(log.unsafeVolatileSnapshot.version === 2)
         val oldMetadataConf = log.update().metadata.configuration
         val newMetadata1 = oldMetadata.copy(
-          configuration = oldMetadataConf - MANAGED_COMMIT_OWNER_NAME.key)
+          configuration = oldMetadataConf - COORDINATED_COMMITS_COORDINATOR_NAME.key)
         val newMetadata2 = oldMetadata.copy(
-          configuration = oldMetadataConf + (MANAGED_COMMIT_OWNER_NAME.key -> "in-memory-2"))
-        assert(log.update().tableCommitOwnerClientOpt.get.commitOwnerClient === cs1)
+          configuration = oldMetadataConf + (
+            COORDINATED_COMMITS_COORDINATOR_NAME.key -> "in-memory-2"))
+        assert(log.update().tableCommitCoordinatorClientOpt.get.commitCoordinatorClient === cs1)
         log.startTransaction().commitManually(newMetadata1) // version 3
         (1 to 3).foreach { v =>
           // backfill commit 1 and 2 also as 3/4 are written directly to FS.
@@ -451,9 +464,9 @@ class ManagedCommitSuite
             actions = log.store.read(segment.deltas(v).getPath).toIterator,
             overwrite = true)
         }
-        assert(log.update().tableCommitOwnerClientOpt === None)
+        assert(log.update().tableCommitCoordinatorClientOpt === None)
         log.startTransaction().commitManually(newMetadata2) // version 4
-        assert(log.update().tableCommitOwnerClientOpt.get.commitOwnerClient === cs2)
+        assert(log.update().tableCommitCoordinatorClientOpt.get.commitCoordinatorClient === cs2)
 
         // Step-6
         Seq(4).toDF.write.format("delta").mode("append").save(tablePath) // version 5
@@ -467,7 +480,7 @@ class ManagedCommitSuite
         clock.setTime(System.currentTimeMillis())
         resetMetrics()
         cs2.failAttempts = Set(1, 2) // fail 0th and 1st attempt, 2nd attempt will succeed.
-        val ex1 = intercept[CommitOwnerGetCommitsFailedException] { oldDeltaLog.update() }
+        val ex1 = intercept[CommitCoordinatorGetCommitsFailedException] { oldDeltaLog.update() }
         assert((cs1.numGetCommitsCalled.get, cs2.numGetCommitsCalled.get) === (1, 1))
         assert(ex1.getMessage.contains("Injected failure"))
         assert(oldDeltaLog.unsafeVolatileSnapshot.version == 1)
@@ -475,7 +488,7 @@ class ManagedCommitSuite
 
         // Attempt-2
         // 2nd update also fails
-        val ex2 = intercept[CommitOwnerGetCommitsFailedException] { oldDeltaLog.update() }
+        val ex2 = intercept[CommitCoordinatorGetCommitsFailedException] { oldDeltaLog.update() }
         assert((cs1.numGetCommitsCalled.get, cs2.numGetCommitsCalled.get) === (2, 2))
         assert(ex2.getMessage.contains("Injected failure"))
         assert(oldDeltaLog.unsafeVolatileSnapshot.version == 1)
@@ -563,11 +576,12 @@ class ManagedCommitSuite
     }
   }
 
-  testWithDefaultCommitOwnerUnset("DeltaLog.getSnapshotAt") {
-    val commitOwnerClient =
-      new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize = 10))
-    val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10, Some(commitOwnerClient))
-    CommitOwnerProvider.registerBuilder(builder)
+  testWithDefaultCommitCoordinatorUnset("DeltaLog.getSnapshotAt") {
+    val commitCoordinatorClient =
+      new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize = 10))
+    val builder =
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10, Some(commitCoordinatorClient))
+    CommitCoordinatorProvider.registerBuilder(builder)
     def checkGetSnapshotAt(
         deltaLog: DeltaLog,
         version: Long,
@@ -597,7 +611,7 @@ class ManagedCommitSuite
 
     withTempDir { dir =>
       val tablePath = dir.getAbsolutePath
-      // Part-1: Validate getSnapshotAt API works as expected for non-managed commit tables
+      // Part-1: Validate getSnapshotAt API works as expected for non-coordinated commits tables
       // commit 0, 1, 2 on FS table
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v0
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v1
@@ -617,10 +631,10 @@ class ManagedCommitSuite
       Seq(deltaLog1, deltaLog2).foreach { log => assert(log.unsafeVolatileSnapshot.version === 2) }
       DeltaLog.clearCache()
 
-      // Part-2: Validate getSnapshotAt API works as expected for managed commit tables when the
-      // switch is made
+      // Part-2: Validate getSnapshotAt API works as expected for coordinated commits tables when
+      // the switch is made
       // commit 3
-      enableManagedCommit(DeltaLog.forTable(spark, tablePath), "tracking-in-memory")
+      enableCoordinatedCommits(DeltaLog.forTable(spark, tablePath), "tracking-in-memory")
       // commit 4
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
       // the old deltaLog objects still points to version 2
@@ -632,7 +646,7 @@ class ManagedCommitSuite
       checkGetSnapshotAt(deltaLog1, version = 2, expectedUpdateCount = 0, expectedListingCount = 0)
       // We are asking for v3 although the deltaLog1.unsafeVolatileSnapshot is for v2. So this will
       // need deltaLog.update() to get the latest snapshot first - this update itself internally
-      // will do 2 round of listing as we are discovering a commit-owner after first round of
+      // will do 2 round of listing as we are discovering a commit-coordinator after first round of
       // listing. Once the update finishes, deltaLog1 will point to v4. So we need another round of
       // listing to get just v3.
       checkGetSnapshotAt(deltaLog1, version = 3, expectedUpdateCount = 1, expectedListingCount = 3)
@@ -644,11 +658,11 @@ class ManagedCommitSuite
       checkGetSnapshotAt(deltaLog1, version = 4, expectedUpdateCount = 0, expectedListingCount = 0)
       // We are asking for v3 although the deltaLog2.unsafeVolatileSnapshot is for v2. So this will
       // need deltaLog.update() to get the latest snapshot first - this update itself internally
-      // will do 2 round of listing as we are discovering a commit-owner after first round of
+      // will do 2 round of listing as we are discovering a commit-coordinator after first round of
       // listing. Once the update finishes, deltaLog2 will point to v4. It can be returned directly.
       checkGetSnapshotAt(deltaLog2, version = 4, expectedUpdateCount = 1, expectedListingCount = 2)
 
-      // Part-2: Validate getSnapshotAt API works as expected for managed commit tables
+      // Part-2: Validate getSnapshotAt API works as expected for coordinated commits tables
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v5
       deltaLog2 = DeltaLog.forTable(spark, tablePath)
       DeltaLog.clearCache()
@@ -663,18 +677,19 @@ class ManagedCommitSuite
     }
   }
 
-  private def enableManagedCommit(deltaLog: DeltaLog, commitOwner: String): Unit = {
+  private def enableCoordinatedCommits(deltaLog: DeltaLog, commitCoordinator: String): Unit = {
     val oldMetadata = deltaLog.update().metadata
-    val commitOwnerConf = (MANAGED_COMMIT_OWNER_NAME.key -> commitOwner)
-    val newMetadata = oldMetadata.copy(configuration = oldMetadata.configuration + commitOwnerConf)
+    val commitCoordinatorConf = (COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinator)
+    val newMetadata =
+      oldMetadata.copy(configuration = oldMetadata.configuration + commitCoordinatorConf)
     deltaLog.startTransaction().commitManually(newMetadata)
   }
 
   test("tableConf returned from registration API is recorded in deltaLog and passed " +
-      "to CommitOwnerClient in future for all the APIs") {
+      "to CommitCoordinatorClient in future for all the APIs") {
     val tableConf = Map("tableID" -> "random-u-u-i-d", "1" -> "2")
-    val trackingCommitOwnerClient = new TrackingCommitOwnerClient(
-        new InMemoryCommitOwner(batchSize = 10) {
+    val trackingCommitCoordinatorClient = new TrackingCommitCoordinatorClient(
+        new InMemoryCommitCoordinator(batchSize = 10) {
           override def registerTable(
               logPath: Path,
               currentVersion: Long,
@@ -686,23 +701,23 @@ class ManagedCommitSuite
 
           override def getCommits(
               logPath: Path,
-              managedCommitTableConf: Map[String, String],
+              coordinatedCommitsTableConf: Map[String, String],
               startVersion: Option[Long],
               endVersion: Option[Long]): GetCommitsResponse = {
-            assert(managedCommitTableConf === tableConf)
-            super.getCommits(logPath, managedCommitTableConf, startVersion, endVersion)
+            assert(coordinatedCommitsTableConf === tableConf)
+            super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
           }
 
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
               logPath: Path,
-              managedCommitTableConf: Map[String, String],
+              coordinatedCommitsTableConf: Map[String, String],
               commitVersion: Long,
               actions: Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
-            assert(managedCommitTableConf === tableConf)
-            super.commit(logStore, hadoopConf, logPath, managedCommitTableConf,
+            assert(coordinatedCommitsTableConf === tableConf)
+            super.commit(logStore, hadoopConf, logPath, coordinatedCommitsTableConf,
               commitVersion, actions, updatedActions)
           }
 
@@ -710,56 +725,60 @@ class ManagedCommitSuite
               logStore: LogStore,
               hadoopConf: Configuration,
               logPath: Path,
-              managedCommitTableConf: Map[String, String],
+              coordinatedCommitsTableConf: Map[String, String],
               version: Long,
               lastKnownBackfilledVersionOpt: Option[Long]): Unit = {
-            assert(managedCommitTableConf === tableConf)
+            assert(coordinatedCommitsTableConf === tableConf)
             super.backfillToVersion(
               logStore,
               hadoopConf,
               logPath,
-              managedCommitTableConf,
+              coordinatedCommitsTableConf,
               version,
               lastKnownBackfilledVersionOpt)
           }
         }
     )
-    val builder =
-      TrackingInMemoryCommitOwnerBuilder(batchSize = 10, Some(trackingCommitOwnerClient))
-    CommitOwnerProvider.registerBuilder(builder)
+    val builder = TrackingInMemoryCommitCoordinatorBuilder(
+      batchSize = 10, Some(trackingCommitCoordinatorClient))
+    CommitCoordinatorProvider.registerBuilder(builder)
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       val log = DeltaLog.forTable(spark, tablePath)
-      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.getName)
-      val newMetadata = Metadata().copy(configuration = commitOwnerConf)
+      val commitCoordinatorConf = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder.getName)
+      val newMetadata = Metadata().copy(configuration = commitCoordinatorConf)
       log.startTransaction().commitManually(newMetadata)
       assert(log.unsafeVolatileSnapshot.version === 0)
-      assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === tableConf)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === tableConf)
 
       log.startTransaction().commitManually(createTestAddFile("f1"))
       log.startTransaction().commitManually(createTestAddFile("f2"))
       log.checkpoint()
       log.startTransaction().commitManually(createTestAddFile("f2"))
 
-      assert(trackingCommitOwnerClient.numCommitsCalled.get > 0)
-      assert(trackingCommitOwnerClient.numGetCommitsCalled.get > 0)
-      assert(trackingCommitOwnerClient.numBackfillToVersionCalled.get > 0)
+      assert(trackingCommitCoordinatorClient.numCommitsCalled.get > 0)
+      assert(trackingCommitCoordinatorClient.numGetCommitsCalled.get > 0)
+      assert(trackingCommitCoordinatorClient.numBackfillToVersionCalled.get > 0)
     }
   }
 
   for (upgradeExistingTable <- BOOLEAN_DOMAIN)
-  testWithDifferentBackfillInterval("upgrade + downgrade [FS -> MC1 -> FS -> MC2]," +
+  testWithDifferentBackfillInterval("upgrade + downgrade [FS -> CC1 -> FS -> CC2]," +
       s" upgradeExistingTable = $upgradeExistingTable") { backfillInterval =>
-    withoutManagedCommitDefaultTableProperties {
-      CommitOwnerProvider.clearNonDefaultBuilders()
-      val builder1 = TrackingInMemoryCommitOwnerBuilder(batchSize = backfillInterval)
-      val builder2 = new TrackingInMemoryCommitOwnerBuilder(batchSize = backfillInterval) {
+    withoutCoordinatedCommitsDefaultTableProperties {
+      CommitCoordinatorProvider.clearNonDefaultBuilders()
+      val builder1 = TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillInterval)
+      val builder2 = new TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillInterval) {
         override def getName: String = "tracking-in-memory-2"
       }
 
-      Seq(builder1, builder2).foreach(CommitOwnerProvider.registerBuilder(_))
-      val cs1 = builder1.trackingInMemoryCommitOwnerClient.asInstanceOf[TrackingCommitOwnerClient]
-      val cs2 = builder2.trackingInMemoryCommitOwnerClient.asInstanceOf[TrackingCommitOwnerClient]
+      Seq(builder1, builder2).foreach(CommitCoordinatorProvider.registerBuilder(_))
+      val cs1 = builder1
+        .trackingInMemoryCommitCoordinatorClient
+        .asInstanceOf[TrackingCommitCoordinatorClient]
+      val cs2 = builder2
+        .trackingInMemoryCommitCoordinatorClient
+        .asInstanceOf[TrackingCommitCoordinatorClient]
 
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
@@ -767,29 +786,30 @@ class ManagedCommitSuite
         val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
 
         var upgradeStartVersion = 0L
-        // Create a non-managed commit table if we are testing upgrade for existing tables
+        // Create a non-coordinated commits table if we are testing upgrade for existing tables
         if (upgradeExistingTable) {
           log.startTransaction().commitManually(Metadata())
           assert(log.unsafeVolatileSnapshot.version === 0)
           log.startTransaction().commitManually(createTestAddFile("1"))
           assert(log.unsafeVolatileSnapshot.version === 1)
-          assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
+          assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
           upgradeStartVersion = 2L
         }
 
         // Upgrade the table
         // [upgradeExistingTable = false] Commit-0
         // [upgradeExistingTable = true] Commit-2
-        val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder1.getName)
-        val newMetadata = Metadata().copy(configuration = commitOwnerConf)
+        val commitCoordinatorConf =
+          Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder1.getName)
+        val newMetadata = Metadata().copy(configuration = commitCoordinatorConf)
         val usageLogs1 = Log4jUsageLogger.track {
           log.startTransaction().commitManually(newMetadata)
         }
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName ===
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName ===
           Some(builder1.getName))
-        assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
+        assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
         // upgrade commit always filesystem based
         assert(fs.exists(FileNames.unsafeDeltaFile(log.logPath, upgradeStartVersion)))
         assert(Seq(cs1, cs2).map(_.numCommitsCalled.get) == Seq(0, 0))
@@ -797,10 +817,10 @@ class ManagedCommitSuite
         // Check usage logs for upgrade commit
         val commitStatsUsageLogs1 = filterUsageRecords(usageLogs1, "delta.commit.stats")
         val commitStats1 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs1.head.blob)
-        assert(commitStats1.managedCommitInfo ===
-          ManagedCommitStats(FS_TO_MC_UPGRADE_COMMIT.toString, builder1.getName, Map.empty))
+        assert(commitStats1.coordinatedCommitsInfo ===
+          CoordinatedCommitsStats(FS_TO_CC_UPGRADE_COMMIT.toString, builder1.getName, Map.empty))
 
-        // Do couple of commits on the managed-commit table
+        // Do couple of commits on the coordinated-commits table
         // [upgradeExistingTable = false] Commit-1/2
         // [upgradeExistingTable = true] Commit-3/4
         (1 to 2).foreach { versionOffset =>
@@ -809,41 +829,42 @@ class ManagedCommitSuite
             log.startTransaction().commitManually(createTestAddFile(s"$versionOffset"))
           }
           assert(log.unsafeVolatileSnapshot.version === version)
-          assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
-          assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName.nonEmpty)
-          assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerConf === Map.empty)
-          assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
+          assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+          assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName.nonEmpty)
+          assert(
+            log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorConf === Map.empty)
+          assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
           assert(cs1.numCommitsCalled.get === versionOffset)
           val backfillExpected = if (version % backfillInterval == 0) true else false
           assert(fs.exists(FileNames.unsafeDeltaFile(log.logPath, version)) == backfillExpected)
-          // Check usage logs for INSERT commits on this managed-commit table.
+          // Check usage logs for INSERT commits on this coordinated-commits table.
           val commitStatsUsageLogs2 = filterUsageRecords(usageLogs2, "delta.commit.stats")
           val commitStats2 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs2.head.blob)
-          assert(commitStats2.managedCommitInfo ===
-            ManagedCommitStats(MC_COMMIT.toString, builder1.getName, Map.empty))
+          assert(commitStats2.coordinatedCommitsInfo ===
+            CoordinatedCommitsStats(CC_COMMIT.toString, builder1.getName, Map.empty))
         }
 
         // Downgrade the table
         // [upgradeExistingTable = false] Commit-3
         // [upgradeExistingTable = true] Commit-5
-        val commitOwnerConfKeys = Seq(
-          MANAGED_COMMIT_OWNER_NAME.key,
-          MANAGED_COMMIT_OWNER_CONF.key,
-          MANAGED_COMMIT_TABLE_CONF.key
+        val commitCoordinatorConfKeys = Seq(
+          COORDINATED_COMMITS_COORDINATOR_NAME.key,
+          COORDINATED_COMMITS_COORDINATOR_CONF.key,
+          COORDINATED_COMMITS_TABLE_CONF.key
         )
         val newConfig = log.snapshot.metadata.configuration
-          .filterKeys(!commitOwnerConfKeys.contains(_)) ++ Map("downgraded_at" -> "v2")
+          .filterKeys(!commitCoordinatorConfKeys.contains(_)) ++ Map("downgraded_at" -> "v2")
         val newMetadata2 = log.snapshot.metadata.copy(configuration = newConfig.toMap)
         val usageLogs3 = Log4jUsageLogger.track {
           log.startTransaction().commitManually(newMetadata2)
         }
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 3)
-        assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName.isEmpty)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerConf === Map.empty)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
+        assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty)
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorConf === Map.empty)
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
         assert(log.unsafeVolatileSnapshot.metadata === newMetadata2)
-        // This must have increased by 1 as downgrade commit happens via CommitOwnerClient.
+        // This must have increased by 1 as downgrade commit happens via CommitCoordinatorClient.
         assert(Seq(cs1, cs2).map(_.numCommitsCalled.get) == Seq(3, 0))
         assert(Seq(cs1, cs2).map(_.numRegisterTableCalled.get) == Seq(1, 0))
         (0 to 3).foreach { version =>
@@ -852,8 +873,8 @@ class ManagedCommitSuite
         // Check usage logs for downgrade commit
         val commitStatsUsageLogs3 = filterUsageRecords(usageLogs3, "delta.commit.stats")
         val commitStats3 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs3.head.blob)
-        assert(commitStats3.managedCommitInfo ===
-          ManagedCommitStats(MC_TO_FS_DOWNGRADE_COMMIT.toString, builder1.getName, Map.empty))
+        assert(commitStats3.coordinatedCommitsInfo ===
+          CoordinatedCommitsStats(CC_TO_FS_DOWNGRADE_COMMIT.toString, builder1.getName, Map.empty))
 
 
         // Do commit after downgrade is over
@@ -863,16 +884,16 @@ class ManagedCommitSuite
           log.startTransaction().commitManually(createTestAddFile("post-upgrade-file"))
         }
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 4)
-        // no commit-owner after downgrade
-        assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
+        // no commit-coordinator after downgrade
+        assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
         // Metadata is same as what we added at time of downgrade
         assert(log.unsafeVolatileSnapshot.metadata === newMetadata2)
         // State reconstruction should give correct results
         var expectedFileNames = Set("1", "2", "post-upgrade-file")
         assert(log.unsafeVolatileSnapshot.allFiles.collect().toSet ===
           expectedFileNames.map(name => createTestAddFile(name, dataChange = false)))
-        // commit-owner should not be invoked for commit API.
+        // commit-coordinator should not be invoked for commit API.
         // Register table API should not be called until the end
         assert(Seq(cs1, cs2).map(_.numCommitsCalled.get) == Seq(3, 0))
         assert(Seq(cs1, cs2).map(_.numRegisterTableCalled.get) == Seq(1, 0))
@@ -881,25 +902,26 @@ class ManagedCommitSuite
         // Check usage logs for normal FS commit
         val commitStatsUsageLogs4 = filterUsageRecords(usageLogs4, "delta.commit.stats")
         val commitStats4 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs4.head.blob)
-        assert(commitStats4.managedCommitInfo ===
-          ManagedCommitStats(FS_COMMIT.toString, "", Map.empty))
+        assert(commitStats4.coordinatedCommitsInfo ===
+          CoordinatedCommitsStats(FS_COMMIT.toString, "", Map.empty))
 
-        // Now transfer the table to another commit-owner
+        // Now transfer the table to another commit-coordinator
         // [upgradeExistingTable = false] Commit-5
         // [upgradeExistingTable = true] Commit-7
-        val commitOwnerConf2 = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder2.getName)
+        val commitCoordinatorConf2 =
+          Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder2.getName)
         val oldMetadata3 = log.unsafeVolatileSnapshot.metadata
         val newMetadata3 = oldMetadata3.copy(
-          configuration = oldMetadata3.configuration ++ commitOwnerConf2)
+          configuration = oldMetadata3.configuration ++ commitCoordinatorConf2)
         val usageLogs5 = Log4jUsageLogger.track {
           log.startTransaction().commitManually(newMetadata3, createTestAddFile("upgrade-2-file"))
         }
         assert(log.unsafeVolatileSnapshot.version === upgradeStartVersion + 5)
-        assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName ===
+        assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName ===
           Some(builder2.getName))
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerConf === Map.empty)
-        assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorConf === Map.empty)
+        assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
         expectedFileNames = Set("1", "2", "post-upgrade-file", "upgrade-2-file")
         assert(log.unsafeVolatileSnapshot.allFiles.collect().toSet ===
           expectedFileNames.map(name => createTestAddFile(name, dataChange = false)))
@@ -908,8 +930,8 @@ class ManagedCommitSuite
         // Check usage logs for 2nd upgrade commit
         val commitStatsUsageLogs5 = filterUsageRecords(usageLogs5, "delta.commit.stats")
         val commitStats5 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs5.head.blob)
-        assert(commitStats5.managedCommitInfo ===
-          ManagedCommitStats(FS_TO_MC_UPGRADE_COMMIT.toString, builder2.getName, Map.empty))
+        assert(commitStats5.coordinatedCommitsInfo ===
+          CoordinatedCommitsStats(FS_TO_CC_UPGRADE_COMMIT.toString, builder2.getName, Map.empty))
 
         // Make 1 more commit, this should go to new owner
         log.startTransaction().commitManually(newMetadata3, createTestAddFile("4"))
@@ -923,44 +945,48 @@ class ManagedCommitSuite
     }
   }
 
-  test("transfer from one commit-owner to another commit-owner fails [MC-1 -> MC-2 fails]") {
-    CommitOwnerProvider.clearNonDefaultBuilders()
-    val builder1 = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
-    val builder2 = new TrackingInMemoryCommitOwnerBuilder(batchSize = 10) {
+  test("transfer from one commit-coordinator to another commit-coordinator fails " +
+    "[CC-1 -> CC-2 fails]") {
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
+    val builder1 = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
+    val builder2 = new TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10) {
       override def getName: String = "tracking-in-memory-2"
     }
-    Seq(builder1, builder2).foreach(CommitOwnerProvider.registerBuilder(_))
+    Seq(builder1, builder2).foreach(CommitCoordinatorProvider.registerBuilder(_))
 
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       val log = DeltaLog.forTable(spark, tablePath)
       // A new table will automatically get `tracking-in-memory` as the whole suite is configured to
-      // use it as default commit-owner via [[MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey]].
+      // use it as default commit-coordinator via
+      // [[COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey]].
       log.startTransaction().commitManually(Metadata())
       assert(log.unsafeVolatileSnapshot.version === 0L)
-      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
 
-      // Change commit-owner
-      val newCommitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder2.getName)
+      // Change commit-coordinator
+      val newCommitCoordinatorConf =
+        Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder2.getName)
       val oldMetadata = log.unsafeVolatileSnapshot.metadata
       val newMetadata = oldMetadata.copy(
-        configuration = oldMetadata.configuration ++ newCommitOwnerConf)
+        configuration = oldMetadata.configuration ++ newCommitCoordinatorConf)
       val ex = intercept[IllegalStateException] {
         log.startTransaction().commitManually(newMetadata)
       }
-      assert(ex.getMessage.contains("from one commit-owner to another commit-owner is not allowed"))
+      assert(ex.getMessage.contains(
+        "from one commit-coordinator to another commit-coordinator is not allowed"))
     }
   }
 
-  testWithDefaultCommitOwnerUnset("FS -> MC upgrade is not retried on a conflict") {
-    val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
-    CommitOwnerProvider.registerBuilder(builder)
+  testWithDefaultCommitCoordinatorUnset("FS -> CC upgrade is not retried on a conflict") {
+    val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
+    CommitCoordinatorProvider.registerBuilder(builder)
 
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       val log = DeltaLog.forTable(spark, tablePath)
-      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.getName)
-      val newMetadata = Metadata().copy(configuration = commitOwnerConf)
+      val commitCoordinatorConf = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder.getName)
+      val newMetadata = Metadata().copy(configuration = commitCoordinatorConf)
       val txn = log.startTransaction() // upgrade txn started
       log.startTransaction().commitManually(createTestAddFile("f1"))
       intercept[io.delta.exceptions.ConcurrentWriteException] {
@@ -969,22 +995,23 @@ class ManagedCommitSuite
     }
   }
 
-  testWithDefaultCommitOwnerUnset("FS -> MC upgrade with commitLarge API") {
-    val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
-    val cs = builder.trackingInMemoryCommitOwnerClient.asInstanceOf[TrackingCommitOwnerClient]
-    CommitOwnerProvider.registerBuilder(builder)
+  testWithDefaultCommitCoordinatorUnset("FS -> CC upgrade with commitLarge API") {
+    val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
+    val cs =
+      builder.trackingInMemoryCommitCoordinatorClient.asInstanceOf[TrackingCommitCoordinatorClient]
+    CommitCoordinatorProvider.registerBuilder(builder)
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       Seq(1).toDF.write.format("delta").save(tablePath)
       Seq(1).toDF.write.mode("overwrite").format("delta").save(tablePath)
       var log = DeltaLog.forTable(spark, tablePath)
       assert(log.unsafeVolatileSnapshot.version === 1L)
-      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.isEmpty)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
 
-      val commitOwnerConf = Map(MANAGED_COMMIT_OWNER_NAME.key -> builder.getName)
+      val commitCoordinatorConf = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder.getName)
       val oldMetadata = log.unsafeVolatileSnapshot.metadata
       val newMetadata = oldMetadata.copy(
-        configuration = oldMetadata.configuration ++ commitOwnerConf)
+        configuration = oldMetadata.configuration ++ commitCoordinatorConf)
       val oldProtocol = log.unsafeVolatileSnapshot.protocol
       assert(!oldProtocol.readerAndWriterFeatures.contains(V2CheckpointTableFeature))
       val newProtocol =
@@ -994,7 +1021,9 @@ class ManagedCommitSuite
           readerFeatures =
             Some(oldProtocol.readerFeatures.getOrElse(Set.empty) + V2CheckpointTableFeature.name),
           writerFeatures =
-            Some(oldProtocol.writerFeatures.getOrElse(Set.empty) + ManagedCommitTableFeature.name))
+            Some(
+              oldProtocol.writerFeatures.getOrElse(Set.empty) + CoordinatedCommitsTableFeature.name)
+            )
       assert(cs.numRegisterTableCalled.get === 0)
       assert(cs.numCommitsCalled.get === 0)
 
@@ -1012,40 +1041,41 @@ class ManagedCommitSuite
       assert(cs.numCommitsCalled.get === 0)
       assert(log.unsafeVolatileSnapshot.version === 2L)
 
-      Seq(V2CheckpointTableFeature, ManagedCommitTableFeature).foreach { feature =>
+      Seq(V2CheckpointTableFeature, CoordinatedCommitsTableFeature).foreach { feature =>
         assert(log.unsafeVolatileSnapshot.protocol.isFeatureSupported(feature))
       }
 
-      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
-      assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerName === Some(builder.getName))
-      assert(log.unsafeVolatileSnapshot.metadata.managedCommitOwnerConf === Map.empty)
-      assert(log.unsafeVolatileSnapshot.metadata.managedCommitTableConf === Map.empty)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName ===
+        Some(builder.getName))
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorConf === Map.empty)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
 
       Seq(3).toDF.write.mode("append").format("delta").save(tablePath)
       assert(cs.numRegisterTableCalled.get === 1)
       assert(cs.numCommitsCalled.get === 1)
       assert(log.unsafeVolatileSnapshot.version === 3L)
-      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
 
     }
   }
 
-  test("Incomplete backfills are handled properly by next commit after MC to FS conversion") {
+  test("Incomplete backfills are handled properly by next commit after CC to FS conversion") {
     val batchSize = 10
-    val neverBackfillingCommitOwner =
-      new TrackingCommitOwnerClient(new InMemoryCommitOwner(batchSize) {
+    val neverBackfillingCommitCoordinator =
+      new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize) {
         override def backfillToVersion(
             logStore: LogStore,
             hadoopConf: Configuration,
             logPath: Path,
-            managedCommitTableConf: Map[String, String],
+            coordinatedCommitsTableConf: Map[String, String],
             version: Long,
             lastKnownBackfilledVersionOpt: Option[Long]): Unit = { }
       })
-    CommitOwnerProvider.clearNonDefaultBuilders()
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
     val builder =
-      TrackingInMemoryCommitOwnerBuilder(batchSize, Some(neverBackfillingCommitOwner))
-    CommitOwnerProvider.registerBuilder(builder)
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize, Some(neverBackfillingCommitCoordinator))
+    CommitCoordinatorProvider.registerBuilder(builder)
 
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
@@ -1054,19 +1084,19 @@ class ManagedCommitSuite
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // v2
 
       val log = DeltaLog.forTable(spark, tablePath)
-      assert(log.unsafeVolatileSnapshot.tableCommitOwnerClientOpt.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
       assert(log.unsafeVolatileSnapshot.version === 2)
       assert(
         log.unsafeVolatileSnapshot.logSegment.deltas.count(FileNames.isUnbackfilledDeltaFile) == 2)
 
       val oldMetadata = log.unsafeVolatileSnapshot.metadata
       val downgradeMetadata = oldMetadata.copy(
-        configuration = oldMetadata.configuration - MANAGED_COMMIT_OWNER_NAME.key)
+        configuration = oldMetadata.configuration - COORDINATED_COMMITS_COORDINATOR_NAME.key)
       log.startTransaction().commitManually(downgradeMetadata)
       log.update()
       val snapshotAfterDowngrade = log.unsafeVolatileSnapshot
       assert(snapshotAfterDowngrade.version === 3)
-      assert(snapshotAfterDowngrade.tableCommitOwnerClientOpt.isEmpty)
+      assert(snapshotAfterDowngrade.tableCommitCoordinatorClientOpt.isEmpty)
       assert(snapshotAfterDowngrade.logSegment.deltas.count(FileNames.isUnbackfilledDeltaFile) == 3)
 
       val records = Log4jUsageLogger.track {
@@ -1074,7 +1104,7 @@ class ManagedCommitSuite
         Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
       }
       val filteredUsageLogs = filterUsageRecords(
-        records, "delta.managedCommit.backfillWhenManagedCommitSupportedAndDisabled")
+        records, "delta.coordinatedCommits.backfillWhenCoordinatedCommitsSupportedAndDisabled")
       assert(filteredUsageLogs.size === 1)
       val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredUsageLogs.head.blob)
       assert(usageObj("numUnbackfilledFiles").asInstanceOf[Int] === 3)
@@ -1083,13 +1113,13 @@ class ManagedCommitSuite
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////
-  //           Test managed-commits with DeltaLog.getChangeLogFile API starts                //
+  //           Test coordinated-commits with DeltaLog.getChangeLogFile API starts                //
   /////////////////////////////////////////////////////////////////////////////////////////////
 
   /**
    * Helper method which generates a delta table with `totalCommits`.
-   * The `upgradeToManagedCommitVersion`th commit version upgrades this table to managed commit
-   * and it uses `backfillInterval` for backfilling.
+   * The `upgradeToCoordinatedCommitsVersion`th commit version upgrades this table to coordinated
+   * commits and it uses `backfillInterval` for backfilling.
    * This method returns a mapping of version to DeltaLog for the versions in
    * `requiredDeltaLogVersions`. Each of this deltaLog object has a Snapshot as per what is
    * mentioned in the `requiredDeltaLogVersions`.
@@ -1097,24 +1127,26 @@ class ManagedCommitSuite
   private def generateDataForGetChangeLogFilesTest(
       dir: File,
       totalCommits: Int,
-      upgradeToManagedCommitVersion: Int,
+      upgradeToCoordinatedCommitsVersion: Int,
       backfillInterval: Int,
       requiredDeltaLogVersions: Set[Int]): Map[Int, DeltaLog] = {
-    val commitOwnerClient = new TrackingCommitOwnerClient(new InMemoryCommitOwner(backfillInterval))
-    val builder = TrackingInMemoryCommitOwnerBuilder(backfillInterval, Some(commitOwnerClient))
-    CommitOwnerProvider.registerBuilder(builder)
+    val commitCoordinatorClient =
+      new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(backfillInterval))
+    val builder =
+      TrackingInMemoryCommitCoordinatorBuilder(backfillInterval, Some(commitCoordinatorClient))
+    CommitCoordinatorProvider.registerBuilder(builder)
     val versionToDeltaLogMapping = collection.mutable.Map.empty[Int, DeltaLog]
     withSQLConf(
       CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "100") {
       val tablePath = dir.getAbsolutePath
 
       (0 to totalCommits).foreach { v =>
-        if (v === upgradeToManagedCommitVersion) {
+        if (v === upgradeToCoordinatedCommitsVersion) {
           val deltaLog = DeltaLog.forTable(spark, tablePath)
           val oldMetadata = deltaLog.unsafeVolatileSnapshot.metadata
-          val commitOwner = (MANAGED_COMMIT_OWNER_NAME.key -> "tracking-in-memory")
+          val commitCoordinator = (COORDINATED_COMMITS_COORDINATOR_NAME.key -> "tracking-in-memory")
           val newMetadata =
-            oldMetadata.copy(configuration = oldMetadata.configuration + commitOwner)
+            oldMetadata.copy(configuration = oldMetadata.configuration + commitCoordinator)
           deltaLog.startTransaction().commitManually(newMetadata)
         } else {
           Seq(v).toDF().write.format("delta").mode("append").save(tablePath)
@@ -1157,13 +1189,13 @@ class ManagedCommitSuite
     assert(filterUsageRecords(usageRecords, "delta.log.update").size === updateCountEvents)
   }
 
-  testWithDefaultCommitOwnerUnset("DeltaLog.getChangeLogFile with and" +
-    " without endVersion [No Managed Commits]") {
+  testWithDefaultCommitCoordinatorUnset("DeltaLog.getChangeLogFile with and" +
+    " without endVersion [No Coordinated Commits]") {
     withTempDir { dir =>
       val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
         dir,
         totalCommits = 4,
-        upgradeToManagedCommitVersion = -1,
+        upgradeToCoordinatedCommitsVersion = -1,
         backfillInterval = -1,
         requiredDeltaLogVersions = Set(2, 4))
 
@@ -1179,8 +1211,8 @@ class ManagedCommitSuite
 
       // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 2).
       // Since the commits in filesystem are more than what unsafeVolatileSnapshot has, we should
-      // need an update() to get the latest snapshot and see if managed commit was enabled on the
-      // table concurrently.
+      // need an update() to get the latest snapshot and see if coordinated commits was enabled on
+      // the table concurrently.
       runGetChangeLogFiles(
         versionsToDeltaLogMapping(2),
         totalCommitsOnTable = 4,
@@ -1190,7 +1222,7 @@ class ManagedCommitSuite
 
       // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 4).
       // The latest commit from filesystem listing is 4 -- same as unsafeVolatileSnapshot and this
-      // unsafeVolatileSnapshot doesn't have managed commit enabled. So we should not need an
+      // unsafeVolatileSnapshot doesn't have coordinated commits enabled. So we should not need an
       // update().
       runGetChangeLogFiles(
         versionsToDeltaLogMapping(4),
@@ -1201,13 +1233,13 @@ class ManagedCommitSuite
     }
   }
 
-  testWithDefaultCommitOwnerUnset("DeltaLog.getChangeLogFile with and" +
-    " without endVersion [Managed Commits backfill size 1]") {
+  testWithDefaultCommitCoordinatorUnset("DeltaLog.getChangeLogFile with and" +
+    " without endVersion [Coordinated Commits backfill size 1]") {
     withTempDir { dir =>
       val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
         dir,
         totalCommits = 4,
-        upgradeToManagedCommitVersion = 2,
+        upgradeToCoordinatedCommitsVersion = 2,
         backfillInterval = 1,
         requiredDeltaLogVersions = Set(0, 2, 4))
 
@@ -1223,8 +1255,8 @@ class ManagedCommitSuite
 
       // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 2).
       // Since the commits in filesystem are more than what unsafeVolatileSnapshot has, we should
-      // need an update() to get the latest snapshot and see if managed commit was enabled on the
-      // table concurrently.
+      // need an update() to get the latest snapshot and see if coordinated commits was enabled on
+      // the table concurrently.
       runGetChangeLogFiles(
         versionsToDeltaLogMapping(2),
         totalCommitsOnTable = 4,
@@ -1234,7 +1266,7 @@ class ManagedCommitSuite
 
       // We are asking for changes between 0 to 4 to a DeltaLog(unsafeVolatileSnapshot = 4).
       // Since the commits in filesystem are between 0 to 4, so we don't need to update() to get
-      // the latest snapshot and see if managed commit was enabled on the table concurrently.
+      // the latest snapshot and see if coordinated commits was enabled on the table concurrently.
       runGetChangeLogFiles(
         versionsToDeltaLogMapping(4),
         totalCommitsOnTable = 4,
@@ -1245,8 +1277,8 @@ class ManagedCommitSuite
 
       // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 4).
       // The latest commit from filesystem listing is 4 -- same as unsafeVolatileSnapshot and this
-      // unsafeVolatileSnapshot has managed commit enabled. So we should need an update() to find
-      // out latest commits from Commit Owner.
+      // unsafeVolatileSnapshot has coordinated commits enabled. So we should need an update() to
+      // find out latest commits from Commit Coordinator.
       runGetChangeLogFiles(
         versionsToDeltaLogMapping(4),
         totalCommitsOnTable = 4,
@@ -1256,13 +1288,13 @@ class ManagedCommitSuite
     }
   }
 
-  testWithDefaultCommitOwnerUnset("DeltaLog.getChangeLogFile with and" +
-    " without endVersion [Managed Commits backfill size 10]") {
+  testWithDefaultCommitCoordinatorUnset("DeltaLog.getChangeLogFile with and" +
+    " without endVersion [Coordinated Commits backfill size 10]") {
     withTempDir { dir =>
       val versionsToDeltaLogMapping = generateDataForGetChangeLogFilesTest(
         dir,
         totalCommits = 8,
-        upgradeToManagedCommitVersion = 2,
+        upgradeToCoordinatedCommitsVersion = 2,
         backfillInterval = 10,
         requiredDeltaLogVersions = Set(2, 3, 4, 8))
 
@@ -1279,8 +1311,8 @@ class ManagedCommitSuite
       }
 
       // We are asking for changes between 0 to `end` to a DeltaLog(unsafeVolatileSnapshot = 2/4).
-      // Since the unsafeVolatileSnapshot has managed-commits enabled, so we need to trigger an
-      // update to find the latest commits from Commit Owner.
+      // Since the unsafeVolatileSnapshot has coordinated-commits enabled, so we need to trigger an
+      // update to find the latest commits from Commit Coordinator.
       Seq(2, 3, 4).foreach { version =>
         runGetChangeLogFiles(
           versionsToDeltaLogMapping(version),
@@ -1307,6 +1339,6 @@ class ManagedCommitSuite
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////
-  //           Test managed-commits with DeltaLog.getChangeLogFile API ENDS                  //
+  //           Test coordinated-commits with DeltaLog.getChangeLogFile API ENDS                  //
   /////////////////////////////////////////////////////////////////////////////////////////////
 }
