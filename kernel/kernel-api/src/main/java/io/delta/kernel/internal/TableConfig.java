@@ -66,7 +66,7 @@ public class TableConfig<T> {
     );
 
     /**
-     * All the legal properties that can be set on the table.
+     * All the valid properties that can be set on the table.
      */
     private static final HashMap<String, TableConfig> legalProperties = new HashMap<>();
     private final String key;
