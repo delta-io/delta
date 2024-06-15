@@ -474,7 +474,7 @@ class DeltaTableBuilderSuite
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("test"))
       val metadata = deltaLog.snapshot.metadata
-      verifyClusteringColumns(TableIdentifier("test"), "c1")
+      verifyClusteringColumns(TableIdentifier("test"), Seq("c1"))
     }
   }
 
