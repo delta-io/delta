@@ -29,8 +29,11 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.actions.{Metadata, SingleAction}
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -239,6 +242,33 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       val ver2Snapshot = table.getSnapshotAsOfVersion(engine, 2).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+    }
+  }
+
+  test("create table and configure the same properties") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txn = createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        Seq.empty, tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
+
+      txn.commit(engine, emptyIterable())
+
+      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assert(getMetadata(engine, table, 0) != null)
+
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assert(getMetadata(engine, table, 1) == null)
     }
   }
 
@@ -946,6 +976,23 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         verifyWrittenContent(tablePath, testSchema, expData)
       }
     }
+  }
+
+  private def getMetadata(engine: Engine, table: Table, version: Long): Metadata = {
+    val logPath = new Path(table.getPath(engine), "_delta_log")
+    val file = engine
+      .getFileSystemClient
+      .listFrom(FileNames.listingPrefix(logPath, version)).next
+    val columnarBatches =
+      engine.getJsonHandler.readJsonFiles(
+        singletonCloseableIterator(file),
+        SingleAction.FULL_SCHEMA,
+        Optional.empty())
+    if (!columnarBatches.hasNext) {
+      return null
+    }
+    val metadataVector = columnarBatches.next().getColumnVector(3)
+    Metadata.fromColumnVector(metadataVector, 1, engine)
   }
 
   def assertMetadataProp(
