@@ -19,13 +19,16 @@ import java.util.*;
 
 import io.delta.storage.*;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import io.delta.kernel.defaults.internal.DefaultEngineErrors;
+import static io.delta.kernel.defaults.internal.DefaultEngineErrors.canNotInstantiateLogStore;
 
 /**
  * Utility class to provide the correct {@link LogStore} based on the scheme of the path.
  */
 public class LogStoreProvider {
+    private static final Logger logger = LoggerFactory.getLogger(LogStoreProvider.class);
 
     // Supported schemes per storage system.
     private static final Set<String> S3_SCHEMES = unmodifiableSet("s3", "s3a", "s3n");
@@ -61,13 +64,7 @@ public class LogStoreProvider {
         // Check if the LogStore implementation is set in the configuration.
         String classNameFromConfig = hadoopConf.get(getLogStoreSchemeConfKey(schemeLower));
         if (classNameFromConfig != null) {
-            try {
-                return getLogStoreClass(classNameFromConfig)
-                        .getConstructor(Configuration.class)
-                        .newInstance(hadoopConf);
-            } catch (Exception e) {
-                throw DefaultEngineErrors.canNotInstantiateLogStore(classNameFromConfig);
-            }
+            return createLogStore(classNameFromConfig, hadoopConf, "from config");
         }
 
         // Create default LogStore based on the scheme.
@@ -80,13 +77,7 @@ public class LogStoreProvider {
             defaultClassName = GCSLogStore.class.getName();
         }
 
-        try {
-            return getLogStoreClass(defaultClassName)
-                    .getConstructor(Configuration.class)
-                    .newInstance(hadoopConf);
-        } catch (Exception e) {
-            throw DefaultEngineErrors.canNotInstantiateLogStore(defaultClassName);
-        }
+        return createLogStore(defaultClassName, hadoopConf, "(default for file scheme)");
     }
 
     /**
@@ -107,6 +98,21 @@ public class LogStoreProvider {
                         true /* initialize */,
                         Thread.currentThread().getContextClassLoader())
                 .asSubclass(LogStore.class);
+    }
+
+    private static LogStore createLogStore(
+            String className,
+            Configuration hadoopConf,
+            String context) {
+        try {
+            return getLogStoreClass(className)
+                    .getConstructor(Configuration.class)
+                    .newInstance(hadoopConf);
+        } catch (Exception e) {
+            String msgTemplate = "Failed to instantiate LogStore class ({}): {}";
+            logger.error(msgTemplate, context, className, e);
+            throw canNotInstantiateLogStore(className, context, e);
+        }
     }
 
     /**

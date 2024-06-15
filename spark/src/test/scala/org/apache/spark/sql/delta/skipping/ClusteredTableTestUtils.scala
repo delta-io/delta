@@ -57,12 +57,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
   def verifyClusteringColumnsInDomainMetadata(
       snapshot: Snapshot,
-      expectedLogicalClusteringColumns: String): Unit = {
-    val logicalColumnNames = if (expectedLogicalClusteringColumns.trim.isEmpty) {
-      Seq.empty[String]
-    } else {
-      expectedLogicalClusteringColumns.split(",").map(_.trim).toSeq
-    }
+      logicalColumnNames: Seq[String]): Unit = {
     val expectedClusteringColumns = logicalColumnNames.map(ClusteringColumn(snapshot.schema, _))
     val actualClusteringColumns =
       ClusteredTableUtils.getClusteringColumnsOptional(snapshot).orNull
@@ -219,7 +214,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
   def verifyClusteringColumns(
       tableIdentifier: TableIdentifier,
-      expectedLogicalClusteringColumns: String,
+      expectedLogicalClusteringColumns: Seq[String],
       skipCatalogCheck: Boolean = false
     ): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
@@ -254,7 +249,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
   def verifyClusteringColumns(
       dataPath: String,
-      expectedLogicalClusteringColumns: String): Unit = {
+      expectedLogicalClusteringColumns: Seq[String]): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, dataPath)
     verifyClusteringColumnsInternal(
       snapshot,
@@ -266,7 +261,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
   def verifyClusteringColumnsInternal(
       snapshot: Snapshot,
       tableNameOrPath: String,
-      expectedLogicalClusteringColumns: String
+      expectedLogicalClusteringColumns: Seq[String]
     ): Unit = {
     assert(ClusteredTableUtils.isSupported(snapshot.protocol) === true)
     verifyClusteringColumnsInDomainMetadata(snapshot, expectedLogicalClusteringColumns)

@@ -18,15 +18,14 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
-import org.apache.spark.TaskFailedReason
-import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructField, StructType}
@@ -457,6 +456,41 @@ class CheckConstraintsSuite extends QueryTest
           "expr" -> "((value IS NULL) OR (length(value) <= 12))"
         )
       )
+    }
+  }
+
+  test("drop table feature") {
+    withTable("table") {
+      sql("CREATE TABLE table (a INT, b INT) USING DELTA " +
+        "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+      sql("ALTER TABLE table ADD CONSTRAINT c1 CHECK (a > 0)")
+      sql("ALTER TABLE table ADD CONSTRAINT c2 CHECK (b > 0)")
+
+      val error1 = intercept[AnalysisException] {
+        sql("ALTER TABLE table DROP FEATURE checkConstraints")
+      }
+      checkError(
+        error1,
+        errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+        parameters = Map("constraints" -> "`c1`, `c2`")
+      )
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("table"))
+      assert(deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
+
+      sql("ALTER TABLE table DROP CONSTRAINT c1")
+      val error2 = intercept[AnalysisException] {
+        sql("ALTER TABLE table DROP FEATURE checkConstraints")
+      }
+      checkError(
+        error2,
+        errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+        parameters = Map("constraints" -> "`c2`")
+      )
+      assert(deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
+
+      sql("ALTER TABLE table DROP CONSTRAINT c2")
+      sql("ALTER TABLE table DROP FEATURE checkConstraints")
+      assert(!deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
     }
   }
 }

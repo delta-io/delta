@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
@@ -28,14 +28,14 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.SparkSession
 
-class InMemoryCommitOwner(val batchSize: Long)
-  extends AbstractBatchBackfillingCommitOwnerClient {
+class InMemoryCommitCoordinator(val batchSize: Long)
+  extends AbstractBatchBackfillingCommitCoordinatorClient {
 
   /**
    * @param maxCommitVersion represents the max commit version known for the table. This is
    *                         initialized at the time of pre-registration and updated whenever a
-   *                         commit is successfully added to the commit-owner.
-   * @param active represents whether this commit-owner has ratified any commit or not.
+   *                         commit is successfully added to the commit-coordinator.
+   * @param active represents whether this commit-coordinator has ratified any commit or not.
    * |----------------------------|------------------|---------------------------|
    * |        State               | maxCommitVersion |          active           |
    * |----------------------------|------------------|---------------------------|
@@ -45,7 +45,7 @@ class InMemoryCommitOwner(val batchSize: Long)
    * | and more commits are done  |                  |                           |
    * |----------------------------|------------------|---------------------------|
    */
-  private[managedcommit] class PerTableData(
+  private[coordinatedcommits] class PerTableData(
     var maxCommitVersion: Long = -1,
     var active: Boolean = false
   ) {
@@ -56,7 +56,7 @@ class InMemoryCommitOwner(val batchSize: Long)
 
     /**
      * Returns the last ratified commit version for the table. If no commits have been done from
-     * commit-owner yet, returns -1.
+     * commit-coordinator yet, returns -1.
      */
     def lastRatifiedCommitVersion: Long = if (!active) -1 else maxCommitVersion
 
@@ -67,9 +67,9 @@ class InMemoryCommitOwner(val batchSize: Long)
     val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock()
   }
 
-  private[managedcommit] val perTableMap = new ConcurrentHashMap[Path, PerTableData]()
+  private[coordinatedcommits] val perTableMap = new ConcurrentHashMap[Path, PerTableData]()
 
-  private[managedcommit] def withWriteLock[T](logPath: Path)(operation: => T): T = {
+  private[coordinatedcommits] def withWriteLock[T](logPath: Path)(operation: => T): T = {
     val tableData = Option(perTableMap.get(logPath)).getOrElse {
       throw new IllegalArgumentException(s"Unknown table $logPath.")
     }
@@ -82,7 +82,7 @@ class InMemoryCommitOwner(val batchSize: Long)
     }
   }
 
-  private[managedcommit] def withReadLock[T](logPath: Path)(operation: => T): T = {
+  private[coordinatedcommits] def withReadLock[T](logPath: Path)(operation: => T): T = {
     val tableData = perTableMap.get(logPath)
     if (tableData == null) {
       throw new IllegalArgumentException(s"Unknown table $logPath.")
@@ -107,7 +107,7 @@ class InMemoryCommitOwner(val batchSize: Long)
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      managedCommitTableConf: Map[String, String],
+      coordinatedCommitsTableConf: Map[String, String],
       commitVersion: Long,
       commitFile: FileStatus,
       commitTimestamp: Long): CommitResponse = {
@@ -133,14 +133,14 @@ class InMemoryCommitOwner(val batchSize: Long)
       tableData.commitsMap(commitVersion) = commit
       tableData.updateLastRatifiedCommit(commitVersion)
 
-      logInfo(s"Added commit file ${commitFile.getPath} to commit-owner.")
+      logInfo(s"Added commit file ${commitFile.getPath} to commit-coordinator.")
       CommitResponse(commit)
     }
   }
 
   override def getCommits(
       logPath: Path,
-      managedCommitTableConf: Map[String, String],
+      coordinatedCommitsTableConf: Map[String, String],
       startVersion: Option[Long],
       endVersion: Option[Long]): GetCommitsResponse = {
     withReadLock[GetCommitsResponse](logPath) {
@@ -180,13 +180,15 @@ class InMemoryCommitOwner(val batchSize: Long)
     perTableMap.compute(logPath, (_, existingData) => {
       if (existingData != null) {
         if (existingData.lastRatifiedCommitVersion != -1) {
-          throw new IllegalStateException(s"Table $logPath already exists in the commit-owner.")
+          throw new IllegalStateException(
+            s"Table $logPath already exists in the commit-coordinator.")
         }
-        // If lastRatifiedCommitVersion is -1 i.e. the commit-owner has never attempted any commit
-        // for this table => this table was just pre-registered. If there is another
+        // If lastRatifiedCommitVersion is -1 i.e. the commit-coordinator has never attempted any
+        // commit for this table => this table was just pre-registered. If there is another
         // pre-registration request for an older version, we reject it and table can't go backward.
         if (currentVersion < existingData.maxCommitVersion) {
-          throw new IllegalStateException(s"Table $logPath already registered with commit-owner")
+          throw new IllegalStateException(
+            s"Table $logPath already registered with commit-coordinator")
         }
       }
       newPerTableData
@@ -194,21 +196,21 @@ class InMemoryCommitOwner(val batchSize: Long)
     Map.empty
   }
 
-  override def semanticEquals(other: CommitOwnerClient): Boolean = this == other
+  override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
 }
 
 /**
- * The [[InMemoryCommitOwnerBuilder]] class is responsible for creating singleton instances of
- * [[InMemoryCommitOwner]] with the specified batchSize.
+ * The [[InMemoryCommitCoordinatorBuilder]] class is responsible for creating singleton instances of
+ * [[InMemoryCommitCoordinator]] with the specified batchSize.
  */
-case class InMemoryCommitOwnerBuilder(batchSize: Long) extends CommitOwnerBuilder {
-  private lazy val inMemoryStore = new InMemoryCommitOwner(batchSize)
+case class InMemoryCommitCoordinatorBuilder(batchSize: Long) extends CommitCoordinatorBuilder {
+  private lazy val inMemoryStore = new InMemoryCommitCoordinator(batchSize)
 
-  /** Name of the commit-owner */
+  /** Name of the commit-coordinator */
   def getName: String = "in-memory"
 
-  /** Returns a commit-owner based on the given conf */
-  def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient = {
+  /** Returns a commit-coordinator based on the given conf */
+  def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
     inMemoryStore
   }
 }

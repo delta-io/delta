@@ -83,15 +83,16 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
     Seq(
       ("",
         "a INT, b STRING, ts TIMESTAMP",
-        "a, b"),
+        Seq("a", "b")),
       (" multipart name",
         "a STRUCT<b INT, c STRING>, ts TIMESTAMP",
-        "a.b, ts")
+        Seq("a.b", "ts"))
     ).foreach { case (testSuffix, columns, clusteringColumns) =>
       test(s"create/replace table$testSuffix") {
         withTable(testTable) {
           clauses.foreach { clause =>
-            createOrReplaceClusteredTable(clause, testTable, columns, clusteringColumns)
+            createOrReplaceClusteredTable(
+              clause, testTable, columns, clusteringColumns.mkString(","))
             verifyClusteringColumns(TableIdentifier(testTable), clusteringColumns)
           }
         }
@@ -103,7 +104,11 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
           withTempDirIfNecessary { location =>
             clauses.foreach { clause =>
               createOrReplaceAsSelectClusteredTable(
-                clause, targetTable, sourceTable, clusteringColumns, location = location)
+                clause,
+                targetTable,
+                sourceTable,
+                clusteringColumns.mkString(","),
+                location = location)
               verifyClusteringColumns(targetTable, clusteringColumns, location)
             }
           }
@@ -114,7 +119,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
         test(s"Replace from non clustered table$testSuffix") {
           withTable(targetTable) {
             sql(s"CREATE TABLE $targetTable($columns) USING delta")
-            createOrReplaceClusteredTable("REPLACE", targetTable, columns, clusteringColumns)
+            createOrReplaceClusteredTable(
+              "REPLACE", targetTable, columns, clusteringColumns.mkString(","))
             verifyClusteringColumns(TableIdentifier(targetTable), clusteringColumns)
           }
         }
@@ -282,7 +288,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
 
   protected def verifyClusteringColumns(
       table: String,
-      expectedLogicalClusteringColumns: String,
+      expectedLogicalClusteringColumns: Seq[String],
       locationOpt: Option[String]): Unit = {
     locationOpt.map { location =>
       verifyClusteringColumns(
@@ -447,7 +453,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
       // Validate REPLACE TABLE (AS SELECT).
       Seq("REPLACE", "CREATE OR REPLACE").foreach { clause =>
         withClusteredTable(testTable, "a int", "a") {
-          verifyClusteringColumns(TableIdentifier(testTable), "a")
+          verifyClusteringColumns(TableIdentifier(testTable), Seq("a"))
 
           Seq(true, false).foreach { isRTAS =>
             val testQuery = if (isRTAS) {
@@ -458,7 +464,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             }
             sql(testQuery)
             // Note that clustering table feature are still retained after REPLACE TABLE.
-            verifyClusteringColumns(TableIdentifier(testTable), "")
+            verifyClusteringColumns(TableIdentifier(testTable), Seq.empty)
           }
         }
       }
@@ -478,7 +484,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
         .saveAsTable(sourceTable)
 
       withClusteredTable(testTable, "a int", "a") {
-        verifyClusteringColumns(TableIdentifier(testTable), "a")
+        verifyClusteringColumns(TableIdentifier(testTable), Seq("a"))
 
         spark.table(sourceTable)
           .write
@@ -487,7 +493,7 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
           .option("overwriteSchema", "true")
           .saveAsTable(testTable)
         // Note that clustering table feature are still retained after REPLACE TABLE.
-        verifyClusteringColumns(TableIdentifier(testTable), "")
+        verifyClusteringColumns(TableIdentifier(testTable), Seq.empty)
       }
     }
   }
@@ -563,29 +569,45 @@ trait ClusteredTableDDLWithColumnMappingV2Base extends ClusteredTableDDLWithColu
     withClusteredTable(testTable, "`col1 a` INT, col2 INT, col3 STRUCT<col4 INT, `col5 b` INT>, " +
       "`col6 c` STRUCT<col7 INT, `col8 d.e` INT>, `col9.f` INT", "`col1 a`") {
       val tableIdentifier = TableIdentifier(testTable)
-      verifyClusteringColumns(tableIdentifier, "`col1 a`")
+      verifyClusteringColumns(tableIdentifier, Seq("`col1 a`"))
 
       // Test ALTER CLUSTER BY to change clustering columns away from names with spaces.
       sql(s"ALTER TABLE $testTable CLUSTER BY (col2)")
-      verifyClusteringColumns(tableIdentifier, "col2")
+      verifyClusteringColumns(tableIdentifier, Seq("col2"))
 
       // Test ALTER CLUSTER BY to test with structs with spaces in varying places.
       sql(s"ALTER TABLE $testTable CLUSTER BY (col3.`col5 b`, `col6 c`.col7)")
-      verifyClusteringColumns(tableIdentifier, "col3.`col5 b`, `col6 c`.col7")
+      verifyClusteringColumns(tableIdentifier, Seq("col3.`col5 b`", "`col6 c`.col7"))
 
       // Test ALTER CLUSTER BY on structs with spaces on both entries and with no spaces in the same
       // clustering spec, including cases where there is a '.' in the name.
       sql(s"ALTER TABLE $testTable CLUSTER BY (col3.col4, `col6 c`.`col8 d.e`, `col1 a`)")
-      verifyClusteringColumns(tableIdentifier, "col3.col4,`col6 c`.`col8 d.e`,`col1 a`")
+      verifyClusteringColumns(tableIdentifier, Seq("col3.col4", "`col6 c`.`col8 d.e`", "`col1 a`"))
 
       // Test ALTER TABLE CLUSTER BY after renaming a column to include spaces in the name.
       sql(s"ALTER TABLE $testTable RENAME COLUMN col2 to `col2 e`")
       sql(s"ALTER TABLE $testTable CLUSTER BY (`col2 e`)")
-      verifyClusteringColumns(tableIdentifier, "`col2 e`")
+      verifyClusteringColumns(tableIdentifier, Seq("`col2 e`"))
 
       // Test ALTER TABLE with '.' in the name.
       sql(s"ALTER TABLE $testTable CLUSTER BY (`col9.f`)")
-      verifyClusteringColumns(tableIdentifier, "`col9.f`")
+      verifyClusteringColumns(tableIdentifier, Seq("`col9.f`"))
+    }
+  }
+
+  test("validate create table with commas in the column name") {
+    withClusteredTable(testTable, "`col1,a` BIGINT", "`col1,a`") {
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("`col1,a`"))
+    }
+    withClusteredTable(testTable, "`,col1,a,` BIGINT", "`,col1,a,`") {
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("`,col1,a,`"))
+    }
+    withClusteredTable(testTable, "`,col1,a,` BIGINT, `col2` BIGINT", "`,col1,a,`, `col2`") {
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("`,col1,a,`", "col2"))
+    }
+    withClusteredTable(testTable, "`,col1,a,` BIGINT, col2 BIGINT", "col2") {
+      sql(s"ALTER TABLE $testTable CLUSTER BY (`,col1,a,`)")
+      verifyClusteringColumns(TableIdentifier(testTable), Seq("`,col1,a,`"))
     }
   }
 }
@@ -622,16 +644,16 @@ trait ClusteredTableDDLSuiteBase
   test("alter table cluster by - valid scenarios") {
     withClusteredTable(testTable, "id INT, a STRUCT<b INT, c STRING>, name STRING", "id, name") {
       val tableIdentifier = TableIdentifier(testTable)
-      verifyClusteringColumns(tableIdentifier, "id,name")
+      verifyClusteringColumns(tableIdentifier, Seq("id", "name"))
 
       // Change the clustering columns and verify that they are changed in both
       // Delta logs and catalog.
       sql(s"ALTER TABLE $testTable CLUSTER BY (name)")
-      verifyClusteringColumns(tableIdentifier, "name")
+      verifyClusteringColumns(tableIdentifier, Seq("name"))
 
       // Nested column scenario.
       sql(s"ALTER TABLE $testTable CLUSTER BY (a.b, id)")
-      verifyClusteringColumns(tableIdentifier, "a.b,id")
+      verifyClusteringColumns(tableIdentifier, Seq("a.b", "id"))
     }
   }
 
@@ -667,17 +689,17 @@ trait ClusteredTableDDLSuiteBase
   test("alter table cluster by none") {
     withClusteredTable(testTable, "id Int", "id") {
       val tableIdentifier = TableIdentifier(testTable)
-      verifyClusteringColumns(tableIdentifier, "id")
+      verifyClusteringColumns(tableIdentifier, Seq("id"))
 
       sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
-      verifyClusteringColumns(tableIdentifier, "")
+      verifyClusteringColumns(tableIdentifier, Seq.empty)
     }
   }
 
   test("optimize clustered table and trigger regular compaction") {
     withClusteredTable(testTable, "a INT, b STRING", "a, b") {
       val tableIdentifier = TableIdentifier(testTable)
-      verifyClusteringColumns(tableIdentifier, "a, b")
+      verifyClusteringColumns(tableIdentifier, Seq("a", "b"))
 
       (1 to 1000).map(i => (i, i.toString)).toDF("a", "b")
         .write.mode("append").format("delta").saveAsTable(testTable)
@@ -697,7 +719,7 @@ trait ClusteredTableDDLSuiteBase
 
       // ALTER TABLE CLUSTER BY NONE and then OPTIMIZE to trigger regular compaction.
       sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
-      verifyClusteringColumns(tableIdentifier, "")
+      verifyClusteringColumns(tableIdentifier, Seq.empty)
 
       (1001 to 2000).map(i => (i, i.toString)).toDF("a", "b")
         .repartition(10).write.mode("append").format("delta").saveAsTable(testTable)
@@ -807,7 +829,7 @@ trait ClusteredTableDDLSuiteBase
 
       // Validate clustering columns and that clustering columns in stats schema.
       val (_, dstSnapshot1) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable1))
-      verifyClusteringColumns(TableIdentifier(dstTable1), "col1,col2")
+      verifyClusteringColumns(TableIdentifier(dstTable1), Seq("col1", "col2"))
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot1, Seq("col1", "col2"))
 
       // Change to CLUSTER BY NONE, then CLONE from earlier version to validate that the
@@ -815,13 +837,13 @@ trait ClusteredTableDDLSuiteBase
       sql(s"ALTER TABLE $srcTable CLUSTER BY NONE")
       sql(s"CREATE TABLE $dstTable2 SHALLOW CLONE $srcTable VERSION AS OF 2")
       val (_, dstSnapshot2) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable2))
-      verifyClusteringColumns(TableIdentifier(dstTable2), "col1,col2")
+      verifyClusteringColumns(TableIdentifier(dstTable2), Seq("col1", "col2"))
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot2, Seq("col1", "col2"))
 
       // Validate CLONE after CLUSTER BY NONE
       sql(s"CREATE TABLE $dstTable3 SHALLOW CLONE $srcTable")
       val (_, dstSnapshot3) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(dstTable3))
-      verifyClusteringColumns(TableIdentifier(dstTable3), "")
+      verifyClusteringColumns(TableIdentifier(dstTable3), Seq.empty)
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(dstSnapshot3, Seq.empty)
 
     }
@@ -877,43 +899,43 @@ trait ClusteredTableDDLSuiteBase
       assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
 
       sql(s"ALTER TABLE $testTable CLUSTER BY (a)")
-      verifyClusteringColumns(tableIdentifier, "a")
+      verifyClusteringColumns(tableIdentifier, Seq("a"))
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
       val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
-      verifyClusteringColumns(tableIdentifier, "", skipCatalogCheck = true)
+      verifyClusteringColumns(tableIdentifier, Seq.empty, skipCatalogCheck = true)
     }
 
     // Scenario 2: restore clustered table to previous clustering columns.
     withClusteredTable(testTable, "a INT, b STRING", "a") {
-      verifyClusteringColumns(tableIdentifier, "a")
+      verifyClusteringColumns(tableIdentifier, Seq("a"))
 
       sql(s"ALTER TABLE $testTable CLUSTER BY (b)")
-      verifyClusteringColumns(tableIdentifier, "b")
+      verifyClusteringColumns(tableIdentifier, Seq("b"))
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, "a", skipCatalogCheck = true)
+      verifyClusteringColumns(tableIdentifier, Seq("a"), skipCatalogCheck = true)
     }
 
     // Scenario 3: restore from table with clustering columns to non-empty clustering columns
     withClusteredTable(testTable, "a int", "a") {
-      verifyClusteringColumns(tableIdentifier, "a")
+      verifyClusteringColumns(tableIdentifier, Seq("a"))
 
       sql(s"ALTER TABLE $testTable CLUSTER BY NONE")
-      verifyClusteringColumns(tableIdentifier, "")
+      verifyClusteringColumns(tableIdentifier, Seq.empty)
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, "a", skipCatalogCheck = true)
+      verifyClusteringColumns(tableIdentifier, Seq("a"), skipCatalogCheck = true)
     }
 
     // Scenario 4: restore to start version.
     withClusteredTable(testTable, "a int", "a") {
-      verifyClusteringColumns(tableIdentifier, "a")
+      verifyClusteringColumns(tableIdentifier, Seq("a"))
 
       sql(s"INSERT INTO $testTable VALUES (1)")
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, "a", skipCatalogCheck = true)
+      verifyClusteringColumns(tableIdentifier, Seq("a"), skipCatalogCheck = true)
     }
 
     // Scenario 5: restore unclustered table to unclustered table.
@@ -981,7 +1003,7 @@ trait ClusteredTableDDLWithV2Base
                 createOrReplaceClusteredTable(
                   clause, testTable, "i int, b string", "i", location = location)
               }
-              verifyClusteringColumns(testTable, "i", location)
+              verifyClusteringColumns(testTable, Seq("i"), location)
             }
           }
         }
@@ -996,7 +1018,7 @@ trait ClusteredTableDDLWithV2Base
       // Validate REPLACE TABLE (AS SELECT).
       Seq("REPLACE", "CREATE OR REPLACE").foreach { clause =>
         withClusteredTable(testTable, "a int", "a") {
-          verifyClusteringColumns(TableIdentifier(testTable), "a")
+          verifyClusteringColumns(TableIdentifier(testTable), Seq("a"))
 
           Seq(true, false).foreach { isRTAS =>
             val e = intercept[DeltaAnalysisException] {
@@ -1038,7 +1060,7 @@ trait ClusteredTableDDLWithV2Base
                 createOrReplaceClusteredTable(
                   clause, testTable, "i int, b string", "i", location = location)
               }
-              verifyClusteringColumns(testTable, "i", location)
+              verifyClusteringColumns(testTable, Seq("i"), location)
               verifyPartitionColumns(TableIdentifier(testTable), Seq())
             }
           }
@@ -1050,16 +1072,17 @@ trait ClusteredTableDDLWithV2Base
   Seq(
     ("",
       "a INT, b STRING, ts TIMESTAMP",
-      "a, b"),
+      Seq("a", "b")),
     (" multipart name",
       "a STRUCT<b INT, c STRING>, ts TIMESTAMP",
-      "a.b, ts")
+      Seq("a.b", "ts"))
   ).foreach { case (testSuffix, columns, clusteringColumns) =>
     test(s"create/replace table createOrReplace$testSuffix") {
       withTable(testTable) {
         // Repeat two times to test both create and replace cases.
         (1 to 2).foreach { _ =>
-          createOrReplaceClusteredTable("CREATE OR REPLACE", testTable, columns, clusteringColumns)
+          createOrReplaceClusteredTable(
+            "CREATE OR REPLACE", testTable, columns, clusteringColumns.mkString(","))
           verifyClusteringColumns(TableIdentifier(testTable), clusteringColumns)
         }
       }
@@ -1072,7 +1095,11 @@ trait ClusteredTableDDLWithV2Base
           // Repeat two times to test both create and replace cases.
           (1 to 2).foreach { _ =>
             createOrReplaceAsSelectClusteredTable(
-              "CREATE OR REPLACE", targetTable, sourceTable, clusteringColumns, location = location)
+              "CREATE OR REPLACE",
+              targetTable,
+              sourceTable,
+              clusteringColumns.mkString(","),
+              location = location)
             verifyClusteringColumns(targetTable, clusteringColumns, location)
           }
         }
@@ -1099,7 +1126,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         // When schema is not specified, the schema of the table is inferred from the external
         // table.
         sql(s"CREATE EXTERNAL TABLE clustered_table USING delta LOCATION '${dir.getAbsolutePath}'")
-        verifyClusteringColumns(TableIdentifier("clustered_table"), "col1")
+        verifyClusteringColumns(TableIdentifier("clustered_table"), Seq("col1"))
       }
     }
   }
@@ -1167,7 +1194,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
       withTable(tableName) {
         sql(s"CREATE EXTERNAL TABLE $tableName (col1 INT, col2 STRING) USING delta " +
           s"CLUSTER BY (col1) LOCATION '${dir.getAbsolutePath}'")
-        verifyClusteringColumns(TableIdentifier(tableName), "col1")
+        verifyClusteringColumns(TableIdentifier(tableName), Seq("col1"))
       }
     }
   }

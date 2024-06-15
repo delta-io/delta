@@ -507,8 +507,8 @@ class DeltaRetentionSuite extends QueryTest
   }
 }
 
-class DeltaRetentionWithManagedCommitBatch1Suite extends DeltaRetentionSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
+class DeltaRetentionWithCoordinatedCommitsBatch1Suite extends DeltaRetentionSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
 /**
@@ -517,10 +517,10 @@ class DeltaRetentionWithManagedCommitBatch1Suite extends DeltaRetentionSuite {
  * files. However, in this suite, delta files might be backfilled asynchronously, which means
  * setting the modification time will not work as expected.
  */
-class DeltaRetentionWithManagedCommitBatch2Suite extends QueryTest
+class DeltaRetentionWithCoordinatedCommitsBatch2Suite extends QueryTest
     with DeltaSQLCommandTest
     with DeltaRetentionSuiteBase {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(2)
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 
   override def getLogFiles(dir: File): Seq[File] =
     getDeltaFiles(dir) ++ getUnbackfilledDeltaFiles(dir) ++ getCheckpointFiles(dir)
@@ -528,9 +528,9 @@ class DeltaRetentionWithManagedCommitBatch2Suite extends QueryTest
   /**
    * This test verifies that unbackfilled versions, i.e., versions for which backfilled deltas do
    * not exist yet, are never considered for deletion, even if they fall outside the retention
-   * window. The primary reason for not deleting these versions is that the CommitOwner might be
-   * actively tracking those files, and currently, MetadataCleanup does not communicate with the
-   * CommitOwner.
+   * window. The primary reason for not deleting these versions is that the CommitCoordinator might
+   * be actively tracking those files, and currently, MetadataCleanup does not communicate with the
+   * CommitCoordinator.
    *
    * Although the fact that they are unbackfilled is somewhat redundant since these versions are
    * currently already protected due to two additional reasons:

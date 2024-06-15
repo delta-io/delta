@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-package io.delta.dynamodbcommitstore;
+package io.delta.dynamodbcommitcoordinator;
 
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
-import org.apache.spark.sql.delta.managedcommit.CommitOwnerBuilder;
-import org.apache.spark.sql.delta.managedcommit.CommitOwnerClient;
+import org.apache.spark.sql.delta.coordinatedcommits.CommitCoordinatorBuilder;
+import org.apache.spark.sql.delta.coordinatedcommits.CommitCoordinatorClient;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
@@ -28,7 +28,7 @@ import scala.collection.immutable.Map;
 
 import java.io.IOException;
 
-public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
+public class DynamoDBCommitCoordinatorClientBuilder implements CommitCoordinatorBuilder {
 
     private final long BACKFILL_BATCH_SIZE = 1L;
 
@@ -42,7 +42,7 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
      * commits for this owner. The value of this key is stored in the `conf`
      * which is passed to the `build` method.
      */
-    private static final String MANAGED_COMMITS_TABLE_NAME_KEY = "dynamoDBTableName";
+    private static final String COORDINATED_COMMITS_TABLE_NAME_KEY = "dynamoDBTableName";
     /**
      * The endpoint of the DynamoDB service. The value of this key is stored in the
      * `conf` which is passed to the `build` method.
@@ -50,29 +50,29 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
     private static final String DYNAMO_DB_ENDPOINT_KEY = "dynamoDBEndpoint";
 
     @Override
-    public CommitOwnerClient build(SparkSession spark, Map<String, String> conf) {
-        String managedCommitTableName = conf.get(MANAGED_COMMITS_TABLE_NAME_KEY).getOrElse(() -> {
-            throw new RuntimeException(MANAGED_COMMITS_TABLE_NAME_KEY + " not found");
+    public CommitCoordinatorClient build(SparkSession spark, Map<String, String> conf) {
+        String coordinatedCommitsTableName = conf.get(COORDINATED_COMMITS_TABLE_NAME_KEY).getOrElse(() -> {
+            throw new RuntimeException(COORDINATED_COMMITS_TABLE_NAME_KEY + " not found");
         });
         String dynamoDBEndpoint = conf.get(DYNAMO_DB_ENDPOINT_KEY).getOrElse(() -> {
             throw new RuntimeException(DYNAMO_DB_ENDPOINT_KEY + " not found");
         });
         String awsCredentialsProviderName =
-                spark.conf().get(DeltaSQLConf.MANAGED_COMMIT_DDB_AWS_CREDENTIALS_PROVIDER_NAME());
+                spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_AWS_CREDENTIALS_PROVIDER_NAME());
         int readCapacityUnits = Integer.parseInt(
-                spark.conf().get(DeltaSQLConf.MANAGED_COMMIT_DDB_READ_CAPACITY_UNITS().key()));
+                spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_READ_CAPACITY_UNITS().key()));
         int writeCapacityUnits = Integer.parseInt(
-                spark.conf().get(DeltaSQLConf.MANAGED_COMMIT_DDB_WRITE_CAPACITY_UNITS().key()));
+                spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_WRITE_CAPACITY_UNITS().key()));
         boolean skipPathCheck = Boolean.parseBoolean(
-                spark.conf().get(DeltaSQLConf.MANAGED_COMMIT_DDB_SKIP_PATH_CHECK().key()));
+                spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK().key()));
         try {
             AmazonDynamoDB ddbClient = createAmazonDDBClient(
                     dynamoDBEndpoint,
                     awsCredentialsProviderName,
                     spark.sessionState().newHadoopConf()
             );
-            return getDynamoDBCommitOwnerClient(
-                    managedCommitTableName,
+            return getDynamoDBCommitCoordinatorClient(
+                    coordinatedCommitsTableName,
                     dynamoDBEndpoint,
                     ddbClient,
                     BACKFILL_BATCH_SIZE,
@@ -85,8 +85,8 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
         }
     }
 
-    protected DynamoDBCommitOwnerClient getDynamoDBCommitOwnerClient(
-            String managedCommitTableName,
+    protected DynamoDBCommitCoordinatorClient getDynamoDBCommitCoordinatorClient(
+            String coordinatedCommitsTableName,
             String dynamoDBEndpoint,
             AmazonDynamoDB ddbClient,
             long backfillBatchSize,
@@ -94,8 +94,8 @@ public class DynamoDBCommitOwnerClientBuilder implements CommitOwnerBuilder {
             int writeCapacityUnits,
             boolean skipPathCheck
     ) throws IOException {
-        return new DynamoDBCommitOwnerClient(
-                managedCommitTableName,
+        return new DynamoDBCommitCoordinatorClient(
+                coordinatedCommitsTableName,
                 dynamoDBEndpoint,
                 ddbClient,
                 backfillBatchSize,

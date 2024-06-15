@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
 import java.util.concurrent.{Executors, TimeUnit}
@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider}
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
-import io.delta.dynamodbcommitstore.DynamoDBCommitOwnerClient
+import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -36,35 +36,35 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{ThreadUtils, Utils}
 
-trait CommitOwnerClientImplSuiteBase extends QueryTest
+trait CommitCoordinatorClientImplSuiteBase extends QueryTest
     with SharedSparkSession
     with LogStoreProvider
-    with ManagedCommitTestUtils
+    with CoordinatedCommitsTestUtils
     with DeltaSQLTestUtils
     with DeltaSQLCommandTest {
 
   /**
-   * Needs to be overwritten by implementing classes to provide a [[TableCommitOwnerClient]]
-   * wrapping the commit owner client that should be tested.
+   * Needs to be overwritten by implementing classes to provide a [[TableCommitCoordinatorClient]]
+   * wrapping the commit coordinator client that should be tested.
    */
-  protected def createTableCommitOwnerClient(deltaLog: DeltaLog): TableCommitOwnerClient
+  protected def createTableCommitCoordinatorClient(deltaLog: DeltaLog): TableCommitCoordinatorClient
 
   /**
    * Needs to be overwritten by implementing classes to provide an implementation
    * of backfill registration.
    */
   protected def registerBackfillOp(
-      tableCommitOwnerClient: TableCommitOwnerClient,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       deltaLog: DeltaLog,
       version: Long): Unit
 
   /**
    * Needs to be overwritten by implementing classes to provide a way of validating
-   * that the commit owner client under test performs backfilling as expected at
+   * that the commit coordinator client under test performs backfilling as expected at
    * the specified version.
    */
   protected def validateBackfillStrategy(
-      tableCommitOwnerClient: TableCommitOwnerClient,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       logPath: Path,
       version: Long): Unit
 
@@ -80,8 +80,8 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
     maxVersion: Long): Unit
 
   /**
-   * Checks that the commit owner state is correct in terms of
-   *  - The latest table version in the commit owner is correct
+   * Checks that the commit coordinator state is correct in terms of
+   *  - The latest table version in the commit coordinator is correct
    *  - All supposedly backfilled commits are indeed backfilled
    *  - The contents of the backfilled commits are correct (verified
    *     if commitTimestampOpt is provided)
@@ -91,17 +91,17 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
    */
   protected def assertInvariants(
        logPath: Path,
-       tableCommitOwnerClient: TableCommitOwnerClient,
+       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
        commitTimestampsOpt: Option[Array[Long]] = None): Unit = {
     val maxUntrackedVersion: Int = {
-      val commitResponse = tableCommitOwnerClient.getCommits()
+      val commitResponse = tableCommitCoordinatorClient.getCommits()
       if (commitResponse.getCommits.isEmpty) {
         commitResponse.getLatestTableVersion.toInt
       } else {
         assert(
           commitResponse.getCommits.last.getVersion == commitResponse.getLatestTableVersion,
-          s"Max commit tracked by the commit owner ${commitResponse.getCommits.last} must " +
-            s"match latestTableVersion tracked by the commit owner " +
+          s"Max commit tracked by the commit coordinator ${commitResponse.getCommits.last} must " +
+            s"match latestTableVersion tracked by the commit coordinator " +
             s"${commitResponse.getLatestTableVersion}."
         )
         val minVersion = commitResponse.getCommits.head.getVersion
@@ -149,7 +149,7 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
   protected def commit(
       version: Long,
       timestamp: Long,
-      tableCommitOwnerClient: TableCommitOwnerClient): Commit = {
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient): Commit = {
     val commitInfo = CommitInfo.empty(version = Some(version)).withTimestamp(timestamp)
       .copy(inCommitTimestamp = Some(timestamp))
     val updatedActions = if (version == 0) {
@@ -157,7 +157,7 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
     } else {
       getUpdatedActionsForNonZerothCommit(commitInfo)
     }
-    tableCommitOwnerClient.commit(
+    tableCommitCoordinatorClient.commit(
       version,
       Iterator(s"$version", s"$timestamp"),
       updatedActions).getCommit
@@ -197,34 +197,34 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
-      val tableCommitOwnerClient = createTableCommitOwnerClient(log)
+      val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
 
       val e = intercept[CommitFailedException] {
-        commit(version = 0, timestamp = 0, tableCommitOwnerClient)
+        commit(version = 0, timestamp = 0, tableCommitCoordinatorClient)
       }
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       writeCommitZero(logPath)
-      assert(tableCommitOwnerClient.getCommits() == GetCommitsResponse(Seq.empty, -1))
+      assert(tableCommitCoordinatorClient.getCommits() == GetCommitsResponse(Seq.empty, -1))
       assertBackfilled(version = 0, logPath, Some(0L))
 
       // Test backfilling functionality for commits 1 - 8
       (1 to 8).foreach { version =>
-        commit(version, version, tableCommitOwnerClient)
-        validateBackfillStrategy(tableCommitOwnerClient, logPath, version)
-        assert(tableCommitOwnerClient.getCommits().getLatestTableVersion == version)
+        commit(version, version, tableCommitCoordinatorClient)
+        validateBackfillStrategy(tableCommitCoordinatorClient, logPath, version)
+        assert(tableCommitCoordinatorClient.getCommits().getLatestTableVersion == version)
       }
 
       // Test that out-of-order backfill is rejected
       intercept[IllegalArgumentException] {
-        registerBackfillOp(tableCommitOwnerClient, log, 10)
+        registerBackfillOp(tableCommitCoordinatorClient, log, 10)
       }
-      assertInvariants(logPath, tableCommitOwnerClient)
+      assertInvariants(logPath, tableCommitCoordinatorClient)
     }
   }
 
   test("startVersion and endVersion are respected in getCommits") {
     def runGetCommitsAndValidate(
-        client: TableCommitOwnerClient,
+        client: TableCommitCoordinatorClient,
         startVersion: Option[Long],
         endVersion: Option[Long],
         maxVersion: Long): Unit = {
@@ -236,18 +236,18 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
       // prepare a table with 15 commits
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
-      val tableCommitOwnerClient = createTableCommitOwnerClient(log)
+      val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
       writeCommitZero(logPath)
       val maxVersion = 15
       (1 to maxVersion).foreach { version =>
-        commit(version, version, tableCommitOwnerClient)
+        commit(version, version, tableCommitCoordinatorClient)
       }
 
-      runGetCommitsAndValidate(tableCommitOwnerClient, None, None, maxVersion)
-      runGetCommitsAndValidate(tableCommitOwnerClient, Some(9), None, maxVersion)
-      runGetCommitsAndValidate(tableCommitOwnerClient, Some(11), Some(14), maxVersion)
-      runGetCommitsAndValidate(tableCommitOwnerClient, Some(12), Some(12), maxVersion)
-      runGetCommitsAndValidate(tableCommitOwnerClient, None, Some(14), maxVersion)
+      runGetCommitsAndValidate(tableCommitCoordinatorClient, None, None, maxVersion)
+      runGetCommitsAndValidate(tableCommitCoordinatorClient, Some(9), None, maxVersion)
+      runGetCommitsAndValidate(tableCommitCoordinatorClient, Some(11), Some(14), maxVersion)
+      runGetCommitsAndValidate(tableCommitCoordinatorClient, Some(12), Some(12), maxVersion)
+      runGetCommitsAndValidate(tableCommitCoordinatorClient, None, Some(14), maxVersion)
     }
   }
 
@@ -255,18 +255,18 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.getPath)
       val logPath = log.logPath
-      val tableCommitOwnerClient = createTableCommitOwnerClient(log)
+      val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
       // commit-0 must be file system based
       writeCommitZero(logPath)
-      (1 to 3).foreach(i => commit(i, i, tableCommitOwnerClient))
+      (1 to 3).foreach(i => commit(i, i, tableCommitCoordinatorClient))
 
       // Test that backfilling is idempotent for already-backfilled commits.
-      registerBackfillOp(tableCommitOwnerClient, log, 2)
-      registerBackfillOp(tableCommitOwnerClient, log, 2)
+      registerBackfillOp(tableCommitCoordinatorClient, log, 2)
+      registerBackfillOp(tableCommitCoordinatorClient, log, 2)
 
       // Test that backfilling uncommited commits fail.
       intercept[IllegalArgumentException] {
-        registerBackfillOp(tableCommitOwnerClient, log, 4)
+        registerBackfillOp(tableCommitCoordinatorClient, log, 4)
       }
     }
   }
@@ -275,23 +275,23 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
-      val tableCommitOwnerClient = createTableCommitOwnerClient(log)
+      val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
 
       // commit-0 must be file system based
       writeCommitZero(logPath)
       // Verify that conflict-checker rejects out-of-order commits.
-      (1 to 4).foreach(i => commit(i, i, tableCommitOwnerClient))
-      // A retry of commit 0 fails from commit owner client with a conflict and it can't be
-      // retried as commit 0 is upgrading the commit owner client.
-      assertCommitFail(0, 5, retryable = false, commit(0, 5, tableCommitOwnerClient))
-      assertCommitFail(4, 5, retryable = true, commit(4, 6, tableCommitOwnerClient))
+      (1 to 4).foreach(i => commit(i, i, tableCommitCoordinatorClient))
+      // A retry of commit 0 fails from commit coordinator client with a conflict and it can't be
+      // retried as commit 0 is upgrading the commit coordinator client.
+      assertCommitFail(0, 5, retryable = false, commit(0, 5, tableCommitCoordinatorClient))
+      assertCommitFail(4, 5, retryable = true, commit(4, 6, tableCommitCoordinatorClient))
 
-      commit(5, 5, tableCommitOwnerClient)
-      validateGetCommitsResult(tableCommitOwnerClient.getCommits(), None, None, 5)
-      assertCommitFail(5, 6, retryable = true, commit(5, 5, tableCommitOwnerClient))
-      assertCommitFail(7, 6, retryable = false, commit(7, 7, tableCommitOwnerClient))
+      commit(5, 5, tableCommitCoordinatorClient)
+      validateGetCommitsResult(tableCommitCoordinatorClient.getCommits(), None, None, 5)
+      assertCommitFail(5, 6, retryable = true, commit(5, 5, tableCommitCoordinatorClient))
+      assertCommitFail(7, 6, retryable = false, commit(7, 7, tableCommitCoordinatorClient))
 
-      assertInvariants(logPath, tableCommitOwnerClient)
+      assertInvariants(logPath, tableCommitCoordinatorClient)
     }
   }
 
@@ -299,12 +299,12 @@ trait CommitOwnerClientImplSuiteBase extends QueryTest
     withTempTableDir { tempDir =>
       val tablePath = new Path(tempDir.getCanonicalPath)
       val logPath = new Path(tablePath, DeltaLog.LOG_DIR_NAME)
-      val tcs = createTableCommitOwnerClient(DeltaLog.forTable(spark, tablePath))
+      val tcs = createTableCommitCoordinatorClient(DeltaLog.forTable(spark, tablePath))
 
       val numberOfWriters = 11
       val numberOfCommitsPerWriter = 11
       // scalastyle:off sparkThreadPools
-      val executor = DeltaThreadPool("commitOwnerSuite", numberOfWriters)
+      val executor = DeltaThreadPool("commitCoordinatorSuite", numberOfWriters)
       // scalastyle:on sparkThreadPools
       val runningTimestamp = new AtomicInteger(0)
       val commitFailedExceptions = new AtomicInteger(0)

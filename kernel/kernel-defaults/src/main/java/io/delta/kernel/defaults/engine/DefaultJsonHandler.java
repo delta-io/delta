@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.*;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.JsonHandler;
 import io.delta.kernel.exceptions.KernelEngineException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
@@ -90,8 +91,8 @@ public class DefaultJsonHandler implements JsonHandler {
             // JSON reader
             return DataTypeParser.parseSchema(defaultObjectReader.readTree(structTypeJson));
         } catch (JsonProcessingException ex) {
-            throw new RuntimeException(
-                format("Could not parse JSON: %s", structTypeJson), ex);
+            throw new KernelException(
+                format("Could not parse schema given as JSON string: %s", structTypeJson), ex);
         }
     }
 

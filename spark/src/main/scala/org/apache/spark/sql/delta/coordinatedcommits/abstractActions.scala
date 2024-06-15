@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 /**
  * Interface for protocol actions in Delta. The protocol defines the requirements

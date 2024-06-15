@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import io.delta.dynamodbcommitstore.{DynamoDBCommitOwnerClient, DynamoDBCommitOwnerClientBuilder}
+import io.delta.dynamodbcommitcoordinator.{DynamoDBCommitCoordinatorClient, DynamoDBCommitCoordinatorClientBuilder}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -35,7 +35,7 @@ import org.apache.spark.sql.SparkSession
 
 /**
  * An in-memory implementation of DynamoDB client for testing. Only the methods used by
- * `DynamoDBCommitOwnerClient` are implemented.
+ * `DynamoDBCommitCoordinatorClient` are implemented.
  */
 class InMemoryDynamoDBClient extends AbstractAmazonDynamoDB {
   /**
@@ -139,10 +139,11 @@ class InMemoryDynamoDBClient extends AbstractAmazonDynamoDB {
   }
 }
 
-case class TestDynamoDBCommitOwnerBuilder(batchSize: Long) extends CommitOwnerBuilder {
+case class TestDynamoDBCommitCoordinatorBuilder(batchSize: Long) extends CommitCoordinatorBuilder {
     override def getName: String = "test-dynamodb"
-    override def build(spark: SparkSession, config: Map[String, String]): CommitOwnerClient = {
-        new DynamoDBCommitOwnerClient(
+    override def build(
+        spark: SparkSession, config: Map[String, String]): CommitCoordinatorClient = {
+        new DynamoDBCommitCoordinatorClient(
           "testTable",
           "test-endpoint",
           new InMemoryDynamoDBClient(),
@@ -150,34 +151,34 @@ case class TestDynamoDBCommitOwnerBuilder(batchSize: Long) extends CommitOwnerBu
     }
 }
 
-abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
-  extends CommitOwnerClientImplSuiteBase {
+abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
+  extends CommitCoordinatorClientImplSuiteBase {
 
-  override protected def createTableCommitOwnerClient(
+  override protected def createTableCommitCoordinatorClient(
       deltaLog: DeltaLog)
-      : TableCommitOwnerClient = {
-    val cs = TestDynamoDBCommitOwnerBuilder(batchSize = batchSize).build(spark, Map.empty)
+      : TableCommitCoordinatorClient = {
+    val cs = TestDynamoDBCommitCoordinatorBuilder(batchSize = batchSize).build(spark, Map.empty)
     val tableConf = cs.registerTable(
       deltaLog.logPath,
       currentVersion = -1L,
       Metadata(),
       Protocol(1, 1))
-    TableCommitOwnerClient(cs, deltaLog, tableConf)
+    TableCommitCoordinatorClient(cs, deltaLog, tableConf)
   }
 
   override protected def registerBackfillOp(
-      tableCommitOwnerClient: TableCommitOwnerClient,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       deltaLog: DeltaLog,
       version: Long): Unit = {
-    tableCommitOwnerClient.backfillToVersion(version)
+    tableCommitCoordinatorClient.backfillToVersion(version)
   }
 
   override protected def validateBackfillStrategy(
-      tableCommitOwnerClient: TableCommitOwnerClient,
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       logPath: Path,
       version: Long): Unit = {
     val lastExpectedBackfilledVersion = (version - (version % batchSize)).toInt
-    val unbackfilledCommitVersionsAll = tableCommitOwnerClient
+    val unbackfilledCommitVersionsAll = tableCommitCoordinatorClient
       .getCommits().getCommits.map(_.getVersion)
     val expectedVersions = lastExpectedBackfilledVersion + 1 to version.toInt
 
@@ -206,7 +207,7 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
       val logPath = log.logPath
       writeCommitZero(logPath)
       val dynamoDB = new InMemoryDynamoDBClient();
-      val commitOwner = new DynamoDBCommitOwnerClient(
+      val commitCoordinator = new DynamoDBCommitCoordinatorClient(
         "testTable",
         "test-endpoint",
         dynamoDB,
@@ -214,7 +215,7 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
         1, // readCapacityUnits
         1, // writeCapacityUnits
         skipPathCheck)
-      val tableConf = commitOwner.registerTable(
+      val tableConf = commitCoordinator.registerTable(
         logPath,
         -1L,
         Metadata(),
@@ -224,15 +225,15 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
       val fs = wrongLogPath.getFileSystem(log.newDeltaHadoopConf())
       fs.mkdirs(wrongTablePath)
       fs.mkdirs(FileNames.commitDirPath(wrongLogPath))
-      val wrongTablePathTableCommitOwner = new TableCommitOwnerClient(
-        commitOwner, wrongLogPath, tableConf, log.newDeltaHadoopConf(), log.store)
+      val wrongTablePathTableCommitCoordinator = new TableCommitCoordinatorClient(
+        commitCoordinator, wrongLogPath, tableConf, log.newDeltaHadoopConf(), log.store)
       if (skipPathCheck) {
         // This should succeed because we are skipping the path check.
-        val resp = commit(1L, 1L, wrongTablePathTableCommitOwner)
+        val resp = commit(1L, 1L, wrongTablePathTableCommitCoordinator)
         assert(resp.getVersion == 1L)
       } else {
         val e = intercept[CommitFailedException] {
-          commit(1L, 1L, wrongTablePathTableCommitOwner)
+          commit(1L, 1L, wrongTablePathTableCommitCoordinator)
         }
         assert(e.getMessage.contains("while the table is registered at"))
       }
@@ -240,7 +241,7 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
   }
 
   test("builder should read dynamic configs from sparkSession") {
-    class TestDynamoDBCommitOwnerBuilder extends DynamoDBCommitOwnerClientBuilder {
+    class TestDynamoDBCommitCoordinatorBuilder extends DynamoDBCommitCoordinatorClientBuilder {
       override def getName: String = "dynamodb-test"
       override def createAmazonDDBClient(
           endpoint: String,
@@ -251,22 +252,22 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
         new InMemoryDynamoDBClient()
       }
 
-      override def getDynamoDBCommitOwnerClient(
-          managedCommitTableName: String,
+      override def getDynamoDBCommitCoordinatorClient(
+          coordinatedCommitsTableName: String,
           dynamoDBEndpoint: String,
           ddbClient: AmazonDynamoDB,
           backfillBatchSize: Long,
           readCapacityUnits: Int,
           writeCapacityUnits: Int,
-          skipPathCheck: Boolean): DynamoDBCommitOwnerClient = {
-        assert(managedCommitTableName == "tableName-1223")
+          skipPathCheck: Boolean): DynamoDBCommitCoordinatorClient = {
+        assert(coordinatedCommitsTableName == "tableName-1223")
         assert(dynamoDBEndpoint == "endpoint-1224")
         assert(backfillBatchSize == 1)
         assert(readCapacityUnits == 1226)
         assert(writeCapacityUnits == 1227)
         assert(skipPathCheck)
-        new DynamoDBCommitOwnerClient(
-          managedCommitTableName,
+        new DynamoDBCommitCoordinatorClient(
+          coordinatedCommitsTableName,
           dynamoDBEndpoint,
           ddbClient,
           backfillBatchSize,
@@ -275,30 +276,33 @@ abstract class DynamoDBCommitOwnerClientSuite(batchSize: Long)
           skipPathCheck)
       }
     }
-    val commitOwnerConf = JsonUtils.toJson(Map(
+    val commitCoordinatorConf = JsonUtils.toJson(Map(
       "dynamoDBTableName" -> "tableName-1223",
       "dynamoDBEndpoint" -> "endpoint-1224"
     ))
     withSQLConf(
-        DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.defaultTablePropertyKey -> "dynamodb-test",
-        DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.defaultTablePropertyKey -> commitOwnerConf,
-        DeltaSQLConf.MANAGED_COMMIT_DDB_AWS_CREDENTIALS_PROVIDER_NAME.key -> "creds-1225",
-        DeltaSQLConf.MANAGED_COMMIT_DDB_SKIP_PATH_CHECK.key -> "true",
-        DeltaSQLConf.MANAGED_COMMIT_DDB_READ_CAPACITY_UNITS.key -> "1226",
-        DeltaSQLConf.MANAGED_COMMIT_DDB_WRITE_CAPACITY_UNITS.key -> "1227") {
+        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
+          "dynamodb-test",
+        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
+          commitCoordinatorConf,
+        DeltaSQLConf.COORDINATED_COMMITS_DDB_AWS_CREDENTIALS_PROVIDER_NAME.key -> "creds-1225",
+        DeltaSQLConf.COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK.key -> "true",
+        DeltaSQLConf.COORDINATED_COMMITS_DDB_READ_CAPACITY_UNITS.key -> "1226",
+        DeltaSQLConf.COORDINATED_COMMITS_DDB_WRITE_CAPACITY_UNITS.key -> "1227") {
       // clear default builders
-      CommitOwnerProvider.clearNonDefaultBuilders()
-      CommitOwnerProvider.registerBuilder(new TestDynamoDBCommitOwnerBuilder())
+      CommitCoordinatorProvider.clearNonDefaultBuilders()
+      CommitCoordinatorProvider.registerBuilder(new TestDynamoDBCommitCoordinatorBuilder())
       withTempTableDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
         spark.range(1).write.format("delta").mode("overwrite").save(tablePath)
         val log = DeltaLog.forTable(spark, tempDir.toString)
-        val tableCommitOwnerClient = log.snapshot.tableCommitOwnerClientOpt.get
-        assert(tableCommitOwnerClient.commitOwnerClient.isInstanceOf[DynamoDBCommitOwnerClient])
-        assert(tableCommitOwnerClient.tableConf.contains("tableId"))
+        val tableCommitCoordinatorClient = log.snapshot.tableCommitCoordinatorClientOpt.get
+        assert(tableCommitCoordinatorClient
+          .commitCoordinatorClient.isInstanceOf[DynamoDBCommitCoordinatorClient])
+        assert(tableCommitCoordinatorClient.tableConf.contains("tableId"))
       }
     }
   }
 }
 
-class DynamoDBCommitOwnerClient5BackfillSuite extends DynamoDBCommitOwnerClientSuite(5)
+class DynamoDBCommitCoordinatorClient5BackfillSuite extends DynamoDBCommitCoordinatorClientSuite(5)

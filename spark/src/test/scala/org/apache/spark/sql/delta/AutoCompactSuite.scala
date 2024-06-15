@@ -181,7 +181,7 @@ class AutoCompactSuite extends
         assert(metricsLog.totalConsideredFiles === 93)
         assert(metricsLog.numFilesAdded == 3)
         assert(metricsLog.numFilesRemoved == 93)
-        assert(metricsLog.numBatches === 3)
+        assert(metricsLog.numBins === 3)
       }
     }
   }

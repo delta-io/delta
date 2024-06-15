@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.managedcommit
+package org.apache.spark.sql.delta.coordinatedcommits
 
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.storage.LogStore
-import io.delta.dynamodbcommitstore.DynamoDBCommitOwnerClientBuilder
+import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClientBuilder
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -36,7 +36,7 @@ case class Commit(
 }
 
 /**
- * Exception raised by [[CommitOwnerClient.commit]] method.
+ * Exception raised by [[CommitCoordinatorClient.commit]] method.
  *  | retryable | conflict  | meaning                                                         |
  *  |   no      |   no      | something bad happened (e.g. auth failure)                      |
  *  |   no      |   yes     | permanent transaction conflict (e.g. multi-table commit failed) |
@@ -51,12 +51,12 @@ case class CommitFailedException(
   def getConflict: Boolean = conflict
 }
 
-/** Response container for [[CommitOwnerClient.commit]] API */
+/** Response container for [[CommitCoordinatorClient.commit]] API */
 case class CommitResponse(private val commit: Commit) {
   def getCommit: Commit = commit
 }
 
-/** Response container for [[CommitOwnerClient.getCommits]] API */
+/** Response container for [[CommitCoordinatorClient.getCommits]] API */
 case class GetCommitsResponse(
     private val commits: Seq[Commit],
     private val latestTableVersion: Long) {
@@ -64,7 +64,10 @@ case class GetCommitsResponse(
   def getLatestTableVersion: Long = latestTableVersion
 }
 
-/** A container class to inform the [[CommitOwnerClient]] about any changes in Protocol/Metadata */
+/**
+ * A container class to inform the [[CommitCoordinatorClient]] about any changes in
+ * Protocol/Metadata
+ */
 case class UpdatedActions(
     private val commitInfo: AbstractCommitInfo,
     private val newMetadata: AbstractMetadata,
@@ -80,31 +83,35 @@ case class UpdatedActions(
 }
 
 /**
- * [[CommitOwnerClient]] is responsible for managing commits for a managed-commit delta table.
- * 1. It provides API to commit a new version of the table. See [[CommitOwnerClient.commit]] API.
+ * [[CommitCoordinatorClient]] is responsible for managing commits for a coordinated-commits delta
+ * table.
+ * 1. It provides API to commit a new version of the table. See [[CommitCoordinatorClient.commit]]
+ * API.
  * 2. It makes sure that commits are backfilled if/when needed
- * 3. It also tracks and returns unbackfilled commits. See [[CommitOwnerClient.getCommits]] API.
+ * 3. It also tracks and returns unbackfilled commits. See [[CommitCoordinatorClient.getCommits]]
+ *  API.
  */
-trait CommitOwnerClient {
+trait CommitCoordinatorClient {
 
   /**
    * API to register the table represented by the given `logPath` with the given
    * `currentTableVersion`.
-   * This API is called when the table is being converted from filesystem table to managed-commit
-   * table.
+   * This API is called when the table is being converted from filesystem table to
+   * coordinated-commits table.
    * - The `currentTableVersion` is the version of the table just before conversion.
    * - The `currentTableVersion` + 1 represents the commit that will do the conversion. This must be
    *   backfilled atomically.
    * - The `currentTableVersion` + 2 represents the first commit after conversion. This will go via
-   *   the [[CommitOwnerClient]] and it could choose whether it wants to write unbackfilled commits
-   *   and backfill them later.
-   * When a new managed-commit table is being created, the `currentTableVersion` will be -1 and the
-   * upgrade commit needs to be a file-system commit which will write the backfilled file directly.
+   *   the [[CommitCoordinatorClient]] and it could choose whether it wants to write unbackfilled
+   *   commits and backfill them later.
+   * When a new coordinated-commits table is being created, the `currentTableVersion` will be -1 and
+   * the upgrade commit needs to be a file-system commit which will write the backfilled file
+   * directly.
    *
-   * @return A map of key-value pairs which is issued by the commit-owner to identify the table.
-   *         This should be stored in the table's metadata. This information needs to be passed in
-   *         other table specific APIs like commit / getCommits / backfillToVersion to identify the
-   *         table.
+   * @return A map of key-value pairs which is issued by the commit-coordinator to identify the
+   *         table. This should be stored in the table's metadata. This information needs to be
+   *         passed in other table specific APIs like commit / getCommits / backfillToVersion to
+   *         identify the table.
    */
   def registerTable(
       logPath: Path,
@@ -123,7 +130,7 @@ trait CommitOwnerClient {
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      managedCommitTableConf: Map[String, String],
+      coordinatedCommitsTableConf: Map[String, String],
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse
@@ -134,59 +141,61 @@ trait CommitOwnerClient {
    * returned commits are contiguous and in ascending version order.
    * Note that the first version returned by this API may not be equal to the `startVersion`. This
    * happens when few versions starting from `startVersion` are already backfilled and so
-   * commit-owner may have stopped tracking them.
-   * The returned latestTableVersion is the maximum commit version ratified by the Commit-Owner.
-   * Note that returning latestTableVersion as -1 is acceptable only if the commit-owner never
+   * commit-coordinator may have stopped tracking them.
+   * The returned latestTableVersion is the maximum commit version ratified by the
+   * Commit-Coordinator.
+   * Note that returning latestTableVersion as -1 is acceptable only if the commit-coordinator never
    * ratified any version i.e. it never accepted any un-backfilled commit.
    *
    * @return GetCommitsResponse which has a list of [[Commit]]s and the latestTableVersion which is
-   *         tracked by [[CommitOwnerClient]].
+   *         tracked by [[CommitCoordinatorClient]].
    */
   def getCommits(
       logPath: Path,
-      managedCommitTableConf: Map[String, String],
+      coordinatedCommitsTableConf: Map[String, String],
       startVersion: Option[Long] = None,
       endVersion: Option[Long] = None): GetCommitsResponse
 
   /**
-   * API to ask the Commit-Owner to backfill all commits > `lastKnownBackfilledVersion` and
+   * API to ask the Commit-Coordinator to backfill all commits > `lastKnownBackfilledVersion` and
    * <= `endVersion`.
    *
    * If this API returns successfully, that means the backfill must have been completed, although
-   * the Commit-Owner may not be aware of it yet.
+   * the Commit-Coordinator may not be aware of it yet.
    *
-   * @param version The version till which the Commit-Owner should backfill.
-   * @param lastKnownBackfilledVersion The last known version that was backfilled by Commit-Owner
-   *                                   before this API was called. If it's None or invalid, then the
-   *                                   Commit-Owner should backfill from the beginning of the table.
+   * @param version The version till which the Commit-Coordinator should backfill.
+   * @param lastKnownBackfilledVersion The last known version that was backfilled by
+   *                                   Commit-Coordinator before this API was called. If it's None
+   *                                   or invalid, then the Commit-Coordinator should backfill from
+   *                                   the beginning of the table.
    */
   def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      managedCommitTableConf: Map[String, String],
+      coordinatedCommitsTableConf: Map[String, String],
       version: Long,
       lastKnownBackfilledVersion: Option[Long]): Unit
 
   /**
-   * Determines whether this [[CommitOwnerClient]] is semantically equal to another
-   * [[CommitOwnerClient]].
+   * Determines whether this [[CommitCoordinatorClient]] is semantically equal to another
+   * [[CommitCoordinatorClient]].
    *
-   * Semantic equality is determined by each [[CommitOwnerClient]] implementation based on whether
-   * the two instances can be used interchangeably when invoking any of the CommitOwnerClient APIs,
-   * such as `commit`, `getCommits`, etc. For e.g., both the instances might be pointing to the same
-   * underlying endpoint.
+   * Semantic equality is determined by each [[CommitCoordinatorClient]] implementation based on
+   * whether the two instances can be used interchangeably when invoking any of the
+   * CommitCoordinatorClient APIs, such as `commit`, `getCommits`, etc. For e.g., both the instances
+   * might be pointing to the same underlying endpoint.
    */
-  def semanticEquals(other: CommitOwnerClient): Boolean
+  def semanticEquals(other: CommitCoordinatorClient): Boolean
 }
 
-object CommitOwnerClient {
+object CommitCoordinatorClient {
   def semanticEquals(
-      commitOwnerClientOpt1: Option[CommitOwnerClient],
-      commitOwnerClientOpt2: Option[CommitOwnerClient]): Boolean = {
-    (commitOwnerClientOpt1, commitOwnerClientOpt2) match {
-      case (Some(commitOwnerClient1), Some(commitOwnerClient2)) =>
-        commitOwnerClient1.semanticEquals(commitOwnerClient2)
+      commitCoordinatorClientOpt1: Option[CommitCoordinatorClient],
+      commitCoordinatorClientOpt2: Option[CommitCoordinatorClient]): Boolean = {
+    (commitCoordinatorClientOpt1, commitCoordinatorClientOpt2) match {
+      case (Some(commitCoordinatorClient1), Some(commitCoordinatorClient2)) =>
+        commitCoordinatorClient1.semanticEquals(commitCoordinatorClient2)
       case (None, None) =>
         true
       case _ =>
@@ -195,50 +204,52 @@ object CommitOwnerClient {
   }
 }
 
-/** A builder interface for [[CommitOwnerClient]] */
-trait CommitOwnerBuilder {
+/** A builder interface for [[CommitCoordinatorClient]] */
+trait CommitCoordinatorBuilder {
 
-  /** Name of the commit-owner */
+  /** Name of the commit-coordinator */
   def getName: String
 
-  /** Returns a commit-owner client based on the given conf */
-  def build(spark: SparkSession, conf: Map[String, String]): CommitOwnerClient
+  /** Returns a commit-coordinator client based on the given conf */
+  def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient
 }
 
-/** Factory to get the correct [[CommitOwnerClient]] for a table */
-object CommitOwnerProvider {
-  // mapping from different commit-owner names to the corresponding [[CommitOwnerBuilder]]s.
-  private val nameToBuilderMapping = mutable.Map.empty[String, CommitOwnerBuilder]
+/** Factory to get the correct [[CommitCoordinatorClient]] for a table */
+object CommitCoordinatorProvider {
+  // mapping from different commit-coordinator names to the corresponding
+  // [[CommitCoordinatorBuilder]]s.
+  private val nameToBuilderMapping = mutable.Map.empty[String, CommitCoordinatorBuilder]
 
-  /** Registers a new [[CommitOwnerBuilder]] with the [[CommitOwnerProvider]] */
-  def registerBuilder(commitOwnerBuilder: CommitOwnerBuilder): Unit = synchronized {
-    nameToBuilderMapping.get(commitOwnerBuilder.getName) match {
-      case Some(commitOwnerBuilder: CommitOwnerBuilder) =>
-        throw new IllegalArgumentException(s"commit-owner: ${commitOwnerBuilder.getName} already" +
-          s" registered with builder ${commitOwnerBuilder.getClass.getName}")
+  /** Registers a new [[CommitCoordinatorBuilder]] with the [[CommitCoordinatorProvider]] */
+  def registerBuilder(commitCoordinatorBuilder: CommitCoordinatorBuilder): Unit = synchronized {
+    nameToBuilderMapping.get(commitCoordinatorBuilder.getName) match {
+      case Some(commitCoordinatorBuilder: CommitCoordinatorBuilder) =>
+        throw new IllegalArgumentException(
+          s"commit-coordinator: ${commitCoordinatorBuilder.getName} already" +
+          s" registered with builder ${commitCoordinatorBuilder.getClass.getName}")
       case None =>
-        nameToBuilderMapping.put(commitOwnerBuilder.getName, commitOwnerBuilder)
+        nameToBuilderMapping.put(commitCoordinatorBuilder.getName, commitCoordinatorBuilder)
     }
   }
 
-  /** Returns a [[CommitOwnerClient]] for the given `name`, `conf`, and `spark` */
-  def getCommitOwnerClient(
+  /** Returns a [[CommitCoordinatorClient]] for the given `name`, `conf`, and `spark` */
+  def getCommitCoordinatorClient(
       name: String,
       conf: Map[String, String],
-      spark: SparkSession): CommitOwnerClient = synchronized {
+      spark: SparkSession): CommitCoordinatorClient = synchronized {
     nameToBuilderMapping.get(name).map(_.build(spark, conf)).getOrElse {
-      throw new IllegalArgumentException(s"Unknown commit-owner: $name")
+      throw new IllegalArgumentException(s"Unknown commit-coordinator: $name")
     }
   }
 
   // Visible only for UTs
   private[delta] def clearNonDefaultBuilders(): Unit = synchronized {
-    val initialCommitOwnerNames = initialCommitOwnerBuilders.map(_.getName).toSet
-    nameToBuilderMapping.retain((k, _) => initialCommitOwnerNames.contains(k))
+    val initialCommitCoordinatorNames = initialCommitCoordinatorBuilders.map(_.getName).toSet
+    nameToBuilderMapping.retain((k, _) => initialCommitCoordinatorNames.contains(k))
   }
 
-  private val initialCommitOwnerBuilders = Seq[CommitOwnerBuilder](
-    new DynamoDBCommitOwnerClientBuilder()
+  private val initialCommitCoordinatorBuilders = Seq[CommitCoordinatorBuilder](
+    new DynamoDBCommitCoordinatorClientBuilder()
   )
-  initialCommitOwnerBuilders.foreach(registerBuilder)
+  initialCommitCoordinatorBuilders.foreach(registerBuilder)
 }
