@@ -660,11 +660,11 @@ trait ClusteredTableDDLSuiteBase
   test("alter table cluster by - catalog reflects clustering columns when reordered") {
     withClusteredTable(testTable, "id INT, a STRUCT<b INT, c STRING>, name STRING", "id, name") {
       val tableIdentifier = TableIdentifier(testTable)
-      verifyClusteringColumns(tableIdentifier, "id,name")
+      verifyClusteringColumns(tableIdentifier, Seq("id", "name"))
 
       // Re-order the clustering keys and validate the catalog sees the correctly reordered keys.
       sql(s"ALTER TABLE $testTable CLUSTER BY (name, id)")
-      verifyClusteringColumns(tableIdentifier, "name,id")
+      verifyClusteringColumns(tableIdentifier, Seq("name", "id"))
     }
   }
 

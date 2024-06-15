@@ -238,12 +238,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
     // Verify CatalogTable's clusterBySpec.
     assert(ClusteredTableUtils.getClusterBySpecOptional(table).isDefined)
-    val expectedColumns = if (expectedLogicalClusteringColumns.isEmpty) {
-      Seq.empty[String]
-    } else {
-      expectedLogicalClusteringColumns.split(",").toSeq
-    }
-    assertEquals(ClusterBySpec.fromColumnNames(expectedColumns),
+    assertEquals(ClusterBySpec.fromColumnNames(expectedLogicalClusteringColumns),
       ClusteredTableUtils.getClusterBySpecOptional(table).get)
   }
 
@@ -287,16 +282,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
         .getString(0)
     val clusterBySpec = ClusterBySpec.fromProperties(
       Map(ClusteredTableUtils.PROP_CLUSTERING_COLUMNS -> clusteringColumnsVal)).get
-    if (expectedLogicalClusteringColumns == "") {
-      // If the expected columns are empty (e.g., ALTER TABLE CLUSTER BY NONE),
-      // the parsed clusterBySpec's column names should be empty. Note that
-      // we cannot use the "else" block's check since it will generate an array
-      // with one element "").
-      assert(clusterBySpec.columnNames.isEmpty)
-    } else {
-      assert(expectedLogicalClusteringColumns.split(",").map(_.trim) ===
-        clusterBySpec.columnNames.map(_.toString))
-    }
+    assert(expectedLogicalClusteringColumns === clusterBySpec.columnNames.map(_.toString))
   }
 }
 
