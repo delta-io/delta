@@ -58,7 +58,7 @@ public interface CommitCoordinatorClient {
    *                       This will go through the CommitCoordinatorClient and the client is
    *                       free to choose when it wants to backfill this commit.
    * @param currentMetadata The metadata of the table at currentTableVersion
-   * @param currentProtocol The protocol of the table at currentTableVersion   *
+   * @param currentProtocol The protocol of the table at currentTableVersion
    * @return A map of key-value pairs which is issued by the commit coordinator to identify the
    *         table. This should be stored in the table's metadata. This information needs to be
    *         passed to the {@link #commit}, {@link #getCommits}, and {@link #backfillToVersion}

@@ -21,7 +21,7 @@ import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 
 /**
- * A container class to inform the CommitOwnerClient about any changes in Protocol/Metadata
+ * A container class to inform the CommitCoordinatorClient about any changes in Protocol/Metadata
  */
 public class UpdatedActions {
 
