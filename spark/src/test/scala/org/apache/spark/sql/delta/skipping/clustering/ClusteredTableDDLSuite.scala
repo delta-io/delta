@@ -22,6 +22,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
+import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
@@ -36,6 +37,35 @@ import org.apache.spark.sql.types.{ArrayType, IntegerType, StructField, StructTy
 trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
   with SharedSparkSession
   with ClusteredTableTestUtils {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key, "true")
+  }
+
+  override def afterAll(): Unit = {
+    // Reset UpdateCatalog's thread pool to ensure it is re-initialized in the next test suite.
+    // This is necessary because the [[SparkThreadLocalForwardingThreadPoolExecutor]]
+    // retains a reference to the SparkContext. Without resetting, the new test suite would
+    // reuse the same SparkContext from the previous suite, despite it being stopped.
+    //
+    // This will force the UpdateCatalog's background thread to use the new SparkContext.
+    //
+    // scalastyle:off line.size.limit
+    // This is to avoid the following exception thrown from the UpdateCatalog's background thread:
+    //  java.lang.IllegalStateException: Cannot call methods on a stopped SparkContext.
+    //  This stopped SparkContext was created at:
+    //
+    //  org.apache.spark.sql.delta.skipping.clustering.ClusteredTableDDLDataSourceV2NameColumnMappingSuite.beforeAll
+    //
+    //  The currently active SparkContext was created at:
+    //
+    //  org.apache.spark.sql.delta.skipping.clustering.ClusteredTableDDLDataSourceV2Suite.beforeAll
+    // scalastyle:on line.size.limit
+    UpdateCatalog.tp = null
+
+    super.afterAll()
+  }
 
   protected val testTable: String = "test_ddl_table"
   protected val sourceTable: String = "test_ddl_source"
@@ -627,6 +657,17 @@ trait ClusteredTableDDLSuiteBase
     }
   }
 
+  test("alter table cluster by - catalog reflects clustering columns when reordered") {
+    withClusteredTable(testTable, "id INT, a STRUCT<b INT, c STRING>, name STRING", "id, name") {
+      val tableIdentifier = TableIdentifier(testTable)
+      verifyClusteringColumns(tableIdentifier, Seq("id", "name"))
+
+      // Re-order the clustering keys and validate the catalog sees the correctly reordered keys.
+      sql(s"ALTER TABLE $testTable CLUSTER BY (name, id)")
+      verifyClusteringColumns(tableIdentifier, Seq("name", "id"))
+    }
+  }
+
   test("alter table cluster by - error scenarios") {
     withClusteredTable(testTable, "id INT, id2 INT, name STRING", "id, name") {
       // Specify non-existing columns.
@@ -862,7 +903,7 @@ trait ClusteredTableDDLSuiteBase
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
       val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
-      verifyClusteringColumns(tableIdentifier, Seq.empty)
+      verifyClusteringColumns(tableIdentifier, Seq.empty, skipCatalogCheck = true)
     }
 
     // Scenario 2: restore clustered table to previous clustering columns.
@@ -873,7 +914,7 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(tableIdentifier, Seq("b"))
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, Seq("a"))
+      verifyClusteringColumns(tableIdentifier, Seq("a"), skipCatalogCheck = true)
     }
 
     // Scenario 3: restore from table with clustering columns to non-empty clustering columns
@@ -884,7 +925,7 @@ trait ClusteredTableDDLSuiteBase
       verifyClusteringColumns(tableIdentifier, Seq.empty)
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, Seq("a"))
+      verifyClusteringColumns(tableIdentifier, Seq("a"), skipCatalogCheck = true)
     }
 
     // Scenario 4: restore to start version.
@@ -894,7 +935,7 @@ trait ClusteredTableDDLSuiteBase
       sql(s"INSERT INTO $testTable VALUES (1)")
 
       sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
-      verifyClusteringColumns(tableIdentifier, Seq("a"))
+      verifyClusteringColumns(tableIdentifier, Seq("a"), skipCatalogCheck = true)
     }
 
     // Scenario 5: restore unclustered table to unclustered table.
@@ -933,6 +974,7 @@ trait ClusteredTableDDLSuiteBase
 }
 
 trait ClusteredTableDDLSuite extends ClusteredTableDDLSuiteBase
+
 trait ClusteredTableDDLWithNameColumnMapping
   extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableNameMode
 

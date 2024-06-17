@@ -107,7 +107,9 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         throw DeltaErrors.unexpectedDataChangeException("Create a Delta table")
       }
       val description = configuration.get("comment").orNull
-      val cleanedConfs = configuration.filterKeys(_ != "comment").toMap
+      // Filter out the property for clustering columns from Metadata action.
+      val cleanedConfs = ClusteredTableUtils.removeClusteringColumnsProperty(
+        configuration.filterKeys(_ != "comment").toMap)
       txn.updateMetadata(
         Metadata(
           description = description,
