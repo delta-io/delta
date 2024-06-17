@@ -17,6 +17,7 @@ package io.delta.kernel.internal.replay;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
@@ -27,8 +28,10 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.*;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -44,6 +47,7 @@ public class ConflictChecker {
     private static final int PROTOCOL_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("protocol");
     private static final int METADATA_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("metaData");
     private static final int TXN_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("txn");
+    private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
 
     // Snapshot of the table read by the transaction that encountered the conflict
     // (a.k.a the losing transaction)
@@ -82,12 +86,15 @@ public class ConflictChecker {
             long attemptVersion,
             TransactionImpl transaction) throws ConcurrentWriteException {
         checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-        return new ConflictChecker(snapshot, transaction, attemptVersion)
+        return new ConflictChecker(
+                snapshot, transaction, attemptVersion)
                 .resolveConflicts(engine);
     }
 
     public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
         List<FileStatus> winningCommits = getWinningCommitFiles(engine);
+        AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt = new AtomicReference<>(
+                Optional.empty());
 
         // no winning commits. why did we get the transaction conflict?
         checkState(!winningCommits.isEmpty(), "No winning commits found.");
@@ -98,11 +105,14 @@ public class ConflictChecker {
                 winningCommits,
                 CONFLICT_RESOLUTION_SCHEMA,
                 Optional.empty())) {
-
             actionsIterator.forEachRemaining(actionBatch -> {
                 checkArgument(!actionBatch.isFromCheckpoint());  // no checkpoints should be read
                 ColumnarBatch batch = actionBatch.getColumnarBatch();
-
+                CommitInfo commitInfo = CommitInfo.fromColumnVector(
+                        batch.getColumnVector(COMMITINFO_ORDINAL),0, engine);
+                if (commitInfo != null) {
+                    winningCommitInfoOpt.set(Optional.of(commitInfo));
+                }
                 handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
                 handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
                 handleTxn(batch.getColumnVector(TXN_ORDINAL));
@@ -113,7 +123,9 @@ public class ConflictChecker {
 
         // if we get here, we have successfully rebased (i.e no logical conflicts)
         // against the winning transactions
-        return new TransactionRebaseState(getLastWinningTxnVersion(winningCommits));
+        return new TransactionRebaseState(
+                getLastWinningTxnVersion(winningCommits),
+                getLastCommitTimestamp(engine, winningCommits, winningCommitInfoOpt.get()));
     }
 
     /**
@@ -128,9 +140,11 @@ public class ConflictChecker {
      */
     public static class TransactionRebaseState {
         private final long latestVersion;
+        private final long latestCommitTimestamp;
 
-        public TransactionRebaseState(long latestVersion) {
+        public TransactionRebaseState(long latestVersion, Long latestCommitTimestamp) {
             this.latestVersion = latestVersion;
+            this.latestCommitTimestamp = latestCommitTimestamp;
         }
 
         /**
@@ -140,6 +154,15 @@ public class ConflictChecker {
          */
         public long getLatestVersion() {
             return latestVersion;
+        }
+
+        /**
+         * Return the latest CommitTimestamp of the table.
+         *
+         * @return latest CommitTimestamp of the table.
+         */
+        public long getLatestCommitTimestamp() {
+            return latestCommitTimestamp;
         }
     }
 
@@ -221,6 +244,23 @@ public class ConflictChecker {
     private long getLastWinningTxnVersion(List<FileStatus> winningCommits) {
         FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
         return FileNames.deltaVersion(lastWinningTxn.getPath());
+    }
+
+    private long getLastCommitTimestamp(
+            Engine engine,
+            List<FileStatus> winningCommits,
+            Optional<CommitInfo> winningCommitInfoOpt) {
+        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
+        long lastWinningVersion = getLastWinningTxnVersion(winningCommits);
+        long winningCommitTimestamp = -1L;
+        if (snapshot.getVersion(engine) == -1 ||
+                !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
+            winningCommitTimestamp = lastWinningTxn.getModificationTime();
+        } else {
+            winningCommitTimestamp = CommitInfo.getRequiredInCommitTimestamp(
+                    winningCommitInfoOpt, String.valueOf(lastWinningVersion));
+        }
+        return winningCommitTimestamp;
     }
 
     private static List<FileStatus> ensureNoGapsInWinningCommits(List<FileStatus> winningCommits) {

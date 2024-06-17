@@ -79,8 +79,8 @@ public class Metadata {
     private final StructType schema;
     private final ArrayValue partitionColumns;
     private final Optional<Long> createdTime;
-    private final MapValue configurationMapValue;
-    private final Lazy<Map<String, String>> configuration;
+    private MapValue configurationMapValue;
+    private Lazy<Map<String, String>> configuration;
     // Partition column names in lower case.
     private final Lazy<Set<String>> partitionColNames;
     // Logical data schema excluding partition columns
@@ -112,6 +112,29 @@ public class Metadata {
                 .filter(field ->
                     !partitionColNames.get().contains(field.getName().toLowerCase(Locale.ROOT)))
                 .collect(Collectors.toList())));
+    }
+
+    public Metadata(Metadata other) {
+        this.id = other.id;
+        this.name = other.name;
+        this.description = other.description;
+        this.format = other.format;
+        this.schemaString = other.schemaString;
+        this.schema = other.schema;
+        this.partitionColumns = other.partitionColumns;
+        this.createdTime = other.createdTime;
+        Map<String, String> newConfiguration = new HashMap<>(other.getConfiguration());
+        this.setConfiguration(newConfiguration);
+        this.partitionColNames = new Lazy<>(() -> loadPartitionColNames());
+        this.dataSchema = new Lazy<>(() ->
+            new StructType(schema.fields().stream()
+                .filter(field ->
+                    !partitionColNames.get().contains(field.getName().toLowerCase(Locale.ROOT)))
+                .collect(Collectors.toList())));
+    }
+
+    public Metadata clone() {
+        return new Metadata(this);
     }
 
     public String getSchemaString() {
@@ -162,6 +185,11 @@ public class Metadata {
 
     public Map<String, String> getConfiguration() {
         return Collections.unmodifiableMap(configuration.get());
+    }
+
+    public void setConfiguration(Map<String, String> configuration) {
+        this.configurationMapValue = VectorUtils.stringStringMapValue(configuration);
+        this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(this.configurationMapValue));
     }
 
     /**

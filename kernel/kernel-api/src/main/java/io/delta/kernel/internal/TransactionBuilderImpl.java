@@ -51,6 +51,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     private Optional<StructType> schema = Optional.empty();
     private Optional<List<String>> partitionColumns = Optional.empty();
     private Optional<SetTransaction> setTxnOpt = Optional.empty();
+    private Optional<Map<String, String>> tableProperties = Optional.empty();
 
     public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
         this.table = table;
@@ -86,6 +87,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     @Override
+    public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
+        this.tableProperties = Optional.of(properties);
+        return this;
+    }
+
+    @Override
     public Transaction build(Engine engine) {
         SnapshotImpl snapshot;
         try {
@@ -104,6 +111,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         boolean isNewTable = snapshot.getVersion(engine) < 0;
         validate(engine, snapshot, isNewTable);
 
+        Metadata  metadata = snapshot.getMetadata().clone();
+        if (tableProperties.isPresent()) {
+            TableConfig.validateProperties(tableProperties.get());
+            Map<String, String> newConfiguration = new HashMap<>(metadata.getConfiguration());
+            newConfiguration.putAll(tableProperties.get());
+            metadata.setConfiguration(newConfiguration);
+        }
+
         return new TransactionImpl(
                 isNewTable,
                 table.getDataPath(),
@@ -112,8 +127,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 engineInfo,
                 operation,
                 snapshot.getProtocol(),
-                snapshot.getMetadata(),
-                setTxnOpt);
+                metadata,
+                setTxnOpt,
+                table.getClock());
     }
 
     /**
@@ -164,6 +180,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         InitialSnapshot(Path dataPath, LogReplay logReplay, Metadata metadata, Protocol protocol) {
             super(dataPath, LogSegment.empty(table.getLogPath()), logReplay, protocol, metadata);
         }
+
+        @Override
+        public long getTimestamp(Engine engine) {
+            return -1L;
+        }
     }
 
     private LogReplay getEmptyLogReplay(Engine engine, Metadata metadata, Protocol protocol) {
@@ -203,7 +224,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 schema.get(), /* schema */
                 stringArrayValue(partitionColumnsCasePreserving), /* partitionColumns */
                 Optional.of(currentTimeMillis), /* createdTime */
-                stringStringMapValue(Collections.emptyMap()) /* configuration */
+                stringStringMapValue(this.tableProperties.orElse(Collections.emptyMap()))
         );
     }
 
