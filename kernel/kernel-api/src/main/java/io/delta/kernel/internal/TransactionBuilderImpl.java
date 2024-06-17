@@ -224,7 +224,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 schema.get(), /* schema */
                 stringArrayValue(partitionColumnsCasePreserving), /* partitionColumns */
                 Optional.of(currentTimeMillis), /* createdTime */
-                stringStringMapValue(this.tableProperties.orElse(Collections.emptyMap()))
+                stringStringMapValue(Collections.emptyMap())
         );
     }
 

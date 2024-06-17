@@ -249,6 +249,32 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("create table and configure verifying that the case of the property is same as the one in" +
+    "TableConfig and not the one passed by the user.") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        tableProperties =
+          Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
+
+      val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+
+      val configurations = ver0Snapshot.getMetadata.getConfiguration
+      assert(configurations.containsKey(TableConfig.CHECKPOINT_INTERVAL.getKey))
+      assert(
+        !configurations.containsKey(
+          TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT)))
+    }
+  }
+
   test("create table - invalid properties - expect failure") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex1 = intercept[UnknownConfigurationException] {
@@ -953,32 +979,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         verifyWrittenContent(tablePath, testSchema, expData)
       }
     }
-  }
-
-  private def getMetadataActionFromCommit(
-    engine: Engine, table: Table, version: Long): Optional[Metadata] = {
-    val logPath = new Path(table.getPath(engine), "_delta_log")
-    val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
-    val columnarBatches =
-      engine.getJsonHandler.readJsonFiles(
-        singletonCloseableIterator(file),
-        SingleAction.FULL_SCHEMA,
-        Optional.empty())
-    if (!columnarBatches.hasNext) {
-      return Optional.empty()
-    }
-    val metadataVector = columnarBatches.next().getColumnVector(3)
-    for (i <- 0 until metadataVector.getSize) {
-      if (!metadataVector.isNullAt(i)) {
-        return Optional.ofNullable(Metadata.fromColumnVector(metadataVector, i, engine))
-      }
-    }
-    Optional.empty()
-  }
-
-  def assertMetadataProp(
-    snapshot: SnapshotImpl, key: TableConfig[_ <: Any], expectedValue: Any): Unit = {
-    assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
   }
 
   def setTablePropAndVerify(

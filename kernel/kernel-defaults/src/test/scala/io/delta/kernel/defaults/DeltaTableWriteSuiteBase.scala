@@ -21,6 +21,12 @@ import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.util.FileNames.checkpointFileSingular
 import io.delta.kernel.{Table, TransactionCommitResult}
+import io.delta.kernel.internal.actions.{Metadata, SingleAction}
+import io.delta.kernel.internal.fs.{Path => DeltaPath}
+import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.utils.FileStatus
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -29,6 +35,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.File
 import java.nio.file.{Files, Paths}
+import java.util.Optional
 import scala.collection.JavaConverters._
 
 /**
@@ -107,5 +114,31 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       Table.forPath(engine, tablePath).checkpoint(engine, result.getVersion)
       verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
     }
+  }
+
+  def getMetadataActionFromCommit(
+    engine: Engine, table: Table, version: Long): Optional[Metadata] = {
+    val logPath = new DeltaPath(table.getPath(engine), "_delta_log")
+    val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
+    val columnarBatches =
+      engine.getJsonHandler.readJsonFiles(
+        singletonCloseableIterator(file),
+        SingleAction.FULL_SCHEMA,
+        Optional.empty())
+    if (!columnarBatches.hasNext) {
+      return Optional.empty()
+    }
+    val metadataVector = columnarBatches.next().getColumnVector(3)
+    for (i <- 0 until metadataVector.getSize) {
+      if (!metadataVector.isNullAt(i)) {
+        return Optional.ofNullable(Metadata.fromColumnVector(metadataVector, i, engine))
+      }
+    }
+    Optional.empty()
+  }
+
+  def assertMetadataProp(
+    snapshot: SnapshotImpl, key: TableConfig[_ <: Any], expectedValue: Any): Unit = {
+    assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
   }
 }

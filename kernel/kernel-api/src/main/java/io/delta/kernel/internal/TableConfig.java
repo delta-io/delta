@@ -118,7 +118,8 @@ public class TableConfig<T> {
 
     /**
      * Validates that the given properties have the delta prefix in the key name, and they are in
-     * the set of valid properties
+     * the set of valid properties. The caller should get the validated configurations and store the
+     * case of the property name defined in TableConfig.
      *
      * @param configurations the properties to validate
      * @throws InvalidConfigurationValueException if any of the properties are invalid
