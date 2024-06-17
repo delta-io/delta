@@ -79,6 +79,10 @@ public class TableConfig<T> {
         this.helpMessage = helpMessage;
     }
 
+    public String key() {
+        return key;
+    }
+
     /**
      * Returns the value of the table property from the given metadata.
      *
