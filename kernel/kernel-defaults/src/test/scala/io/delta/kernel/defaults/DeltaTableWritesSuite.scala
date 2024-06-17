@@ -27,6 +27,8 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.internal.actions.SingleAction
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -40,9 +42,9 @@ import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
 
+import java.util
 import java.util.Optional
 import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
 
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   val OBJ_MAPPER = new ObjectMapper()
@@ -50,6 +52,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   /** Test table schemas and test */
   val testSchema = new StructType().add("id", INTEGER)
+  val testSchema1 = new StructType().add("id", INTEGER).add("name", STRING)
+  val testSchema2 = new StructType().add("id", INTEGER).add("age", INTEGER)
   val dataBatches1 = generateData(testSchema, Seq.empty, Map.empty, 200, 3)
   val dataBatches2 = generateData(testSchema, Seq.empty, Map.empty, 400, 5)
 
@@ -116,32 +120,109 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create table - table already exists at the location") {
+  test("create table - table already exists, with new schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
-      val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
+      var txn = txnBuilder.withSchema(engine, testSchema).build(engine)
       txn.commit(engine, emptyIterable())
 
       {
-        val ex = intercept[TableAlreadyExistsException] {
+        txn = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+          .withSchema(engine, testSchema1)
+          .build(engine)
+        txn.commit(engine, emptyIterable())
+        val schema = table.getLatestSnapshot(engine).getSchema(engine)
+        assert(schema.equals(testSchema1))
+      }
+    }
+  }
+
+  test("create table - table already exists, with new schema drop column") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      var txn = txnBuilder.withSchema(engine, testSchema1).build(engine)
+      txn.commit(engine, emptyIterable())
+
+      {
+        val ex = intercept[KernelException] {
           table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
             .withSchema(engine, testSchema)
             .build(engine)
         }
-        assert(ex.getMessage.contains("Table already exists, but provided a new schema. " +
-          "Schema can only be set on a new table."))
+        assert(ex.getMessage.equals("Kernel doesn't support schema evolution drop column."))
       }
-      {
-        val ex = intercept[TableAlreadyExistsException] {
-          table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-            .withPartitionColumns(engine, Seq("part1", "part2").asJava)
-            .build(engine)
-        }
-        assert(ex.getMessage.contains("Table already exists, but provided new partition columns." +
-          " Partition columns can only be set on a new table."))
+    }
+  }
+
+  test("create table - with configuration") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val config: util.HashMap[String, String] = new util.HashMap[String, String]
+      config.put(TableConfig.CHECKPOINT_INTERVAL.key(), "100")
+      config.put(TableConfig.TOMBSTONE_RETENTION.key(), "interval 2 week")
+      val txn = txnBuilder.withSchema(engine, testSchema).withConfiguration(engine, config)
+        .build(engine)
+      txn.commit(engine, emptyIterable())
+
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val tableConfig = snapshot.getMetadata.getConfiguration
+      assert(tableConfig.size() == 2)
+      assert(tableConfig.get(TableConfig.CHECKPOINT_INTERVAL.key()).equals("100"))
+      assert(tableConfig.get(TableConfig.TOMBSTONE_RETENTION.key()).equals("interval 2 week"))
+    }
+  }
+
+  test("create table - table already exists, with update configuration") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      var config: util.Map[String, String] = new util.HashMap[String, String]
+      config.put(TableConfig.CHECKPOINT_INTERVAL.key(), "100")
+      config.put(TableConfig.TOMBSTONE_RETENTION.key(), "interval 2 week")
+      var txn = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+        .withSchema(engine, testSchema).withConfiguration(engine, config).build(engine)
+      txn.commit(engine, emptyIterable())
+
+      var snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      var tableConfig = snapshot.getMetadata.getConfiguration
+      assert(tableConfig.size() == 2)
+      assert(tableConfig.get(TableConfig.CHECKPOINT_INTERVAL.key()).equals("100"))
+      assert(tableConfig.get(TableConfig.TOMBSTONE_RETENTION.key()).equals("interval 2 week"))
+
+      config.clear()
+      config.put(TableConfig.CHECKPOINT_INTERVAL.key(), null)
+      config.put(TableConfig.TOMBSTONE_RETENTION.key(), "interval 10 week")
+      txn = table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
+        .withConfiguration(engine, config).build(engine)
+      txn.commit(engine, emptyIterable())
+
+      snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      tableConfig = snapshot.getMetadata.getConfiguration
+      assert(tableConfig.size() == 1)
+      assert(tableConfig.get(TableConfig.TOMBSTONE_RETENTION.key()).equals("interval 10 week"))
+    }
+  }
+
+  test("create table - table already exists, with new column") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val par1 = Seq("part1")
+
+      val txn = txnBuilder.withSchema(engine, testPartitionSchema)
+        .withPartitionColumns(engine, par1.asJava).build(engine)
+      txn.commit(engine, emptyIterable())
+
+      val par2 = Seq("part1", "part2")
+      val ex = intercept[KernelException] {
+        table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+          .withPartitionColumns(engine, par2.asJava).build(engine)
       }
+      assert(ex.getMessage.equals("Kernel doesn't support partition columns change."))
     }
   }
 
@@ -322,6 +403,58 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(ex.getMessage.contains(
         "Transaction is already attempted to commit. Create a new transaction."))
     }
+  }
+
+  test("remove data from table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val config: util.HashMap[String, String] = new util.HashMap[String, String]
+      config.put(TableConfig.IS_APPEND_ONLY.key(), "true")
+      var txn = txnBuilder.withSchema(engine, testSchema).withConfiguration(engine, config)
+        .build(engine)
+      txn.commit(engine, emptyIterable())
+
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        partCols = Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2))
+      )
+
+      val snapshot = table.getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder(engine).build()
+
+      val removeFiles = new util.ArrayList[Row]();
+      val scanFile = scan.getScanFiles(engine)
+      while (scanFile.hasNext) {
+        val batch = scanFile.next()
+        val rows = batch.getRows
+        while (rows.hasNext) {
+          val singleAction = rows.next()
+          val addFileAction = singleAction.getStruct(
+            InternalScanFileUtils.SCAN_FILE_SCHEMA.indexOf("add"))
+
+          val removeFileRow = SingleAction.addFileToRemoveFile(
+            addFileAction, System.currentTimeMillis())
+          removeFiles.add(SingleAction.createRemoveFileSingleAction(removeFileRow))
+        }
+        rows.close()
+      }
+      scanFile.close()
+      val actions = inMemoryIterable(CloseableIterator.toCloseableIterator(removeFiles))
+
+      txn = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE).build(engine)
+      val ex = intercept[KernelException] {
+        txn.commit(engine, actions)
+      }
+      assert(ex.getMessage.contains(
+        "This table is configured to only allow appends. If you would like to permit updates or " +
+          "deletes, update config 'delta.appendOnly' to true"))
+    }
+
   }
 
   test("insert into partitioned table - table created from scratch") {

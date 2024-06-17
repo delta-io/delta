@@ -70,6 +70,7 @@ public class TransactionImpl
     private final Metadata metadata;
     private final SnapshotImpl readSnapshot;
     private final Optional<SetTransaction> setTxnOpt;
+    private boolean metadataChange;
 
     private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -83,6 +84,21 @@ public class TransactionImpl
             Protocol protocol,
             Metadata metadata,
             Optional<SetTransaction> setTxnOpt) {
+        this(isNewTable, dataPath, logPath, readSnapshot, engineInfo, operation, protocol, metadata,
+            setTxnOpt, false);
+    }
+
+    public TransactionImpl(
+        boolean isNewTable,
+        Path dataPath,
+        Path logPath,
+        SnapshotImpl readSnapshot,
+        String engineInfo,
+        Operation operation,
+        Protocol protocol,
+        Metadata metadata,
+        Optional<SetTransaction> setTxnOpt,
+        boolean metadataChange) {
         this.isNewTable = isNewTable;
         this.dataPath = dataPath;
         this.logPath = logPath;
@@ -92,6 +108,7 @@ public class TransactionImpl
         this.protocol = protocol;
         this.metadata = metadata;
         this.setTxnOpt = setTxnOpt;
+        this.metadataChange = metadataChange;
     }
 
     @Override
@@ -115,7 +132,13 @@ public class TransactionImpl
         try {
             checkState(!closed,
                     "Transaction is already attempted to commit. Create a new transaction.");
-
+            if (TableConfig.IS_APPEND_ONLY.fromMetadata(metadata)) {
+                for (Row dataAction : dataActions) {
+                    if (SingleAction.isRemoveFileAction(dataAction)) {
+                        throw DeltaErrors.modifyAppendOnlyTableException();
+                    }
+                }
+            }
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
             int numRetries = 0;
             do {
@@ -152,9 +175,10 @@ public class TransactionImpl
         List<Row> metadataActions = new ArrayList<>();
         metadataActions.add(createCommitInfoSingleAction(generateCommitAction()));
         if (isNewTable) {
-            // In the future, we need to add metadata and action when there are any changes to them.
             metadataActions.add(createMetadataSingleAction(metadata.toRow()));
             metadataActions.add(createProtocolSingleAction(protocol.toRow()));
+        } else if (metadataChange) {
+            metadataActions.add(createMetadataSingleAction(metadata.toRow()));
         }
         setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 

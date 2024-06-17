@@ -18,6 +18,7 @@ package io.delta.kernel.utils;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.function.Function;
@@ -165,6 +166,25 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
             @Override
             public void close() throws IOException {
                 Utils.closeCloseables(delegate, other);
+            }
+        };
+    }
+
+    static <T> CloseableIterator<T> toCloseableIterator(Collection<T> collection) {
+        Iterator<T> iterator = collection.iterator();
+        return new CloseableIterator<T>() {
+            @Override
+            public boolean hasNext() {
+                return iterator.hasNext();
+            }
+
+            @Override
+            public T next() {
+                return iterator.next();
+            }
+
+            @Override
+            public void close() throws IOException {
             }
         };
     }

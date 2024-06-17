@@ -16,6 +16,7 @@
 package io.delta.kernel;
 
 import java.util.List;
+import java.util.Map;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
@@ -30,7 +31,7 @@ import io.delta.kernel.types.StructType;
 @Evolving
 public interface TransactionBuilder {
     /**
-     * Set the schema of the table when creating a new table.
+     * Set the schema of the table when create a new transaction.
      *
      * @param engine {@link Engine} instance to use.
      * @param schema The new schema of the table.
@@ -47,6 +48,15 @@ public interface TransactionBuilder {
      * @return updated {@link TransactionBuilder} instance.
      */
     TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns);
+
+    /**
+     * Set the configuration of the table when create a new transaction
+     *
+     * @param engine           {@link Engine} instance to use.
+     * @param configuration The table configuration.
+     * @return updated {@link TransactionBuilder} instance.
+     */
+    TransactionBuilder withConfiguration(Engine engine, Map<String, String> configuration);
 
     /**
      * Set the transaction identifier for idempotent writes. Incremental processing systems (e.g.,

@@ -105,4 +105,48 @@ public class SingleAction {
         singleActionValueMap.put(TXN_ORDINAL, txn);
         return new GenericRow(FULL_SCHEMA, singleActionValueMap);
     }
+
+    public static Row addFileToRemoveFile(Row addFile, long deletionTimestamp) {
+        HashMap<Integer, Object> ordinalToValue = new HashMap<>();
+        int pathIndex = addFile.getSchema().indexOf("path");
+        if (pathIndex != -1) {
+            ordinalToValue.put(RemoveFile.FULL_SCHEMA.indexOf("path"),
+                addFile.getString(pathIndex));
+        }
+        int partitionValuesIndex = addFile.getSchema().indexOf("partitionValues");
+        if (partitionValuesIndex != -1) {
+            ordinalToValue.put(RemoveFile.FULL_SCHEMA.indexOf("partitionValues"),
+                addFile.getMap(partitionValuesIndex));
+        }
+        int sizeIndex = addFile.getSchema().indexOf("size");
+        if (sizeIndex != -1) {
+            ordinalToValue.put(RemoveFile.FULL_SCHEMA.indexOf("size"), addFile.getLong(sizeIndex));
+        }
+        int dataChangeIndex = addFile.getSchema().indexOf("dataChange");
+        if (dataChangeIndex != -1) {
+            ordinalToValue.put(RemoveFile.FULL_SCHEMA.indexOf("dataChange"),
+                addFile.getBoolean(dataChangeIndex));
+        }
+        int deletionVectorIndex = addFile.getSchema().indexOf("deletionVector");
+        if (deletionVectorIndex != -1) {
+            ordinalToValue.put(RemoveFile.FULL_SCHEMA.indexOf("deletionVector"),
+                addFile.getStruct(deletionVectorIndex));
+        }
+        int tagsIndex = addFile.getSchema().indexOf("tags");
+        if (tagsIndex != -1) {
+            ordinalToValue.put(RemoveFile.FULL_SCHEMA.indexOf("tags"), addFile.getMap(tagsIndex));
+        }
+        int statsIndex = addFile.getSchema().indexOf("stats");
+        if (statsIndex != -1) {
+            ordinalToValue.put(RemoveFile.FULL_SCHEMA.indexOf("stats"),
+                addFile.getString(statsIndex));
+        }
+        ordinalToValue.put(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp"), deletionTimestamp);
+        return new GenericRow(RemoveFile.FULL_SCHEMA, ordinalToValue);
+    }
+
+    public static boolean isRemoveFileAction(Row row) {
+        Row struct = row.getStruct(REMOVE_FILE_ORDINAL);
+        return struct != null;
+    }
 }

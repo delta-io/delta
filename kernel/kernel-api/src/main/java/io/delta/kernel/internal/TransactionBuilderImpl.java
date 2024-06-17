@@ -16,16 +16,17 @@
 package io.delta.kernel.internal;
 
 import java.util.*;
+import java.util.Map.Entry;
 import static java.util.Objects.requireNonNull;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.*;
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.types.StructType;
-
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -34,12 +35,12 @@ import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
-import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
+import static io.delta.kernel.internal.DeltaErrors.unsupportedPartitionColumnsChange;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
-import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
+
 
 public class TransactionBuilderImpl implements TransactionBuilder {
     private static final Logger logger = LoggerFactory.getLogger(TransactionBuilderImpl.class);
@@ -51,6 +52,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     private Optional<StructType> schema = Optional.empty();
     private Optional<List<String>> partitionColumns = Optional.empty();
     private Optional<SetTransaction> setTxnOpt = Optional.empty();
+    private Optional<Map<String, String>> configuration = Optional.empty();
+    private boolean metadataChange = false;
 
     public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
         this.table = table;
@@ -73,6 +76,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     @Override
+    public TransactionBuilder withConfiguration(Engine engine, Map<String, String> configuration) {
+        if (!configuration.isEmpty()) {
+            this.configuration = Optional.of(configuration);
+        }
+        return this;
+    }
+
+    @Override
     public TransactionBuilder withTransactionId(
             Engine engine,
             String applicationId,
@@ -85,11 +96,50 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         return this;
     }
 
+    private void validateTableEvolution(SnapshotImpl snapshot) {
+        Metadata metadata = snapshot.getMetadata();
+        ArrayValue partitionColumns = metadata.getPartitionColumns();
+        this.partitionColumns.map(ele -> {
+            if (partitionColumns.getSize() != ele.size()) {
+                throw unsupportedPartitionColumnsChange();
+            }
+            int size = partitionColumns.getSize();
+            for (int i = 0; i < size; i++) {
+                String partitionColumn = partitionColumns.getElements().getString(i);
+                if (!partitionColumn.equals(ele.get(i))) {
+                    throw unsupportedPartitionColumnsChange();
+                }
+            }
+            return null;
+        });
+        this.schema.map(ele -> {
+            StructType schema = metadata.getSchema();
+            SchemaUtils.validateSchemaEvolution(schema, ele);
+            return null;
+        });
+    }
+
     @Override
     public Transaction build(Engine engine) {
         SnapshotImpl snapshot;
         try {
             snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
+            validateTableEvolution(snapshot);
+            Metadata metadata = snapshot.getMetadata();
+            configuration.map(ele -> {
+                for (Entry<String, String> entry : ele.entrySet()) {
+                    if (metadata.updateConfiguration(entry.getKey(), entry.getValue())) {
+                        metadataChange = true;
+                    }
+                }
+                return null;
+            });
+            schema.map(ele -> {
+                metadataChange = true;
+                metadata.updateSchema(ele);
+                metadata.updateSchemaString(ele.toJson());
+                return null;
+            });
         } catch (TableNotFoundException tblf) {
             String tablePath = table.getPath(engine);
             logger.info("Table {} doesn't exist yet. Trying to create a new table.", tablePath);
@@ -102,7 +152,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         }
 
         boolean isNewTable = snapshot.getVersion(engine) < 0;
-        validate(engine, snapshot, isNewTable);
+        validate(engine, snapshot);
 
         return new TransactionImpl(
                 isNewTable,
@@ -113,13 +163,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 operation,
                 snapshot.getProtocol(),
                 snapshot.getMetadata(),
-                setTxnOpt);
+                setTxnOpt,
+                metadataChange);
     }
+
 
     /**
      * Validate the given parameters for the transaction.
      */
-    private void validate(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
+    private void validate(Engine engine, SnapshotImpl snapshot) {
         String tablePath = table.getPath(engine);
         // Validate the table has no features that Kernel doesn't yet support writing into it.
         TableFeatures.validateWriteSupportedTable(
@@ -127,26 +179,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 snapshot.getMetadata(),
                 snapshot.getMetadata().getSchema(),
                 tablePath);
-
-        if (!isNewTable) {
-            if (schema.isPresent()) {
-                throw tableAlreadyExists(
-                        tablePath,
-                        "Table already exists, but provided a new schema. " +
-                                "Schema can only be set on a new table.");
-            }
-            if (partitionColumns.isPresent()) {
-                throw tableAlreadyExists(
-                        tablePath,
-                        "Table already exists, but provided new partition columns. "
-                                + "Partition columns can only be set on a new table.");
-            }
-        } else {
-            // New table verify the given schema and partition columns
-            SchemaUtils.validateSchema(schema.get(), false /* isColumnMappingEnabled */);
+        // New table verify the given schema and partition columns
+        schema.map(ele -> {
+            SchemaUtils.validateSchema(ele, false /* isColumnMappingEnabled */);
             SchemaUtils.validatePartitionColumns(
-                    schema.get(), partitionColumns.orElse(Collections.emptyList()));
-        }
+                ele, partitionColumns.orElse(Collections.emptyList()));
+            return null;
+        });
+
 
         setTxnOpt.ifPresent(txnId -> {
             Optional<Long> lastTxnVersion =
@@ -203,7 +243,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 schema.get(), /* schema */
                 stringArrayValue(partitionColumnsCasePreserving), /* partitionColumns */
                 Optional.of(currentTimeMillis), /* createdTime */
-                stringStringMapValue(Collections.emptyMap()) /* configuration */
+                configuration.orElse(Collections.emptyMap())  /* configuration */
         );
     }
 
