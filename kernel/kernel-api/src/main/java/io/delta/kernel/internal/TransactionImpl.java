@@ -67,8 +67,8 @@ public class TransactionImpl
     private final Path dataPath;
     private final Path logPath;
     private final Protocol protocol;
-    private Metadata metadata;
-    private boolean shouldUpdateMetadata;
+    private final Metadata metadata;
+    private final boolean shouldUpdateMetadata;
     private final SnapshotImpl readSnapshot;
     private final Optional<SetTransaction> setTxnOpt;
 

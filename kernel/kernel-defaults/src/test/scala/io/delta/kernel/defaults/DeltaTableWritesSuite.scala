@@ -44,7 +44,7 @@ import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
 
-import java.util.Optional
+import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
@@ -177,42 +177,26 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       txn1.commit(engine, emptyIterable())
 
-      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
+      val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
-      val txn2 = createTxn(
-        engine,
-        tablePath,
-        tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
-
-      txn2.commit(engine, emptyIterable())
-
-      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = false, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
     }
   }
 
   test("create table with properties and they should be retained") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn = createTxn(
-        engine,
-        tablePath,
-        isNewTable = true,
-        testSchema,
-        Seq.empty, tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
-
-      txn.commit(engine, emptyIterable())
-
-      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = true, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
 
       appendData(
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches1)
       )
-      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
@@ -234,13 +218,14 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches1)
       )
+
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+
       // Try to commit txn1
       txn1.commit(engine, emptyIterable())
 
-      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
-
-      val ver2Snapshot = table.getSnapshotAsOfVersion(engine, 2).asInstanceOf[SnapshotImpl]
+      val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
@@ -248,25 +233,17 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   test("create table and configure the same properties") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn = createTxn(
-        engine,
-        tablePath,
-        isNewTable = true,
-        testSchema,
-        Seq.empty, tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
-
-      txn.commit(engine, emptyIterable())
-
-      val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = true, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
       assert(getMetadataActionFromCommit(engine, table, 0).isPresent)
 
       appendData(
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
-        tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
-      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+        tableProperties =
+          Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
       assert(!getMetadataActionFromCommit(engine, table, 1).isPresent)
     }
@@ -990,15 +967,37 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         SingleAction.FULL_SCHEMA,
         Optional.empty())
     if (!columnarBatches.hasNext) {
-      return null
+      return Optional.empty()
     }
     val metadataVector = columnarBatches.next().getColumnVector(3)
-    Optional.ofNullable(Metadata.fromColumnVector(metadataVector, 1, engine))
+    for (i <- 0 until metadataVector.getSize) {
+      if (!metadataVector.isNullAt(i)) {
+        return Optional.ofNullable(Metadata.fromColumnVector(metadataVector, i, engine))
+      }
+    }
+    Optional.empty()
   }
 
   def assertMetadataProp(
     snapshot: SnapshotImpl, key: TableConfig[_ <: Any], expectedValue: Any): Unit = {
     assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
+  }
+
+  def setTablePropAndVerify(
+    engine: Engine,
+    tablePath: String,
+    isNewTable: Boolean = true,
+    key: TableConfig[_ <: Any], value: String, expectedValue: Any): Unit = {
+
+    val table = Table.forPath(engine, tablePath)
+
+    createTxn(
+      engine,
+      tablePath, isNewTable, testSchema, Seq.empty, tableProperties = Map(key.getKey -> value))
+      .commit(engine, emptyIterable())
+
+    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    assertMetadataProp(snapshot, key, expectedValue)
   }
 
   def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {

@@ -20,7 +20,7 @@ import io.delta.kernel.annotation.Evolving;
 /**
  * Thrown when an unknown configuration key is specified.
  *
- * @since 3.2.0
+ * @since 3.3.0
  */
 @Evolving
 public class UnknownConfigurationException extends KernelException {

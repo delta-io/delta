@@ -114,9 +114,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         Metadata  metadata = snapshot.getMetadata();
         boolean shouldUpdateMetadata = false;
         if (tableProperties.isPresent()) {
-            TableConfig.validateProperties(tableProperties.get());
+            Map<String, String> validatedProperties =
+                    TableConfig.validateProperties(tableProperties.get());
             Map<String, String> newProperties =
-                    metadata.filterOutUnchangedProperties(tableProperties.get());
+                    metadata.filterOutUnchangedProperties(validatedProperties);
             if (!newProperties.isEmpty()) {
                 shouldUpdateMetadata = true;
                 metadata = metadata.withNewConfiguration(newProperties);

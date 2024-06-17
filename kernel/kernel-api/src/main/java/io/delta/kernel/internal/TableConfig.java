@@ -124,7 +124,8 @@ public class TableConfig<T> {
      * @throws InvalidConfigurationValueException if any of the properties are invalid
      * @throws UnknownConfigurationException if any of the properties are unknown
      */
-    public static void validateProperties(Map<String, String> configurations) {
+    public static Map<String, String> validateProperties(Map<String, String> configurations) {
+        Map<String, String> validatedConfigurations = new HashMap<>();
         for (Map.Entry<String, String> kv : configurations.entrySet()) {
             String key = kv.getKey().toLowerCase(Locale.ROOT);
             String value = kv.getValue();
@@ -132,6 +133,7 @@ public class TableConfig<T> {
                 TableConfig tableConfig = validProperties.get(key);
                 if (tableConfig != null) {
                     tableConfig.validate(value);
+                    validatedConfigurations.put(tableConfig.getKey(), value);
                 } else {
                     throw DeltaErrors.unknownConfigurationException(key);
                 }
@@ -139,6 +141,7 @@ public class TableConfig<T> {
                 throw DeltaErrors.unknownConfigurationException(key);
             }
         }
+        return validatedConfigurations;
     }
 
     private void validate(String value) {

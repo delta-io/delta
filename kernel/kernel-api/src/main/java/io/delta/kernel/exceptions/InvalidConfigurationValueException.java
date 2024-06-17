@@ -20,7 +20,7 @@ import io.delta.kernel.annotation.Evolving;
 /**
  * Thrown when an illegal value is specified for a table property.
  *
- * @since 3.2.0
+ * @since 3.3.0
  */
 @Evolving
 public class InvalidConfigurationValueException extends KernelException {

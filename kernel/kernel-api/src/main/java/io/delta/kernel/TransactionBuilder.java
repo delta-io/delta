@@ -80,13 +80,9 @@ public interface TransactionBuilder {
      * @param engine     {@link Engine} instance to use.
      * @param properties The table properties to set. These are key-value pairs that can be used to
      *                   configure the table. And these properties are stored in the table metadata.
-     * @throws InvalidConfigurationValueException if the value of the property is invalid.
-     * @throws UnknownConfigurationException if any of the properties are unknown to
-     *                                      {@link TableConfig}.
-     *
      * @return updated {@link TransactionBuilder} instance.
      *
-     * @since 3.2.0
+     * @since 3.3.0
      */
     TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties);
 
@@ -97,6 +93,9 @@ public interface TransactionBuilder {
      * @param engine {@link Engine} instance to use.
      * @throws ConcurrentTransactionException if the table already has a committed transaction with
      *                                        the same given transaction identifier.
+     * @throws InvalidConfigurationValueException if the value of the property is invalid.
+     * @throws UnknownConfigurationException if any of the properties are unknown to
+     *                                      {@link TableConfig}.
      */
     Transaction build(Engine engine);
 }
