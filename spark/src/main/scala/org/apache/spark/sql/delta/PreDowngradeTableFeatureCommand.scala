@@ -398,3 +398,28 @@ case class CheckConstraintsPreDowngradeTableFeatureCommand(table: DeltaTableV2)
     throw DeltaErrors.cannotDropCheckConstraintFeature(checkConstraintNames)
   }
 }
+
+case class ChangeDataFeedPreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Throws an exception if the table has change data feed enabled, and returns false otherwise
+   * (as no action was required).
+   *
+   * We intentionally error out instead of disabling the change data feed here.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    if (ChangeDataFeedTableFeature.validateRemoval(table.initialSnapshot)) {
+      // Table property is not set.
+      return false
+    }
+    if (DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(table.initialSnapshot.metadata)) {
+      // Table property is set to true.
+      throw DeltaErrors.cannotDropChangeDataFeedFeature()
+    }
+    // Table property is set to false. We can safely remove it.
+    val properties = Seq(DeltaConfigs.CHANGE_DATA_FEED.key)
+    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    true
+  }
+}
