@@ -42,7 +42,7 @@ import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 
 import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
@@ -958,9 +958,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   private def getMetadataActionFromCommit(
     engine: Engine, table: Table, version: Long): Optional[Metadata] = {
     val logPath = new Path(table.getPath(engine), "_delta_log")
-    val file = engine
-      .getFileSystemClient
-      .listFrom(FileNames.listingPrefix(logPath, version)).next
+    val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
     val columnarBatches =
       engine.getJsonHandler.readJsonFiles(
         singletonCloseableIterator(file),
