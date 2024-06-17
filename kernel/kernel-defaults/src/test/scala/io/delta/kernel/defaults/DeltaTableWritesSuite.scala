@@ -259,7 +259,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       val ver0Snapshot = table.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
-      assert(getMetadata(engine, table, 0) != null)
+      assert(getMetadataActionFromCommit(engine, table, 0).isPresent)
 
       appendData(
         engine,
@@ -268,7 +268,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
       val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
-      assert(getMetadata(engine, table, 1) == null)
+      assert(!getMetadataActionFromCommit(engine, table, 1).isPresent)
     }
   }
 
@@ -978,7 +978,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  private def getMetadata(engine: Engine, table: Table, version: Long): Metadata = {
+  private def getMetadataActionFromCommit(
+    engine: Engine, table: Table, version: Long): Optional[Metadata] = {
     val logPath = new Path(table.getPath(engine), "_delta_log")
     val file = engine
       .getFileSystemClient
@@ -992,7 +993,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       return null
     }
     val metadataVector = columnarBatches.next().getColumnVector(3)
-    Metadata.fromColumnVector(metadataVector, 1, engine)
+    Optional.ofNullable(Metadata.fromColumnVector(metadataVector, 1, engine))
   }
 
   def assertMetadataProp(
