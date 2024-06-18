@@ -27,8 +27,10 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.*;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -44,6 +46,7 @@ public class ConflictChecker {
     private static final int PROTOCOL_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("protocol");
     private static final int METADATA_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("metaData");
     private static final int TXN_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("txn");
+    private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
 
     // Snapshot of the table read by the transaction that encountered the conflict
     // (a.k.a the losing transaction)
@@ -88,6 +91,7 @@ public class ConflictChecker {
 
     public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
         List<FileStatus> winningCommits = getWinningCommitFiles(engine);
+        Optional<CommitInfo> winningCommitInfoOpt = Optional.empty();
 
         // no winning commits. why did we get the transaction conflict?
         checkState(!winningCommits.isEmpty(), "No winning commits found.");
@@ -99,21 +103,33 @@ public class ConflictChecker {
                 CONFLICT_RESOLUTION_SCHEMA,
                 Optional.empty())) {
 
-            actionsIterator.forEachRemaining(actionBatch -> {
+            List<ActionWrapper> actionBatchList = new ArrayList<>();
+            actionsIterator.forEachRemaining(actionBatchList::add);
+            for (int i = 0; i < actionBatchList.size(); i++) {
+                ActionWrapper actionBatch = actionBatchList.get(i);
                 checkArgument(!actionBatch.isFromCheckpoint());  // no checkpoints should be read
                 ColumnarBatch batch = actionBatch.getColumnarBatch();
+                if (i == actionBatchList.size() - 1) {
+                    CommitInfo commitInfo =
+                            getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
+                    winningCommitInfoOpt = Optional.ofNullable(commitInfo);
+                }
 
                 handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
                 handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
                 handleTxn(batch.getColumnVector(TXN_ORDINAL));
-            });
+            }
         } catch (IOException ioe) {
             throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
         }
 
         // if we get here, we have successfully rebased (i.e no logical conflicts)
         // against the winning transactions
-        return new TransactionRebaseState(getLastWinningTxnVersion(winningCommits));
+        long lastWinningVersion = getLastWinningTxnVersion(winningCommits);
+        return new TransactionRebaseState(
+                lastWinningVersion,
+                getLastCommitTimestamp(
+                        engine, lastWinningVersion, winningCommits, winningCommitInfoOpt));
     }
 
     /**
@@ -128,9 +144,11 @@ public class ConflictChecker {
      */
     public static class TransactionRebaseState {
         private final long latestVersion;
+        private final long latestCommitTimestamp;
 
-        public TransactionRebaseState(long latestVersion) {
+        public TransactionRebaseState(long latestVersion, long latestCommitTimestamp) {
             this.latestVersion = latestVersion;
+            this.latestCommitTimestamp = latestCommitTimestamp;
         }
 
         /**
@@ -140,6 +158,15 @@ public class ConflictChecker {
          */
         public long getLatestVersion() {
             return latestVersion;
+        }
+
+        /**
+         * Return the latest CommitTimestamp of the table.
+         *
+         * @return latest CommitTimestamp of the table.
+         */
+        public long getLatestCommitTimestamp() {
+            return latestCommitTimestamp;
         }
     }
 
@@ -171,6 +198,21 @@ public class ConflictChecker {
                 throw DeltaErrors.metadataChangedException();
             }
         }
+    }
+
+    /**
+     * Get the commit info from the winning transactions.
+     *
+     * @param commitInfoVector commit info rows from the winning transactions
+     * @return the commit info
+     */
+    private CommitInfo getCommitInfo(ColumnVector commitInfoVector) {
+        for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
+            if (!commitInfoVector.isNullAt(rowId)) {
+                return CommitInfo.fromColumnVector(commitInfoVector, rowId);
+            }
+        }
+        return null;
     }
 
     private void handleTxn(ColumnVector txnVector) {
@@ -216,6 +258,25 @@ public class ConflictChecker {
             throw new UncheckedIOException(
                     "Error listing files from " + firstWinningCommitFile, ioe);
         }
+    }
+
+    private long getLastCommitTimestamp(
+            Engine engine,
+            long lastWinningVersion,
+            List<FileStatus> winningCommits,
+            Optional<CommitInfo> winningCommitInfoOpt) {
+        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
+        long winningCommitTimestamp = -1L;
+        if (snapshot.getVersion(engine) == -1 ||
+                !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
+            winningCommitTimestamp = lastWinningTxn.getModificationTime();
+        } else {
+            winningCommitTimestamp = CommitInfo.getRequiredInCommitTimestamp(
+                    winningCommitInfoOpt,
+                    String.valueOf(lastWinningVersion),
+                    snapshot.getDataPath());
+        }
+        return winningCommitTimestamp;
     }
 
     private long getLastWinningTxnVersion(List<FileStatus> winningCommits) {
