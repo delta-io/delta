@@ -2,13 +2,12 @@ package io.delta.flinkv2.sink;
 
 import io.delta.flinkv2.utils.DataUtils;
 import io.delta.flinkv2.utils.SchemaUtils;
-import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.types.StructType;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
 import org.apache.flink.api.connector.sink2.StatefulSinkWriter;
@@ -45,15 +44,15 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
 
     private Map<Map<String, Literal>, DeltaSinkWriterTask> writerTasksByPartition;
 
-    public static DeltaSinkWriter restoreWriter(String appId, String writerId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns, OptionalLong restoredCheckpointId) {
-        return new DeltaSinkWriter(appId, writerId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, restoredCheckpointId);
+    public static DeltaSinkWriter restoreWriter(String appId, String writerId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, List<String> tablePartitionColumns, OptionalLong restoredCheckpointId) {
+        return new DeltaSinkWriter(appId, writerId, mockTxnStateJson, writeOperatorFlinkSchema, tablePartitionColumns, restoredCheckpointId);
     }
 
-    public static DeltaSinkWriter createNewWriter(String appId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns, OptionalLong restoredCheckpointId) {
-        return new DeltaSinkWriter(appId, java.util.UUID.randomUUID().toString(), tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, restoredCheckpointId);
+    public static DeltaSinkWriter createNewWriter(String appId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, List<String> tablePartitionColumns, OptionalLong restoredCheckpointId) {
+        return new DeltaSinkWriter(appId, java.util.UUID.randomUUID().toString(), mockTxnStateJson, writeOperatorFlinkSchema, tablePartitionColumns, restoredCheckpointId);
     }
 
-    private DeltaSinkWriter(String appId, String writerId, String tablePath, RowType writeOperatorFlinkSchema, List<String> userProvidedPartitionColumns, OptionalLong restoredCheckpointId) {
+    private DeltaSinkWriter(String appId, String writerId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, List<String> tablePartitionColumns, OptionalLong restoredCheckpointId) {
         if (restoredCheckpointId.isPresent()) {
             // restoredCheckpointId is the last successful checkpointId that was checkpointed and committed
             // thus, the *next* checkpointId is clearly 1 more than that
@@ -68,28 +67,9 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
         this.writeOperatorFlinkSchema = writeOperatorFlinkSchema;
         this.writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(writeOperatorFlinkSchema);
         this.writerTasksByPartition = new HashMap<>();
+        this.tablePartitionColumns = new HashSet<>(tablePartitionColumns);
 
-        final Table table = Table.forPath(engine, tablePath);
-        TransactionBuilder txnBuilder =
-            table.createTransactionBuilder(
-                engine,
-                "FlinkV2",
-                Operation.MANUAL_UPDATE // this doesn't matter, we aren't committing anything
-            );
-
-        try {
-            final Snapshot latestSnapshot = table.getLatestSnapshot(engine);
-            this.tablePartitionColumns = ((SnapshotImpl) latestSnapshot).getMetadata().getPartitionColNames();
-        } catch (TableNotFoundException ex) {
-            // table doesn't exist
-            txnBuilder = txnBuilder
-                .withSchema(engine, writeOperatorDeltaSchema)
-                .withPartitionColumns(engine, userProvidedPartitionColumns);
-
-            this.tablePartitionColumns = new HashSet<>(userProvidedPartitionColumns);
-        }
-
-        this.mockTxnState = txnBuilder.build(engine).getTransactionState(engine);
+        this.mockTxnState = JsonUtils.rowFromJson(mockTxnStateJson, TransactionStateRow.SCHEMA);
 
         LOG.info(
             String.format(
@@ -146,16 +126,16 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
 //            );
 //        }
 
-        if (failCount < 1 && nextCheckpointId > 2 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 200 == 0) {
-            failCount++;
-
-            int totalRowsBuffered = writerTasksByPartition.values().stream()
-                .mapToInt(DeltaSinkWriterTask::getBufferSize)
-                .sum();
-            final String msg = String.format("RANDOM FAILURE ---- Scott > DeltaSinkWriter[%s] > write :: element=%s :: nextCheckpointId=%s, lastSnapshottedCheckpointId=%s, totalRowsBuffered=%s", writerId, element, nextCheckpointId, lastSnapshottedCheckpointId, totalRowsBuffered);
-            LOG.info(msg);
-            throw new RuntimeException("!!!!!" + msg);
-        }
+//        if (failCount < 1 && nextCheckpointId > 2 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 200 == 0) {
+//            failCount++;
+//
+//            int totalRowsBuffered = writerTasksByPartition.values().stream()
+//                .mapToInt(DeltaSinkWriterTask::getBufferSize)
+//                .sum();
+//            final String msg = String.format("RANDOM FAILURE ---- Scott > DeltaSinkWriter[%s] > write :: element=%s :: nextCheckpointId=%s, lastSnapshottedCheckpointId=%s, totalRowsBuffered=%s", writerId, element, nextCheckpointId, lastSnapshottedCheckpointId, totalRowsBuffered);
+//            LOG.info(msg);
+//            throw new RuntimeException("!!!!!" + msg);
+//        }
 
         final Map<String, Literal> partitionValues =
             DataUtils.flinkRowToPartitionValues(writeOperatorFlinkSchema, element, tablePartitionColumns);
@@ -246,6 +226,14 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
     @Override
     public List<DeltaSinkWriterState> snapshotState(long latestCheckpointId) throws IOException {
         lastSnapshottedCheckpointId = latestCheckpointId;
+
+//        if (failCount < 1 && latestCheckpointId >= 2 && java.util.concurrent.ThreadLocalRandom.current().nextInt() % 3 == 0) {
+//            failCount++;
+//
+//            final String msg = String.format("RANDOM FAILURE ---- Scott > DeltaSinkWriter[%s] > snapshotState :: latestCheckpointIdToSnapshot=%s", writerId, latestCheckpointId);
+//            LOG.error(msg);
+//            throw new RuntimeException("!!!!!" + msg);
+//        }
 
         LOG.info(String.format("Scott > DeltaSinkWriter[%s] > snapshotState :: checkpointIdToSnapshot=%s, nextCheckpointId=%s, ---- %s", writerId, latestCheckpointId, nextCheckpointId, this));
 

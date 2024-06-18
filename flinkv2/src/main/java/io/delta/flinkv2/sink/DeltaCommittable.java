@@ -81,7 +81,6 @@ public class DeltaCommittable {
                 in.readFully(rowBytes);
                 final String rowJsonStr = new String(rowBytes, java.nio.charset.StandardCharsets.UTF_8);
                 final Row kernelActionRow = JsonUtils.rowFromJson(rowJsonStr, SingleAction.FULL_SCHEMA);
-                ;
 
                 return new DeltaCommittable(appId, writerId, checkpointId, kernelActionRow);
             }

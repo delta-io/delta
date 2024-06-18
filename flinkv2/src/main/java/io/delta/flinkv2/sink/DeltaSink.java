@@ -3,7 +3,9 @@ package io.delta.flinkv2.sink;
 import io.delta.flinkv2.utils.DataUtils;
 import io.delta.flinkv2.utils.SchemaUtils;
 import io.delta.kernel.*;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -46,14 +48,15 @@ public class DeltaSink implements Sink<RowData>,
         return new DeltaSink(tablePath, rowType, userProvidedPartitionColumns);
     }
 
-    /////////////////////////////////////////////
-    // Member fields that MUST be Serializable //
-    /////////////////////////////////////////////
+    /////////////////////////////////////////
+    // Member fields. MUST be Serializable //
+    /////////////////////////////////////////
 
     private final String appId; // TODO: be able to restore this
     private final String tablePath;
     private final RowType writeOperatorFlinkSchema;
     private final List<String> userProvidedPartitionColumns;
+    private final String mockTxnStateJson;
     private Set<String> tablePartitionColumns; // non-final since we set it in try-catch block
 
     private DeltaSink(final String tablePath, final RowType rowType, final List<String> userProvidedPartitionColumns) {
@@ -74,12 +77,21 @@ public class DeltaSink implements Sink<RowData>,
             String.format("Equivalent Delta schema is: %s", SchemaUtils.toDeltaDataType(rowType))
         );
 
+        final StructType writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(rowType);
+        final Engine engine = DefaultEngine.create(new Configuration());
+        final Table table = Table.forPath(engine, tablePath);
+        TransactionBuilder mockTxnBuilder =
+            table.createTransactionBuilder(
+                engine,
+                "FlinkV2",
+                Operation.MANUAL_UPDATE // this doesn't matter, we aren't committing anything
+            );
+
         try {
-            final Engine engine = DefaultEngine.create(new Configuration());
-            final Table table = Table.forPath(engine, tablePath);
+
             final Snapshot latestSnapshot = table.getLatestSnapshot(engine);
             final StructType tableSchema = latestSnapshot.getSchema(engine);
-            final StructType writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(rowType);
+
             if (!tableSchema.equivalent(writeOperatorDeltaSchema)) {
                 throw new RuntimeException(
                     String.format(
@@ -94,7 +106,16 @@ public class DeltaSink implements Sink<RowData>,
             // table doesn't exist
             LOG.info(String.format("Scott > DeltaSink > constructor :: DOES NOT EXIST tablePath=%s", tablePath));
             this.tablePartitionColumns = new HashSet<>(userProvidedPartitionColumns);
+
+            mockTxnBuilder = mockTxnBuilder
+                .withSchema(engine, writeOperatorDeltaSchema)
+                .withPartitionColumns(engine, userProvidedPartitionColumns);
         }
+
+        final Transaction mockTxn = mockTxnBuilder.build(engine);
+        final Row mockTxnState = mockTxn.getTransactionState(engine);
+
+        this.mockTxnStateJson = JsonUtils.rowToJson(mockTxnState);
     }
 
     /////////////////
@@ -109,7 +130,7 @@ public class DeltaSink implements Sink<RowData>,
                 context.getRestoredCheckpointId()
             )
         );
-        return DeltaSinkWriter.createNewWriter(appId, tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
+        return DeltaSinkWriter.createNewWriter(appId, mockTxnStateJson, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
     }
 
     @Override
@@ -188,7 +209,7 @@ public class DeltaSink implements Sink<RowData>,
 
         LOG.info(String.format("Scott > DeltaSink > restoreWriter :: writerId=%s, context.getRestoredCheckpointId=%s, writerStateNextCheckpointId=%s", state.getWriterId(), context.getRestoredCheckpointId(), state.getCheckpointId()));
 
-        return DeltaSinkWriter.restoreWriter(state.getAppId(), state.getWriterId(), tablePath, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
+        return DeltaSinkWriter.restoreWriter(state.getAppId(), state.getWriterId(), mockTxnStateJson, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
     }
 
     @Override
