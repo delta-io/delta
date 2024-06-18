@@ -68,6 +68,7 @@ public class TransactionImpl
     private final Path logPath;
     private final Protocol protocol;
     private final Metadata metadata;
+    private final boolean shouldUpdateMetadata;
     private final SnapshotImpl readSnapshot;
     private final Optional<SetTransaction> setTxnOpt;
 
@@ -82,7 +83,8 @@ public class TransactionImpl
             Operation operation,
             Protocol protocol,
             Metadata metadata,
-            Optional<SetTransaction> setTxnOpt) {
+            Optional<SetTransaction> setTxnOpt,
+            boolean shouldUpdateMetadata) {
         this.isNewTable = isNewTable;
         this.dataPath = dataPath;
         this.logPath = logPath;
@@ -92,6 +94,7 @@ public class TransactionImpl
         this.protocol = protocol;
         this.metadata = metadata;
         this.setTxnOpt = setTxnOpt;
+        this.shouldUpdateMetadata = shouldUpdateMetadata;
     }
 
     @Override
@@ -151,9 +154,11 @@ public class TransactionImpl
             throws FileAlreadyExistsException {
         List<Row> metadataActions = new ArrayList<>();
         metadataActions.add(createCommitInfoSingleAction(generateCommitAction()));
+        if (shouldUpdateMetadata || isNewTable) {
+            metadataActions.add(createMetadataSingleAction(metadata.toRow()));
+        }
         if (isNewTable) {
             // In the future, we need to add metadata and action when there are any changes to them.
-            metadataActions.add(createMetadataSingleAction(metadata.toRow()));
             metadataActions.add(createProtocolSingleAction(protocol.toRow()));
         }
         setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));

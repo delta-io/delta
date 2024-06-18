@@ -114,6 +114,22 @@ public class Metadata {
                 .collect(Collectors.toList())));
     }
 
+    public Metadata withNewConfiguration(Map<String, String> configuration) {
+        Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
+        newConfiguration.putAll(configuration);
+        return new Metadata(
+            this.id,
+            this.name,
+            this.description,
+            this.format,
+            this.schemaString,
+            this.schema,
+            this.partitionColumns,
+            this.createdTime,
+            VectorUtils.stringStringMapValue(newConfiguration)
+        );
+    }
+
     public String getSchemaString() {
         return schemaString;
     }
@@ -162,6 +178,21 @@ public class Metadata {
 
     public Map<String, String> getConfiguration() {
         return Collections.unmodifiableMap(configuration.get());
+    }
+
+    /**
+     * Filter out the key-value pair matches exactly with the old properties.
+     *
+     * @param newProperties the new properties to be filtered
+     *
+     * @return the filtered properties
+     */
+    public Map<String, String> filterOutUnchangedProperties(Map<String, String> newProperties) {
+        Map<String, String> oldProperties = getConfiguration();
+        return newProperties.entrySet().stream()
+                .filter(entry -> !oldProperties.containsKey(entry.getKey()) ||
+                        !oldProperties.get(entry.getKey()).equals(entry.getValue()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     /**

@@ -19,7 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
@@ -29,7 +29,11 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.actions.{Metadata, SingleAction}
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -38,9 +42,9 @@ import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 
-import java.util.Optional
+import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
@@ -163,6 +167,134 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       verifyCommitInfo(tablePath = tablePath, version = 0)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
+    }
+  }
+
+  test("create table and set properties") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txn1 = createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+
+      txn1.commit(engine, emptyIterable())
+
+      val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = false, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
+    }
+  }
+
+  test("create table with properties and they should be retained") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = true, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
+
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1)
+      )
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+    }
+  }
+
+  test("create table and configure properties with retries") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table
+      val table = Table.forPath(engine, tablePath)
+      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+        .commit(engine, emptyIterable())
+      // Create txn1 with config changes
+      val txn1 = createTxn(
+        engine,
+        tablePath,
+        tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
+      // Create and commit txn2
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1)
+      )
+
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+
+      // Try to commit txn1
+      txn1.commit(engine, emptyIterable())
+
+      val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+    }
+  }
+
+  test("create table and configure the same properties") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = true, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
+      assert(getMetadataActionFromCommit(engine, table, 0).isPresent)
+
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        tableProperties =
+          Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assert(!getMetadataActionFromCommit(engine, table, 1).isPresent)
+    }
+  }
+
+  test("create table and configure verifying that the case of the property is same as the one in" +
+    "TableConfig and not the one passed by the user.") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        tableProperties =
+          Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
+
+      val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+
+      val configurations = ver0Snapshot.getMetadata.getConfiguration
+      assert(configurations.containsKey(TableConfig.CHECKPOINT_INTERVAL.getKey))
+      assert(
+        !configurations.containsKey(
+          TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT)))
+    }
+  }
+
+  test("create table - invalid properties - expect failure") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val ex1 = intercept[UnknownConfigurationException] {
+        createTxn(
+          engine, tablePath, isNewTable = true, testSchema, Seq.empty, Map("invalid key" -> "10"))
+      }
+      assert(ex1.getMessage.contains("Unknown configuration was specified: invalid key"))
+
+      val ex2 = intercept[InvalidConfigurationValueException] {
+        createTxn(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema, Seq.empty, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "-1"))
+      }
+      assert(
+        ex2.getMessage.contains(
+          String.format(
+            "Invalid value for table property '%s': '%s'. %s",
+            TableConfig.CHECKPOINT_INTERVAL.getKey, "-1", "needs to be a positive integer.")))
     }
   }
 
@@ -849,6 +981,23 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  def setTablePropAndVerify(
+    engine: Engine,
+    tablePath: String,
+    isNewTable: Boolean = true,
+    key: TableConfig[_ <: Any], value: String, expectedValue: Any): Unit = {
+
+    val table = Table.forPath(engine, tablePath)
+
+    createTxn(
+      engine,
+      tablePath, isNewTable, testSchema, Seq.empty, tableProperties = Map(key.getKey -> value))
+      .commit(engine, emptyIterable())
+
+    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    assertMetadataProp(snapshot, key, expectedValue)
+  }
+
   def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {
     val actSchema = tableSchema(path)
     assert(actSchema === expSchema)
@@ -997,22 +1146,39 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
   }
 
-  def appendData(
+  def createTxn(
     engine: Engine = defaultEngine,
     tablePath: String,
     isNewTable: Boolean = false,
     schema: StructType = null,
     partCols: Seq[String] = null,
-    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+    tableProperties: Map[String, String] = null): Transaction = {
 
-    var txnBuilder = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+    var txnBuilder = createWriteTxnBuilder(
+      Table.forPath(engine, tablePath))
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
         .withPartitionColumns(engine, partCols.asJava)
     }
 
-    val txn = txnBuilder.build(engine)
+    if (tableProperties != null) {
+      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+
+    txnBuilder.build(engine)
+  }
+
+  def appendData(
+    engine: Engine = defaultEngine,
+    tablePath: String,
+    isNewTable: Boolean = false,
+    schema: StructType = null,
+    partCols: Seq[String] = null,
+    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
+    tableProperties: Map[String, String] = null): TransactionCommitResult = {
+
+    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties)
     val txnState = txn.getTransactionState(engine)
 
     val actions = data.map { case (partValues, partData) =>
