@@ -24,13 +24,14 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal.ofInt
+import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -279,10 +280,11 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     isNewTable: Boolean = false,
     schema: StructType = null,
     partCols: Seq[String] = null,
-    tableProperties: Map[String, String] = null): Transaction = {
+    tableProperties: Map[String, String] = null,
+    clock: Clock = () => System.currentTimeMillis): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
-      Table.forPath(engine, tablePath))
+      TableImpl.forPath(engine, tablePath, clock))
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
@@ -303,9 +305,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     schema: StructType = null,
     partCols: Seq[String] = null,
     data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
+    clock: Clock = () => System.currentTimeMillis,
     tableProperties: Map[String, String] = null): TransactionCommitResult = {
 
-    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties)
+    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
     val txnState = txn.getTransactionState(engine)
 
     val actions = data.map { case (partValues, partData) =>
@@ -338,13 +341,15 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     engine: Engine,
     tablePath: String,
     isNewTable: Boolean = true,
-    key: TableConfig[_ <: Any], value: String, expectedValue: Any): Unit = {
+    key: TableConfig[_ <: Any], value: String, expectedValue: Any,
+    clock: Clock = () => System.currentTimeMillis): Unit = {
 
     val table = Table.forPath(engine, tablePath)
 
     createTxn(
       engine,
-      tablePath, isNewTable, testSchema, Seq.empty, tableProperties = Map(key.getKey -> value))
+      tablePath,
+      isNewTable, testSchema, Seq.empty, tableProperties = Map(key.getKey -> value), clock)
       .commit(engine, emptyIterable())
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
