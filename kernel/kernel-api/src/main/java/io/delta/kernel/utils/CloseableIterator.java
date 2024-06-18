@@ -20,10 +20,14 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.function.Consumer;
 import java.util.function.Function;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelEngineException;
+import io.delta.kernel.exceptions.KernelException;
+
+import io.delta.kernel.internal.util.Utils;
 
 /**
  * Closeable extension of {@link Iterator}
@@ -33,17 +37,47 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public interface CloseableIterator<T> extends Iterator<T>, Closeable {
+
+    /**
+     * Returns true if the iteration has more elements. (In other words, returns true if next would
+     * return an element rather than throwing an exception.)
+     *
+     * @return true if the iteration has more elements
+     * @throws KernelEngineException For any underlying exception occurs in {@link Engine} while
+     *                               trying to execute the operation. The original exception is (if
+     *                               any) wrapped in this exception as cause. E.g.
+     *                               {@link IOException} thrown while trying to read from a Delta
+     *                               log file. It will be wrapped in this exception as cause.
+     * @throws KernelException       When encountered an operation or state that is invalid or
+     *                               unsupported.
+     */
+    @Override
+    boolean hasNext();
+
+    /**
+     * Returns the next element in the iteration.
+     *
+     * @return the next element in the iteration
+     * @throws NoSuchElementException if the iteration has no more elements
+     * @throws KernelEngineException  For any underlying exception occurs in {@link Engine} while
+     *                                trying to execute the operation. The original exception is (if
+     *                                any) wrapped in this exception as cause. E.g.
+     *                                {@link IOException} thrown while trying to read from a Delta
+     *                                log file. It will be wrapped in this exception as cause.
+     * @throws KernelException        When encountered an operation or state that is invalid or
+     *                                unsupported in Kernel. For example, trying to read from a
+     *                                Delta table that has advanced features which are not yet
+     *                                supported by Kernel.
+     */
+    @Override
+    T next();
+
     default <U> CloseableIterator<U> map(Function<T, U> mapper) {
         CloseableIterator<T> delegate = this;
         return new CloseableIterator<U>() {
             @Override
             public void remove() {
                 delegate.remove();
-            }
-
-            @Override
-            public void forEachRemaining(Consumer<? super U> action) {
-                this.forEachRemaining(action);
             }
 
             @Override
@@ -99,6 +133,38 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
             public void close()
                 throws IOException {
                 delegate.close();
+            }
+        };
+    }
+
+    /**
+     * Combine the current iterator with another iterator. The resulting iterator will return all
+     * elements from the current iterator followed by all elements from the other iterator.
+     *
+     * @param other the other iterator to combine with
+     * @return a new iterator that combines the current iterator with the other iterator
+     */
+    default CloseableIterator<T> combine(CloseableIterator<T> other) {
+
+        CloseableIterator<T> delegate = this;
+        return new CloseableIterator<T>() {
+            @Override
+            public boolean hasNext() {
+                return delegate.hasNext() || other.hasNext();
+            }
+
+            @Override
+            public T next() {
+                if (delegate.hasNext()) {
+                    return delegate.next();
+                } else {
+                    return other.next();
+                }
+            }
+
+            @Override
+            public void close() throws IOException {
+                Utils.closeCloseables(delegate, other);
             }
         };
     }

@@ -136,12 +136,6 @@ trait BaseMockExpressionHandler extends ExpressionHandler {
       outputType: DataType): ExpressionEvaluator =
     throw new UnsupportedOperationException("not supported in this test suite")
 
-  override def isSupported(
-      inputSchema: StructType,
-      expression: Expression,
-      outputType: DataType): Boolean =
-    throw new UnsupportedOperationException("not supported in this test suite")
-
   override def createSelectionVector(values: Array[Boolean], from: Int, to: Int): ColumnVector =
     throw new UnsupportedOperationException("not supported in this test suite")
 }

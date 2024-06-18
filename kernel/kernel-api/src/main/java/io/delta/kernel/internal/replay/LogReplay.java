@@ -115,7 +115,6 @@ public class LogReplay {
 
     private final Path dataPath;
     private final LogSegment logSegment;
-    private final Engine engine;
     private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
@@ -129,8 +128,8 @@ public class LogReplay {
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.engine = engine;
-        this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint, snapshotVersion);
+        this.protocolAndMetadata =
+                loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
     }
 
     /////////////////
@@ -145,8 +144,8 @@ public class LogReplay {
         return this.protocolAndMetadata._2;
     }
 
-    public Optional<Long> getLatestTransactionIdentifier(String applicationId) {
-        return loadLatestTransactionVersion(applicationId);
+    public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
+        return loadLatestTransactionVersion(engine, applicationId);
     }
 
     /**
@@ -165,6 +164,7 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
+            Engine engine,
             boolean shouldReadStats,
             Optional<Predicate> checkpointPredicate) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
@@ -187,7 +187,8 @@ public class LogReplay {
      * delta files newer than the hint to search for any new P & M. If we don't find them, we can
      * just use the P and/or M from the hint.
      */
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+    protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+            Engine engine,
             Optional<SnapshotHint> snapshotHint,
             long snapshotVersion) {
 
@@ -247,7 +248,8 @@ public class LogReplay {
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
-                                TableFeatures.validateReadSupportedTable(protocol, metadata);
+                                TableFeatures.validateReadSupportedTable(
+                                    protocol, metadata, dataPath.toString());
                                 return new Tuple2<>(protocol, metadata);
                             }
 
@@ -284,7 +286,7 @@ public class LogReplay {
         );
     }
 
-    private Optional<Long> loadLatestTransactionVersion(String applicationId) {
+    private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
                      new ActionsIterator(engine,
                              logSegment.allLogFilesReversed(),

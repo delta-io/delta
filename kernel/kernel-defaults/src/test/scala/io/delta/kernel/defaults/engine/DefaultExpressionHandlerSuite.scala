@@ -76,36 +76,6 @@ class DefaultExpressionHandlerSuite extends AnyFunSuite with ExpressionTestUtils
     assert(ex.getMessage.contains("values is null"))
   }
 
-  val tableSchema = new StructType()
-    .add("d1", INTEGER)
-    .add("d2", STRING)
-    .add("d3", new StructType()
-      .add("d31", BOOLEAN)
-      .add("d32", LONG))
-    .add("p1", INTEGER)
-    .add("p2", STRING)
-  val unsupportedExpr = Map(
-    (unsupported("d1"), BOOLEAN) -> false, // unsupported function
-    (lt(col("d1"), int(12)), BOOLEAN) -> true,
-    (lt(col("d1"), int(12)), INTEGER) -> false, // output type is not supported
-    (lt(nestedCol("d3.d32"), int(12)), BOOLEAN) -> true, // implicit conversion from int to long
-    (gt(col("d1"), str("sss")), STRING) -> false, // unexpected input type to > operator
-    // unsupported expression in one of the AND inputs
-    (and(gt(col("d2"), str("sss")), unsupported("d2")), BOOLEAN) -> false,
-    // both unsupported expressions in AND inputs
-    (and(gt(nestedCol("d3.d31"), str("sss")), unsupported("d2")), BOOLEAN) -> false,
-    // unsupported expression in one of the OR inputs
-    (or(gt(col("p2"), str("sss")), unsupported("d2")), BOOLEAN) -> false,
-    // both unsupported expressions in OR inputs
-    (or(gt(nestedCol("d3.d31"), str("sss")), unsupported("d2")), BOOLEAN) -> false
-  ).foreach {
-    case ((expr, outputType), expected) =>
-      test(s"is expression supported: $expr -> $outputType") {
-        assert(
-          new DefaultExpressionHandler().isSupported(tableSchema, expr, outputType) == expected)
-      }
-  }
-
   private def selectionVector(values: Array[Boolean], from: Int, to: Int) = {
     new DefaultExpressionHandler().createSelectionVector(values, from, to)
   }

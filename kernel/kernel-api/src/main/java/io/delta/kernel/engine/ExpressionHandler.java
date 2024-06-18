@@ -34,15 +34,6 @@ import io.delta.kernel.types.StructType;
  */
 @Evolving
 public interface ExpressionHandler {
-    /**
-     * Is the given expression evaluation supported on the data with given schema?
-     *
-     * @param inputSchema Schema of input data on which the expression is evaluated.
-     * @param expression Expression to check whether it is supported for evaluation.
-     * @param outputType Expected result data type.
-     * @return true if supported and false otherwise.
-     */
-    boolean isSupported(StructType inputSchema, Expression expression, DataType outputType);
 
     /**
      * Create an {@link ExpressionEvaluator} that can evaluate the given <i>expression</i> on

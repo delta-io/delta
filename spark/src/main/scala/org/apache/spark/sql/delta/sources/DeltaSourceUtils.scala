@@ -103,5 +103,5 @@ object DeltaSourceUtils {
         UnresolvedAttribute(attribute), expressions.Literal.create(s"%${value}%"))
     case sources.AlwaysTrue() => expressions.Literal.TrueLiteral
     case sources.AlwaysFalse() => expressions.Literal.FalseLiteral
-  }.reduce(expressions.And)
+  }.reduceOption(expressions.And).getOrElse(expressions.Literal.TrueLiteral)
 }

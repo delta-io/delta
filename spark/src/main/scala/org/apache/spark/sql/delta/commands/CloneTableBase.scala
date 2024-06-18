@@ -189,7 +189,7 @@ abstract class CloneTableBase(
     }
 
     if (txn.readVersion < 0) {
-      destinationTable.createLogDirectory()
+      destinationTable.createLogDirectoriesIfNotExists()
     }
 
     val metadataToUpdate = determineTargetMetadata(txn.snapshot, deltaOperation.name)

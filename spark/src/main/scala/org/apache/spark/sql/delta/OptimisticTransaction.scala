@@ -21,6 +21,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
@@ -32,10 +33,10 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.coordinatedcommits._
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
-import org.apache.spark.sql.delta.managedcommit._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -54,6 +55,16 @@ import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
+
+object CoordinatedCommitType extends Enumeration {
+  type CoordinatedCommitType = Value
+  val FS_COMMIT, CC_COMMIT, FS_TO_CC_UPGRADE_COMMIT, CC_TO_FS_DOWNGRADE_COMMIT = Value
+}
+
+case class CoordinatedCommitsStats(
+  coordinatedCommitsType: String,
+  commitCoordinatorName: String,
+  commitCoordinatorConf: Map[String, String])
 
 /** Record metrics about a successful commit. */
 case class CommitStats(
@@ -95,6 +106,7 @@ case class CommitStats(
   numDistinctPartitionsInAdd: Int,
   numPartitionColumnsInTable: Int,
   isolationLevel: String,
+  coordinatedCommitsInfo: CoordinatedCommitsStats,
   fileSizeHistogram: Option[FileSizeHistogram] = None,
   addFilesHistogram: Option[FileSizeHistogram] = None,
   removeFilesHistogram: Option[FileSizeHistogram] = None,
@@ -238,7 +250,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * Tracks the data that could have been seen by recording the partition
    * predicates by which files have been queried by this transaction.
    */
-  protected val readPredicates = new ArrayBuffer[DeltaTableReadPredicate]
+  protected val readPredicates =
+    new java.util.concurrent.ConcurrentLinkedQueue[DeltaTableReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
   protected val readFiles = new HashSet[AddFile]
@@ -376,10 +389,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   private[delta] var preCommitLogSegment: LogSegment =
     snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
 
-  // The commit-owner of a table shouldn't change. If it is changed by a concurrent commit, then it
-  // will be detected as a conflict and the transaction will anyway fail.
-  private[delta] val readSnapshotTableCommitOwnerClientOpt: Option[TableCommitOwnerClient] =
-    snapshot.tableCommitOwnerClientOpt
+  // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent commit,
+  // then it will be detected as a conflict and the transaction will anyway fail.
+  private[delta] val readSnapshotTableCommitCoordinatorClientOpt:
+    Option[TableCommitCoordinatorClient] = {
+      snapshot.tableCommitCoordinatorClientOpt
+  }
 
   /**
    * Generates a timestamp which is greater than the commit timestamp
@@ -397,7 +412,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
     None
   } else {
-    Some(NANOSECONDS.toMillis((commitEndNano - txnStartNano)))
+    Some(NANOSECONDS.toMillis(commitEndNano - txnStartNano))
   }
 
   /** Gets the stats collector for the table at the snapshot this transaction has. */
@@ -710,8 +725,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * to enable these pre-requisite features.
    */
   private def getMetadataWithDependentFeaturesEnabled(metadata: Metadata): Metadata = {
-    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).map { _ =>
-      // managed-commits requires ICT to be enabled as per the spec.
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).map { _ =>
+      // coordinated-commits requires ICT to be enabled as per the spec.
       // If ICT is just in Protocol and not in Metadata,
       // then it is in a 'supported' state but not enabled.
       // In order to enable ICT, we have to set the table property in Metadata.
@@ -884,10 +899,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
 
-    readPredicates += DeltaTableReadPredicate(
+    readPredicates.add(DeltaTableReadPredicate(
       partitionPredicates = partitionFilters,
       dataPredicates = dataFilters,
       shouldRewriteFilter = shouldRewriteFilter)
+    )
   }
 
   /**
@@ -1101,8 +1117,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       actions: Seq[Action],
       op: DeltaOperations.Operation,
       canSkipEmptyCommits: Boolean,
-      tags: Map[String, String]
-  ): Option[Long] = recordDeltaOperation(deltaLog, "delta.commit") {
+      tags: Map[String, String]): Option[Long] = recordDeltaOperation(deltaLog, "delta.commit") {
     commitStartNano = System.nanoTime()
 
     val (version, postCommitSnapshot, actualCommittedActions) = try {
@@ -1127,7 +1142,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
       isBlindAppend = {
-        val dependsOnFiles = readPredicates.nonEmpty || readFiles.nonEmpty
+        val dependsOnFiles = !readPredicates.isEmpty || readFiles.nonEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
         onlyAddFiles && !dependsOnFiles
@@ -1153,9 +1168,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         txnId = Some(txnId))
 
       val firstAttemptVersion = getFirstAttemptVersion
-      val metadataUpdatedWithManagedCommitInfo = updateMetadataWithManagedCommitConfs()
+      val metadataUpdatedWithCoordinatedCommitsInfo = updateMetadataWithCoordinatedCommitsConfs()
       val metadataUpdatedWithIctInfo = updateMetadataWithInCommitTimestamp(commitInfo)
-      if (metadataUpdatedWithIctInfo || metadataUpdatedWithManagedCommitInfo) {
+      if (metadataUpdatedWithIctInfo || metadataUpdatedWithCoordinatedCommitsInfo) {
         preparedActions = preparedActions.map {
           case _: Metadata => metadata
           case other => other
@@ -1163,7 +1178,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
-        readPredicates = readPredicates.toSeq,
+        readPredicates = readPredicates.asScala.toSeq,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
@@ -1233,41 +1248,43 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
-   * This method makes the necessary changes to Metadata based on managed-commit: If the table is
-   * being converted from file-system to managed commits, then it registers the table with the
-   * commit-owner and updates the Metadata with the necessary configuration information from the
-   * commit-owner.
+   * This method makes the necessary changes to Metadata based on coordinated-commits: If the table
+   * is being converted from file-system to coordinated commits, then it registers the table with
+   * the commit-coordinator and updates the Metadata with the necessary configuration information
+   * from the commit-coordinator.
    *
    * @return A boolean which represents whether we have updated the table Metadata with
-   *         managed-commit information. If no changed were made, returns false.
+   *         coordinated-commits information. If no changed were made, returns false.
    */
-  protected def updateMetadataWithManagedCommitConfs(): Boolean = {
-    validateManagedCommitConfInMetadata(newMetadata)
-    val newManagedCommitTableConfOpt = registerTableForManagedCommitsIfNeeded(metadata, protocol)
-    val newManagedCommitTableConf = newManagedCommitTableConfOpt.getOrElse {
+  protected def updateMetadataWithCoordinatedCommitsConfs(): Boolean = {
+    validateCoordinatedCommitsConfInMetadata(newMetadata)
+    val newCoordinatedCommitsTableConfOpt =
+      registerTableForCoordinatedCommitsIfNeeded(metadata, protocol)
+    val newCoordinatedCommitsTableConf = newCoordinatedCommitsTableConfOpt.getOrElse {
       return false
     }
 
-    // FS to MC conversion
+    // FS to CC conversion
     val finalMetadata = metadata
-    val managedCommitTableConfJson = JsonUtils.toJson(newManagedCommitTableConf)
-    val extraKVConf = DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key -> managedCommitTableConfJson
+    val coordinatedCommitsTableConfJson = JsonUtils.toJson(newCoordinatedCommitsTableConf)
+    val extraKVConf =
+      DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key -> coordinatedCommitsTableConfJson
     newMetadata = Some(finalMetadata.copy(
       configuration = finalMetadata.configuration + extraKVConf))
     true
   }
 
-  protected def validateManagedCommitConfInMetadata(newMetadataOpt: Option[Metadata]): Unit = {
-    // Validate that the [[DeltaConfigs.MANAGED_COMMIT_OWNER_CONF]] is json parse-able.
+  protected def validateCoordinatedCommitsConfInMetadata(newMetadataOpt: Option[Metadata]): Unit = {
+    // Validate that the [[DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF]] is json parse-able.
     // Also do this validation if this table property has changed.
     newMetadataOpt
       .filter { newMetadata =>
-        val newManagedCommitConf =
-          newMetadata.configuration.get(DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key)
-        val oldManagedCommitConf =
-          snapshot.metadata.configuration.get(DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key)
-        newManagedCommitConf != oldManagedCommitConf
-      }.foreach(DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData)
+        val newCoordinatedCommitsConf =
+          newMetadata.configuration.get(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key)
+        val oldCoordinatedCommitsConf =
+          snapshot.metadata.configuration.get(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key)
+        newCoordinatedCommitsConf != oldCoordinatedCommitsConf
+      }.foreach(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.fromMetaData)
   }
 
 
@@ -1315,29 +1332,32 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     newProtocol = newProtocolOpt
     // If a feature requires another feature to be enabled, we enable the required
     // feature in the metadata (if needed) and add it to the protocol.
-    // e.g. Managed Commits requires ICT and VacuumProtocolCheck to be enabled.
+    // e.g. Coordinated Commits requires ICT and VacuumProtocolCheck to be enabled.
     updateMetadataAndProtocolWithRequiredFeatures(newMetadata)
 
     def recordCommitLargeFailure(ex: Throwable, op: DeltaOperations.Operation): Unit = {
-      val managedCommitExceptionOpt = ex match {
+      val coordinatedCommitsExceptionOpt = ex match {
         case e: CommitFailedException => Some(e)
         case _ => None
       }
       val data = Map(
         "exception" -> Utils.exceptionString(ex),
         "operation" -> op.name,
-        "fromManagedCommit" -> managedCommitExceptionOpt.isDefined,
-        "fromManagedCommitConflict" -> managedCommitExceptionOpt.map(_.conflict).getOrElse(""),
-        "fromManagedCommitRetryable" -> managedCommitExceptionOpt.map(_.retryable).getOrElse(""))
+        "fromCoordinatedCommits" -> coordinatedCommitsExceptionOpt.isDefined,
+        "fromCoordinatedCommitsConflict" ->
+          coordinatedCommitsExceptionOpt.map(_.getConflict).getOrElse(""),
+        "fromCoordinatedCommitsRetryable" ->
+          coordinatedCommitsExceptionOpt.map(_.getRetryable).getOrElse(""))
       recordDeltaEvent(deltaLog, "delta.commitLarge.failure", data = data)
     }
 
     try {
       val tags = Map.empty[String, String]
+      val commitTimestampMs = clock.getTimeMillis()
       val commitInfo = CommitInfo(
-        NANOSECONDS.toMillis(commitStartNano),
+        commitTimestampMs,
         operation = op.name,
-        generateInCommitTimestampForFirstCommitAttempt(NANOSECONDS.toMillis(commitStartNano)),
+        generateInCommitTimestampForFirstCommitAttempt(commitTimestampMs),
         operationParameters = op.jsonEncodedValues,
         context,
         readVersion = Some(readVersion),
@@ -1362,7 +1382,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
-      updateMetadataWithManagedCommitConfs()
+      updateMetadataWithCoordinatedCommitsConfs()
       updateMetadataWithInCommitTimestamp(commitInfo)
 
       var allActions =
@@ -1412,21 +1432,23 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
       if (readVersion < 0) {
-        deltaLog.createLogDirectory()
+        deltaLog.createLogDirectoriesIfNotExists()
       }
       val fsWriteStartNano = System.nanoTime()
       val jsonActions = allActions.map(_.json)
-      val effectiveTableCommitOwnerClient = readSnapshotTableCommitOwnerClientOpt.getOrElse {
-        TableCommitOwnerClient(
-          commitOwnerClient = new FileSystemBasedCommitOwnerClient(deltaLog),
-          deltaLog = deltaLog,
-          managedCommitTableConf = snapshot.metadata.managedCommitTableConf)
-      }
+      val effectiveTableCommitCoordinatorClient =
+        readSnapshotTableCommitCoordinatorClientOpt.getOrElse {
+          TableCommitCoordinatorClient(
+            commitCoordinatorClient = new FileSystemBasedCommitCoordinatorClient(deltaLog),
+            deltaLog = deltaLog,
+            coordinatedCommitsTableConf = snapshot.metadata.coordinatedCommitsTableConf)
+        }
       val updatedActions = UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
-      val commitResponse =
-        effectiveTableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
-      // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
+      val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
+        effectiveTableCommitCoordinatorClient.commit(attemptVersion, jsonActions, updatedActions)
+      }
+      // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
       // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
       acStatsCollector.finalizeStats(newMetadata.map(_.id).getOrElse(this.snapshot.metadata.id))
@@ -1438,7 +1460,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
       // Instead, manually run any necessary actions in updateAndCheckpoint.
       val postCommitSnapshot = updateAndCheckpoint(
-        spark, deltaLog, commitSize, attemptVersion, commitResponse.commit, txnId)
+        spark, deltaLog, commitSize, attemptVersion, commitResponse.getCommit, txnId)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = readVersion,
@@ -1468,6 +1490,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
         numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = Serializable.toString,
+        coordinatedCommitsInfo = createCoordinatedCommitsStats(),
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
 
@@ -1480,7 +1503,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             recordCommitLargeFailure(e, op)
             // Actions of a commit which went in before ours.
             // Requires updating deltaLog to retrieve these actions, as another writer may have used
-            // CommitOwnerClient for writing.
+            // CommitCoordinatorClient for writing.
             val logs = deltaLog.store.readAsIterator(
               DeltaCommitFileProvider(deltaLog.update()).deltaFile(attemptVersion),
               deltaLog.newDeltaHadoopConf())
@@ -1499,59 +1522,79 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
+  def createCoordinatedCommitsStats(): CoordinatedCommitsStats = {
+    val (coordinatedCommitsType, metadataToUse) = snapshot.tableCommitCoordinatorClientOpt match {
+      case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
+        (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
+      case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
+        (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
+      case Some(_) =>                                                        // CC commit
+        (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
+      case None =>                                                           // FS commit
+        (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
+    }
+    CoordinatedCommitsStats(
+      coordinatedCommitsType.toString,
+      metadataToUse.coordinatedCommitsCoordinatorName.getOrElse(""),
+      metadataToUse.coordinatedCommitsCoordinatorConf)
+  }
+
   /**
-   * This method registers the table with the commit-owner via the [[CommitOwnerClient]] if the
-   * table is transitioning from file-system based table to managed-commit table.
+   * This method registers the table with the commit-coordinator via the [[CommitCoordinatorClient]]
+   * if the table is transitioning from file-system based table to coordinated-commits table.
    * @param finalMetadata the effective [[Metadata]] of the table. Note that this refers to the
    *                      new metadata if this commit is updating the table Metadata.
    * @param finalProtocol the effective [[Protocol]] of the table. Note that this refers to the
    *                      new protocol if this commit is updating the table Protocol.
-   * @return The new managed-commit table metadata if the table is transitioning from file-system
-   *         based table to managed-commit table. Otherwise, None.
+   * @return The new coordinated-commits table metadata if the table is transitioning from
+   *         file-system based table to coordinated-commits table. Otherwise, None.
    *         This metadata should be added to the [[Metadata.configuration]] before doing the
    *         commit.
    */
-  protected def registerTableForManagedCommitsIfNeeded(
+  protected def registerTableForCoordinatedCommitsIfNeeded(
       finalMetadata: Metadata,
       finalProtocol: Protocol): Option[Map[String, String]] = {
-    val (oldOwnerName, oldOwnerConf) = ManagedCommitUtils.getManagedCommitConfs(snapshot.metadata)
-    var newManagedCommitTableConf: Option[Map[String, String]] = None
+    val (oldOwnerName, oldOwnerConf) =
+      CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
+    var newCoordinatedCommitsTableConf: Option[Map[String, String]] = None
     if (finalMetadata.configuration != snapshot.metadata.configuration || snapshot.version == -1L) {
-      val newCommitOwnerClientOpt =
-        ManagedCommitUtils.getCommitOwnerClient(finalMetadata, finalProtocol)
-      (newCommitOwnerClientOpt, readSnapshotTableCommitOwnerClientOpt) match {
-        case (Some(newCommitOwnerClient), None) =>
-          // FS -> MC conversion
-          val (commitOwnerName, commitOwnerConf) =
-            ManagedCommitUtils.getManagedCommitConfs(finalMetadata)
+      val newCommitCoordinatorClientOpt =
+        CoordinatedCommitsUtils.getCommitCoordinatorClient(spark, finalMetadata, finalProtocol)
+      (newCommitCoordinatorClientOpt, readSnapshotTableCommitCoordinatorClientOpt) match {
+        case (Some(newCommitCoordinatorClient), None) =>
+          // FS -> CC conversion
+          val (commitCoordinatorName, commitCoordinatorConf) =
+            CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
           logInfo(s"Table ${deltaLog.logPath} transitioning from file-system based table to " +
-            s"managed-commit table: [commit-owner: $commitOwnerName, conf: $commitOwnerConf]")
-          newManagedCommitTableConf = Some(newCommitOwnerClient.registerTable(
+            s"coordinated-commits table: [commit-coordinator: $commitCoordinatorName, " +
+            s"conf: $commitCoordinatorConf]")
+          newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
             deltaLog.logPath, readVersion, finalMetadata, protocol))
-        case (None, Some(readCommitOwnerClient)) =>
-          // MC -> FS conversion
+        case (None, Some(readCommitCoordinatorClient)) =>
+          // CC -> FS conversion
           val (newOwnerName, newOwnerConf) =
-            ManagedCommitUtils.getManagedCommitConfs(snapshot.metadata)
-          logInfo(s"Table ${deltaLog.logPath} transitioning from managed-commit table to " +
-            s"file-system table: [commit-owner: $newOwnerName, conf: $newOwnerConf]")
-        case (Some(newCommitOwnerClient), Some(readCommitOwnerClient))
-            if !readCommitOwnerClient.semanticsEquals(newCommitOwnerClient) =>
-          // MC1 -> MC2 conversion is not allowed.
-          // In order to transfer the table from one commit-owner to another, transfer the table
-          // from current commit-owner to filesystem first and then filesystem to the commit-owner.
+            CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
+          logInfo(s"Table ${deltaLog.logPath} transitioning from coordinated-commits table to " +
+            s"file-system table: [commit-coordinator: $newOwnerName, conf: $newOwnerConf]")
+        case (Some(newCommitCoordinatorClient), Some(readCommitCoordinatorClient))
+            if !readCommitCoordinatorClient.semanticsEquals(newCommitCoordinatorClient) =>
+          // CC1 -> CC2 conversion is not allowed.
+          // In order to transfer the table from one commit-coordinator to another, transfer the
+          // table from current commit-coordinator to filesystem first and then filesystem to the
+          // commit-coordinator.
           val (newOwnerName, newOwnerConf) =
-            ManagedCommitUtils.getManagedCommitConfs(finalMetadata)
-          val message = s"Transition of table ${deltaLog.logPath} from one commit-owner to" +
-            s" another commit-owner is not allowed: [old commit-owner: $oldOwnerName," +
-            s" new commit-owner: $newOwnerName, old commit-owner conf: $oldOwnerConf," +
-            s" new commit-owner conf: $newOwnerConf]."
+            CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
+          val message = s"Transition of table ${deltaLog.logPath} from one commit-coordinator to" +
+            s" another commit-coordinator is not allowed: [old commit-coordinator: $oldOwnerName," +
+            s" new commit-coordinator: $newOwnerName, old commit-coordinator conf: $oldOwnerConf," +
+            s" new commit-coordinator conf: $newOwnerConf]."
           throw new IllegalStateException(message)
         case _ =>
           // no owner change
           ()
       }
     }
-    newManagedCommitTableConf
+    newCoordinatedCommitsTableConf
   }
 
   /** Update the table now that the commit has been made, and write a checkpoint. */
@@ -1678,8 +1721,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // `assertMetadata` call above.
     performCdcColumnMappingCheck(finalActions, op)
 
+    // Ensure Commit Directory exists when coordinated commits is enabled on an existing table.
+    lazy val isFsToCcConversion = snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
+      newMetadata.flatMap(_.coordinatedCommitsCoordinatorName).nonEmpty
+    val shouldCreateLogDirs = snapshot.version == -1 || isFsToCcConversion
+    if (shouldCreateLogDirs) {
+      deltaLog.createLogDirectoriesIfNotExists()
+    }
+
     if (snapshot.version == -1) {
-      deltaLog.ensureLogDirectoryExist()
       // If this is the first commit and no protocol is specified, initialize the protocol version.
       if (!finalActions.exists(_.isInstanceOf[Protocol])) {
         finalActions = protocol +: finalActions
@@ -1889,8 +1939,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     var commitVersion = attemptVersion
     var updatedCurrentTransactionInfo = currentTransactionInfo
-    val isFsToMcCommit =
-      snapshot.metadata.managedCommitOwnerName.isEmpty && metadata.managedCommitOwnerName.nonEmpty
+    val isFsToCcCommit =
+      snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
+        metadata.coordinatedCommitsCoordinatorName.nonEmpty
     val maxRetryAttempts = spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)
     val maxNonConflictRetryAttempts =
       spark.conf.get(DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS)
@@ -1911,24 +1962,26 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           committed = true
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
-          case _: FileAlreadyExistsException if isFsToMcCommit =>
+          case _: FileAlreadyExistsException if isFsToCcCommit =>
             // Don't retry if this commit tries to upgrade the table from filesystem to managed
             // commits and the first attempt failed due to a conflict.
             throw DeltaErrors.concurrentWriteException(conflictingCommit = None)
-          case _: FileAlreadyExistsException if readSnapshotTableCommitOwnerClientOpt.isEmpty =>
+          case _: FileAlreadyExistsException
+            if readSnapshotTableCommitCoordinatorClientOpt.isEmpty =>
             // For filesystem based tables, we use LogStore to do the commit. On a conflict,
             // LogStore returns FileAlreadyExistsException necessitating conflict resolution.
-            // For commit-owners, FileAlreadyExistsException isn't expected under normal operations
-            // and thus retries are not performed if this exception is thrown by CommitOwnerClient.
+            // For commit-coordinators, FileAlreadyExistsException isn't expected under normal
+            // operations and thus retries are not performed if this exception is thrown by
+            // CommitCoordinatorClient.
             shouldCheckForConflicts = true
             // Do nothing, retry with next available attemptVersion
-          case ex: CommitFailedException if ex.retryable && ex.conflict =>
+          case ex: CommitFailedException if ex.getRetryable && ex.getConflict =>
             shouldCheckForConflicts = true
             // Reset nonConflictAttemptNumber if a conflict is detected.
             nonConflictAttemptNumber = 0
-            // For managed-commits, only retry with next available attemptVersion when
+            // For coordinated-commits, only retry with next available attemptVersion when
             // retryable is set and it was a case of conflict.
-          case ex: CommitFailedException if ex.retryable && !ex.conflict =>
+          case ex: CommitFailedException if ex.getRetryable && !ex.getConflict =>
             if (nonConflictAttemptNumber < maxNonConflictRetryAttempts) {
               nonConflictAttemptNumber += 1
             } else {
@@ -2067,6 +2120,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numDistinctPartitionsInAdd = distinctPartitions.size,
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
+      coordinatedCommitsInfo = createCoordinatedCommitsStats(),
       numOfDomainMetadatas = numOfDomainMetadatas,
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
@@ -2075,23 +2129,34 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     postCommitSnapshot
   }
 
-  class FileSystemBasedCommitOwnerClient(val deltaLog: DeltaLog) extends CommitOwnerClient {
+  class FileSystemBasedCommitCoordinatorClient(val deltaLog: DeltaLog)
+    extends CommitCoordinatorClient {
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
         logPath: Path,
-        managedCommitTableConf: Map[String, String],
+        coordinatedCommitsTableConf: Map[String, String],
         commitVersion: Long,
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
+      // Get thread local observer for Fuzz testing purpose.
+      val executionObserver = TransactionExecutionObserver.threadObserver.get()
       val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
-      // TODO(managed-commits): Integrate with ICT and pass the correct commitTimestamp
+      executionObserver.beginBackfill()
+      val ictEnabled = updatedActions.getNewMetadata.getConfiguration.getOrElse(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, "false") == "true"
+      val commitTimestamp = if (ictEnabled) {
+        // CommitInfo.getCommitTimestamp will return the inCommitTimestamp.
+        updatedActions.getCommitInfo.getCommitTimestamp
+      } else {
+        commitFileStatus.getModificationTime
+      }
       CommitResponse(Commit(
         commitVersion,
         fileStatus = commitFileStatus,
-        commitTimestamp = commitFileStatus.getModificationTime
+        commitTimestamp = commitTimestamp
       ))
     }
 
@@ -2108,8 +2173,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     override def getCommits(
         logPath: Path,
-        managedCommitTableConf: Map[String, String],
-        startVersion: Long,
+        coordinatedCommitsTableConf: Map[String, String],
+        startVersion: Option[Long],
         endVersion: Option[Long]): GetCommitsResponse =
       GetCommitsResponse(Seq.empty, -1)
 
@@ -2117,19 +2182,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         logStore: LogStore,
         hadoopConf: Configuration,
         logPath: Path,
-        managedCommitTableConf: Map[String, String],
-        startVersion: Long,
-        endVersion: Option[Long]): Unit = {}
+        coordinatedCommitsTableConf: Map[String, String],
+        version: Long,
+        lastKnownBackfilledVersion: Option[Long] = None): Unit = {}
 
     /**
-     * [[FileSystemBasedCommitOwnerClient]] is supposed to be treated as a singleton object for a
-     * Delta Log and is equal to all other instances of [[FileSystemBasedCommitOwnerClient]] for the
-     * same Delta Log.
+     * [[FileSystemBasedCommitCoordinatorClient]] is supposed to be treated as a singleton object
+     * for a Delta Log and is equal to all other instances of
+     * [[FileSystemBasedCommitCoordinatorClient]] for the same Delta Log.
      */
-    override def semanticEquals(other: CommitOwnerClient): Boolean = {
+    override def semanticEquals(other: CommitCoordinatorClient): Boolean = {
       other match {
-        case fsCommitOwnerClient: FileSystemBasedCommitOwnerClient =>
-          fsCommitOwnerClient.deltaLog == deltaLog
+        case fsCommitCoordinatorClient: FileSystemBasedCommitCoordinatorClient =>
+          fsCommitCoordinatorClient.deltaLog == deltaLog
         case _ => false
       }
     }
@@ -2137,7 +2202,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /**
    * Writes the json actions provided to the commit file corresponding to attemptVersion.
-   * If managed-commits are enabled, this method must return a non-empty [[Commit]]
+   * If coordinated-commits are enabled, this method must return a non-empty [[Commit]]
    * since we can't guess it from the FileSystem.
    */
   protected def writeCommitFile(
@@ -2145,39 +2210,37 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       jsonActions: Iterator[String],
       currentTransactionInfo: CurrentTransactionInfo)
       : (Option[VersionChecksum], Commit) = {
-    val commitOwnerClient = readSnapshotTableCommitOwnerClientOpt.getOrElse {
-      TableCommitOwnerClient(
-        new FileSystemBasedCommitOwnerClient(deltaLog),
+    val commitCoordinatorClient = readSnapshotTableCommitCoordinatorClientOpt.getOrElse {
+      TableCommitCoordinatorClient(
+        new FileSystemBasedCommitCoordinatorClient(deltaLog),
         deltaLog,
-        snapshot.metadata.managedCommitTableConf)
+        snapshot.metadata.coordinatedCommitsTableConf)
     }
-    val commitFile =
-      writeCommitFileImpl(attemptVersion, jsonActions, commitOwnerClient, currentTransactionInfo)
+    val commitFile = writeCommitFileImpl(
+      attemptVersion, jsonActions, commitCoordinatorClient, currentTransactionInfo)
     (None, commitFile)
   }
 
   protected def writeCommitFileImpl(
     attemptVersion: Long,
     jsonActions: Iterator[String],
-    tableCommitOwnerClient: TableCommitOwnerClient,
+    tableCommitCoordinatorClient: TableCommitCoordinatorClient,
     currentTransactionInfo: CurrentTransactionInfo
   ): Commit = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
-    val commitResponse = tableCommitOwnerClient.commit(attemptVersion, jsonActions, updatedActions)
-    // TODO(managed-commits): Use the right timestamp method on top of CommitInfo once ICT is
-    //  merged.
-    val commitTimestamp = commitResponse.commit.fileStatus.getModificationTime
-    val commitFile = commitResponse.commit.copy(commitTimestamp = commitTimestamp)
+    val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
+      tableCommitCoordinatorClient.commit(attemptVersion, jsonActions, updatedActions)
+    }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
-      val actualCommitPath = commitResponse.commit.fileStatus.getPath.toUri
+      val actualCommitPath = commitResponse.getCommit.getFileStatus.getPath.toUri
       if (actualCommitPath != expectedPathForCommitZero) {
         throw new IllegalStateException("Expected 0th commit to be written to " +
           s"$expectedPathForCommitZero but was written to $actualCommitPath")
       }
     }
-    commitFile
+    commitResponse.getCommit
   }
 
   /**
@@ -2261,8 +2324,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Returns the conflicting commit information */
   protected def getConflictingVersions(previousAttemptVersion: Long): Seq[FileStatus] = {
     assert(previousAttemptVersion == preCommitLogSegment.version + 1)
-    val (newPreCommitLogSegment, newCommitFileStatuses) =
-      deltaLog.getUpdatedLogSegment(preCommitLogSegment, readSnapshotTableCommitOwnerClientOpt)
+    val (newPreCommitLogSegment, newCommitFileStatuses) = deltaLog.getUpdatedLogSegment(
+      preCommitLogSegment,
+      readSnapshotTableCommitCoordinatorClientOpt)
     assert(preCommitLogSegment.version + newCommitFileStatuses.size ==
       newPreCommitLogSegment.version)
     preCommitLogSegment = newPreCommitLogSegment
@@ -2380,58 +2444,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
-  /**
-   * This method takes care of backfilling any unbackfilled delta files when managed commit is
-   * not enabled on the table (i.e. commit-owner is not present) but there are still unbackfilled
-   * delta files in the table. This can happen if an error occurred during the MC -> FS commit
-   * where the commit-owner was able to register the downgrade commit but it failed to backfill
-   * it. This method must be invoked before doing the next commit as otherwise there will be a
-   * gap in the backfilled commit sequence.
-   */
-  private def backfillWhenManagedCommitDisabled(): Unit = {
-    if (snapshot.tableCommitOwnerClientOpt.nonEmpty) {
-      // Managed commits is enabled on the table. Don't backfill as backfills are managed by
-      // commit-owners.
-      return
-    }
-    val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
-      case UnbackfilledDeltaFile(unbackfilledDeltaFile, version, _) =>
-        (unbackfilledDeltaFile, version)
-    }
-    if (unbackfilledFilesAndVersions.isEmpty) return
-    // Managed commits are disabled on the table but the table still has un-backfilled files.
-    val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val fs = deltaLog.logPath.getFileSystem(hadoopConf)
-    val overwrite = !deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
-    var numAlreadyBackfilledFiles = 0L
-    unbackfilledFilesAndVersions.foreach { case (unbackfilledDeltaFile, version) =>
-      val backfilledFilePath = unsafeDeltaFile(deltaLog.logPath, version)
-      if (!fs.exists(backfilledFilePath)) {
-        val actionsIter = deltaLog.store.readAsIterator(unbackfilledDeltaFile.getPath, hadoopConf)
-        deltaLog.store.write(
-          backfilledFilePath,
-          actionsIter,
-          overwrite,
-          hadoopConf)
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} backfilled to path" +
-          s" ${backfilledFilePath.toString}.")
-      } else {
-        numAlreadyBackfilledFiles += 1
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} already backfilled.")
-      }
-    }
-    recordDeltaEvent(
-      deltaLog,
-      opType = "delta.managedCommit.backfillWhenManagedCommitSupportedAndDisabled",
-      data = Map(
-        "numUnbackfilledFiles" -> unbackfilledFilesAndVersions.size,
-        "unbackfilledFiles" -> unbackfilledFilesAndVersions.map(_._1.getPath.toString),
-        "numAlreadyBackfilledFiles" -> numAlreadyBackfilledFiles
-      )
-    )
-  }
-
-  // Backfill any unbackfilled commits if managed commits are disabled -- in the Optimistic
+  // Backfill any unbackfilled commits if coordinated commits are disabled -- in the Optimistic
   // Transaction constructor.
-  backfillWhenManagedCommitDisabled()
+  CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshot)
 }

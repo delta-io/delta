@@ -16,12 +16,13 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
 import io.delta.kernel.types.{LongType, StructType}
-import io.delta.kernel.{Table, TableNotFoundException}
+import io.delta.kernel.Table
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
@@ -181,6 +182,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
       )
     }
+  }
+
+  test(s"end to end: reading decimal-various-scale-precision") {
+    val tablePath = goldenTablePath("decimal-various-scale-precision")
+    val expResults = spark.sql(s"SELECT * FROM delta.`$tablePath`")
+      .collect()
+      .map(TestRow(_))
+
+    checkTable(
+      path = goldenTablePath("decimal-various-scale-precision"),
+      expectedAnswer = expResults
+    )
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -585,7 +598,32 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         .getScanBuilder(defaultEngine)
         .build()
     }
-    assert(e.getMessage.contains("Unsupported reader protocol version"))
+    assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
+  }
+
+  test("table with void type - throws KernelException") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
+      val e = intercept[KernelException] {
+        latestSnapshot(path)
+      }
+      assert(e.getMessage.contains(
+        "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))
+    }
+  }
+
+  test("read a shallow cloned table") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath
+      val source = goldenTablePath("data-reader-partition-values")
+      spark.sql(s"CREATE TABLE delta.`$target` SHALLOW CLONE delta.`$source`")
+
+      val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
+
+      assert(expAnswer.size == 3)
+      checkTable(target, expAnswer)
+    }
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -628,7 +666,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           .getSnapshotAsOfVersion(defaultEngine, 11)
       }
       assert(e.getMessage.contains(
-        "Trying to load a non-existent version 11. The latest version available is 10"))
+        "Cannot load table version 11 as it does not exist. The latest available version is 10"))
     }
   }
 
@@ -644,9 +682,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       val log = org.apache.spark.sql.delta.DeltaLog.forTable(
         spark, new org.apache.hadoop.fs.Path(tablePath))
+      val deltaCommitFileProvider = org.apache.spark.sql.delta.util.DeltaCommitFileProvider(
+        log.unsafeVolatileSnapshot)
       // Delete the log files for versions 0-9, truncating the table history to version 10
       (0 to 9).foreach { i =>
-        val jsonFile = org.apache.spark.sql.delta.util.FileNames.deltaFile(log.logPath, i)
+        val jsonFile = deltaCommitFileProvider.deltaFile(i)
         new File(new org.apache.hadoop.fs.Path(log.logPath, jsonFile).toUri).delete()
       }
       // Create version 11 that overwrites the whole table
@@ -660,7 +700,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         Table.forPath(defaultEngine, tablePath)
           .getSnapshotAsOfVersion(defaultEngine, 9)
       }
-      assert(e.getMessage.contains("Unable to reconstruct state at version 9"))
+      assert(e.getMessage.contains("Cannot load table version 9"))
       // Can read version 10
       checkTable(
         path = tablePath,
@@ -774,7 +814,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e1.getMessage.contains(
         s"The provided timestamp ${start + 50 * minuteInMilliseconds} ms " +
-          s"(2018-10-24T22:04:18Z) is after the latest commit"))
+          s"(2018-10-24T22:04:18Z) is after the latest available version"))
       // Timestamp before the first commit fails
       val e2 = intercept[RuntimeException] {
         checkTable(
@@ -785,7 +825,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e2.getMessage.contains(
         s"The provided timestamp ${start - 1L} ms (2018-10-24T21:14:17.999Z) is before " +
-          s"the earliest version available."))
+          s"the earliest available version"))
     }
   }
 

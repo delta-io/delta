@@ -32,8 +32,10 @@ object RowCommitVersion {
 
   val QUALIFIED_COLUMN_NAME = s"${FileFormat.METADATA_NAME}.$METADATA_STRUCT_FIELD_NAME"
 
-  def createMetadataStructField(protocol: Protocol, metadata: Metadata, nullable: Boolean = false)
-    : Option[StructField] =
+  def createMetadataStructField(
+      protocol: Protocol,
+      metadata: Metadata,
+      nullable: Boolean = false): Option[StructField] =
     MaterializedRowCommitVersion.getMaterializedColumnName(protocol, metadata)
       .map(MetadataStructField(_, nullable))
 

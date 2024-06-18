@@ -466,15 +466,19 @@ class DeltaTableBuilderSuite
   }
 
   test("create table with clustering") {
-    withTable("test") {
-      io.delta.tables.DeltaTable.create().tableName("test")
-        .addColumn("c1", "int")
-        .clusterBy("c1")
-        .execute()
+    withSQLConf(
+      // Enable update catalog for verifyClusteringColumns.
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
+      withTable("test") {
+        io.delta.tables.DeltaTable.create().tableName("test")
+          .addColumn("c1", "int")
+          .clusterBy("c1")
+          .execute()
 
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("test"))
-      val metadata = deltaLog.snapshot.metadata
-      verifyClusteringColumns(TableIdentifier("test"), "c1")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier("test"))
+        val metadata = deltaLog.snapshot.metadata
+        verifyClusteringColumns(TableIdentifier("test"), Seq("c1"))
+      }
     }
   }
 

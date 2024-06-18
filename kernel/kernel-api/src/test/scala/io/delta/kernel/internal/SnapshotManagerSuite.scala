@@ -453,13 +453,13 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       files = deltaFileStatuses(Seq(0L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
-        "Trying to load a non-existent version 15. The latest version available is 0"
+        "Cannot load table version 15 as it does not exist. The latest available version is 0"
     )
     testExpectedError[RuntimeException](
       files = deltaFileStatuses((10L until 13L)) ++ singularCheckpointFileStatuses(Seq(10L)),
       versionToLoad = Optional.of(15),
       expectedErrorMessageContains =
-        "Trying to load a non-existent version 15. The latest version available is 12"
+        "Cannot load table version 15 as it does not exist. The latest available version is 12"
     )
   }
 
@@ -512,13 +512,13 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     testExpectedError[RuntimeException](
       files,
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Unable to reconstruct state at version 15"
+      expectedErrorMessageContains = "Cannot load table version 15"
     )
     testExpectedError[RuntimeException](
       files,
       startCheckpoint = Optional.of(20),
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Unable to reconstruct state at version 15"
+      expectedErrorMessageContains = "Cannot load table version 15"
     )
   }
 

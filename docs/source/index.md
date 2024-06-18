@@ -28,7 +28,10 @@ This is the documentation site for <Delta>.
     delta-drop-feature
     delta-row-tracking
     delta-apidoc
+    delta-spark-connect
     delta-storage
+    delta-coordinated-commits
+    delta-type-widening
     delta-uniform
     delta-sharing
     concurrency-control

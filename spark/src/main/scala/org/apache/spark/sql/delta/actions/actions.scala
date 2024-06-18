@@ -28,7 +28,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
-import org.apache.spark.sql.delta.managedcommit.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
+import org.apache.spark.sql.delta.coordinatedcommits.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
@@ -596,6 +596,10 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   def estLogicalFileSize: Option[Long]
 
+  /** Returns [[tags]] or an empty Map if null */
+  @JsonIgnore
+  def tagsOrEmpty: Map[String, String] = Option(tags).getOrElse(Map.empty[String, String])
+
   /**
    * Return tag value if tags is not null and the tag present.
    */
@@ -780,20 +784,23 @@ case class AddFile(
     }
   }
 
+  // Don't use lazy val because we want to save memory.
   @JsonIgnore
-  lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME).map(_.toLong)
+  def insertionTime: Long = longTag(AddFile.Tags.INSERTION_TIME)
     // From modification time in milliseconds to microseconds.
     .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS))
 
 
   def copyWithTags(newTags: Map[String, String]): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) ++ newTags)
-
+    copy(tags = tagsOrEmpty ++ newTags)
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] = getTag(tag.name)
 
+  def longTag(tagKey: AddFile.Tags.KeyType): Option[Long] =
+    tag(tagKey).map(_.toLong)
+
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
+    copy(tags = tagsOrEmpty + (tag.name -> value))
 
   def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile = {
     if (tags == null) {
@@ -912,13 +919,13 @@ case class RemoveFile(
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
    */
   def copyWithTag(tag: String, value: String): RemoveFile = copy(
-    tags = Option(tags).getOrElse(Map.empty) + (tag -> value))
+    tags = tagsOrEmpty + (tag -> value))
 
   /**
    * Create a copy without the tag.
    */
   def copyWithoutTag(tag: String): RemoveFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) - tag)
+    copy(tags = tagsOrEmpty - tag)
 
   @JsonIgnore
   override def getFileSize: Long = size.getOrElse(0L)
@@ -1033,22 +1040,22 @@ case class Metadata(
     GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
 
   /**
-   * The name of commit-owner which arbitrates the commits to the table. This must be available
-   * if this is a managed-commit table.
+   * The name of commit-coordinator which arbitrates the commits to the table. This must be
+   * available if this is a coordinated-commits table.
    */
   @JsonIgnore
-  lazy val managedCommitOwnerName: Option[String] =
-    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(this)
+  lazy val coordinatedCommitsCoordinatorName: Option[String] =
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(this)
 
-  /** The configuration to uniquely identify the commit-owner for managed-commit. */
+  /** The configuration to uniquely identify the commit-coordinator for coordinated-commits. */
   @JsonIgnore
-  lazy val managedCommitOwnerConf: Map[String, String] =
-    DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.fromMetaData(this)
+  lazy val coordinatedCommitsCoordinatorConf: Map[String, String] =
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.fromMetaData(this)
 
-  /** The table specific configuration for managed-commit. */
+  /** The table specific configuration for coordinated-commits. */
   @JsonIgnore
-  lazy val managedCommitTableConf: Map[String, String] =
-    DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.fromMetaData(this)
+  lazy val coordinatedCommitsTableConf: Map[String, String] =
+    DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.fromMetaData(this)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
 
@@ -1105,6 +1112,7 @@ case class CommitInfo(
     // infer the commit version from the file name and fill in this field then.
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     version: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     inCommitTimestamp: Option[Long],
     timestamp: Timestamp,
     userId: Option[String],
@@ -1280,7 +1288,7 @@ case class SidecarFile(
     sizeInBytes: Long,
     modificationTime: Long,
     tags: Map[String, String] = null)
-  extends Action with CheckpointOnlyAction {
+  extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(sidecar = this)
 
@@ -1311,7 +1319,7 @@ object SidecarFile {
 case class CheckpointMetadata(
     version: Long,
     tags: Map[String, String] = null)
-  extends Action with CheckpointOnlyAction {
+  extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
 }

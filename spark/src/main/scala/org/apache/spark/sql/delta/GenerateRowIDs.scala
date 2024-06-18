@@ -49,13 +49,13 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
   }
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.transformUpWithNewOutput {
-    case DeltaScanWithRowTrackingEnabled(scan) =>
+    case DeltaScanWithRowTrackingEnabled(
+            scan @ LogicalRelation(baseRelation: HadoopFsRelation, _, _, _)) =>
       // While Row IDs and commit versions are non-nullable, we'll use the Row ID & commit
       // version attributes to read the materialized values from now on, which can be null. We make
       // the materialized Row ID & commit version attributes nullable in the scan here.
 
       // Update nullability in the scan `metadataOutput` by updating the delta file format.
-      val baseRelation = scan.relation.asInstanceOf[HadoopFsRelation]
       val newFileFormat = baseRelation.fileFormat match {
         case format: DeltaParquetFileFormat =>
           format.copy(nullableRowTrackingFields = true)
@@ -134,8 +134,8 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
    * Create a new metadata struct where the Row ID and row commit version values are populated using
    * the materialized values if present, or the default Row ID / row commit version values if not.
    */
-  private def metadataWithRowTrackingColumnsProjection(metadata: AttributeReference)
-    : NamedExpression = {
+  private def metadataWithRowTrackingColumnsProjection(
+      metadata: AttributeReference): NamedExpression = {
     val metadataFields = metadata.dataType.asInstanceOf[StructType].map {
       case field if field.name == RowId.ROW_ID =>
         field -> rowIdExpr(metadata)

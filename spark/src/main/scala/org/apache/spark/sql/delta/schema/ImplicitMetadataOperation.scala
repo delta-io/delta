@@ -107,7 +107,9 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         throw DeltaErrors.unexpectedDataChangeException("Create a Delta table")
       }
       val description = configuration.get("comment").orNull
-      val cleanedConfs = configuration.filterKeys(_ != "comment").toMap
+      // Filter out the property for clustering columns from Metadata action.
+      val cleanedConfs = ClusteredTableUtils.removeClusteringColumnsProperty(
+        configuration.filterKeys(_ != "comment").toMap)
       txn.updateMetadata(
         Metadata(
           description = description,
@@ -181,7 +183,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       clusterBySpecOpt: Option[ClusterBySpec] = None): Seq[DomainMetadata] = {
     if (canUpdateMetadata && (!txn.deltaLog.tableExists || isReplacingTable)) {
       val newDomainMetadata = Seq.empty[DomainMetadata] ++
-        ClusteredTableUtils.getDomainMetadataOptional(clusterBySpecOpt, txn)
+        ClusteredTableUtils.getDomainMetadataFromTransaction(clusterBySpecOpt, txn)
       if (!txn.deltaLog.tableExists) {
         newDomainMetadata
       } else {

@@ -23,7 +23,6 @@ import scala.collection.generic.Sizing
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
-import org.apache.spark.sql.delta.DeltaConfig
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
@@ -193,8 +192,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
       snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
-    val numModifiedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
-    val numRemovedFiles: Long = touchedFiles.count(_.isFullyReplaced())
+    val numModifiedRows = touchedFiles.map(_.numberOfModifiedRows).sum.toLong
+    val numRemovedFiles = touchedFiles.count(_.isFullyReplaced()).toLong
 
     val (fullyRemovedFiles, notFullyRemovedFiles) = touchedFiles.partition(_.isFullyReplaced())
 
@@ -399,7 +398,7 @@ object DeletionVectorBitmapGenerator {
       .withColumn(FILE_NAME_COL, fileNameColumn)
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
-      .filter(new Column(condition))
+      .filter(Column(condition))
       .withColumn(ROW_INDEX_COL, rowIndexColumn)
 
     val df = if (tableHasDVs) {

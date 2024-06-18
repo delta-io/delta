@@ -41,6 +41,7 @@ import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl, SupportsTriggerAvailableNow}
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 
 /**
  * A case class to help with `Dataset` operations regarding Offset indexing, representing AddFile
@@ -322,7 +323,13 @@ trait DeltaSourceBase extends Source
             excludeRegex.forall(_.findFirstIn(indexedFile.getFileAction.path).isEmpty)
         }
 
-        createDataFrame(filteredIndexedFiles)
+        val (result, duration) = Utils.timeTakenMs {
+          createDataFrame(filteredIndexedFiles)
+        }
+        logInfo(s"Getting dataFrame for delta_log_path=${deltaLog.logPath} with " +
+          s"startVersion=$startVersion, startIndex=$startIndex, " +
+          s"isInitialSnapshot=$isInitialSnapshot, endOffset=$endOffset took timeMs=$duration ms")
+        result
       } finally {
         fileActionsIter.close()
       }
@@ -772,36 +779,42 @@ case class DeltaSource(
       }
     }
 
-    var iter = if (isInitialSnapshot) {
-      Iterator(1, 2).flatMapWithClose {  // so that the filterAndIndexDeltaLogs call is lazy
-        case 1 => getSnapshotAt(fromVersion).toClosable
-        case 2 => filterAndIndexDeltaLogs(fromVersion + 1)
+    val (result, duration) = Utils.timeTakenMs {
+      var iter = if (isInitialSnapshot) {
+        Iterator(1, 2).flatMapWithClose { // so that the filterAndIndexDeltaLogs call is lazy
+          case 1 => getSnapshotAt(fromVersion).toClosable
+          case 2 => filterAndIndexDeltaLogs(fromVersion + 1)
+        }
+      } else {
+        filterAndIndexDeltaLogs(fromVersion)
       }
-    } else {
-      filterAndIndexDeltaLogs(fromVersion)
-    }
 
-    iter = iter.withClose { it =>
-      it.filter { file =>
-        file.version > fromVersion || file.index > fromIndex
-      }
-    }
-
-    // If endOffset is provided, we are getting a batch on a constructed range so we should use
-    // the endOffset as the limit.
-    // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
-    // Trigger.availableNow() as limit. We know endOffset <= lastOffsetForTriggerAvailableNow.
-    val lastOffsetForThisScan = endOffset.orElse(lastOffsetForTriggerAvailableNow)
-
-    lastOffsetForThisScan.foreach { bound =>
       iter = iter.withClose { it =>
-        it.takeWhile { file =>
-          file.version < bound.reservoirVersion ||
-            (file.version == bound.reservoirVersion && file.index <= bound.index)
+        it.filter { file =>
+          file.version > fromVersion || file.index > fromIndex
         }
       }
+
+      // If endOffset is provided, we are getting a batch on a constructed range so we should use
+      // the endOffset as the limit.
+      // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
+      // Trigger.availableNow() as limit. We know endOffset <= lastOffsetForTriggerAvailableNow.
+        val lastOffsetForThisScan = endOffset.orElse(lastOffsetForTriggerAvailableNow)
+
+        lastOffsetForThisScan.foreach { bound =>
+          iter = iter.withClose { it =>
+            it.takeWhile { file =>
+              file.version < bound.reservoirVersion ||
+                (file.version == bound.reservoirVersion && file.index <= bound.index)
+            }
+          }
+        }
+      iter
     }
-    iter
+    logInfo(s"Getting file changes for delta_log_path=${deltaLog.logPath} with " +
+      s"fromVersion=$fromVersion, fromIndex=$fromIndex, isInitialSnapshot=$isInitialSnapshot " +
+      s"took timeMs=$duration ms")
+    result
   }
 
   /**
@@ -893,7 +906,9 @@ case class DeltaSource(
    * This should only be called by the engine. Call `latestOffsetInternal` instead if you need to
    * get the latest offset.
    */
-  override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset = {
+  override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset =
+    recordDeltaOperation(
+      snapshotAtSourceInit.deltaLog, opType = "delta.streaming.source.latestOffset") {
     val deltaStartOffset = Option(startOffset).map(toDeltaSourceOffset)
     initForTriggerAvailableNowIfNeeded(deltaStartOffset)
     latestOffsetInternal(deltaStartOffset, limit).orNull
@@ -1037,7 +1052,9 @@ case class DeltaSource(
     (skippedCommit, metadataAction, protocolAction)
   }
 
-  override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
+  override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame =
+    recordDeltaOperation(
+      snapshotAtSourceInit.deltaLog, opType = "delta.streaming.source.getBatch") {
     val endOffset = toDeltaSourceOffset(end)
     val startDeltaOffsetOption = startOffsetOption.map(toDeltaSourceOffset)
 
@@ -1180,7 +1197,8 @@ case class DeltaSource(
   // Marks that the `end` offset is done and we can safely run any actions in response to that.
   // This happens AFTER `end` offset is committed by the streaming engine so we can safely fail this
   // if needed, e.g. for failing the stream to conduct schema evolution.
-  override def commit(end: Offset): Unit = {
+  override def commit(end: Offset): Unit =
+    recordDeltaOperation(snapshotAtSourceInit.deltaLog, opType = "delta.streaming.source.commit") {
     super.commit(end)
     // IMPORTANT: for future developers, please place any work you would like to do in commit()
     // before `updateSchemaTrackingLogAndFailTheStreamIfNeeded(end)` as it may throw an exception.

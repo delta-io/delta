@@ -38,17 +38,6 @@ import io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator;
  * Default implementation of {@link ExpressionHandler}
  */
 public class DefaultExpressionHandler implements ExpressionHandler {
-    @Override
-    public boolean isSupported(StructType inputSchema, Expression expression, DataType outputType) {
-        // There is no extra cost to create an expression handler in default implementation in
-        // addition to checking the expression support. So we can just use `getEvaluator`.
-        try {
-            getEvaluator(inputSchema, expression, outputType);
-            return true;
-        } catch (UnsupportedOperationException e) {
-            return false;
-        }
-    }
 
     @Override
     public ExpressionEvaluator getEvaluator(

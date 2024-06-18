@@ -31,6 +31,7 @@ import org.apache.parquet.io.api.RecordConsumer;
 import org.apache.parquet.schema.MessageType;
 import static org.apache.parquet.hadoop.ParquetOutputFormat.*;
 
+import io.delta.kernel.Meta;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.StructType;
@@ -286,9 +287,9 @@ public class ParquetFileWriter {
 
         @Override
         public WriteContext init(Configuration configuration) {
-            // TODO: figure out a way to dynamically fetch the Kernel version.
             Map<String, String> extraProps = Collections.singletonMap(
-                    "io.delta.kernel.default-parquet-writer", "3.2.0-SNAPSHOT");
+                    "io.delta.kernel.default-parquet-writer",
+                    "Kernel-Defaults-" + Meta.KERNEL_VERSION);
             return new WriteContext(parquetSchema, extraProps);
         }
 

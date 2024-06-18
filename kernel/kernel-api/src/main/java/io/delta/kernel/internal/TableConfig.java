@@ -15,9 +15,14 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
+import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.IntervalParserUtils;
 
@@ -48,11 +53,34 @@ public class TableConfig<T> {
                     " and years are not accepted. You may specify '365 days' for a year instead."
     );
 
+    /**
+     * How often to checkpoint the delta log? For every N (this config) commits to the log, we will
+     * suggest write out a checkpoint file that can speed up the Delta table state reconstruction.
+     */
+    public static final TableConfig<Integer> CHECKPOINT_INTERVAL = new TableConfig<>(
+            "delta.checkpointInterval",
+            "10",
+            Integer::valueOf,
+            value -> value > 0,
+            "needs to be a positive integer."
+    );
+
+    /**
+     * All the valid properties that can be set on the table.
+     */
+    private static final HashMap<String, TableConfig> validProperties = new HashMap<>();
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;
     private final Predicate<T> validator;
     private final String helpMessage;
+
+    static {
+        validProperties.put(
+                TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
+        validProperties.put(
+                CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
+    }
 
     private TableConfig(
             String key,
@@ -74,13 +102,53 @@ public class TableConfig<T> {
      * @return the value of the table property
      */
     public T fromMetadata(Metadata metadata) {
-        T value = fromString.apply(metadata.getConfiguration().getOrDefault(key, defaultValue));
-        if (!validator.test(value)) {
-            throw new IllegalArgumentException(
-                    String.format("Invalid value for table property '%s': '%s'. %s",
-                            key, value, helpMessage));
+        String value = metadata.getConfiguration().getOrDefault(key, defaultValue);
+        validate(value);
+        return fromString.apply(value);
+    }
+
+    /**
+     * Returns the key of the table property.
+     *
+     * @return the key of the table property
+     */
+    public String getKey() {
+        return key;
+    }
+
+    /**
+     * Validates that the given properties have the delta prefix in the key name, and they are in
+     * the set of valid properties. The caller should get the validated configurations and store the
+     * case of the property name defined in TableConfig.
+     *
+     * @param configurations the properties to validate
+     * @throws InvalidConfigurationValueException if any of the properties are invalid
+     * @throws UnknownConfigurationException if any of the properties are unknown
+     */
+    public static Map<String, String> validateProperties(Map<String, String> configurations) {
+        Map<String, String> validatedConfigurations = new HashMap<>();
+        for (Map.Entry<String, String> kv : configurations.entrySet()) {
+            String key = kv.getKey().toLowerCase(Locale.ROOT);
+            String value = kv.getValue();
+            if (key.startsWith("delta.")) {
+                TableConfig tableConfig = validProperties.get(key);
+                if (tableConfig != null) {
+                    tableConfig.validate(value);
+                    validatedConfigurations.put(tableConfig.getKey(), value);
+                } else {
+                    throw DeltaErrors.unknownConfigurationException(key);
+                }
+            } else {
+                throw DeltaErrors.unknownConfigurationException(key);
+            }
         }
-        return value;
+        return validatedConfigurations;
+    }
+
+    private void validate(String value) {
+        T parsedValue = fromString.apply(value);
+        if (!validator.test(parsedValue)) {
+            throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
+        }
     }
 }
-

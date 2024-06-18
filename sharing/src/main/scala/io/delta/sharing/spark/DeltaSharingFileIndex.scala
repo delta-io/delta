@@ -53,7 +53,7 @@ case class DeltaSharingFileIndex(
     with SupportsRowIndexFilters
     with DeltaFileFormat
     with Logging {
-  private val queryCustomTablePath = client.getProfileProvider.getCustomTablePath(
+  private lazy val queryCustomTablePath = client.getProfileProvider.getCustomTablePath(
     params.path.toString
   )
 
@@ -168,8 +168,7 @@ case class DeltaSharingFileIndex(
         limit = overrideLimit.orElse(limitHint),
         versionAsOf = params.options.versionAsOf,
         timestampAsOf = params.options.timestampAsOf,
-        jsonPredicateHints = jsonPredicateHints,
-        refreshToken = deltaTableFiles.refreshToken
+        jsonPredicateHints = jsonPredicateHints
       ),
       expirationTimestamp =
         if (CachedTableManager.INSTANCE

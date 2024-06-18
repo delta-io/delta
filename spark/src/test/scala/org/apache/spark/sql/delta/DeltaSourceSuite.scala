@@ -1733,7 +1733,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testSparkLatestOnly("startingVersion: user defined start works with mergeSchema") {
+  test("startingVersion: user defined start works with mergeSchema") {
     withTempDir { inputDir =>
       withTempView("startingVersionTest") {
         spark.range(10)
@@ -1774,10 +1774,13 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           q.processAllAvailable()
           checkAnswer(
             sql("select * from startingVersionTest"),
-            ((10 until 20).map(x => (x.toLong, x.toLong, None.toString)) ++
+            ((10 until 20).map(x => (x.toLong, x.toLong, "null")) ++
               (20 until 30).map(x => (x.toLong, x.toLong, x.toString)))
               .toDF("id", "id2", "id3")
-              .selectExpr("id", "id2", "cast(id3 as long) as id3")
+              .selectExpr(
+                "id",
+                "id2",
+                "CASE WHEN id3 = 'null' THEN NULL ELSE cast(id3 as long) END as id3")
           )
         } finally {
           q.stop()

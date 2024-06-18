@@ -19,7 +19,8 @@ import java.io.IOException;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
-
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 
@@ -70,5 +71,21 @@ public class TableImpl implements Table {
     public void checkpoint(Engine engine, long version)
             throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
         snapshotManager.checkpoint(engine, version);
+    }
+
+    @Override
+    public TransactionBuilder createTransactionBuilder(
+            Engine engine,
+            String engineInfo,
+            Operation operation) {
+        return new TransactionBuilderImpl(this, engineInfo, operation);
+    }
+
+    protected Path getDataPath() {
+        return new Path(tablePath);
+    }
+
+    protected Path getLogPath() {
+        return new Path(tablePath, "_delta_log");
     }
 }

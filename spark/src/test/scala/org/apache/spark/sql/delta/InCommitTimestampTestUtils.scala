@@ -40,4 +40,19 @@ object InCommitTimestampTestUtils {
     deltaLog.store.write(
       filePath, updatedActionsList.toIterator, overwrite = true, deltaLog.newDeltaHadoopConf())
   }
+
+  /**
+   * Overwrites the in-commit-timestamp in the given CRC file with the given timestamp.
+   */
+  def overwriteICTInCrc(deltaLog: DeltaLog, version: Long, ts: Option[Long]): Unit = {
+    val crcPath = FileNames.checksumFile(deltaLog.logPath, version)
+    val latestCrc = JsonUtils.fromJson[VersionChecksum](
+      deltaLog.store.read(crcPath, deltaLog.newDeltaHadoopConf()).mkString(""))
+    val checksumWithNoICT = latestCrc.copy(inCommitTimestampOpt = ts)
+    deltaLog.store.write(
+      crcPath,
+      Iterator(JsonUtils.toJson(checksumWithNoICT)),
+      overwrite = true,
+      deltaLog.newDeltaHadoopConf())
+  }
 }

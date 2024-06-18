@@ -16,8 +16,10 @@
 package io.delta.kernel.defaults.engine;
 
 import java.io.*;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import static java.lang.String.format;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
@@ -28,6 +30,8 @@ import org.apache.hadoop.fs.*;
 
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.JsonHandler;
+import io.delta.kernel.exceptions.KernelEngineException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
@@ -87,8 +91,8 @@ public class DefaultJsonHandler implements JsonHandler {
             // JSON reader
             return DataTypeParser.parseSchema(defaultObjectReader.readTree(structTypeJson));
         } catch (JsonProcessingException ex) {
-            throw new RuntimeException(
-                String.format("Could not parse JSON: %s", structTypeJson), ex);
+            throw new KernelException(
+                format("Could not parse schema given as JSON string: %s", structTypeJson), ex);
         }
     }
 
@@ -126,7 +130,8 @@ public class DefaultJsonHandler implements JsonHandler {
                         }
                     }
                 } catch (IOException ex) {
-                    throw new RuntimeException(ex);
+                    throw new KernelEngineException(
+                            format("Error reading JSON file: %s", currentFile.getPath()), ex);
                 }
 
                 return nextLine != null;
@@ -186,7 +191,7 @@ public class DefaultJsonHandler implements JsonHandler {
             String filePath,
             CloseableIterator<Row> data,
             boolean overwrite) throws IOException {
-        Path path = new Path(filePath);
+        Path path = new Path(URI.create(filePath));
         LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
         try {
             logStore.write(
@@ -214,7 +219,7 @@ public class DefaultJsonHandler implements JsonHandler {
             final JsonNode jsonNode = objectReaderReadBigDecimals.readTree(json);
             return new DefaultJsonRow((ObjectNode) jsonNode, readSchema);
         } catch (JsonProcessingException ex) {
-            throw new RuntimeException(String.format("Could not parse JSON: %s", json), ex);
+            throw new KernelEngineException(format("Could not parse JSON: %s", json), ex);
         }
     }
 }

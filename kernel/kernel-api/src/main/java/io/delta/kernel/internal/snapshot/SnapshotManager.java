@@ -30,6 +30,8 @@ import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
@@ -38,6 +40,7 @@ import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
@@ -160,8 +163,8 @@ public class SnapshotManager {
         SnapshotImpl snapshot = (SnapshotImpl) getSnapshotAt(engine, version);
 
         // Check if writing to the given table protocol version/features is supported in Kernel
-        validateWriteSupportedTable(
-                snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getSchema(engine));
+        validateWriteSupportedTable(snapshot.getProtocol(), snapshot.getMetadata(),
+            snapshot.getSchema(engine), tablePath.toString());
 
         Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
 
@@ -257,7 +260,7 @@ public class SnapshotManager {
         } catch (FileNotFoundException e) {
             return Optional.empty();
         } catch (IOException io) {
-            throw new RuntimeException("Failed to list the files in delta log", io);
+            throw new UncheckedIOException("Failed to list the files in delta log", io);
         }
     }
 
@@ -317,8 +320,10 @@ public class SnapshotManager {
                         // than the versionToLoad then the versionToLoad is not reconstructable
                         // from the existing logs
                         if (output.isEmpty()) {
-                            throw DeltaErrors.nonReconstructableStateException(
-                                tablePath.toString(), versionToLoad.get());
+                            long earliestVersion = DeltaHistoryManager.getEarliestRecreatableCommit(
+                                engine, logPath);
+                            throw DeltaErrors.versionBeforeFirstAvailableCommit(
+                                tablePath.toString(), versionToLoad.get(), earliestVersion);
                         }
                         break;
                     }
@@ -361,18 +366,26 @@ public class SnapshotManager {
             .orElse(".");
         logger.info("{}: Loading version {} {}", tablePath, initSegment.version, startingFromStr);
 
+
+        LogReplay logReplay = new LogReplay(
+            logPath,
+            tablePath,
+            initSegment.version,
+            engine,
+            initSegment,
+            Optional.ofNullable(latestSnapshotHint.get()));
+
         long startTimeMillis = System.currentTimeMillis();
 
         assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
 
         final SnapshotImpl snapshot = new SnapshotImpl(
-            logPath,
             tablePath,
-            initSegment.version,
-            initSegment, engine,
-            initSegment.lastCommitTimestamp,
-            Optional.ofNullable(latestSnapshotHint.get())
-        );
+            initSegment,
+            logReplay,
+            logReplay.getProtocol(),
+            logReplay.getMetadata());
+
         logger.info(
                 "{}: Took {}ms to construct the snapshot (loading protocol and metadata) for {} {}",
                 tablePath,
@@ -624,7 +637,7 @@ public class SnapshotManager {
         }
 
         versionToLoadOpt.filter(v -> v != newVersion).ifPresent(v -> {
-            throw DeltaErrors.nonExistentVersionException(tablePath.toString(), v, newVersion);
+            throw DeltaErrors.versionAfterLatestCommit(tablePath.toString(), v, newVersion);
         });
 
         // We may just be getting a checkpoint file after the filtering

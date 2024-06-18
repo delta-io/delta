@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.{CheckpointAlreadyExistsException, Table, TableNotFoundException}
+import io.delta.kernel.Table
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -32,11 +32,12 @@ import java.io.File
 
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
 
 /**
  * Test suite for `io.delta.kernel.Table.checkpoint(engine, version)`
  */
-class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
+class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
 
   ///////////
   // Tests //
@@ -324,7 +325,7 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
       val ex2 = intercept[Exception] {
         kernelCheckpoint(tc, path, checkpointVersion = 5)
       }
-      assert(ex2.getMessage.contains("Trying to load a non-existent version 5"))
+      assert(ex2.getMessage.contains("Cannot load table version 5 as it does not exist"))
     }
   }
 
@@ -349,8 +350,8 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
       val ex2 = intercept[Exception] {
         kernelCheckpoint(tc, tablePath, checkpointVersion = 5)
       }
-      assert(ex2.getMessage.contains(
-        "Unsupported writer protocol version: 7 with feature: deletionVectors"))
+      assert(ex2.getMessage.contains("Unsupported Delta writer feature") &&
+        ex2.getMessage.contains("writer table feature \"deletionVectors\""))
     }
   }
 
@@ -401,52 +402,5 @@ class CreateCheckpointSuite extends AnyFunSuite with TestUtils {
 
     // verify using Kernel reader
     checkTable(tablePath, expResults)
-  }
-
-  def verifyLastCheckpointMetadata(tablePath: String, checkpointAt: Long, expSize: Long): Unit = {
-    val filePath = f"$tablePath/_delta_log/_last_checkpoint"
-
-    val source = scala.io.Source.fromFile(filePath)
-    val result = try source.getLines().mkString(",") finally source.close()
-
-    assert(result === s"""{"version":$checkpointAt,"size":$expSize}""")
-  }
-
-  /** Helper method to remove the delta files before the given version, to make sure the read is
-   * using a checkpoint as base for state reconstruction.
-   */
-  def deleteDeltaFilesBefore(tablePath: String, beforeVersion: Long): Unit = {
-    Seq.range(0, beforeVersion).foreach { version =>
-      val filePath = new Path(f"$tablePath/_delta_log/$version%020d.json")
-      new Path(tablePath).getFileSystem(new Configuration()).delete(filePath, false /* recursive */)
-    }
-
-    // try to query a version < beforeVersion
-    val ex = intercept[VersionNotFoundException] {
-      spark.read.format("delta").option("versionAsOf", beforeVersion - 1).load(tablePath)
-    }
-    assert(ex.getMessage().contains(
-      s"Cannot time travel Delta table to version ${beforeVersion - 1}"))
-  }
-
-  def withTempDirAndEngine(f: (String, Engine) => Unit): Unit = {
-    val engine = DefaultEngine.create(new Configuration() {
-      {
-        // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-        set("delta.kernel.default.parquet.reader.batch-size", "200");
-        set("delta.kernel.default.json.reader.batch-size", "200");
-      }
-    })
-    withTempDir { dir => f(dir.getAbsolutePath, engine) }
-  }
-
-  def checkpointFilePath(tablePath: String, checkpointVersion: Long): String = {
-    f"$tablePath/_delta_log/$checkpointVersion%020d.checkpoint.parquet"
-  }
-
-  def copyTable(goldenTableName: String, targetLocation: String): Unit = {
-    val source = new File(goldenTablePath(goldenTableName))
-    val target = new File(targetLocation)
-    FileUtils.copyDirectory(source, target)
   }
 }

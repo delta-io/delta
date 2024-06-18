@@ -449,7 +449,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     var validatedConfigurations =
       DeltaConfigs.validateConfigurations(tableDesc.properties)
     ClusteredTableUtils.validateExistingTableFeatureProperties(validatedConfigurations)
-    // Add needed configs for Clustered table.
+    // Add needed configs for Clustered table. Note that [[PROP_CLUSTERING_COLUMNS]] can only
+    // be added after [[DeltaConfigs.validateConfigurations]] to avoid non-user configurable check
+    // failure.
     if (maybeClusterBySpec.nonEmpty) {
       validatedConfigurations =
         validatedConfigurations ++
@@ -761,8 +763,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val clusterBySpec = ClusterBySpec(c.clusteringColumns.toSeq)
             validateClusterBySpec(Some(clusterBySpec), table.schema())
           }
-          if (!ClusteredTableUtils.isSupported(table.initialSnapshot.protocol)) {
-            throw DeltaErrors.alterClusterByNotAllowedException()
+          if (table.initialSnapshot.metadata.partitionColumns.nonEmpty) {
+            throw DeltaErrors.alterTableClusterByOnPartitionedTableException()
           }
           AlterTableClusterByDeltaCommand(
             table, c.clusteringColumns.map(_.fieldNames().toSeq).toSeq).run(spark)

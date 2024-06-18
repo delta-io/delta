@@ -110,7 +110,8 @@ public interface JsonHandler {
      * <ul>
      *     <li>Primitive types: @code boolean, byte, short, int, long, float, double, string}</li>
      *     <li>{@code struct}: any element whose value is null is not written to file</li>
-     *     <li>{@code map}: only a {@code map} with {@code string} key type is supported</li>
+     *     <li>{@code map}: only a {@code map} with {@code string} key type is supported. If an
+     *     entry value is {@code null}, it should be written to the file.</li>
      *     <li>{@code array}: {@code null} value elements are written to file</li>
      * </ul>
      *

@@ -30,8 +30,8 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
@@ -332,7 +332,7 @@ class DeltaLog private(
   def getChangeLogFiles(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltasWithVersion = ManagedCommitUtils.commitFilesIterator(this, startVersion)
+    val deltasWithVersion = CoordinatedCommitsUtils.commitFilesIterator(this, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltasWithVersion.map { case (status, version) =>
@@ -467,8 +467,8 @@ class DeltaLog private(
 
   def isSameLogAs(otherLog: DeltaLog): Boolean = this.compositeId == otherLog.compositeId
 
-  /** Creates the log directory if it does not exist. */
-  def ensureLogDirectoryExist(): Unit = {
+  /** Creates the log directory and commit directory if it does not exist. */
+  def createLogDirectoriesIfNotExists(): Unit = {
     val fs = logPath.getFileSystem(newDeltaHadoopConf())
     def createDirIfNotExists(path: Path): Unit = {
       // Optimistically attempt to create the directory first without checking its existence.
@@ -498,14 +498,6 @@ class DeltaLog private(
       }
     }
     createDirIfNotExists(FileNames.commitDirPath(logPath))
-  }
-
-  /**
-   * Create the log directory. Unlike `ensureLogDirectoryExist`, this method doesn't check whether
-   * the log directory exists and it will ignore the return value of `mkdirs`.
-   */
-  def createLogDirectory(): Unit = {
-    logPath.getFileSystem(newDeltaHadoopConf()).mkdirs(logPath)
   }
 
   /* ------------  *

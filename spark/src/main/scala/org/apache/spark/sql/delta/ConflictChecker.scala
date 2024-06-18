@@ -23,7 +23,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.managedcommit.UpdatedActions
+import org.apache.spark.sql.delta.coordinatedcommits.UpdatedActions
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions

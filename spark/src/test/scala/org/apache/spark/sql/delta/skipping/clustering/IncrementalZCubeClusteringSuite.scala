@@ -191,7 +191,9 @@ class IncrementalZCubeClusteringSuite extends QueryTest
 
   test("test changing clustering columns") {
     withSQLConf(
-      SQLConf.MAX_RECORDS_PER_FILE.key -> "2") {
+      SQLConf.MAX_RECORDS_PER_FILE.key -> "2",
+      // Enable update catalog for verifyClusteringColumns.
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
       withClusteredTable(
         table = table,
         schema = "col1 int, col2 int",
@@ -240,7 +242,7 @@ class IncrementalZCubeClusteringSuite extends QueryTest
         assert(getZCubeIds(table).size == 2)
 
         sql(s"ALTER TABLE $table CLUSTER BY (col2, col1)")
-        verifyClusteringColumns(TableIdentifier(table), "col2, col1")
+        verifyClusteringColumns(TableIdentifier(table), Seq("col2", "col1"))
         // Incremental clustering won't touch those clustered files with different clustering
         // columns, so re-clustering should be a no-op.
         withSQLConf(

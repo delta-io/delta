@@ -202,6 +202,15 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    */
   def validateGeneratedColumns(spark: SparkSession, schema: StructType): Unit = {
     val (generatedColumns, normalColumns) = schema.partition(isGeneratedColumn)
+    generatedColumns.foreach { c =>
+      // Generated columns cannot be variant types because the writer must be able to enforce that
+      // the <variant value> <=> <generated expression>. Variants are currently not comprable so
+      // this condition is impossible to enforce.
+      if (VariantShims.isVariantType(c.dataType)) {
+        throw DeltaErrors.generatedColumnsUnsupportedType(c.dataType)
+      }
+    }
+
     // Create a fake relation using the normal columns and add a project with generation expressions
     // on top of it to ask Spark to analyze the plan. This will help us find out the following
     // errors:

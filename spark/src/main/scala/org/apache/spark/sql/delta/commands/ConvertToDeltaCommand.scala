@@ -346,7 +346,7 @@ abstract class ConvertToDeltaCommandBase(
       convertProperties: ConvertTarget,
       targetTable: ConvertTargetTable): Seq[Row] =
     recordDeltaOperation(txn.deltaLog, "delta.convert") {
-    txn.deltaLog.ensureLogDirectoryExist()
+    txn.deltaLog.createLogDirectoriesIfNotExists()
     val targetPath = new Path(convertProperties.targetDir)
     // scalastyle:off deltahadoopconfiguration
     val sessionHadoopConf = spark.sessionState.newHadoopConf()

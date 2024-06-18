@@ -538,13 +538,60 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
-  val MANAGED_COMMIT_GET_COMMITS_THREAD_POOL_SIZE =
-    buildStaticConf("managedCommits.getCommits.threadPoolSize")
+  val COORDINATED_COMMITS_GET_COMMITS_THREAD_POOL_SIZE =
+    buildStaticConf("coordinatedCommits.getCommits.threadPoolSize")
       .internal()
-      .doc("The size of the thread pool for listing files from the commit-owner.")
+      .doc("The size of the thread pool for listing files from the commit-coordinator.")
       .intConf
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
+
+  //////////////////////////////////////////////
+  // DynamoDB Commit Coordinator-specific configs
+  /////////////////////////////////////////////
+
+  val COORDINATED_COMMITS_DDB_AWS_CREDENTIALS_PROVIDER_NAME =
+    buildConf("coordinatedCommits.commitCoordinator.dynamodb.awsCredentialsProviderName")
+      .internal()
+      .doc("The fully qualified class name of the AWS credentials provider to use for " +
+        "interacting with DynamoDB in the DynamoDB Commit Coordinator Client. e.g. " +
+        "com.amazonaws.auth.DefaultAWSCredentialsProviderChain.")
+      .stringConf
+      .createWithDefault("com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+
+  val COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK =
+    buildConf("coordinatedCommits.commitCoordinator.dynamodb.skipPathCheckEnabled")
+      .internal()
+      .doc("When enabled, the DynamoDB Commit Coordinator will not enforce that the table path " +
+        "of the current Delta table matches the stored in the corresponding DynamoDB table. This " +
+        "should only be used when the observed table path for the same physical table varies " +
+        "depending on how it is accessed (e.g. abfs://path1 vs abfss://path1). Leaving this " +
+        "enabled can be dangerous as every physical copy of a Delta table with try to write to" +
+        " the same DynamoDB table.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val COORDINATED_COMMITS_DDB_READ_CAPACITY_UNITS =
+    buildConf("coordinatedCommits.commitCoordinator.dynamodb.readCapacityUnits")
+      .internal()
+      .doc("Controls the provisioned read capacity units for the DynamoDB table backing the " +
+        "DynamoDB Commit Coordinator. This configuration is only used when the DynamoDB table " +
+        "is first provisioned and cannot be used configure an existing table.")
+      .intConf
+      .createWithDefault(5)
+
+  val COORDINATED_COMMITS_DDB_WRITE_CAPACITY_UNITS =
+    buildConf("coordinatedCommits.commitCoordinator.dynamodb.writeCapacityUnits")
+      .internal()
+      .doc("Controls the provisioned write capacity units for the DynamoDB table backing the " +
+        "DynamoDB Commit Coordinator. This configuration is only used when the DynamoDB table " +
+        "is first provisioned and cannot be used configure an existing table.")
+      .intConf
+      .createWithDefault(5)
+
+  //////////////////////////////////////////////
+  // DynamoDB Commit Coordinator-specific configs end
+  /////////////////////////////////////////////
 
   val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =
     buildConf("catalog.update.longFieldTruncationThreshold")
@@ -927,6 +974,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS =
+    buildConf("workAroundColonsInHadoopPaths.enabled")
+      .internal()
+      .doc("""
+             |When enabled, Delta will work around to allow colons in file paths. Normally Hadoop
+             |does not support colons in file paths due to ambiguity, but some file systems like
+             |S3 allow them.
+             |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val REPLACEWHERE_DATACOLUMNS_ENABLED =
     buildConf("replaceWhere.dataColumns.enabled")
       .doc(
@@ -1167,6 +1225,19 @@ trait DeltaSQLConfBase {
         .intConf
         .checkValue(_ > 0, "'optimize.maxThreads' must be positive.")
         .createWithDefault(15)
+
+  val DELTA_OPTIMIZE_BATCH_SIZE =
+    buildConf("optimize.batchSize")
+        .internal()
+        .doc(
+          """
+            |The size of a batch within an OPTIMIZE JOB. After a batch is complete, its
+            | progress will be committed to the transaction log, allowing for incremental
+            | progress.
+            |""".stripMargin)
+        .bytesConf(ByteUnit.BYTE)
+        .checkValue(_ > 0, "batchSize has to be positive")
+        .createOptional
 
   val DELTA_OPTIMIZE_REPARTITION_ENABLED =
     buildConf("optimize.repartition.enabled")
@@ -1597,7 +1668,7 @@ trait DeltaSQLConfBase {
           |If enabled, allow the column mapping to be removed from a table.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTALOG_MINOR_COMPACTION_USE_FOR_READS =
     buildConf("deltaLog.minorCompaction.useForReads")
@@ -1618,8 +1689,8 @@ trait DeltaSQLConfBase {
   val HUDI_MAX_COMMITS_TO_CONVERT = buildConf("hudi.maxPendingCommits")
     .doc("""
            |The maximum number of pending Delta commits to convert to Hudi incrementally.
-           |If the table hasn't been converted to Iceberg in longer than this number of commits,
-           |we start from scratch, replacing the previously converted Iceberg table contents.
+           |If the table hasn't been converted to Hudi in longer than this number of commits,
+           |we start from scratch, replacing the previously converted Hudi table contents.
            |""".stripMargin)
     .intConf
     .createWithDefault(100)

@@ -24,8 +24,8 @@ import scala.concurrent.duration._
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -49,7 +49,7 @@ class CheckpointsSuite
   with SharedSparkSession
   with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest
-  with ManagedCommitBaseSuite {
+  with CoordinatedCommitsBaseSuite {
 
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
@@ -581,7 +581,7 @@ class CheckpointsSuite
 
       // Delete the commit files 0-9, so that we are forced to read the checkpoint file
       val logPath = new Path(new File(target, "_delta_log").getAbsolutePath)
-      for (i <- 0 to 10) {
+      for (i <- 0 to 9) {
         val file = new File(FileNames.unsafeDeltaFile(logPath, version = i).toString)
         file.delete()
       }
@@ -818,6 +818,7 @@ class CheckpointsSuite
   private def writeAllActionsInV2Manifest(
       snapshot: Snapshot,
       v2CheckpointFormat: V2Checkpoint.Format): Path = {
+    snapshot.ensureCommitFilesBackfilled()
     val checkpointMetadata = CheckpointMetadata(version = snapshot.version)
     val actionsDS = snapshot.stateDS
       .where("checkpointMetadata is null and " +
@@ -1062,15 +1063,15 @@ class FakeGCSFileSystemValidatingCommits extends FakeGCSFileSystemValidatingChec
   override protected def shouldValidateFilePattern(f: Path): Boolean = f.getName.contains(".json")
 }
 
-class ManagedCommitBatch1BackFillCheckpointsSuite extends CheckpointsSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
+class CheckpointsWithCoordinatedCommitsBatch1Suite extends CheckpointsSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class ManagedCommitBatch2BackFillCheckpointsSuite extends CheckpointsSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(2)
+class CheckpointsWithCoordinatedCommitsBatch2Suite extends CheckpointsSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class ManagedCommitBatch20BackFillCheckpointsSuite extends CheckpointsSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(20)
+class CheckpointsWithCoordinatedCommitsBatch100Suite extends CheckpointsSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
 

@@ -19,6 +19,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.*;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -49,7 +52,9 @@ import static io.delta.kernel.internal.replay.LogReplayUtils.prepareSelectionVec
  * with a selection vector indicating which AddFiles are still active in the table
  * (have not been tombstoned).
  */
-class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
+public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
+    private static final Logger logger = LoggerFactory.getLogger(ActiveAddFilesIterator.class);
+
     private final Engine engine;
     private final Path tableRoot;
 
@@ -66,6 +71,12 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     private boolean[] selectionVectorBuffer;
     private ExpressionEvaluator tableRootVectorGenerator;
     private boolean closed;
+
+    /**
+     * Metrics capturing the state reconstruction log replay. These counters are updated as the
+     * iterator is consumed and printed when the iterator is closed.
+     */
+    private LogReplayMetrics metrics = new LogReplayMetrics();
 
     ActiveAddFilesIterator(
             Engine engine,
@@ -110,6 +121,10 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
     public void close() throws IOException {
         closed = true;
         Utils.closeCloseables(iter);
+
+        // Log the metrics of the log replay of actions that are consumed so far. If the iterator
+        // is closed before consuming all the actions, the metrics will be partial.
+        logger.info("Active add file finding log replay metrics: {}", metrics);
     }
 
     /**
@@ -166,6 +181,7 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
                 ).map(DeletionVectorDescriptor::getUniqueId);
                 final UniqueFileActionTuple key = new UniqueFileActionTuple(pathAsUri, dvId);
                 tombstonesFromJson.add(key);
+                metrics.incNumTombstonesSeen();
             }
         }
 
@@ -182,6 +198,11 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
                 continue; // selectionVector will be `false` at rowId by default
             }
 
+            metrics.incNumAddFilesSeen();
+            if (!isFromCheckpoint) {
+                metrics.incNumAddFilesSeenFromDeltaFiles();
+            }
+
             final String path = getAddFilePath(addsVector, rowId);
             final URI pathAsUri = pathToUri(path);
             final Optional<String> dvId = Optional.ofNullable(getAddFileDV(addsVector, rowId))
@@ -194,7 +215,8 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
 
             if (!alreadyReturned) {
                 // Note: No AddFile will appear twice in a checkpoint, so we only need
-                //       non-checkpoint AddFiles in the set
+                //       non-checkpoint AddFiles in the set. When stats are recomputed the same
+                //       AddFile is added with stats without remove it first.
                 if (!isFromCheckpoint) {
                     addFilesFromJson.add(key);
                 }
@@ -202,7 +224,10 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
                 if (!alreadyDeleted) {
                     doSelect = true;
                     selectionVectorBuffer[rowId] = true;
+                    metrics.incNumActiveAddFiles();
                 }
+            } else {
+                metrics.incNumDuplicateAddFiles();
             }
 
             if (!doSelect) {
@@ -253,5 +278,14 @@ class ActiveAddFilesIterator implements CloseableIterator<FilteredColumnarBatch>
         ColumnVector removeFileVector, int rowId) {
         return DeletionVectorDescriptor.fromColumnVector(
             removeFileVector.getChild(REMOVE_FILE_DV_ORDINAL), rowId);
+    }
+
+    /**
+     * Returns the metrics for the log replay. Currently used in tests only.
+     * Caution: The metrics should be fetched only after the iterator is closed, to avoid reading
+     * incomplete metrics.
+     */
+    public LogReplayMetrics getMetrics() {
+        return metrics;
     }
 }

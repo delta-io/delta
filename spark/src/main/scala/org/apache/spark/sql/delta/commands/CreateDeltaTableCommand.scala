@@ -140,40 +140,42 @@ case class CreateDeltaTableCommand(
 
     val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
 
-    val result = query match {
-      // CLONE handled separately from other CREATE TABLE syntax
-      case Some(cmd: CloneTableCommand) =>
-        checkPathEmpty(txn)
-        cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
-      case Some(deltaWriter: WriteIntoDeltaLike) =>
-        checkPathEmpty(txn)
-        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
-        Nil
-      case Some(query) =>
-        checkPathEmpty(txn)
-        require(!query.isInstanceOf[RunnableCommand])
-        // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
-        // to once again go through analysis
-        val data = Dataset.ofRows(sparkSession, query)
-        val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
-        val deltaWriter = WriteIntoDelta(
-          deltaLog = deltaLog,
-          mode = mode,
-          options,
-          partitionColumns = table.partitionColumnNames,
-          configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
-          data = data,
-          Some(tableWithLocation))
-        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
-        Nil
-      case _ =>
-        handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
-        Nil
+    OptimisticTransaction.withActive(txn) {
+      val result = query match {
+        // CLONE handled separately from other CREATE TABLE syntax
+        case Some(cmd: CloneTableCommand) =>
+          checkPathEmpty(txn)
+          cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
+        case Some(deltaWriter: WriteIntoDeltaLike) =>
+          checkPathEmpty(txn)
+          handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          Nil
+        case Some(query) =>
+          checkPathEmpty(txn)
+          require(!query.isInstanceOf[RunnableCommand])
+          // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
+          // to once again go through analysis
+          val data = Dataset.ofRows(sparkSession, query)
+          val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+          val deltaWriter = WriteIntoDelta(
+            deltaLog = deltaLog,
+            mode = mode,
+            options,
+            partitionColumns = table.partitionColumnNames,
+            configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
+            data = data,
+            Some(tableWithLocation))
+          handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          Nil
+        case _ =>
+          handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
+          Nil
+      }
+
+      runPostCommitUpdates(sparkSession, txn, deltaLog, tableWithLocation)
+
+      result
     }
-
-    runPostCommitUpdates(sparkSession, txn, deltaLog, tableWithLocation)
-
-    result
   }
 
   /**
@@ -255,7 +257,8 @@ case class CreateDeltaTableCommand(
       // exists (replacing table), otherwise it is handled inside WriteIntoDelta (creating table).
       if (!isV1Writer && isReplace && txn.readVersion > -1L) {
         val newDomainMetadata = Seq.empty[DomainMetadata] ++
-          ClusteredTableUtils.getDomainMetadataOptional(table, txn)
+          ClusteredTableUtils.getDomainMetadataFromTransaction(
+            ClusteredTableUtils.getClusterBySpecOptional(table), txn)
         // Ensure to remove any domain metadata for REPLACE TABLE.
         val newActions = taggedCommitData.actions ++
           DomainMetadataUtils.handleDomainMetadataForReplaceTable(
@@ -337,7 +340,8 @@ case class CreateDeltaTableCommand(
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
         }
-        ClusteredTableUtils.getDomainMetadataOptional(table, txn).toSeq
+        ClusteredTableUtils.getDomainMetadataFromTransaction(
+          ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq
       } else {
         verifyTableMetadata(txn, tableWithLocation)
         Nil
@@ -381,7 +385,8 @@ case class CreateDeltaTableCommand(
         actionsToCommit = removes ++
           DomainMetadataUtils.handleDomainMetadataForReplaceTable(
             txn.snapshot.domainMetadata,
-            ClusteredTableUtils.getDomainMetadataOptional(table, txn).toSeq)
+            ClusteredTableUtils.getDomainMetadataFromTransaction(
+              ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq)
         actionsToCommit
     }
 
@@ -480,15 +485,38 @@ case class CreateDeltaTableCommand(
           throw DeltaErrors.createTableWithDifferentPartitioningException(
             path, tableDesc.partitionColumnNames, existingMetadata.partitionColumns)
         }
+        // If schema is specified, we must make sure the clustering column matches (includes when
+        // clustering is not specified).
+        val specifiedClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(tableDesc)
+        val existingClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(txn.snapshot)
+        if (specifiedClusterBySpec != existingClusterBySpec) {
+          throw DeltaErrors.createTableWithDifferentClusteringException(
+            path,
+            specifiedClusterBySpec,
+            existingClusterBySpec)
+        }
       }
 
       if (tableDesc.properties.nonEmpty) {
         // When comparing properties of the existing table and the new table, remove some
         // internal column mapping properties for the sake of comparison.
-        val filteredTableProperties = filterColumnMappingProperties(
+        var filteredTableProperties = filterColumnMappingProperties(
           tableDesc.properties)
-        val filteredExistingProperties = filterColumnMappingProperties(
+        var filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
+        // Clustered table has internal table properties in Metadata configurations and they are
+        // never configured by the user so remove them before validation.
+        if (ClusteredTableUtils.isSupported(txn.protocol)) {
+          filteredExistingProperties =
+            ClusteredTableUtils.removeInternalTableProperties(filteredExistingProperties) ++
+              // Validate clustering columns in CatalogTable.PROP_CLUSTERING_COLUMNS
+              // are matched.
+              ClusteredTableUtils.getClusteringColumnsAsProperty(txn.snapshot)
+          // Note that clustering columns are already stored in the key
+          // CatalogTable.PROP_CLUSTERING_COLUMNS.
+          filteredTableProperties =
+            ClusteredTableUtils.removeInternalTableProperties(filteredTableProperties)
+        }
         if (filteredTableProperties != filteredExistingProperties) {
           throw DeltaErrors.createTableWithDifferentPropertiesException(
             path, filteredTableProperties, filteredExistingProperties)

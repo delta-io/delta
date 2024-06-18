@@ -29,12 +29,16 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
+import org.apache.spark.sql.delta.coordinatedcommits._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{unsafeDeltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, SaveMode}
@@ -61,7 +65,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       path: File,
       schema: StructType = testTableSchema): DeltaLog = {
     val log = DeltaLog.forTable(spark, path)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
       unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = schema.json).json, protocol.json),
@@ -410,7 +414,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   test("access with protocol too high") {
     withTempDir { path =>
       val log = DeltaLog.forTable(spark, path)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
         unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata().json, Protocol(Integer.MAX_VALUE, Integer.MAX_VALUE).json),
@@ -1228,7 +1232,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   test("create a table with no protocol") {
     withTempDir { path =>
       val log = DeltaLog.forTable(spark, path)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
         unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata().json),
@@ -3272,7 +3276,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       initialMinWriterVersion: Int,
       featuresToAdd: Seq[TableFeature],
       featuresToRemove: Seq[TableFeature],
-      expectedDowngradedProtocol: Protocol): Unit = {
+      expectedDowngradedProtocol: Protocol,
+      truncateHistory: Boolean = false): Unit = {
     withTempDir { dir =>
       val deltaLog = DeltaLog.forTable(spark, dir)
 
@@ -3293,8 +3298,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
            |)""".stripMargin)
 
       for (feature <- featuresToRemove) {
-        AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), feature.name)
-          .run(spark)
+        AlterTableDropFeatureDeltaCommand(
+          table = DeltaTableV2(spark, deltaLog.dataPath),
+          featureName = feature.name,
+          truncateHistory = truncateHistory).run(spark)
       }
       assert(deltaLog.update().protocol === expectedDowngradedProtocol)
     }
@@ -3341,7 +3348,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = Protocol(1, 1))
   }
 
-  test("Downgrade protocol version on table created with table features") {
+  test("Downgrade protocol version on table created with (3, 7)") {
     // When the table is initialized with table features there are no active (implicit) legacy
     // features. After removing the last table feature we downgrade back to (1, 1).
     testProtocolVersionDowngrade(
@@ -3352,7 +3359,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = Protocol(1, 1))
   }
 
-  test("Downgrade protocol version on table created with writer features") {
+  test("Downgrade protocol version on table created with (1, 7)") {
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 1,
       initialMinWriterVersion = 7,
@@ -3414,7 +3421,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = protocolWithWriterFeature(DomainMetadataTableFeature))
   }
 
-  test("Protocol version is not downgraded when reader+writer features exist") {
+  test("Protocol version is not downgraded when multiple reader+writer features exist") {
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 3,
       initialMinWriterVersion = 7,
@@ -3423,15 +3430,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = protocolWithReaderFeature(DeletionVectorsTableFeature))
   }
 
-  test("Protocol version is not downgraded when both reader+writer and writer features exist") {
-    testProtocolVersionDowngrade(
-      initialMinReaderVersion = 3,
-      initialMinWriterVersion = 7,
-      featuresToAdd = Seq(TestRemovableReaderWriterFeature, TestRemovableWriterFeature),
-      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
-      expectedDowngradedProtocol =
-        Protocol(3, 7, Some(Set.empty), Some(Set(TestRemovableWriterFeature.name))))
-
+  test("Protocol version is not downgraded when reader+writer features exist") {
     testProtocolVersionDowngrade(
       initialMinReaderVersion = 3,
       initialMinWriterVersion = 7,
@@ -3467,6 +3466,50 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       assert(targetLog.update().protocol == Protocol(1, 1))
     }
+  }
+
+  for (truncateHistory <- BOOLEAN_DOMAIN)
+  test(s"Protocol version downgrade with Table Features - Basic test " +
+      s"truncateHistory: ${truncateHistory}") {
+    val expectedFeatures = Seq(RowTrackingFeature, DomainMetadataTableFeature)
+
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 7).withFeatures(expectedFeatures),
+      truncateHistory = truncateHistory)
+  }
+
+  for (truncateHistory <- BOOLEAN_DOMAIN)
+  test(s"Protocol version downgrade with Table Features - include legacy writer features: " +
+      s"truncateHistory: ${truncateHistory}") {
+    val expectedFeatures =
+      Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, AppendOnlyTableFeature)
+
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol = Protocol(1, 7).withFeatures(expectedFeatures),
+      truncateHistory = truncateHistory)
+  }
+
+  for (truncateHistory <- BOOLEAN_DOMAIN)
+  test(s"Protocol version downgrade with Table Features - include legacy reader features: " +
+    s"truncateHistory: ${truncateHistory}") {
+    val expectedFeatures =
+      Seq(DomainMetadataTableFeature, ChangeDataFeedTableFeature, ColumnMappingTableFeature)
+
+    testProtocolVersionDowngrade(
+      initialMinReaderVersion = 3,
+      initialMinWriterVersion = 7,
+      featuresToAdd = expectedFeatures :+ TestRemovableReaderWriterFeature,
+      featuresToRemove = Seq(TestRemovableReaderWriterFeature),
+      expectedDowngradedProtocol = Protocol(2, 7).withFeatures(expectedFeatures),
+      truncateHistory = truncateHistory)
   }
 
   private def dropV2CheckpointsTableFeature(spark: SparkSession, log: DeltaLog): Unit = {
@@ -3658,11 +3701,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   test("Removing VacuumProtocolCheckTableFeature should fail when dependent feature " +
-      "Managed Commit is enabled") {
+      "Coordinated Commits is enabled") {
     testRemoveVacuumProtocolCheckTableFeature(
       enableFeatureInitially = true,
       additionalTableProperties = Seq(
-        (s"$FEATURE_PROP_PREFIX${ManagedCommitTableFeature.name}", "supported")),
+        (s"$FEATURE_PROP_PREFIX${CoordinatedCommitsTableFeature.name}", "supported")),
       downgradeFailsWithException = Some("DELTA_FEATURE_DROP_DEPENDENT_FEATURE"),
       featureExpectedAtTheEnd = true)
   }
@@ -3847,6 +3890,165 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         expectProvenanceVersionProperty = false)
     }
   }
+
+  // ---- Coordinated Commits Drop Feature Tests ----
+  private def setUpCoordinatedCommitsTable(dir: File, mcBuilder: CommitCoordinatorBuilder): Unit = {
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
+    CommitCoordinatorProvider.registerBuilder(mcBuilder)
+    val tablePath = dir.getAbsolutePath
+    val log = DeltaLog.forTable(spark, tablePath)
+    val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+    val commitCoordinatorConf =
+      Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> mcBuilder.getName)
+    val newMetadata = Metadata().copy(configuration = commitCoordinatorConf)
+    log.startTransaction().commitManually(newMetadata)
+    assert(log.unsafeVolatileSnapshot.version === 0)
+    assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName ===
+      Some(mcBuilder.getName))
+    assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+    assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
+    // upgrade commit always filesystem based
+    assert(fs.exists(FileNames.unsafeDeltaFile(log.logPath, 0)))
+
+    // Do a couple of commits on the coordinated-commits table
+    (1 to 2).foreach { version =>
+      log.startTransaction()
+        .commitManually(DeltaTestUtils.createTestAddFile(s"$version"))
+      assert(log.unsafeVolatileSnapshot.version === version)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorName.nonEmpty)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorConf === Map.empty)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
+    }
+  }
+
+  private def validateCoordinatedCommitsDropLogs(
+      usageLogs: Seq[UsageRecord],
+      expectTablePropertiesPresent: Boolean,
+      expectUnbackfilledCommitsPresent: Boolean,
+      exceptionMessageOpt: Option[String] = None): Unit = {
+    val dropFeatureBlob = usageLogs
+      .find(_.tags.get("opType").contains("delta.coordinatedCommitsFeatureRemovalMetrics"))
+      .getOrElse(fail("Expected a log for coordinatedCommitsFeatureRemovalMetrics"))
+    val blob = JsonUtils.fromJson[Map[String, String]](dropFeatureBlob.blob)
+    assert(blob.contains("downgradeTimeMs"))
+    val expectTraceRemovalNeeded = expectTablePropertiesPresent || expectUnbackfilledCommitsPresent
+    assert(blob.get("traceRemovalNeeded").contains(expectTraceRemovalNeeded.toString))
+    Seq(
+        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key,
+        DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key).foreach { prop =>
+      assert(blob.get(prop).contains(expectTablePropertiesPresent.toString))
+    }
+    // COORDINATED_COMMITS_COORDINATOR_CONF is not used by "in-memory" commit coordinator.
+    assert(blob
+      .get("postDisablementUnbackfilledCommitsPresent")
+      .contains(expectUnbackfilledCommitsPresent.toString))
+    assert(
+      blob.get(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key).contains("false"))
+    assert(blob.get("traceRemovalSuccess").contains(exceptionMessageOpt.isEmpty.toString))
+    exceptionMessageOpt.foreach { exceptionMessage =>
+      assert(blob.get("traceRemovalException").contains(exceptionMessage))
+    }
+  }
+
+  test("basic coordinated commits feature drop") {
+    withTempDir { dir =>
+      val mcBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1000)
+      setUpCoordinatedCommitsTable(dir, mcBuilder)
+      val log = DeltaLog.forTable(spark, dir)
+      val usageLogs = Log4jUsageLogger.track {
+        AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, log.dataPath),
+          CoordinatedCommitsTableFeature.name)
+          .run(spark)
+      }
+      val snapshot = log.update()
+      assert(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(
+        snapshot.metadata.configuration.contains(_)))
+      assert(!snapshot.protocol.writerFeatures.exists(
+        _.contains(CoordinatedCommitsTableFeature.name)))
+      validateCoordinatedCommitsDropLogs(
+        usageLogs, expectTablePropertiesPresent = true, expectUnbackfilledCommitsPresent = false)
+    }
+  }
+
+  test("backfill failure during coordinated commits feature drop") {
+    withTempDir { dir =>
+      var shouldFailBackfill = true
+      val alternatingFailureBackfillClient =
+        new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(1000) {
+          override def backfillToVersion(
+            logStore: LogStore,
+            hadoopConf: Configuration,
+            logPath: Path,
+            coordinatedCommitsTableConf: Map[String, String],
+            startVersion: Long,
+            endVersionOpt: Option[Long]): Unit = {
+            // Backfill fails on every other attempt.
+            if (shouldFailBackfill) {
+              shouldFailBackfill = !shouldFailBackfill
+              throw new IllegalStateException("backfill failed")
+            } else {
+              super.backfillToVersion(
+                logStore,
+                hadoopConf,
+                logPath,
+                coordinatedCommitsTableConf,
+                startVersion,
+                endVersionOpt)
+            }
+          }
+        })
+      val mcBuilder =
+        TrackingInMemoryCommitCoordinatorBuilder(100, Some(alternatingFailureBackfillClient))
+      setUpCoordinatedCommitsTable(dir, mcBuilder)
+      val log = DeltaLog.forTable(spark, dir)
+      val usageLogs = Log4jUsageLogger.track {
+        val e = intercept[IllegalStateException] {
+          AlterTableDropFeatureDeltaCommand(
+            DeltaTableV2(spark, log.dataPath),
+            CoordinatedCommitsTableFeature.name)
+            .run(spark)
+        }
+
+        assert(e.getMessage.contains("backfill failed"))
+      }
+      validateCoordinatedCommitsDropLogs(
+        usageLogs,
+        expectTablePropertiesPresent = true,
+        expectUnbackfilledCommitsPresent = false,
+        exceptionMessageOpt = Some("backfill failed"))
+      def backfilledCommitExists(v: Long): Boolean = {
+        val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+        fs.exists(FileNames.unsafeDeltaFile(log.logPath, v))
+      }
+      // Backfill of the commit which disables coordinated commits failed.
+      assert(!backfilledCommitExists(3))
+      // The commit coordinator still tracks the commit that disables it.
+      val commitsFromCommitCoordinator =
+        log.snapshot.tableCommitCoordinatorClientOpt.get.getCommits(Some(3))
+      assert(commitsFromCommitCoordinator.getCommits.exists(_.getVersion == 3))
+      // The next drop attempt will also trigger an explicit backfill.
+      val usageLogs2 = Log4jUsageLogger.track {
+        AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, log.dataPath),
+          CoordinatedCommitsTableFeature.name)
+          .run(spark)
+      }
+      validateCoordinatedCommitsDropLogs(
+        usageLogs2, expectTablePropertiesPresent = false, expectUnbackfilledCommitsPresent = true)
+      val snapshot = log.update()
+      assert(snapshot.version === 4)
+      assert(backfilledCommitExists(3))
+      // The protocol downgrade commit is performed through logstore directly.
+      assert(backfilledCommitExists(4))
+      assert(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.exists(
+          snapshot.metadata.configuration.contains(_)))
+      assert(!snapshot.protocol.writerFeatures.exists(
+        _.contains(CoordinatedCommitsTableFeature.name)))
+    }
+  }
+  // ---- End Coordinated Commits Drop Feature Tests ----
 
   // Create a table for testing that has an unsupported feature.
   private def withTestTableWithUnsupportedWriterFeature(
