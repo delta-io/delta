@@ -36,12 +36,11 @@ public class InCommitTimestampUtils {
         // then the current transaction must have enabled it.
         // In case of a conflict, any winning transaction that enabled it after
         // our read snapshot would have caused a metadata conflict abort
-        // (see [[ConflictChecker.checkNoMetadataUpdates]]), so we know that
+        // (see [[ConflictChecker.handleMetadata]]), so we know that
         // all winning transactions' ICT enablement status must match the read snapshot.
         //
-        // WARNING: The Metadata() of InitialSnapshot can enable ICT by default. To ensure that
-        // this function returns true if ICT is enabled during the first commit, we explicitly
-        // handle the case where the readSnapshot.version is -1.
+        // WARNING: To ensure that this function returns true if ICT is enabled during the first
+        // commit, we explicitly handle the case where the readSnapshot.version is -1.
         boolean isICTCurrentlyEnabled =
                 IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
         boolean wasICTEnabledInReadSnapshot = readSnapshot.getVersion(engine) != -1 &&
