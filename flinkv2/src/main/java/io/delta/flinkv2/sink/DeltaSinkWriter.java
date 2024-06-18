@@ -44,15 +44,15 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
 
     private Map<Map<String, Literal>, DeltaSinkWriterTask> writerTasksByPartition;
 
-    public static DeltaSinkWriter restoreWriter(String appId, String writerId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, List<String> tablePartitionColumns, OptionalLong restoredCheckpointId) {
-        return new DeltaSinkWriter(appId, writerId, mockTxnStateJson, writeOperatorFlinkSchema, tablePartitionColumns, restoredCheckpointId);
+    public static DeltaSinkWriter restoreWriter(String appId, String writerId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, OptionalLong restoredCheckpointId) {
+        return new DeltaSinkWriter(appId, writerId, mockTxnStateJson, writeOperatorFlinkSchema, restoredCheckpointId);
     }
 
-    public static DeltaSinkWriter createNewWriter(String appId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, List<String> tablePartitionColumns, OptionalLong restoredCheckpointId) {
-        return new DeltaSinkWriter(appId, java.util.UUID.randomUUID().toString(), mockTxnStateJson, writeOperatorFlinkSchema, tablePartitionColumns, restoredCheckpointId);
+    public static DeltaSinkWriter createNewWriter(String appId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, OptionalLong restoredCheckpointId) {
+        return new DeltaSinkWriter(appId, java.util.UUID.randomUUID().toString(), mockTxnStateJson, writeOperatorFlinkSchema, restoredCheckpointId);
     }
 
-    private DeltaSinkWriter(String appId, String writerId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, List<String> tablePartitionColumns, OptionalLong restoredCheckpointId) {
+    private DeltaSinkWriter(String appId, String writerId, String mockTxnStateJson, RowType writeOperatorFlinkSchema, OptionalLong restoredCheckpointId) {
         if (restoredCheckpointId.isPresent()) {
             // restoredCheckpointId is the last successful checkpointId that was checkpointed and committed
             // thus, the *next* checkpointId is clearly 1 more than that
@@ -67,9 +67,8 @@ public class DeltaSinkWriter implements CommittingSinkWriter<RowData, DeltaCommi
         this.writeOperatorFlinkSchema = writeOperatorFlinkSchema;
         this.writeOperatorDeltaSchema = SchemaUtils.toDeltaDataType(writeOperatorFlinkSchema);
         this.writerTasksByPartition = new HashMap<>();
-        this.tablePartitionColumns = new HashSet<>(tablePartitionColumns);
-
         this.mockTxnState = JsonUtils.rowFromJson(mockTxnStateJson, TransactionStateRow.SCHEMA);
+        this.tablePartitionColumns = new HashSet<>(TransactionStateRow.getPartitionColumnsList(mockTxnState));
 
         LOG.info(
             String.format(

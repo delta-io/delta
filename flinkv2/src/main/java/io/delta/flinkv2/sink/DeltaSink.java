@@ -130,7 +130,7 @@ public class DeltaSink implements Sink<RowData>,
                 context.getRestoredCheckpointId()
             )
         );
-        return DeltaSinkWriter.createNewWriter(appId, mockTxnStateJson, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
+        return DeltaSinkWriter.createNewWriter(appId, mockTxnStateJson, writeOperatorFlinkSchema, context.getRestoredCheckpointId());
     }
 
     @Override
@@ -209,7 +209,7 @@ public class DeltaSink implements Sink<RowData>,
 
         LOG.info(String.format("Scott > DeltaSink > restoreWriter :: writerId=%s, context.getRestoredCheckpointId=%s, writerStateNextCheckpointId=%s", state.getWriterId(), context.getRestoredCheckpointId(), state.getCheckpointId()));
 
-        return DeltaSinkWriter.restoreWriter(state.getAppId(), state.getWriterId(), mockTxnStateJson, writeOperatorFlinkSchema, userProvidedPartitionColumns, context.getRestoredCheckpointId());
+        return DeltaSinkWriter.restoreWriter(state.getAppId(), state.getWriterId(), mockTxnStateJson, writeOperatorFlinkSchema, context.getRestoredCheckpointId());
     }
 
     @Override
