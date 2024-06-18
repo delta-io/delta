@@ -172,7 +172,11 @@ public class TransactionImpl
 
             if (commitAsVersion == 0) {
                 // New table, create a delta log directory
-                if (!engine.getFileSystemClient().mkdirs(logPath.toString())) {
+                if (!wrapWithEngineException(
+                    () -> engine.getFileSystemClient().mkdirs(logPath.toString()),
+                    "Creating directories for path %s",
+                    logPath
+                )) {
                     throw new RuntimeException(
                             "Failed to create delta log directory: " + logPath);
                 }

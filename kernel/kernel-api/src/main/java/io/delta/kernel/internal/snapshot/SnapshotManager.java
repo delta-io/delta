@@ -23,6 +23,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
+
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.lang.String.format;
 
 import org.slf4j.Logger;
@@ -223,9 +225,13 @@ public class SnapshotManager {
             long startVersion)
             throws IOException {
         logger.debug("{}: startVersion: {}", tablePath, startVersion);
-        return engine
-            .getFileSystemClient()
-            .listFrom(FileNames.listingPrefix(logPath, startVersion));
+        return wrapWithEngineException(
+            () -> engine
+                .getFileSystemClient()
+                .listFrom(FileNames.listingPrefix(logPath, startVersion)),
+            "Listing from %s",
+            FileNames.listingPrefix(logPath, startVersion)
+        );
     }
 
     /**

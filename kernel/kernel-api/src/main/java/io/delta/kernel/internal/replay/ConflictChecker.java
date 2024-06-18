@@ -17,6 +17,8 @@ package io.delta.kernel.internal.replay;
 
 import java.io.*;
 import java.util.*;
+
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
@@ -197,8 +199,12 @@ public class ConflictChecker {
         String firstWinningCommitFile =
                 deltaFile(snapshot.getLogPath(), snapshot.getVersion(engine) + 1);
 
-        try (CloseableIterator<FileStatus> files = engine.getFileSystemClient()
-                .listFrom(firstWinningCommitFile)) {
+        try (CloseableIterator<FileStatus> files = wrapWithEngineException(
+            () -> engine.getFileSystemClient()
+                .listFrom(firstWinningCommitFile),
+            "Listing from %s",
+            firstWinningCommitFile)
+        ) {
             // Select all winning transaction commit files.
             List<FileStatus> winningCommitFiles = new ArrayList<>();
             while (files.hasNext()) {

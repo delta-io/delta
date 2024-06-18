@@ -29,6 +29,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.Utils;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
@@ -79,8 +80,12 @@ public class DeletionVectorStoredBitmap {
                 }
             };
 
-            CloseableIterator<ByteArrayInputStream> streamIter = fileSystemClient.readFiles(
-                Utils.singletonCloseableIterator(dvToRead));
+            CloseableIterator<ByteArrayInputStream> streamIter = wrapWithEngineException(
+                () -> fileSystemClient.readFiles(
+                    Utils.singletonCloseableIterator(dvToRead)),
+                "Reading file %s",
+                dvToRead
+            );
             ByteArrayInputStream stream = InternalUtils.getSingularElement(streamIter).orElseThrow(
                 () -> new IllegalStateException("Iterator should not be empty")
             );

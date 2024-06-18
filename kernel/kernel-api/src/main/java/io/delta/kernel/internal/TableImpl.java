@@ -23,15 +23,15 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 
 public class TableImpl implements Table {
     public static Table forPath(Engine engine, String path) {
         String resolvedPath;
-        try {
-            resolvedPath = engine.getFileSystemClient().resolvePath(path);
-        } catch (IOException io) {
-            throw new RuntimeException(io);
-        }
+        resolvedPath = wrapWithEngineException(
+            () -> engine.getFileSystemClient().resolvePath(path),
+            "Resolving path %s",
+            path);
         return new TableImpl(resolvedPath);
     }
 

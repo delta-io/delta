@@ -30,6 +30,7 @@ import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.fs.Path.getName;
 
 public final class DeltaHistoryManager {
@@ -173,9 +174,14 @@ public final class DeltaHistoryManager {
             long startVersion) throws TableNotFoundException {
         Path tablePath = logPath.getParent();
         try {
-            CloseableIterator<FileStatus> files = engine
-                .getFileSystemClient()
-                .listFrom(FileNames.listingPrefix(logPath, startVersion));
+            CloseableIterator<FileStatus> files = wrapWithEngineException(
+                () -> engine
+                    .getFileSystemClient()
+                    .listFrom(FileNames.listingPrefix(logPath, startVersion)),
+                "Listing from %s",
+                FileNames.listingPrefix(logPath, startVersion)
+            );
+
             if (!files.hasNext()) {
                 // We treat an empty directory as table not found
                 throw new TableNotFoundException(tablePath.toString());

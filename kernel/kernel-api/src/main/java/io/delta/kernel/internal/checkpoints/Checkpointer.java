@@ -112,8 +112,12 @@ public class Checkpointer {
         while (currentVersion >= 0) {
             try {
                 long searchLowerBound = Math.max(0, currentVersion - 1000);
-                CloseableIterator<FileStatus> deltaLogFileIter = engine.getFileSystemClient()
-                        .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound));
+                CloseableIterator<FileStatus> deltaLogFileIter = wrapWithEngineException(
+                    () -> engine.getFileSystemClient()
+                        .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
+                    "Listing from %s",
+                    FileNames.listingPrefix(tableLogPath, searchLowerBound)
+                );
 
                 List<CheckpointInstance> checkpoints = new ArrayList<>();
                 while (deltaLogFileIter.hasNext()) {
