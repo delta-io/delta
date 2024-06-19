@@ -26,8 +26,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.util.Arrays.asList;
 
 import io.delta.kernel.data.*;
@@ -40,6 +38,7 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;

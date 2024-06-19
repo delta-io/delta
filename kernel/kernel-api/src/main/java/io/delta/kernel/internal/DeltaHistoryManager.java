@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -178,7 +179,7 @@ public final class DeltaHistoryManager {
                 () -> engine
                     .getFileSystemClient()
                     .listFrom(FileNames.listingPrefix(logPath, startVersion)),
-                "Listing from %s",
+                "Listing files in the delta log starting from %s",
                 FileNames.listingPrefix(logPath, startVersion)
             );
 
@@ -187,10 +188,12 @@ public final class DeltaHistoryManager {
                 throw new TableNotFoundException(tablePath.toString());
             }
             return files;
-        } catch (FileNotFoundException e) {
-            throw new TableNotFoundException(tablePath.toString());
-        } catch (IOException io) {
-            throw new RuntimeException("Failed to list the files in delta log", io);
+        } catch (KernelEngineException e) {
+            if (e.getCause() instanceof FileNotFoundException) {
+                throw new TableNotFoundException(tablePath.toString());
+            } else {
+                throw e;
+            }
         }
     }
 

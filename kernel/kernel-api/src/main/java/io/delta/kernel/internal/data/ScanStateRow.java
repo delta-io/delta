@@ -17,8 +17,6 @@ package io.delta.kernel.internal.data;
 
 import java.util.*;
 import java.util.stream.IntStream;
-
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
@@ -30,6 +28,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 
 /**
  * Encapsulate the scan state (common info for all scan files) as a {@link Row}
@@ -151,7 +150,7 @@ public class ScanStateRow extends GenericRow {
     }
 
     private static StructType parseSchema(Engine engine, String serializedSchema) {
-       return wrapWithEngineException(
+        return wrapWithEngineException(
             () -> engine.getJsonHandler().deserializeStructType(serializedSchema),
             "Parsing the schema from the scan state. Schema JSON:\n%s",
             serializedSchema

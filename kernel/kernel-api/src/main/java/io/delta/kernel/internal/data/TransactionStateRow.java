@@ -17,8 +17,6 @@ package io.delta.kernel.internal.data;
 
 import java.util.*;
 import java.util.stream.IntStream;
-
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Transaction;
@@ -28,6 +26,7 @@ import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 
 public class TransactionStateRow extends GenericRow {
     private static final StructType SCHEMA = new StructType()

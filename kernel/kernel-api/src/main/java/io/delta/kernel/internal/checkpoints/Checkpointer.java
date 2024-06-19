@@ -158,11 +158,16 @@ public class Checkpointer {
                     return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
                 }
                 currentVersion -= 1000; // search for checkpoint in previous 1000 entries
-            } catch (IOException e) {
-                String msg = String.format("Failed to list checkpoint files for version %s in %s.",
+            } catch (KernelEngineException e) {
+                if (e.getCause() instanceof IOException) {
+                    String msg = String.format(
+                        "Failed to list checkpoint files for version %s in %s.",
                         version, tableLogPath);
-                logger.warn(msg, e);
-                return new Tuple2<>(Optional.empty(), numberOfFilesSearched);
+                    logger.warn(msg, e);
+                    return new Tuple2<>(Optional.empty(), numberOfFilesSearched);
+                } else {
+                    throw e;
+                }
             }
         }
         logger.info("No complete checkpoint found before version {} in {}", version, tableLogPath);

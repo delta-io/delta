@@ -17,8 +17,6 @@ package io.delta.kernel.internal.actions;
 
 import java.util.*;
 import java.util.stream.Collectors;
-
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.*;
@@ -28,6 +26,7 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 

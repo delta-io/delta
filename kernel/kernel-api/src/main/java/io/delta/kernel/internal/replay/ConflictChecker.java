@@ -17,8 +17,6 @@ package io.delta.kernel.internal.replay;
 
 import java.io.*;
 import java.util.*;
-
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
@@ -31,6 +29,7 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
+import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
