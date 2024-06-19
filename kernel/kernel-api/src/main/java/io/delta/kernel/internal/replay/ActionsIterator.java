@@ -190,10 +190,16 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         final CloseableIterator<ColumnarBatch> topLevelIter;
         StructType finalModifiedReadSchema = modifiedReadSchema;
         if (fileName.endsWith(".parquet")) {
-            topLevelIter = engine.getParquetHandler().readParquetFiles(
+            topLevelIter = wrapWithEngineException(
+                () -> engine.getParquetHandler().readParquetFiles(
                     singletonCloseableIterator(file),
-                    modifiedReadSchema,
-                    checkpointPredicate);
+                    finalModifiedReadSchema,
+                    checkpointPredicate),
+                "Reading parquet log file `%s` with readSchema=%s and predicate=%s",
+                file,
+                modifiedReadSchema,
+                checkpointPredicate
+            );
         } else if (fileName.endsWith(".json")) {
             topLevelIter = wrapWithEngineException(
                 () -> engine.getJsonHandler().readJsonFiles(
@@ -314,8 +320,14 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     // optimizations like reading multiple files in parallel.
                     CloseableIterator<FileStatus> checkpointFiles =
                             retrieveRemainingCheckpointFiles(nextLogFile);
-                    CloseableIterator<ColumnarBatch> dataIter = engine.getParquetHandler()
-                            .readParquetFiles(checkpointFiles, readSchema, checkpointPredicate);
+                    CloseableIterator<ColumnarBatch> dataIter = wrapWithEngineException(
+                        () -> engine.getParquetHandler()
+                            .readParquetFiles(checkpointFiles, readSchema, checkpointPredicate),
+                        "Reading checkpoint sidecars [%s] with readSchema=%s and predicate=%s",
+                        checkpointFiles,
+                        readSchema,
+                        checkpointPredicate
+                    );
 
                     long version = checkpointVersion(nextFilePath);
                     return combine(dataIter, true /* isFromCheckpoint */, version);

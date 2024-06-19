@@ -173,10 +173,15 @@ public class SnapshotManager {
         try (CreateCheckpointIterator checkpointDataIter =
                      snapshot.getCreateCheckpointIterator(engine)) {
             // Write the iterator actions to the checkpoint using the Parquet handler
-            engine.getParquetHandler()
-                    .writeParquetFileAtomically(
-                            checkpointPath.toString(),
-                            checkpointDataIter);
+            wrapWithEngineException(
+                () -> {
+                    engine.getParquetHandler()
+                        .writeParquetFileAtomically(checkpointPath.toString(), checkpointDataIter);
+                    return null;
+                },
+                "Writing checkpoint file %s",
+                checkpointPath.toString()
+            );
 
             logger.info("{}: Checkpoint file is written for version: {}", tablePath, version);
 
