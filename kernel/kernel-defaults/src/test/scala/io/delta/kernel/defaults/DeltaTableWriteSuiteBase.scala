@@ -20,7 +20,7 @@ import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.actions.{Metadata, SingleAction}
+import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
@@ -155,15 +155,19 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     }
   }
 
-  def getMetadataActionFromCommit(
-    engine: Engine, table: Table, version: Long): Optional[Metadata] = {
+  def getColumnarBatchesFromCommit(
+    engine: Engine, table: Table, version: Long): CloseableIterator[ColumnarBatch] = {
     val logPath = new DeltaPath(table.getPath(engine), "_delta_log")
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
-    val columnarBatches =
-      engine.getJsonHandler.readJsonFiles(
-        singletonCloseableIterator(file),
-        SingleAction.FULL_SCHEMA,
-        Optional.empty())
+    engine.getJsonHandler.readJsonFiles(
+      singletonCloseableIterator(file),
+      SingleAction.FULL_SCHEMA,
+      Optional.empty())
+  }
+
+  def getMetadataActionFromCommit(
+    engine: Engine, table: Table, version: Long): Optional[Metadata] = {
+    val columnarBatches = getColumnarBatchesFromCommit(engine, table, version)
     if (!columnarBatches.hasNext) {
       return Optional.empty()
     }
@@ -171,6 +175,21 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     for (i <- 0 until metadataVector.getSize) {
       if (!metadataVector.isNullAt(i)) {
         return Optional.ofNullable(Metadata.fromColumnVector(metadataVector, i, engine))
+      }
+    }
+    Optional.empty()
+  }
+
+  def getProtocolActionFromCommit(
+    engine: Engine, table: Table, version: Long): Optional[Protocol] = {
+    val columnarBatches = getColumnarBatchesFromCommit(engine, table, version)
+    if (!columnarBatches.hasNext) {
+      return Optional.empty()
+    }
+    val protocolVector = columnarBatches.next().getColumnVector(4)
+    for (i <- 0 until protocolVector.getSize) {
+      if (!protocolVector.isNullAt(i)) {
+        return Optional.ofNullable(Protocol.fromColumnVector(protocolVector, i))
       }
     }
     Optional.empty()

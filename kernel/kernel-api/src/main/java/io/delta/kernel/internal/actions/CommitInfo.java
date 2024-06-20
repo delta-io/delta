@@ -51,21 +51,21 @@ public class CommitInfo {
             return null;
         }
 
+        ColumnVector[] children = new ColumnVector[7];
+        for (int i = 0; i < 7; i++) {
+            children[i] = vector.getChild(i);
+        }
+
         return new CommitInfo(
-                Optional.ofNullable(vector.getChild(0).isNullAt(rowId) ? null :
-                        vector.getChild(0).getLong(rowId)),
-                vector.getChild(1).isNullAt(rowId) ? null :
-                        vector.getChild(1).getLong(rowId),
-                vector.getChild(2).isNullAt(rowId) ? null :
-                        vector.getChild(2).getString(rowId),
-                vector.getChild(3).isNullAt(rowId) ? null :
-                        vector.getChild(3).getString(rowId),
-                vector.getChild(4).isNullAt(rowId) ? Collections.emptyMap() :
-                        VectorUtils.toJavaMap(vector.getChild(4).getMap(rowId)),
-                vector.getChild(5).isNullAt(rowId) ? null :
-                        vector.getChild(5).getBoolean(rowId),
-                vector.getChild(6).isNullAt(rowId) ? null :
-                        vector.getChild(6).getString(rowId)
+                Optional.ofNullable(children[0].isNullAt(rowId) ? null :
+                        children[0].getLong(rowId)),
+                children[1].isNullAt(rowId) ? null : children[1].getLong(rowId),
+                children[2].isNullAt(rowId) ? null : children[2].getString(rowId),
+                children[3].isNullAt(rowId) ? null : children[3].getString(rowId),
+                children[4].isNullAt(rowId) ? Collections.emptyMap() :
+                        VectorUtils.toJavaMap(children[4].getMap(rowId)),
+                children[5].isNullAt(rowId) ? null : children[5].getBoolean(rowId),
+                children[6].isNullAt(rowId) ? null : children[6].getString(rowId)
         );
     }
 

@@ -32,7 +32,7 @@ import static io.delta.kernel.internal.DeltaErrors.*;
  */
 public class TableFeatures {
 
-    public static Set<String> supportedWriterFeatures = new HashSet<String>() {{
+    private static Set<String> supportedWriterFeatures = new HashSet<String>() {{
             add("appendOnly");
             add("inCommitTimestamp-preview");
         }};
@@ -40,6 +40,15 @@ public class TableFeatures {
     ////////////////////
     // Helper Methods //
     ////////////////////
+
+    /**
+     * Get the set of supported writer features in Kernel.
+     *
+     * @return the set of supported writer features
+     */
+    public static Set<String> getSupportedWriterFeatures() {
+        return supportedWriterFeatures;
+    }
 
     public static void validateReadSupportedTable(
             Protocol protocol, Metadata metadata, String tablePath) {
@@ -130,6 +139,14 @@ public class TableFeatures {
         }
     }
 
+    /**
+     * Determine whether a writer feature must be supported and enabled because its metadata
+     * requirements are satisfied.
+     *
+     * @param metadata the table metadata
+     * @param feature the writer feature to check
+     * @return whether the writer feature must be enabled
+     */
     public static boolean metadataRequiresWriterFeatureToBeEnabled(
             Metadata metadata, String feature) {
         switch (feature) {

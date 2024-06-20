@@ -29,7 +29,7 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
-import java.util.Optional
+import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 import scala.collection.mutable
@@ -38,13 +38,7 @@ import io.delta.kernel.utils.FileStatus;
 
 class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Optional[Long] = {
-    val logPath = new Path(table.getPath(engine), "_delta_log")
-    val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
-    val columnarBatches =
-      engine.getJsonHandler.readJsonFiles(
-        singletonCloseableIterator(file),
-        SingleAction.FULL_SCHEMA,
-        Optional.empty())
+    val columnarBatches = getColumnarBatchesFromCommit(engine, table, version)
     if (!columnarBatches.hasNext) {
       return Optional.empty()
     }
@@ -161,6 +155,25 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assertMetadataProp(
         ver2Snapshot,
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION, Optional.of(1L))
+    }
+  }
+
+  test("Update the protocol unless required") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+      val protocol = getProtocolActionFromCommit(engine, table, 0)
+      assert(protocol.isPresent)
+      assert(protocol.get.getWriterFeatures.contains("inCommitTimestamp-preview"))
+
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = false, IN_COMMIT_TIMESTAMPS_ENABLED, "false", false)
+      assert(!getProtocolActionFromCommit(engine, table, 1).isPresent)
+
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = false, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+      assert(!getProtocolActionFromCommit(engine, table, 2).isPresent)
     }
   }
 }

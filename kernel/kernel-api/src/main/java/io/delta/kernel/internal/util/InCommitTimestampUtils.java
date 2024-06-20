@@ -28,7 +28,7 @@ import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 public class InCommitTimestampUtils {
 
     /** Returns true if the current transaction implicitly/explicitly enables ICT. */
-    public static boolean didCurrentTransactionEnableICT(
+    private static boolean didCurrentTransactionEnableICT(
             Engine engine,
             Metadata currentTransactionMetadata,
             SnapshotImpl readSnapshot) {

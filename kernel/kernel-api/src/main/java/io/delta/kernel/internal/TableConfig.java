@@ -72,38 +72,42 @@ public class TableConfig<T> {
     private static final HashMap<String, TableConfig> validProperties = new HashMap<>();
 
     /**
-     * This table property is used to track the enablement of the inCommitTimestamps.
+     * This table property is used to track the enablement of the {@code inCommitTimestamps}.
+     * <p>
+     * When enabled, commit metadata includes a monotonically increasing timestamp that allows for
+     * reliable TIMESTAMP AS OF time travel even if filesystem operations change a commit file's
+     * modification timestamp.
      */
     public static final TableConfig<Boolean> IN_COMMIT_TIMESTAMPS_ENABLED = new TableConfig<>(
             "delta.enableInCommitTimestamps-preview",
-            "false",
+            "false", /* default values */
             Boolean::valueOf,
             value -> true,
             "needs to be a boolean."
     );
 
     /**
-     * This table property is used to track the version of the table at which inCommitTimestamps
-     * were enabled.
+     * This table property is used to track the version of the table at which
+     * {@code inCommitTimestamps} were enabled.
      */
     public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION =
             new TableConfig<>(
                     "delta.inCommitTimestampEnablementVersion-preview",
-                    null,
+                    null, /* default values */
                     v -> Optional.ofNullable(v).map(Long::valueOf),
                     value -> true,
                     "needs to be a long."
             );
 
     /**
-     * This table property is used to track the timestamp at which inCommitTimestamps were enabled.
-     * More specifically, it is the inCommitTimestamp of the commit with the version specified in
-     * [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
+     * This table property is used to track the timestamp at which {@code inCommitTimestamps} were
+     * enabled. More specifically, it is the {@code inCommitTimestamps} of the commit with the
+     * version specified in {@link #IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION}.
      */
     public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP =
             new TableConfig<>(
                     "delta.inCommitTimestampEnablementTimestamp-preview",
-                    null,
+                    null, /* default values */
                     v -> Optional.ofNullable(v).map(Long::valueOf),
                     value -> true,
                     "needs to be a long."
@@ -115,20 +119,16 @@ public class TableConfig<T> {
     private final Predicate<T> validator;
     private final String helpMessage;
 
+    private static void addConfig(Map<String, TableConfig> configs, TableConfig config) {
+        configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
+    }
+
     static {
-        validProperties.put(
-                TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
-        validProperties.put(
-                CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
-        validProperties.put(
-                IN_COMMIT_TIMESTAMPS_ENABLED.getKey().toLowerCase(Locale.ROOT),
-                IN_COMMIT_TIMESTAMPS_ENABLED);
-        validProperties.put(
-                IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey().toLowerCase(Locale.ROOT),
-                IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
-        validProperties.put(
-                IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey().toLowerCase(Locale.ROOT),
-                IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
+        addConfig(validProperties, TOMBSTONE_RETENTION);
+        addConfig(validProperties, CHECKPOINT_INTERVAL);
+        addConfig(validProperties, IN_COMMIT_TIMESTAMPS_ENABLED);
+        addConfig(validProperties, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
+        addConfig(validProperties, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
     }
 
     private TableConfig(

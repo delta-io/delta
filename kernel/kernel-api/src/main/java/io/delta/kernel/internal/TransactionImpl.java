@@ -164,6 +164,9 @@ public class TransactionImpl
     }
 
     private void updateMetadata(Metadata metadata) {
+        logger.info(String.format(
+                "Updated metadata from %s to %s",
+                this.metadata.toString(), metadata.toString()));
         this.metadata = metadata;
         this.shouldUpdateMetadata = true;
     }

@@ -121,13 +121,15 @@ public class Protocol {
 
     /**
      * Extract the writer features that should be enabled automatically based on the metadata which
-     * are not already enabled.
+     * are not already enabled. For example, the inCommitTimestamp-preview feature should be
+     * enabled when the IN_COMMIT_TIMESTAMPS_ENABLED property is set to true in the metadata if it
+     * is not already enabled.
      *
      * @param metadata the metadata of the table
      * @return the writer features that should be enabled automatically
      */
     public Set<String> extractAutomaticallyEnabledWriterFeatures(Metadata metadata) {
-        return TableFeatures.supportedWriterFeatures.stream()
+        return TableFeatures.getSupportedWriterFeatures().stream()
                 .filter(f -> TableFeatures.metadataRequiresWriterFeatureToBeEnabled(metadata, f))
                 .filter(f -> writerFeatures == null || !writerFeatures.contains(f))
                 .collect(Collectors.toSet());

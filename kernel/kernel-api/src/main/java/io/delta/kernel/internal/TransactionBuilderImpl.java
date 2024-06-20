@@ -127,8 +127,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             Set<String> newWriterFeatures =
                     protocol.extractAutomaticallyEnabledWriterFeatures(metadata);
             if (!newWriterFeatures.isEmpty()) {
+                logger.info("Automatically enabling writer features: {}", newWriterFeatures);
                 shouldUpdateProtocol = true;
+                List<String> oldWriterFeaturesForCheck = protocol.getWriterFeatures();
                 protocol = protocol.withNewWriterFeatures(newWriterFeatures);
+                List<String> newWriterFeaturesForCheck = protocol.getWriterFeatures();
+                assert(!Objects.equals(oldWriterFeaturesForCheck, newWriterFeaturesForCheck));
                 TableFeatures.validateWriteSupportedTable(
                         protocol,
                         metadata,
