@@ -60,18 +60,19 @@ public class DeltaSink implements Sink<RowData>,
     private Set<String> tablePartitionColumns; // non-final since we set it in try-catch block
 
     private DeltaSink(final String tablePath, final RowType rowType, final List<String> userProvidedPartitionColumns) {
-        LOG.info(
-            String.format(
-                "Scott > DeltaSink > constructor :: tablePath=%s, rowType=%s, userProvidedPartitionColumns=%s",
-                tablePath,
-                rowType,
-                userProvidedPartitionColumns)
-        );
-
         this.appId = java.util.UUID.randomUUID().toString();
         this.tablePath = tablePath;
         this.writeOperatorFlinkSchema = rowType;
         this.userProvidedPartitionColumns = userProvidedPartitionColumns;
+
+        LOG.info(
+            String.format(
+                "Scott > DeltaSink > constructor :: tablePath=%s, appId=%s, rowType=%s, userProvidedPartitionColumns=%s",
+                tablePath,
+                appId,
+                rowType,
+                userProvidedPartitionColumns)
+        );
 
         LOG.info(
             String.format("Equivalent Delta schema is: %s", SchemaUtils.toDeltaDataType(rowType))
