@@ -477,7 +477,7 @@ The following is an example `remove` action.
 ```
 
 ### Add CDC File
-The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
+The `cdc` action is used to register a file containing only the data that was changed as part of the transaction. The `cdc` action can either add a [Change Data File](#change-data-files) or register a [Data File](#data-files) that is also added by an `add` action. When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
 
 The schema of the `cdc` action is as follows:
 
@@ -523,7 +523,7 @@ Specifically, to read the row-level changes made in a version, the following str
 
 ##### Note for non-change data readers
 
-In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema and will consistently have a `null` value. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
+In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema. The column will either be null or have the same value for all rows of each data Parquet file. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
