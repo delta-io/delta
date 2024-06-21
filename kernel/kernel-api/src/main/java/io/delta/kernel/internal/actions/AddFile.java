@@ -86,7 +86,7 @@ public class AddFile {
         Path filePath = new Path(dataFileStatus.getPath());
         Map<Integer, Object> valueMap = new HashMap<>();
         valueMap.put(COL_NAME_TO_ORDINAL.get("path"),
-                relativizePath(filePath, tableRoot).toString());
+                relativizePath(filePath, tableRoot).toUri().toString());
         valueMap.put(COL_NAME_TO_ORDINAL.get("partitionValues"),
                 serializePartitionMap(partitionValues));
         valueMap.put(COL_NAME_TO_ORDINAL.get("size"), dataFileStatus.getSize());
