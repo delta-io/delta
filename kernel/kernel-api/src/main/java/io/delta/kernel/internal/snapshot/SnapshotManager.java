@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -79,15 +80,18 @@ public class SnapshotManager {
     public static void verifyDeltaVersions(
             List<Long> versions,
             Optional<Long> expectedStartVersion,
-            Optional<Long> expectedEndVersion) {
+            Optional<Long> expectedEndVersion,
+            Path tablePath) {
         if (!versions.isEmpty()) {
             List<Long> contVersions = LongStream
                     .rangeClosed(versions.get(0), versions.get(versions.size() -1))
                     .boxed()
                     .collect(Collectors.toList());
             if (!contVersions.equals(versions)) {
-                throw new IllegalStateException(
-                        format("Versions (%s) are not continuous", versions));
+                throw new InvalidTableException(
+                    tablePath.toString(),
+                    String.format("Missing delta files: versions (%s) are not continuous", versions)
+                );
             }
         }
         expectedStartVersion.ifPresent(v -> {
@@ -628,11 +632,13 @@ public class SnapshotManager {
         final long newVersion = deltaVersionsAfterCheckpoint.isEmpty() ?
             newCheckpointOpt.get().version : deltaVersionsAfterCheckpoint.getLast();
 
-        // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
-        // they may just be before the checkpoint version unless we have a bug in log cleanup.
-        if (deltas.isEmpty()) {
-            throw new IllegalStateException(
-                format("Could not find any delta files for version %s", newVersion)
+        // There should be a delta file present for the newVersion that we are loading
+        // (Even if `deltasAfterCheckpoint` is empty, `deltas` should not be)
+        if (deltas.isEmpty() ||
+            FileNames.deltaVersion(deltas.get(deltas.size() - 1).getPath()) < newVersion) {
+            throw new InvalidTableException(
+                tablePath.toString(),
+                String.format("Missing delta file for version %s", newVersion)
             );
         }
 
@@ -642,19 +648,24 @@ public class SnapshotManager {
 
         // We may just be getting a checkpoint file after the filtering
         if (!deltaVersionsAfterCheckpoint.isEmpty()) {
+            // If we have deltas after the checkpoint, the first file should be 1 greater than our
+            // last checkpoint version. If no checkpoint is present, this means the first delta file
+            // should be version 0.
             if (deltaVersionsAfterCheckpoint.getFirst() != newCheckpointVersion + 1) {
-                throw new RuntimeException(
-                    format(
-                        "Log file not found.\nExpected: %s\nFound: %s",
-                        FileNames.deltaFile(logPath, newCheckpointVersion + 1),
-                        FileNames.deltaFile(logPath, deltaVersionsAfterCheckpoint.get(0))
+                throw new InvalidTableException(
+                    tablePath.toString(),
+                    String.format(
+                        "Unable to reconstruct table state: missing log file for version %s",
+                        newCheckpointVersion + 1
                     )
                 );
             }
             verifyDeltaVersions(
                 deltaVersionsAfterCheckpoint,
                 Optional.of(newCheckpointVersion + 1),
-                versionToLoadOpt);
+                versionToLoadOpt,
+                tablePath
+            );
         }
 
         final long lastCommitTimestamp = deltas.get(deltas.size() - 1).getModificationTime();
