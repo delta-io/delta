@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import java.io.IOException;
-import java.net.URI;
 import java.util.*;
 import static java.util.Objects.requireNonNull;
 
@@ -113,7 +112,7 @@ public class ParquetFileReader {
                     org.apache.parquet.hadoop.ParquetFileReader fileReader = null;
                     try {
                         Configuration confCopy = configuration;
-                        Path filePath = new Path(URI.create(path));
+                        Path filePath = new Path(path);
 
                         // We need physical schema in order to construct a filter that can be
                         // pushed into the `parquet-mr` reader. For that reason read the footer

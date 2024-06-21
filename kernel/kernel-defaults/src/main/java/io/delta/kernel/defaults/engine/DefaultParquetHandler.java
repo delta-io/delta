@@ -17,7 +17,6 @@ package io.delta.kernel.defaults.engine;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.net.URI;
 import java.util.*;
 import static java.lang.String.format;
 
@@ -104,7 +103,7 @@ public class DefaultParquetHandler implements ParquetHandler {
             CloseableIterator<FilteredColumnarBatch> dataIter,
             List<Column> statsColumns) throws IOException {
         ParquetFileWriter batchWriter =
-            new ParquetFileWriter(hadoopConf, new Path(URI.create(directoryPath)), statsColumns);
+            new ParquetFileWriter(hadoopConf, new Path(directoryPath), statsColumns);
         return batchWriter.write(dataIter);
     }
 
@@ -121,7 +120,7 @@ public class DefaultParquetHandler implements ParquetHandler {
             String filePath,
             CloseableIterator<FilteredColumnarBatch> data) throws IOException {
         try {
-            Path targetPath = new Path(URI.create(filePath));
+            Path targetPath = new Path(filePath);
             LogStore logStore =
                     LogStoreProvider.getLogStore(hadoopConf, targetPath.toUri().getScheme());
 

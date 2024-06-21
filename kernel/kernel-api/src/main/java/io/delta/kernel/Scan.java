@@ -56,7 +56,9 @@ public interface Scan {
      *   <li>name: {@code add}, type: {@code struct}</li>
      *   <li>Description: Represents `AddFile` DeltaLog action</li>
      *   <li><ul>
-     *    <li>name: {@code path}, type: {@code string}, description: location of the file.</li>
+     *    <li>name: {@code path}, type: {@code string}, description: location of the file.
+     *    The path is a URI as specified by RFC 2396 URI Generic Syntax, which needs to be decoded
+     *    to get the data file path.</li>
      *    <li>name: {@code partitionValues}, type: {@code map(string, string)},
      *       description: A map from partition column to value for this logical file. </li>
      *    <li>name: {@code size}, type: {@code long}, description: size of the file.</li>
@@ -72,7 +74,9 @@ public interface Scan {
      *      <a href=https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Deletion-Vectors>
      *          Protocol</a><ul>
      *       <li>name: {@code storageType}, type: {@code string}</li>
-     *       <li>name: {@code pathOrInlineDv}, type: {@code string}</li>
+     *       <li>name: {@code pathOrInlineDv}, type: {@code string}, description: The path is a
+     *       URI as specified by RFC 2396 URI Generic Syntax, which needs to be decoded to get the
+     *       data file path.</li>
      *       <li>name: {@code offset}, type: {@code log}</li>
      *       <li>name: {@code sizeInBytes}, type: {@code log}</li>
      *       <li>name: {@code cardinality}, type: {@code log}</li>
@@ -83,9 +87,11 @@ public interface Scan {
      *  </ul></li>
      *  <li><ul>
      *      <li>name: {@code tableRoot}, type: {@code string}</li>
-     *      <li>Description: Absolute path of the table location. NOTE: this is temporary. Will
-     *      be removed in future. @see <a href=https://github.com/delta-io/delta/issues/2089>
-     *          </a></li>
+     *      <li>Description: Absolute path of the table location. The path is a URI as specified by
+     *      RFC 2396 URI Generic Syntax, which needs to be decode to get the data file path.
+     *      NOTE: this is temporary. Will be removed in future.
+     *      @see <a href=https://github.com/delta-io/delta/issues/2089></a>
+     *      </li>
      *  </ul></li>
      * </ol>
      */
