@@ -619,10 +619,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       val source = goldenTablePath("data-reader-partition-values")
       spark.sql(s"CREATE TABLE delta.`$target` SHALLOW CLONE delta.`$source`")
 
-      val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
-
-      assert(expAnswer.size == 3)
-      checkTable(target, expAnswer)
+      withSparkTimeZone("UTC") {
+        val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
+        assert(expAnswer.size == 3)
+        checkTable(target, expAnswer)
+      }
     }
   }
 
