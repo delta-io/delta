@@ -37,6 +37,7 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
@@ -132,7 +133,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 List<String> oldWriterFeaturesForCheck = protocol.getWriterFeatures();
                 protocol = protocol.withNewWriterFeatures(newWriterFeatures);
                 List<String> newWriterFeaturesForCheck = protocol.getWriterFeatures();
-                assert(!Objects.equals(oldWriterFeaturesForCheck, newWriterFeaturesForCheck));
+                checkArgument(
+                        !Objects.equals(oldWriterFeaturesForCheck, newWriterFeaturesForCheck));
                 TableFeatures.validateWriteSupportedTable(
                         protocol,
                         metadata,

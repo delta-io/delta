@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -32,10 +33,11 @@ import static io.delta.kernel.internal.DeltaErrors.*;
  */
 public class TableFeatures {
 
-    private static Set<String> supportedWriterFeatures = new HashSet<String>() {{
-            add("appendOnly");
-            add("inCommitTimestamp-preview");
-        }};
+    private static final Set<String> supportedWriterFeatures =
+            Collections.unmodifiableSet(new HashSet<String>() {{
+                    add("appendOnly");
+                    add("inCommitTimestamp-preview");
+                }});
 
     ////////////////////
     // Helper Methods //

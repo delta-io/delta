@@ -27,29 +27,8 @@ import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
 public class InCommitTimestampUtils {
 
-    /** Returns true if the current transaction implicitly/explicitly enables ICT. */
-    private static boolean didCurrentTransactionEnableICT(
-            Engine engine,
-            Metadata currentTransactionMetadata,
-            SnapshotImpl readSnapshot) {
-        // If ICT is currently enabled, and the read snapshot did not have ICT enabled,
-        // then the current transaction must have enabled it.
-        // In case of a conflict, any winning transaction that enabled it after
-        // our read snapshot would have caused a metadata conflict abort
-        // (see [[ConflictChecker.handleMetadata]]), so we know that
-        // all winning transactions' ICT enablement status must match the read snapshot.
-        //
-        // WARNING: To ensure that this function returns true if ICT is enabled during the first
-        // commit, we explicitly handle the case where the readSnapshot.version is -1.
-        boolean isICTCurrentlyEnabled =
-                IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
-        boolean wasICTEnabledInReadSnapshot = readSnapshot.getVersion(engine) != -1 &&
-                IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
-        return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
-    }
-
     /**
-     * Returns the updated [[Metadata]] with inCommitTimestamp enablement related info
+     * Returns the updated {@link Metadata} with inCommitTimestamp enablement related info
      * (version and timestamp) correctly set.
      * This is done only
      * 1. If this transaction enables inCommitTimestamp.
@@ -77,5 +56,26 @@ public class InCommitTimestampUtils {
         } else {
             return Optional.empty();
         }
+    }
+
+    /** Returns true if the current transaction implicitly/explicitly enables ICT. */
+    private static boolean didCurrentTransactionEnableICT(
+            Engine engine,
+            Metadata currentTransactionMetadata,
+            SnapshotImpl readSnapshot) {
+        // If ICT is currently enabled, and the read snapshot did not have ICT enabled,
+        // then the current transaction must have enabled it.
+        // In case of a conflict, any winning transaction that enabled it after
+        // our read snapshot would have caused a metadata conflict abort
+        // (see {@link ConflictChecker.handleMetadata}), so we know that
+        // all winning transactions' ICT enablement status must match the read snapshot.
+        //
+        // WARNING: To ensure that this function returns true if ICT is enabled during the first
+        // commit, we explicitly handle the case where the readSnapshot.version is -1.
+        boolean isICTCurrentlyEnabled =
+                IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
+        boolean wasICTEnabledInReadSnapshot = readSnapshot.getVersion(engine) != -1 &&
+                IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
+        return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
     }
 }

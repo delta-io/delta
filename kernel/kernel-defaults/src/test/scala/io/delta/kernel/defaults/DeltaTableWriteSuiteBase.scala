@@ -155,44 +155,64 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     }
   }
 
-  def getColumnarBatchesFromCommit(
-    engine: Engine, table: Table, version: Long): CloseableIterator[ColumnarBatch] = {
+  /**
+   * Helper method to read the commit file of the given version and return the value at the given
+   * ordinal if it is not null and the consumer returns a value, otherwise return null.
+   */
+  def readCommitFile(
+    engine: Engine,
+    tablePath: String,
+    version: Long, consumer: Row => Option[Any]): Option[Any] = {
+    val table = Table.forPath(engine, tablePath)
     val logPath = new DeltaPath(table.getPath(engine), "_delta_log")
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
-    engine.getJsonHandler.readJsonFiles(
+    val columnarBatches = engine.getJsonHandler.readJsonFiles(
       singletonCloseableIterator(file),
       SingleAction.FULL_SCHEMA,
       Optional.empty())
+    while (columnarBatches.hasNext) {
+      val batch = columnarBatches.next
+      val rows = batch.getRows
+      while (rows.hasNext) {
+        val row = rows.next
+        val ret = consumer(row)
+        if (ret.isDefined) {
+          return ret
+        }
+      }
+    }
+    Option.empty
   }
 
+  /**
+   *  Helper method to read the Metadata from the commit file of the given version if it is not
+   *  null, otherwise return null.
+   */
   def getMetadataActionFromCommit(
-    engine: Engine, table: Table, version: Long): Optional[Metadata] = {
-    val columnarBatches = getColumnarBatchesFromCommit(engine, table, version)
-    if (!columnarBatches.hasNext) {
-      return Optional.empty()
-    }
-    val metadataVector = columnarBatches.next().getColumnVector(3)
-    for (i <- 0 until metadataVector.getSize) {
-      if (!metadataVector.isNullAt(i)) {
-        return Optional.ofNullable(Metadata.fromColumnVector(metadataVector, i, engine))
+    engine: Engine, table: Table, version: Long): Option[Row] = {
+    readCommitFile(engine, table.getPath(engine), version, (row) => {
+      val ord = row.getSchema.indexOf("metaData")
+      if (!row.isNullAt(ord)) {
+        Option(row.getStruct(ord))
+      } else {
+        Option.empty
       }
-    }
-    Optional.empty()
+    }).map{ case metadata: Row => Some(metadata)}.getOrElse(Option.empty)
   }
 
-  def getProtocolActionFromCommit(
-    engine: Engine, table: Table, version: Long): Optional[Protocol] = {
-    val columnarBatches = getColumnarBatchesFromCommit(engine, table, version)
-    if (!columnarBatches.hasNext) {
-      return Optional.empty()
-    }
-    val protocolVector = columnarBatches.next().getColumnVector(4)
-    for (i <- 0 until protocolVector.getSize) {
-      if (!protocolVector.isNullAt(i)) {
-        return Optional.ofNullable(Protocol.fromColumnVector(protocolVector, i))
+  /**
+   *  Helper method to read the Protocol from the commit file of the given version if it is not
+   *  null, otherwise return null.
+   */
+  def getProtocolActionFromCommit(engine: Engine, table: Table, version: Long): Option[Row] = {
+    readCommitFile(engine, table.getPath(engine), version, (row) => {
+      val ord = row.getSchema.indexOf("protocol")
+      if (!row.isNullAt(ord)) {
+        Some(row.getStruct(ord))
+      } else {
+        Option.empty
       }
-    }
-    Optional.empty()
+    }).map{ case protocol: Row => Some(protocol)}.getOrElse(Option.empty)
   }
 
   def generateData(
@@ -298,6 +318,11 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   def assertMetadataProp(
     snapshot: SnapshotImpl, key: TableConfig[_ <: Any], expectedValue: Any): Unit = {
     assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
+  }
+
+  def assertHasNoMetadataProp(
+    snapshot: SnapshotImpl, key: TableConfig[_ <: Any]): Unit = {
+    assertMetadataProp(snapshot, key, Optional.empty())
   }
 
   def setTablePropAndVerify(

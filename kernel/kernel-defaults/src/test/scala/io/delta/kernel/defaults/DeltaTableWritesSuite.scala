@@ -154,7 +154,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = false, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
+        engine = engine,
+        tablePath = tablePath,
+        isNewTable = false,
+        key = TableConfig.CHECKPOINT_INTERVAL,
+        value = "2",
+        expectedValue = 2)
     }
   }
 
@@ -162,7 +167,11 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = true, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
+        engine = engine,
+        tablePath = tablePath,
+        key = TableConfig.CHECKPOINT_INTERVAL,
+        value = "2",
+        expectedValue = 2)
 
       appendData(
         engine,
@@ -207,8 +216,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = true, TableConfig.CHECKPOINT_INTERVAL, "2", 2)
-      assert(getMetadataActionFromCommit(engine, table, 0).isPresent)
+        engine = engine,
+        tablePath = tablePath,
+        key = TableConfig.CHECKPOINT_INTERVAL,
+        value = "2",
+        expectedValue = 2)
+      assert(getMetadataActionFromCommit(engine, table, 0).isDefined)
 
       appendData(
         engine,
@@ -218,7 +231,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
-      assert(!getMetadataActionFromCommit(engine, table, 1).isPresent)
+      assert(getMetadataActionFromCommit(engine, table, 1).isEmpty)
     }
   }
 

@@ -125,21 +125,28 @@ public class TransactionImpl
                     "Transaction is already attempted to commit. Create a new transaction.");
 
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
+            // Generate the commit action with the inCommitTimestamp if ICT is enabled. And if ICT
+            // is enabled for the current transaction, update the metadata with the ICT enablement
+            // info.
             CommitInfo attemptCommitInfo = generateCommitAction(engine);
-            if (attemptCommitInfo.getInCommitTimestamp().isPresent()) {
-                Optional<Metadata> metadataWithICTInfo =
-                        InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-                                engine,
-                                attemptCommitInfo.getInCommitTimestamp().get(),
-                                readSnapshot,
-                                metadata,
-                                readSnapshot.getVersion(engine) + 1L);
-                metadataWithICTInfo.ifPresent(this::updateMetadata);
-            }
+            attemptCommitInfo.getInCommitTimestamp().ifPresent(
+                    inCommitTimestamp -> {
+                        Optional<Metadata> metadataWithICTInfo =
+                                InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+                                        engine,
+                                        inCommitTimestamp,
+                                        readSnapshot,
+                                        metadata,
+                                        readSnapshot.getVersion(engine) + 1L);
+                        metadataWithICTInfo.ifPresent(this::updateMetadata);
+                    }
+            );
             int numRetries = 0;
             do {
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
                 try {
+                    // TODO Update the attemptCommitInfo and metadata based on the conflict
+                    // resolution.
                     return doCommit(engine, commitAsVersion, attemptCommitInfo, dataActions);
                 } catch (FileAlreadyExistsException fnfe) {
                     logger.info("Concurrent write detected when committing as version = {}. " +
@@ -164,9 +171,9 @@ public class TransactionImpl
     }
 
     private void updateMetadata(Metadata metadata) {
-        logger.info(String.format(
-                "Updated metadata from %s to %s",
-                this.metadata.toString(), metadata.toString()));
+        logger.info(
+                "Updated metadata from {} to {}",
+                shouldUpdateMetadata ? this.metadata : "-", metadata);
         this.metadata = metadata;
         this.shouldUpdateMetadata = true;
     }
@@ -230,11 +237,8 @@ public class TransactionImpl
 
     private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
             Engine engine, long currentTimestamp) {
-        if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
-            return Optional.of(currentTimestamp);
-        } else {
-            return Optional.empty();
-        }
+        boolean ictEnabled = IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+        return ictEnabled ? Optional.of(currentTimestamp) : Optional.empty();
     }
 
     private CommitInfo generateCommitAction(Engine engine) {

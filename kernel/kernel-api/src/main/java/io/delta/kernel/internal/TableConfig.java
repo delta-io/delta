@@ -119,10 +119,6 @@ public class TableConfig<T> {
     private final Predicate<T> validator;
     private final String helpMessage;
 
-    private static void addConfig(Map<String, TableConfig> configs, TableConfig config) {
-        configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
-    }
-
     static {
         addConfig(validProperties, TOMBSTONE_RETENTION);
         addConfig(validProperties, CHECKPOINT_INTERVAL);
@@ -199,5 +195,9 @@ public class TableConfig<T> {
         if (!validator.test(parsedValue)) {
             throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
         }
+    }
+
+    private static void addConfig(Map<String, TableConfig> configs, TableConfig config) {
+        configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
     }
 }

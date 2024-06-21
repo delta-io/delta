@@ -17,12 +17,11 @@ package io.delta.kernel.defaults
 
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel._
-import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.actions.{CommitInfo, SingleAction}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -33,34 +32,21 @@ import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 import scala.collection.mutable
-import io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED
+import io.delta.kernel.internal.TableConfig._
 import io.delta.kernel.utils.FileStatus;
 
 class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
-  private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Optional[Long] = {
-    val columnarBatches = getColumnarBatchesFromCommit(engine, table, version)
-    if (!columnarBatches.hasNext) {
-      return Optional.empty()
-    }
-    val commitInfoVector = columnarBatches.next().getColumnVector(6)
-    for (i <- 0 until commitInfoVector.getSize) {
-      if (!commitInfoVector.isNullAt(i)) {
-        val commitInfo = CommitInfo.fromColumnVector(commitInfoVector, i)
-        if (commitInfo != null && commitInfo.getInCommitTimestamp.isPresent) {
-          return Optional.of(commitInfo.getInCommitTimestamp.get)
-        }
-      }
-    }
-    Optional.empty()
-  }
-
   test("Enable ICT on commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
       val beforeCommitAttemptStartTime = System.currentTimeMillis
       val table = Table.forPath(engine, tablePath)
 
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+        engine = engine,
+        tablePath = tablePath,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true)
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assert(getInCommitTimestamp(engine, table, 0).get >= beforeCommitAttemptStartTime)
@@ -80,13 +66,18 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       txn1.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver0Snapshot, TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED, false)
+      assertMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
       assert(!ver0Snapshot.getProtocol.getWriterFeatures.contains("inCommitTimestamp-preview"))
-      assert(!getInCommitTimestamp(engine, table, 0).isPresent)
+      assert(getInCommitTimestamp(engine, table, 0).isEmpty)
 
       val beforeCommitAttemptStartTime = System.currentTimeMillis
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = false, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+        engine = engine,
+        tablePath = tablePath,
+        isNewTable = false,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true)
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assert(ver1Snapshot.getProtocol.getWriterFeatures.contains("inCommitTimestamp-preview"))
@@ -97,16 +88,17 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Enablement tracking properties should not be added if ICT is enabled on commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
-
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+        engine = engine,
+        tablePath = tablePath,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true)
 
-      val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver0Snapshot, TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
-        Optional.empty())
-      assertMetadataProp(ver0Snapshot, TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
-        Optional.empty())
+      val ver0Snapshot =
+        Table.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertHasNoMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+      assertHasNoMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
     }
   }
 
@@ -130,14 +122,14 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver1Snapshot, TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
         ver1Snapshot,
-        TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
-        getInCommitTimestamp(engine, table, version = 1))
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
+        Optional.of(getInCommitTimestamp(engine, table, version = 1).get))
       assertMetadataProp(
         ver1Snapshot,
-        TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION, Optional.of(1L))
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION, Optional.of(1L))
 
       appendData(
         engine,
@@ -147,33 +139,98 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         data = Seq(Map.empty[String, Literal] -> dataBatches2))
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver2Snapshot, TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(ver2Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
         ver2Snapshot,
-        TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
-        getInCommitTimestamp(engine, table, version = 1))
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
+        Optional.of(getInCommitTimestamp(engine, table, version = 1).get))
       assertMetadataProp(
         ver2Snapshot,
-        TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION, Optional.of(1L))
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION, Optional.of(1L))
     }
   }
 
-  test("Update the protocol unless required") {
+  test("Update the protocol only if required") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+        engine = engine,
+        tablePath = tablePath,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true)
       val protocol = getProtocolActionFromCommit(engine, table, 0)
-      assert(protocol.isPresent)
-      assert(protocol.get.getWriterFeatures.contains("inCommitTimestamp-preview"))
+      assert(protocol.isDefined)
+      assert(VectorUtils.toJavaList(protocol.get.getArray(3)).contains("inCommitTimestamp-preview"))
 
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = false, IN_COMMIT_TIMESTAMPS_ENABLED, "false", false)
-      assert(!getProtocolActionFromCommit(engine, table, 1).isPresent)
+        engine = engine,
+        tablePath = tablePath,
+        isNewTable = false,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "false",
+        expectedValue = false)
+      assert(getProtocolActionFromCommit(engine, table, 1).isEmpty)
 
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = false, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
-      assert(!getProtocolActionFromCommit(engine, table, 2).isPresent)
+        engine = engine,
+        tablePath = tablePath,
+        isNewTable = false,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true)
+      assert(getProtocolActionFromCommit(engine, table, 2).isEmpty)
     }
+  }
+
+  test("Metadata toString should work with ICT enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = TableImpl.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn = txnBuilder
+        .withSchema(engine, testSchema)
+        .build(engine)
+
+      txn.commit(engine, emptyIterable())
+
+      appendData(
+        engine,
+        tablePath,
+        schema = testSchema,
+        partCols = Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
+
+      val metadata = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl].getMetadata
+      val inCommitTimestamp = getInCommitTimestamp(engine, table, version = 1).get
+      assert(metadata.toString == String.format(
+        "Metadata(%s,Optional.empty,Optional.empty," +
+        "Format(parquet,Map()),{\n  \"type\" : \"struct\",\n  \"fields\" : [ {\n" +
+        "  \"name\" : \"id\",\n  \"type\" : \"integer\",\n  \"nullable\" : true, \n" +
+        "  \"metadata\" : {}\n} ]\n}," +
+        "List(),Map(delta.enableInCommitTimestamps-preview -> true, " +
+        "delta.inCommitTimestampEnablementVersion-preview -> 1, " +
+        "delta.inCommitTimestampEnablementTimestamp-preview -> %s)," +
+        "Optional[%s])", metadata.getId, inCommitTimestamp.toString, metadata.getCreatedTime.get))
+    }
+  }
+
+  /**
+   *  Helper method to read the inCommitTimestamp from the commit file of the given version if it
+   *  is not null, otherwise return null.
+   */
+  private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Option[Long] = {
+    readCommitFile(engine, table.getPath(engine), version, row => {
+      val commitInfoOrd = row.getSchema.indexOf("commitInfo")
+      if (!row.isNullAt(commitInfoOrd)) {
+        val commitInfo = row.getStruct(commitInfoOrd)
+        val inCommitTimestampOrd = commitInfo.getSchema.indexOf("inCommitTimestamp")
+        if (!commitInfo.isNullAt(inCommitTimestampOrd)) {
+          return Some(commitInfo.getLong(inCommitTimestampOrd))
+        }
+      }
+      Option.empty
+    }).map{ case inCommitTimestamp: Long => Some(inCommitTimestamp)}.getOrElse(Option.empty)
   }
 }
