@@ -484,11 +484,11 @@ trait TestUtils extends Assertions with SQLHelper {
     }
   }
 
-  def withSparkTimeZone(timeZone: String)(fn: () => Unit): Unit = {
+  def withSparkTimeZone(timeZone: String)(fn: => Unit): Unit = {
     val prevTimeZone = spark.conf.get("spark.sql.session.timeZone")
     try {
       spark.conf.set("spark.sql.session.timeZone", timeZone)
-      fn()
+      fn
     } finally {
       spark.conf.set("spark.sql.session.timeZone", prevTimeZone)
     }
