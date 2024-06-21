@@ -24,6 +24,8 @@ import io.delta.kernel.DataWriteContext;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 
+import io.delta.kernel.internal.fs.Path;
+
 /**
  * Implements the {@link DataWriteContext} interface. In addition to the data needed for the
  * interface, it also contains the partition values of the targeted partition. In case of
@@ -59,7 +61,9 @@ public class DataWriteContextImpl implements DataWriteContext {
      * @return fully qualified path of the target directory
      */
     public String getTargetDirectory() {
-        return targetDirectory;
+        // TODO: this is temporary until paths are uniform (i.e. they are actually file system paths
+        // or URIs everywhere, but not a combination of the two).
+        return new Path(targetDirectory).toUri().toString();
     }
 
     /**
