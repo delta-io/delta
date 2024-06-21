@@ -170,13 +170,6 @@
     ],
     "sqlState" : "42703"
   },
-  "DELTA_CANNOT_DROP_CHANGE_DATA_FEED_FEATURE" : {
-    "message" : [
-      "Cannot drop the change data feed table feature.",
-      "Disable change data feed before dropping the feature."
-    ],
-    "sqlState" : "0AKDE"
-  },
   "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE" : {
     "message" : [
       "Cannot drop the CHECK constraints table feature.",

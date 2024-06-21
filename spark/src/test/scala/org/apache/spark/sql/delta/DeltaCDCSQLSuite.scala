@@ -335,13 +335,12 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
 
   test("drop feature") {
     withTable("table") {
-      def assertChangeDataFeedEnabled(): Unit = {
+      def assertFeatureEnabled(): Unit = {
         val log = DeltaLog.forTable(spark, TableIdentifier("table"))
-        assert(DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(log.update().metadata))
         assert(log.update().protocol.writerFeatureNames.contains(ChangeDataFeedTableFeature.name))
       }
 
-      def assertChangeDataFeedRemoved(): Unit = {
+      def assertFeatureRemoved(): Unit = {
         val log = DeltaLog.forTable(spark, TableIdentifier("table"))
         assert(!log.update().metadata.configuration.contains(DeltaConfigs.CHANGE_DATA_FEED.key))
         assert(!log.update().protocol.writerFeatureNames.contains(ChangeDataFeedTableFeature.name))
@@ -355,41 +354,23 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
           | 'delta.enableChangeDataFeed' = 'true'
           |)
           |""".stripMargin)
-      assertChangeDataFeedEnabled()
+      assertFeatureEnabled()
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          sql("ALTER TABLE table DROP FEATURE changeDataFeed")
-        },
-        errorClass = "DELTA_CANNOT_DROP_CHANGE_DATA_FEED_FEATURE"
-      )
-      assertChangeDataFeedEnabled()
-
-      sql("ALTER TABLE table SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'false')")
       sql("ALTER TABLE table DROP FEATURE changeDataFeed")
-      assertChangeDataFeedRemoved()
+      assertFeatureRemoved()
 
       sql(
         """
           |ALTER TABLE table SET TBLPROPERTIES (
           | 'delta.minWriterVersion' = 7,
-          | 'delta.enableChangeDataFeed' = 'true'
+          | 'delta.enableChangeDataFeed' = 'false'
           |)
           |""".stripMargin
       )
-      assertChangeDataFeedEnabled()
+      assertFeatureEnabled()
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          sql("ALTER TABLE table DROP FEATURE changeDataFeed")
-        },
-        errorClass = "DELTA_CANNOT_DROP_CHANGE_DATA_FEED_FEATURE"
-      )
-      assertChangeDataFeedEnabled()
-
-      sql("ALTER TABLE table UNSET TBLPROPERTIES ('delta.enableChangeDataFeed')")
       sql("ALTER TABLE table DROP FEATURE changeDataFeed")
-      assertChangeDataFeedRemoved()
+      assertFeatureRemoved()
     }
   }
 }

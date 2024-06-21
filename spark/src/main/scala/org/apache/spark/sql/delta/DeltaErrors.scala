@@ -343,13 +343,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def cannotDropChangeDataFeedFeature(): AnalysisException = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_CANNOT_DROP_CHANGE_DATA_FEED_FEATURE",
-      messageParameters = Array.empty
-    )
-  }
-
   def incorrectLogStoreImplementationException(
       sparkConf: SparkConf,
       cause: Throwable): Throwable = {
