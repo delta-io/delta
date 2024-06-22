@@ -359,14 +359,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       sql("ALTER TABLE table DROP FEATURE changeDataFeed")
       assertFeatureRemoved()
 
-      sql(
-        """
-          |ALTER TABLE table SET TBLPROPERTIES (
-          | 'delta.minWriterVersion' = 7,
-          | 'delta.enableChangeDataFeed' = 'false'
-          |)
-          |""".stripMargin
-      )
+      sql("ALTER TABLE table SET TBLPROPERTIES ('delta.feature.changeDataFeed' = 'supported')")
       assertFeatureEnabled()
 
       sql("ALTER TABLE table DROP FEATURE changeDataFeed")
