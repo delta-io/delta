@@ -1,0 +1,4 @@
+{"commitInfo":{"timestamp":1641389722961,"operation":"WRITE","operationParameters":{"mode":"Append","partitionBy":"[]"},"isBlindAppend":true,"operationMetrics":{"numFiles":"1","numOutputBytes":"1708","numOutputRows":"100"}}}
+{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}
+{"metaData":{"id":"70eb82f9-3705-42bf-890b-64dd07b16df6","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"col1\",\"type\":\"long\",\"nullable\":true,\"metadata\":{}},{\"name\":\"col2\",\"type\":\"long\",\"nullable\":true,\"metadata\":{}},{\"name\":\"col3\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":[],"configuration":{},"createdTime":1641389721181}}
+{"add":{"path":"part-00000-8afd0f54-129c-4140-adf2-f337074aa039-c000.snappy.parquet","partitionValues":{},"size":1708,"modificationTime":1641389722879,"dataChange":true}}

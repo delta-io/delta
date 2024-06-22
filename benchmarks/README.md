@@ -21,6 +21,8 @@ The next section will provide the detailed steps of how to setup the necessary H
 - A S3 bucket which will be used to generate the TPC-DS data.
 - A machine which has access to the AWS setup and where this repository has been downloaded or cloned.
 
+There are two ways to create infrastructure required for benchmarks - using provided [Terraform template](infrastructure/aws/terraform/README.md) or manually (described below).
+
 #### Create external Hive Metastore using Amazon RDS
 Create an external Hive Metastore in a MySQL database using Amazon RDS with the following specifications:
 - MySQL 8.x on a `db.m5.large`.
@@ -33,7 +35,9 @@ After the database is ready, note the JDBC connection details, the username and 
   
 #### Create EMR cluster
 Create an EMR cluster that connects to the external Hive Metastore.  Here are the specifications of the EMR cluster required for running benchmarks.
-- EMR version 6.5.0 having Apache Spark 3.1
+- EMR with Spark and Hive (needed for writing to Hive Metastore). Choose the EMR version based on the Spark version compatible with the format. For example:
+  - For Delta 2.0 on Spark 3.2 - EMR 6.6.0
+  - For Delta 1.0 on Spark 3.1 - EMR 6.5.0
 - Master - i3.2xlarge
 - Workers - 16 x i3.2xlarge (or just 1 worker if you are just testing by running the 1GB benchmark).
 - Hive-site configuration to connect to the Hive Metastore. See [Using an external MySQL database or Amazon Aurora](https://docs.aws.amazon.com/emr/latest/ReleaseGuide/emr-hive-metastore-external.html) for more details.
@@ -63,6 +67,8 @@ _________________
 - SSH keys for a user which will be used to access the master node. The user's SSH key can be either [a project-wide key](https://cloud.google.com/compute/docs/connect/add-ssh-keys#add_ssh_keys_to_project_metadata) 
   or assigned to the [master node](https://cloud.google.com/compute/docs/connect/add-ssh-keys#after-vm-creation) only.
 - Ideally, all GCP components used in benchmark should be in the same location (Storage bucket, Dataproc Metastore service and Dataproc cluster).
+
+There are two ways to create infrastructure required for benchmarks - using provided [Terraform template](infrastructure/gcp/terraform/README.md) or manually (described below).
 
 #### Prepare GCS bucket
 Create a new GCS bucket (or use an existing one) which is in the same region as your Dataproc cluster.
@@ -140,7 +146,7 @@ Verify that you have the following information
   - <CLOUD_PROVIDER>: Currently either `gcp` or `aws`. For each storage type, different Delta properties might be added.
     
 Then run a simple table write-read test: Run the following in your shell.
- 
+
 ```sh
 ./run-benchmark.py \
     --cluster-hostname <HOSTNAME> \

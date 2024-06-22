@@ -3,12 +3,12 @@
 [![Test](https://github.com/delta-io/delta/actions/workflows/test.yaml/badge.svg)](https://github.com/delta-io/delta/actions/workflows/test.yaml)
 [![License](https://img.shields.io/badge/license-Apache%202-brightgreen.svg)](https://github.com/delta-io/delta/blob/master/LICENSE.txt)
 [![PyPI](https://img.shields.io/pypi/v/delta-spark.svg)](https://pypi.org/project/delta-spark/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/delta-spark)](https://pypistats.org/packages/delta-spark)
 
 Delta Lake is an open-source storage framework that enables building a [Lakehouse architecture](http://cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf) with compute engines including Spark, PrestoDB, Flink, Trino, and Hive and APIs for Scala, Java, Rust, Ruby, and Python. 
 * See the [Delta Lake Documentation](https://docs.delta.io) for details.
 * See the [Quick Start Guide](https://docs.delta.io/latest/quick-start.html) to get started with Scala, Java and Python.
-* Note, this repo is one of many Delta Lake repositories in the [delta.io](https://github.com/delta-io) organizations including 
-[connectors](https://github.com/delta-io/connectors),
+* Note, this repo is one of many Delta Lake repositories in the [delta.io](https://github.com/delta-io) organizations including
 [delta](https://github.com/delta-io/delta), 
 [delta-rs](https://github.com/delta-io/delta-rs),
 [delta-sharing](https://github.com/delta-io/delta-sharing),
@@ -18,7 +18,7 @@ Delta Lake is an open-source storage framework that enables building a [Lakehous
 The following are some of the more popular Delta Lake integrations, refer to [delta.io/integrations](https://delta.io/integrations/) for the complete list:
 
 * [Apache Spark™](https://docs.delta.io/): This connector allows Apache Spark™ to read from and write to Delta Lake.
-* [Apache Flink (Preview)](https://github.com/delta-io/connectors/tree/master/flink): This connector allows Apache Flink to write to Delta Lake.
+* [Apache Flink (Preview)](https://github.com/delta-io/delta/tree/master/connectors/flink): This connector allows Apache Flink to write to Delta Lake.
 * [PrestoDB](https://prestodb.io/docs/current/connector/deltalake.html): This connector allows PrestoDB to read from Delta Lake.
 * [Trino](https://trino.io/docs/current/connector/delta-lake.html): This connector allows Trino to read from and write to Delta Lake.
 * [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html): This library allows Scala and Java-based projects (including Apache Flink, Apache Hive, Apache Beam, and PrestoDB) to read from and write to Delta Lake.
@@ -127,11 +127,11 @@ To execute tests, run
 
 To execute a single test suite, run
 
-    build/sbt 'testOnly org.apache.spark.sql.delta.optimize.OptimizeCompactionSuite'
+    build/sbt spark/'testOnly org.apache.spark.sql.delta.optimize.OptimizeCompactionSQLSuite'
 
 To execute a single test within and a single test suite, run
 
-    build/sbt 'testOnly *.OptimizeCompactionSuite -- -z "optimize command: on partitioned table - all partitions"'
+    build/sbt spark/'testOnly *.OptimizeCompactionSQLSuite -- -z "optimize command: on partitioned table - all partitions"'
 
 Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
 
@@ -164,7 +164,7 @@ Error:(91, 22) not found: type DeltaSqlBaseParser
 
 then follow these steps:
 1. Compile using the SBT CLI: `build/sbt compile`.
-2. Go to `File` > `Project Structure...` > `Modules` > `delta-core`.
+2. Go to `File` > `Project Structure...` > `Modules` > `delta-spark`.
 3. In the right panel under `Source Folders` remove any `target` folders, e.g. `target/scala-2.12/src_managed/main [generated]`
 4. Click `Apply` and then re-run your test.
 

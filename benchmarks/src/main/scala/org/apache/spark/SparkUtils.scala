@@ -52,4 +52,6 @@ object SparkUtils {
       valueOption.map(value => f.getName -> value)
     }.toMap
   }
+
+  def median(sizes: Array[Long], alreadySorted: Boolean): Long = Utils.median(sizes, alreadySorted)
 }

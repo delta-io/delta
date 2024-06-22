@@ -14,6 +14,9 @@
 # limitations under the License.
 #
 
+# mypy: disable-error-code="union-attr"
+# mypy: disable-error-code="attr-defined"
+
 import unittest
 import tempfile
 import shutil
@@ -44,7 +47,8 @@ class DeltaSqlTests(DeltaTestCase):
             self.spark.sql("set spark.databricks.delta.retentionDurationCheck.enabled = true")
 
     def test_describe_history(self) -> None:
-        assert(len(self.spark.sql("desc history delta.`%s`" % (self.tempFile)).collect()) > 0)
+        self.assertGreater(
+            len(self.spark.sql("desc history delta.`%s`" % (self.tempFile)).collect()), 0)
 
     def test_generate(self) -> None:
         # create a delta table
@@ -67,7 +71,7 @@ class DeltaSqlTests(DeltaTestCase):
 
         shutil.rmtree(temp_path)
         # the number of files we write should equal the number of lines in the manifest
-        assert(len(files) == numFiles)
+        self.assertEqual(len(files), numFiles)
 
     def test_convert(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
@@ -95,7 +99,7 @@ class DeltaSqlTests(DeltaTestCase):
     def test_ddls(self) -> None:
         table = "deltaTable"
         table2 = "deltaTable2"
-        try:
+        with self.table(table, table2):
             def read_table() -> DataFrame:
                 return self.spark.sql(f"SELECT * FROM {table}")
 
@@ -104,11 +108,21 @@ class DeltaSqlTests(DeltaTestCase):
 
             self.spark.sql(f"CREATE TABLE {table}(a LONG, b String NOT NULL) USING delta")
             self.assertEqual(read_table().count(), 0)
+            self.spark.sql(f"CREATE TABLE {table}_part(a LONG, b String NOT NULL)"
+                           " USING delta PARTITIONED BY (a)")
 
+            # Unpartitioned table does not include partitioning information in Spark 3.4+
+            answer = [("a", "bigint"), ("b", "string")]
             self.__checkAnswer(
                 self.spark.sql(f"DESCRIBE TABLE {table}").select("col_name", "data_type"),
-                [("a", "bigint"), ("b", "string"), ("", ""), ("# Partitioning", ""),
-                 ("Not partitioned", "")],
+                answer,
+                schema=["col_name", "data_type"])
+
+            answer_part = [("a", "bigint"), ("b", "string"), ("# Partition Information", ""),
+                           ("# col_name", "data_type"), ("a", "bigint")]
+            self.__checkAnswer(
+                self.spark.sql(f"DESCRIBE TABLE {table}_part").select("col_name", "data_type"),
+                answer_part,
                 schema=["col_name", "data_type"])
 
             self.spark.sql(f"ALTER TABLE {table} CHANGE COLUMN a a LONG AFTER b")
@@ -122,15 +136,13 @@ class DeltaSqlTests(DeltaTestCase):
 
             self.spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ('k' = 'v')")
             self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"),
-                               [('Type', 'MANAGED'),
-                                ('k', 'v'),
+                               [('k', 'v'),
                                 ('delta.minReaderVersion', '1'),
                                 ('delta.minWriterVersion', '2')])
 
             self.spark.sql(f"ALTER TABLE {table} UNSET TBLPROPERTIES ('k')")
             self.__checkAnswer(self.spark.sql(f"SHOW TBLPROPERTIES {table}"),
-                               [('Type', 'MANAGED'),
-                                ('delta.minReaderVersion', '1'),
+                               [('delta.minReaderVersion', '1'),
                                 ('delta.minWriterVersion', '2')])
 
             self.spark.sql(f"ALTER TABLE {table} RENAME TO {table2}")
@@ -142,9 +154,6 @@ class DeltaSqlTests(DeltaTestCase):
 
             self.spark.sql(f"ALTER TABLE {table2} SET LOCATION '{test_dir}'")
             self.assertEqual(self.spark.sql(f"SELECT * FROM {table2}").count(), 1)
-        finally:
-            self.spark.sql(f"DROP TABLE IF EXISTS {table}")
-            self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],

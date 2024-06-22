@@ -8,6 +8,18 @@ title: '[BUG]'
 
 ## Bug
 
+#### Which Delta project/connector is this regarding?
+<!--
+Please add the component selected below to the beginning of the issue title
+For example: [BUG][Spark] Title of my issue
+-->
+
+- [ ] Spark
+- [ ] Standalone
+- [ ] Flink
+- [ ] Kernel
+- [ ] Other (fill in here)
+
 ### Describe the problem
 
 #### Steps to reproduce

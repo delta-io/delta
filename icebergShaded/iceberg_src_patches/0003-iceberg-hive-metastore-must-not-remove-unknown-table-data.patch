@@ -1,0 +1,45 @@
+HiveTableOperations should have its catalog operations compatible with Delta
+
+This patch prevent Iceberg HiveTableOperations to overwrite catalog table properties used by Delta. It also writes a dummy schema to metastore to be aligned with Delta's behavior.
+---
+Index: hive-metastore/src/main/java/org/apache/iceberg/hive/HiveTableOperations.java
+===================================================================
+diff --git a/hive-metastore/src/main/java/org/apache/iceberg/hive/HiveTableOperations.java b/hive-metastore/src/main/java/org/apache/iceberg/hive/HiveTableOperations.java
+--- a/hive-metastore/src/main/java/org/apache/iceberg/hive/HiveTableOperations.java	(revision ede085d0f7529f24acd0c81dd0a43f7bb969b763)
++++ b/hive-metastore/src/main/java/org/apache/iceberg/hive/HiveTableOperations.java	(revision 4470b919dd6a97b0f6d6b7d57d1d57348a40c025)
+@@ -43,6 +43,7 @@
+ import org.apache.hadoop.hive.metastore.IMetaStoreClient;
+ import org.apache.hadoop.hive.metastore.TableType;
+ import org.apache.hadoop.hive.metastore.api.InvalidObjectException;
++import org.apache.hadoop.hive.metastore.api.FieldSchema;
+ import org.apache.hadoop.hive.metastore.api.LockComponent;
+ import org.apache.hadoop.hive.metastore.api.LockLevel;
+ import org.apache.hadoop.hive.metastore.api.LockRequest;
+@@ -286,7 +287,9 @@
+         LOG.debug("Committing new table: {}", fullName);
+       }
+
+-      tbl.setSd(storageDescriptor(metadata, hiveEngineEnabled)); // set to pickup any schema changes
++      StorageDescriptor newsd = storageDescriptor(metadata, hiveEngineEnabled);
++      newsd.getSerdeInfo().setParameters(tbl.getSd().getSerdeInfo().getParameters());
++      tbl.setSd(newsd); // set to pickup any schema changes
+
+       String metadataLocation = tbl.getParameters().get(METADATA_LOCATION_PROP);
+       String baseMetadataLocation = base != null ? base.metadataFileLocation() : null;
+@@ -393,6 +396,7 @@
+   @VisibleForTesting
+   void persistTable(Table hmsTable, boolean updateHiveTable)
+       throws TException, InterruptedException {
++    hmsTable.getSd().setCols(Collections.singletonList(new FieldSchema("col", "array<string>", "")));
+     if (updateHiveTable) {
+       metaClients.run(
+           client -> {
+@@ -468,7 +472,7 @@
+     }
+
+     // remove any props from HMS that are no longer present in Iceberg table props
+-    obsoleteProps.forEach(parameters::remove);
++    // obsoleteProps.forEach(parameters::remove);
+
+     parameters.put(TABLE_TYPE_PROP, ICEBERG_TABLE_TYPE_VALUE.toUpperCase(Locale.ENGLISH));
+     parameters.put(METADATA_LOCATION_PROP, newMetadataLocation);

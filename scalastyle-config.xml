@@ -92,7 +92,7 @@ This file is divided into 3 sections:
  */
 
 \E)?\Q/*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (\E\d{4}\Q) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -295,6 +295,32 @@ This file is divided into 3 sections:
     ]]></customMessage>
   </check>
 
+  <check customId="typedlit" level="error" class="org.scalastyle.file.RegexChecker" enabled="true">
+    <parameters><parameter name="regex">typed[lL]it</parameter></parameters>
+    <customMessage><![CDATA[
+      'typedlit' or `typedLit` uses ScalaReflection to resolve the data type which is inefficient in concurrent
+      queries. In most cases, you can use `lit` or `new Column(Literal(...))` instead.
+      If you must use it, wrap the code block with
+      // scalastyle:off typedlit
+      typedLit("foo")
+      // scalastyle:on typedlit
+    ]]></customMessage>
+  </check>
+
+  <check customId="sparkimplicits" level="error" class="org.scalastyle.file.RegexChecker" enabled="true">
+    <parameters><parameter name="regex">spark(Session)?.implicits._</parameter></parameters>
+    <customMessage><![CDATA[
+      When importing `spark.implicits._`, it's easy to create an `Encoder` unintentionally which can hurt
+      the performance a lot in concurrent queries. You can use `import com.databricks.sql.transaction.tahoe.implicits._`
+      instead to use `Encoder`s we cache for reusing. If this doesn't work, you can define new `Encoder`s
+      in `DeltaEncoders` to cache and reuse them.
+      If you must use it, wrap the code block with
+      // scalastyle:off sparkimplicits
+      import spark.implicits._
+      // scalastyle:on sparkimplicits
+    ]]></customMessage>
+  </check>
+
   <check customId="throwerror" level="error" class="org.scalastyle.file.RegexChecker" enabled="true">
     <parameters><parameter name="regex">throw new \w+Error\(</parameter></parameters>
     <customMessage><![CDATA[
@@ -303,6 +329,18 @@ This file is divided into 3 sections:
       // scalastyle:off throwerror
       throw new XXXError(...)
       // scalastyle:on throwerror
+    ]]></customMessage>
+  </check>
+
+  <check customId="countstring" level="error" class="org.scalastyle.file.RegexChecker" enabled="true">
+    <parameters><parameter name="regex">count\("</parameter></parameters>
+    <customMessage><![CDATA[
+      'count(String)' returns 'TypedColumn' and touches ScalaReflection which is inefficient in concurrent queries.
+      In most cases, you don't need a 'TypedColumn' and you should use 'count(new Column("..."))' instead.
+      If you must use it, wrap the code block with
+      // scalastyle:off countstring
+      count("foo")
+      // scalastyle:on countstring
     ]]></customMessage>
   </check>
 

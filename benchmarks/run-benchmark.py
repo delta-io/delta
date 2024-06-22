@@ -19,14 +19,14 @@
 import argparse
 from scripts.benchmarks import *
 
-delta_version = "1.0.0"
+delta_version = "2.3.0"
 
 # Benchmark name to their specifications. See the imported benchmarks.py for details of benchmark.
 
 benchmarks = {
     "test":
         DeltaBenchmarkSpec(
-            delta_version="1.0.0",
+            delta_version=delta_version,
             benchmark_main_class="benchmark.TestBenchmark",
             main_class_args=["--test-param", "value"],
         ),
@@ -42,6 +42,14 @@ benchmarks = {
     "tpcds-3tb-delta": DeltaTPCDSBenchmarkSpec(delta_version=delta_version, scale_in_gb=3000),
     "tpcds-1gb-parquet": ParquetTPCDSBenchmarkSpec(scale_in_gb=1),
     "tpcds-3tb-parquet": ParquetTPCDSBenchmarkSpec(scale_in_gb=3000),
+
+    # Merge data load.
+    "merge-1gb-delta-load": DeltaMergeDataLoadSpec(delta_version=delta_version, scale_in_gb=1),
+    "merge-3tb-delta-load": DeltaMergeDataLoadSpec(delta_version=delta_version, scale_in_gb=3000),
+
+    # Merge benchmark.
+    "merge-1gb-delta": DeltaMergeBenchmarkSpec(delta_version=delta_version, scale_in_gb=1),
+    "merge-3tb-delta": DeltaMergeBenchmarkSpec(delta_version=delta_version, scale_in_gb=3000),
 
 }
 
@@ -60,6 +68,8 @@ if __name__ == "__main__":
 
     """
 
+
+def parse_args():
     # Parse cmd line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -96,29 +106,48 @@ if __name__ == "__main__":
         default="hadoop",
         help="The user which is used to communicate with the master via SSH.")
 
-    args, passthru_args = parser.parse_known_args()
+    parsed_args, parsed_passthru_args = parser.parse_known_args()
+    return parsed_args, parsed_passthru_args
+
+
+def run_single_benchmark(benchmark_name, benchmark_spec, other_args):
+    benchmark_spec.append_spark_confs(other_args.spark_conf)
+    benchmark_spec.append_spark_conf(delta_log_store_classes.get(other_args.cloud_provider))
+    benchmark_spec.append_main_class_args(passthru_args)
+    print("------")
+    print("Benchmark spec to run:\n" + str(vars(benchmark_spec)))
+    print("------")
+
+    benchmark = Benchmark(benchmark_name, benchmark_spec,
+                          use_spark_shell=True, local_delta_dir=other_args.use_local_delta_dir)
+    benchmark_dir = os.path.dirname(os.path.abspath(__file__))
+    with WorkingDirectory(benchmark_dir):
+        benchmark.run(other_args.cluster_hostname, other_args.ssh_id_file, other_args.ssh_user)
+
+
+if __name__ == "__main__":
+    """
+    Run benchmark on a cluster using ssh.
+
+    Example usage:
+
+    ./run-benchmark.py --cluster-hostname <hostname> -i <pem file> --ssh-user <ssh user> --cloud-provider <cloud provider> --benchmark test
+
+    """
+    args, passthru_args = parse_args()
 
     if args.resume_benchmark is not None:
         Benchmark.wait_for_completion(
             args.cluster_hostname, args.ssh_id_file, args.resume_benchmark, args.ssh_user)
         exit(0)
 
-    # Create and run the benchmark
-    if args.benchmark in benchmarks:
-        benchmark_spec = benchmarks[args.benchmark]
-    else:
-        raise Exception("Must provide one of the predefined benchmark names:\n" +
-                        "\n".join(benchmarks.keys()) +
-                        "\nSee this python file for more details.")
-    benchmark_spec.append_spark_confs(args.spark_conf)
-    benchmark_spec.append_spark_conf(delta_log_store_classes.get(args.cloud_provider))
-    benchmark_spec.append_main_class_args(passthru_args)
-    print("------")
-    print("Benchmark spec to run:\n" + str(vars(benchmark_spec)))
-    print("------")
-
-    benchmark = Benchmark(args.benchmark, benchmark_spec,
-                          use_spark_shell=True, local_delta_dir=args.use_local_delta_dir)
-    benchmark_dir = os.path.dirname(os.path.abspath(__file__))
-    with WorkingDirectory(benchmark_dir):
-        benchmark.run(args.cluster_hostname, args.ssh_id_file, args.ssh_user)
+    benchmark_names = args.benchmark.split(",")
+    for benchmark_name in benchmark_names:
+        # Create and run the benchmark
+        if benchmark_name in benchmarks:
+            run_single_benchmark(benchmark_name, benchmarks[benchmark_name], args)
+        else:
+            raise Exception("Could not find benchmark spec for '" + benchmark_name + "'." +
+                            "Must provide one of the predefined benchmark names:\n" +
+                            "\n".join(benchmarks.keys()) +
+                            "\nSee this python file for more details.")

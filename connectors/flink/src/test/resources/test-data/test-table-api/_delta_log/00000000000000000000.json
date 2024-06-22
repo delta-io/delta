@@ -1,0 +1,5 @@
+{"commitInfo":{"timestamp":1641940596957,"operation":"STREAMING UPDATE","operationParameters":{"mode":"Append","partitionBy":"[]"},"isolationLevel":"Serializable","isBlindAppend":true,"operationMetrics":{"numOutputRows":"16","numAddedFiles":"16","numOutputBytes":"29401","numRemovedFiles":"0"},"engineInfo":"flink-delta-connector/0.2.1 Delta-Standalone/0.2.1"}}
+{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}
+{"metaData":{"id":"eaf79abd-f74f-4618-a013-afd3a69c7ad2","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"col1\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"col2\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"col3\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":[],"configuration":{},"createdTime":1641940596848}}
+{"txn":{"appId":"52a2b765-3479-4843-b728-1af202bc98c6","version":1,"lastUpdated":1641940596928}}
+{"add":{"path":"part-c55ac642-c3c2-45a7-b916-8e34304f2d51-0.snappy.parquet","partitionValues":{},"size":1838,"modificationTime":1641940595992,"dataChange":true}}

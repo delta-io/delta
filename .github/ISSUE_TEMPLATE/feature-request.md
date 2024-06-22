@@ -8,6 +8,18 @@ title: '[Feature Request]'
 
 ## Feature request
 
+#### Which Delta project/connector is this regarding?
+<!--
+Please add the component selected below to the beginning of the issue title
+For example: [Feature Request][Spark] Title of my issue
+-->
+
+- [ ] Spark
+- [ ] Standalone
+- [ ] Flink
+- [ ] Kernel
+- [ ] Other (fill in here)
+
 ### Overview
 
 <!-- Provide a high-level description of the feature request. -->

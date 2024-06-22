@@ -16,11 +16,11 @@
 
 package benchmark
 
-import scala.collection.mutable
 import java.net.URI
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
 
+import scala.collection.mutable
 import scala.language.postfixOps
 import scala.sys.process._
 import scala.util.control.NonFatal
@@ -31,7 +31,9 @@ import com.fasterxml.jackson.databind.{DeserializationFeature, MapperFeature, Ob
 import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
 
 import org.apache.spark.SparkUtils
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 
 trait BenchmarkConf extends Product {
   /** Cloud path where benchmark data is going to be written. */
@@ -106,8 +108,14 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
     log("Spark started with configuration:\n" +
       s.conf.getAll.toSeq.sortBy(_._1).map(x => x._1 + ": " + x._2).mkString("\t", "\n\t", "\n"))
     s.sparkContext.setLogLevel("WARN")
+    sys.props.update("spark.ui.proxyBase", "")
     s
   }
+
+  val extraConfs: Map[String, String] = Map(
+    SQLConf.BROADCAST_TIMEOUT.key -> "7200",
+    SQLConf.CROSS_JOINS_ENABLED.key -> "true"
+  )
 
   private val queryResults = new mutable.ArrayBuffer[QueryResult]
   private val extraMetrics = new mutable.HashMap[String, Double]
@@ -129,7 +137,7 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
       queryName: String = "",
       iteration: Option[Int] = None,
       printRows: Boolean = false,
-      ignoreError: Boolean = true): DataFrame = synchronized {
+      ignoreError: Boolean = true): Seq[Row] = synchronized {
     val iterationStr = iteration.map(i => s" - iteration $i").getOrElse("")
     var banner = s"$queryName$iterationStr"
     if (banner.trim.isEmpty) {
@@ -149,7 +157,34 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
       queryResults += QueryResult(queryName, iteration, Some(durationMs), errorMsg = None)
       log(s"END took $durationMs ms: $banner")
       log("=" * 80)
-      df
+      r
+    } catch {
+      case NonFatal(e) =>
+        log(s"ERROR: $banner\n${e.getMessage}")
+        queryResults +=
+          QueryResult(queryName, iteration, durationMs = None, errorMsg = Some(e.getMessage))
+        if (!ignoreError) throw e else Nil
+    }
+  }
+
+
+  protected def runFunc(
+      queryName: String = "",
+      iteration: Option[Int] = None,
+      ignoreError: Boolean = true)(f: => Unit): Unit = synchronized {
+    val iterationStr = iteration.map(i => s" - iteration $i").getOrElse("")
+    var banner = s"$queryName$iterationStr"
+    log("=" * 80)
+    log(s"START: $banner")
+    spark.sparkContext.setJobGroup(banner, banner, interruptOnCancel = true)
+    try {
+      val before = System.nanoTime()
+      f
+      val after = System.nanoTime()
+      val durationMs = (after - before) / (1000 * 1000)
+      queryResults += QueryResult(queryName, iteration, Some(durationMs), errorMsg = None)
+      log(s"END took $durationMs ms: $banner")
+      log("=" * 80)
     } catch {
       case NonFatal(e) =>
         log(s"ERROR: $banner\n${e.getMessage}")
@@ -158,6 +193,7 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
         if (!ignoreError) throw e else spark.emptyDataFrame
     }
   }
+
 
   protected def reportExtraMetric(name: String, value: Double): Unit = synchronized {
     extraMetrics += (name -> value)
@@ -202,16 +238,18 @@ abstract class Benchmark(private val conf: BenchmarkConf) {
   }
 
   private def uploadFile(localPath: String, targetPath: String): Unit = {
+    val targetUri = new URI(targetPath)
+    val sanitizedTargetPath = targetUri.normalize().toString
+    val scheme = new URI(targetPath).getScheme
     try {
-      val scheme = new URI(targetPath).getScheme
-      if (scheme.equals("s3")) s"aws s3 cp $localPath $targetPath/" !
-      else if (scheme.equals("gs")) s"gsutil cp $localPath $targetPath/" !
+      if (scheme.equals("s3")) s"aws s3 cp $localPath $sanitizedTargetPath/" !
+      else if (scheme.equals("gs")) s"gsutil cp $localPath $sanitizedTargetPath/" !
       else throw new IllegalArgumentException(String.format("Unsupported scheme %s.", scheme))
 
-      println(s"FILE UPLOAD: Uploaded $localPath to $targetPath")
+      println(s"FILE UPLOAD: Uploaded $localPath to $sanitizedTargetPath")
     } catch {
       case NonFatal(e) =>
-        log(s"FILE UPLOAD: Failed to upload $localPath to $targetPath: $e")
+        log(s"FILE UPLOAD: Failed to upload $localPath to $sanitizedTargetPath: $e")
     }
   }
 

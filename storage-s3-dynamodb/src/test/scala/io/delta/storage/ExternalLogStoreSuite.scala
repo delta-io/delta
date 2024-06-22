@@ -41,11 +41,11 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
   )
 
   def getDeltaVersionPath(logDir: File, version: Int): Path = {
-    FileNames.deltaFile(new Path(logDir.toURI), version)
+    FileNames.unsafeDeltaFile(new Path(logDir.toURI), version)
   }
 
   def getFailingDeltaVersionPath(logDir: File, version: Int): Path = {
-    FileNames.deltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), version)
+    FileNames.unsafeDeltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), version)
   }
 
   test("single write") {
@@ -82,6 +82,51 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     }
   }
 
+  test("write N fails if overwrite=false and N already exists in FileSystem " +
+    "and N does not exist in external store") {
+    withTempLogDir { tempLogDir =>
+      val delta0 = getDeltaVersionPath(tempLogDir, 0)
+      val delta1_a = getDeltaVersionPath(tempLogDir, 1)
+      val delta1_b = getDeltaVersionPath(tempLogDir, 1)
+
+      val store = createLogStore(spark)
+      store.write(delta0, Iterator("zero"), overwrite = false, sessionHadoopConf)
+      store.write(delta1_a, Iterator("one_a"), overwrite = false, sessionHadoopConf)
+
+      // Pretend that BaseExternalLogStore.getExpirationDelaySeconds() seconds have
+      // transpired and that the external store has run TTL cleanup.
+      MemoryLogStore.hashMap.clear();
+
+      val e = intercept[java.nio.file.FileAlreadyExistsException] {
+        store.write(delta1_b, Iterator("one_b"), overwrite = false, sessionHadoopConf)
+      }
+
+      assert(e.getMessage.contains(delta1_b.toString))
+    }
+  }
+
+  test("write N fails and does not write to external store if overwrite=false and N " +
+    "already exists in FileSystem and N already exists in external store") {
+    withTempLogDir { tempLogDir =>
+      val delta0 = getDeltaVersionPath(tempLogDir, 0)
+      val delta1_a = getDeltaVersionPath(tempLogDir, 1)
+      val delta1_b = getDeltaVersionPath(tempLogDir, 1)
+
+      val store = createLogStore(spark)
+      store.write(delta0, Iterator("zero"), overwrite = false, sessionHadoopConf)
+      store.write(delta1_a, Iterator("one_a"), overwrite = false, sessionHadoopConf)
+
+      assert(MemoryLogStore.hashMap.size() == 2)
+
+      val e = intercept[java.nio.file.FileAlreadyExistsException] {
+        store.write(delta1_b, Iterator("one_b"), overwrite = false, sessionHadoopConf)
+      }
+
+      assert(e.getMessage.contains(delta1_b.toString))
+      assert(MemoryLogStore.hashMap.size() == 2)
+    }
+  }
+
   test("write N+1 fails if N doesn't exist in external store or FileSystem") {
     withTempLogDir { tempLogDir =>
       val store = createLogStore(spark)
@@ -91,7 +136,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       val e = intercept[java.nio.file.FileSystemException] {
         store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
       }
-      assert(e.getMessage == s"previous commit $delta0 doesn't exist")
+      assert(e.getMessage == s"previous commit $delta0 doesn't exist on the file system but does in the external log store")
     }
   }
 
@@ -109,7 +154,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       val e = intercept[java.nio.file.FileSystemException] {
         store.write(delta1, Iterator("one"), overwrite = false, sessionHadoopConf)
       }
-      assert(e.getMessage == s"previous commit $delta0 doesn't exist")
+      assert(e.getMessage == s"previous commit $delta0 doesn't exist on the file system but does in the external log store")
     }
   }
 
@@ -191,7 +236,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       }.getMessage
 
       val tablePath = path.getParent.getParent
-      assert(e == s"Old entries for table $tablePath still exist in the external store")
+      assert(e == s"Old entries for table $tablePath still exist in the external log store")
     }
   }
 
