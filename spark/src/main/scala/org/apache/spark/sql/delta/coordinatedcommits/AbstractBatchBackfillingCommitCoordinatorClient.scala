@@ -23,18 +23,21 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.TransactionExecutionObserver
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LoggingShims, MDC}
 
 /**
  * An abstract [[CommitCoordinatorClient]] which triggers backfills every n commits.
  * - every commit version which satisfies `commitVersion % batchSize == 0` will trigger a backfill.
  */
-trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorClient with Logging {
+trait AbstractBatchBackfillingCommitCoordinatorClient
+  extends CommitCoordinatorClient
+    with LoggingShims {
 
   /**
    * Size of batch that should be backfilled. So every commit version which satisfies
@@ -69,12 +72,15 @@ trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorC
       throw CommitFailedException(
         retryable = false, conflict = false, message = "Commit version 0 must go via filesystem.")
     }
-    logInfo(s"Attempting to commit version $commitVersion on table $tablePath")
+    logInfo(log"Attempting to commit version " +
+      log"${MDC(DeltaLogKeys.VERSION, commitVersion)} on table " +
+      log"${MDC(DeltaLogKeys.PATH, tablePath)}")
     val fs = logPath.getFileSystem(hadoopConf)
     if (batchSize <= 1) {
       // Backfill until `commitVersion - 1`
-      logInfo(s"Making sure commits are backfilled until ${commitVersion - 1} version for" +
-        s" table ${tablePath.toString}")
+      logInfo(log"Making sure commits are backfilled until " +
+        log"${MDC(DeltaLogKeys.VERSION, commitVersion - 1)} version for" +
+        log" table ${MDC(DeltaLogKeys.PATH, tablePath.toString)}")
       backfillToVersion(
         logStore,
         hadoopConf,
@@ -110,8 +116,9 @@ trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorC
       val newCommit = commitResponse.getCommit.copy(fileStatus = targetFileStatus)
       commitResponse = commitResponse.copy(commit = newCommit)
     } else if (commitVersion % batchSize == 0 || mcToFsConversion) {
-      logInfo(s"Making sure commits are backfilled till $commitVersion version for" +
-        s"table ${tablePath.toString}")
+      logInfo(log"Making sure commits are backfilled till " +
+        log"${MDC(DeltaLogKeys.VERSION, commitVersion)} " +
+        log"version for table ${MDC(DeltaLogKeys.PATH, tablePath.toString)}")
       backfillToVersion(
         logStore,
         hadoopConf,
@@ -119,7 +126,8 @@ trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorC
         coordinatedCommitsTableConf,
         commitVersion)
     }
-    logInfo(s"Commit $commitVersion done successfully on table $tablePath")
+    logInfo(log"Commit ${MDC(DeltaLogKeys.VERSION, commitVersion)} done successfully on table " +
+      log"${MDC(DeltaLogKeys.PATH, tablePath)}")
     commitResponse
   }
 
@@ -163,7 +171,8 @@ trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorC
       version: Long,
       fileStatus: FileStatus): Unit = {
     val targetFile = FileNames.unsafeDeltaFile(logPath, version)
-    logInfo(s"Backfilling commit ${fileStatus.getPath} to ${targetFile.toString}")
+    logInfo(log"Backfilling commit ${MDC(DeltaLogKeys.PATH, fileStatus.getPath)} to " +
+      log"${MDC(DeltaLogKeys.PATH2, targetFile.toString)}")
     val commitContentIterator = logStore.readAsIterator(fileStatus, hadoopConf)
     try {
       logStore.write(
@@ -174,7 +183,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorC
       registerBackfill(logPath, version)
     } catch {
       case _: FileAlreadyExistsException =>
-        logInfo(s"The backfilled file $targetFile already exists.")
+        logInfo(log"The backfilled file ${MDC(DeltaLogKeys.FILE_NAME, targetFile)} already exists.")
     } finally {
       commitContentIterator.close()
     }

@@ -20,6 +20,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
@@ -27,6 +28,7 @@ import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFi
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.Utils
 
@@ -293,11 +295,12 @@ object CoordinatedCommitsUtils extends DeltaLogging {
           actionsIter,
           overwrite,
           hadoopConf)
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} backfilled to path" +
-          s" ${backfilledFilePath.toString}.")
+        logInfo(log"Delta file ${MDC(DeltaLogKeys.PATH, unbackfilledDeltaFile.getPath.toString)} " +
+          log"backfilled to path ${MDC(DeltaLogKeys.PATH2, backfilledFilePath.toString)}.")
       } else {
         numAlreadyBackfilledFiles += 1
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} already backfilled.")
+        logInfo(log"Delta file ${MDC(DeltaLogKeys.PATH, unbackfilledDeltaFile.getPath.toString)} " +
+          log"already backfilled.")
       }
     }
     recordDeltaEvent(

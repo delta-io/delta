@@ -20,9 +20,10 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.FileMetadataMaterializationTracker.TaskLevelPermitAllocator
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LoggingShims, MDC}
 
 /**
  * An instance of this class tracks and controls the materialization usage of a single command
@@ -40,7 +41,7 @@ import org.apache.spark.internal.Logging
  * Accessed by the thread materializing files and by the thread releasing resources after execution.
  *
  */
-class FileMetadataMaterializationTracker extends Logging {
+class FileMetadataMaterializationTracker extends LoggingShims {
 
   /** The number of permits allocated from the global file materialization semaphore */
   @volatile private var numPermitsFromSemaphore: Int = 0
@@ -79,7 +80,8 @@ class FileMetadataMaterializationTracker extends Logging {
       val startTime = System.currentTimeMillis()
       FileMetadataMaterializationTracker.overAllocationLock.acquire(1)
       val waitTime = System.currentTimeMillis() - startTime
-      logInfo(s"Acquired over allocation lock for this query in $waitTime ms")
+      logInfo(log"Acquired over allocation lock for this query in " +
+        log"${MDC(DeltaLogKeys.TIME_MS, waitTime)} ms")
       materializationMetrics.overAllocWaitTimeMs += waitTime
       materializationMetrics.overAllocWaitCount += 1
       materializationMetrics.overAllocFilesMaterializedCount += 1

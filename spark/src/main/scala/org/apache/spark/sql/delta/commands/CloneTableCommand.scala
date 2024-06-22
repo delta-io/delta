@@ -25,9 +25,11 @@ import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.Protocol.extractAutomaticallyEnabledFeatures
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.convert.{ConvertTargetTable, ConvertUtils}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
@@ -88,7 +90,8 @@ case class CloneTableCommand(
     }
 
     /** Log clone command information */
-    logInfo("Cloning " + sourceTable.description + s" to $targetPath")
+    logInfo(log"Cloning ${MDC(DeltaLogKeys.TABLE_DESC, sourceTable.description)} to " +
+      log"${MDC(DeltaLogKeys.PATH, targetPath)}")
 
     // scalastyle:off deltahadoopconfiguration
     val hdpConf = sparkSession.sessionState.newHadoopConf()

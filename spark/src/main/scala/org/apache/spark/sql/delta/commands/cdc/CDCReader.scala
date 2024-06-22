@@ -24,12 +24,14 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
@@ -300,8 +302,8 @@ trait CDCReaderImpl extends DeltaLogging {
     }
 
     logInfo(
-      s"startingVersion: ${startingVersion.version}, " +
-        s"endingVersion: ${endingVersionOpt.map(_.version)}")
+      log"startingVersion: ${MDC(DeltaLogKeys.START_VERSION, startingVersion.version)}, " +
+      log"endingVersion: ${MDC(DeltaLogKeys.END_VERSION, endingVersionOpt.map(_.version))}")
 
     val startingSnapshot = snapshotToUse.deltaLog.getSnapshotAt(startingVersion.version)
     val columnMappingEnabledAtStartingVersion =
