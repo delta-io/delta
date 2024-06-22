@@ -30,8 +30,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import static org.apache.parquet.filter2.predicate.FilterApi.*;
 
-import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.*;
 
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
@@ -156,9 +156,11 @@ public class ParquetFilterUtils {
             case "or":
                 return convertOrToParquetFilter(parquetFieldMap, deltaPredicate);
             case "is_null":
-                return convertIsNullIsNotNull(parquetFieldMap, deltaPredicate, false /* isNotNull */);
+                return convertIsNullIsNotNull(
+                        parquetFieldMap, deltaPredicate, false /* isNotNull */);
             case "is_not_null":
-                return convertIsNullIsNotNull(parquetFieldMap, deltaPredicate, true /* isNotNull */);
+                return convertIsNullIsNotNull(
+                        parquetFieldMap, deltaPredicate, true /* isNotNull */);
             default:
                 return visitUnsupported(deltaPredicate, name + " is not a supported predicate.");
         }
