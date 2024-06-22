@@ -28,9 +28,10 @@ import org.apache.parquet.schema.*;
 import org.apache.parquet.schema.LogicalTypeAnnotation.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import static org.apache.parquet.filter2.predicate.FilterApi.*;
 
-import io.delta.kernel.expressions.*;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
@@ -154,6 +155,10 @@ public class ParquetFilterUtils {
                 return convertAndToParquetFilter(parquetFieldMap, deltaPredicate);
             case "or":
                 return convertOrToParquetFilter(parquetFieldMap, deltaPredicate);
+            case "is_null":
+                return convertIsNullIsNotNull(parquetFieldMap, deltaPredicate, false /* isNotNull */);
+            case "is_not_null":
+                return convertIsNullIsNotNull(parquetFieldMap, deltaPredicate, true /* isNotNull */);
             default:
                 return visitUnsupported(deltaPredicate, name + " is not a supported predicate.");
         }
@@ -206,13 +211,13 @@ public class ParquetFilterUtils {
 
         switch (parquetType.getPrimitiveTypeName()) {
             case BOOLEAN:
-                BooleanColumn booleanColumn = FilterApi.booleanColumn(columnPath);
+                BooleanColumn booleanColumn = booleanColumn(columnPath);
                 if ("=".equals(comparator)) { // Only = is supported for boolean
                     return Optional.of(FilterApi.eq(booleanColumn, getBoolean(literal)));
                 }
                 break;
             case INT32:
-                IntColumn intColumn = FilterApi.intColumn(columnPath);
+                IntColumn intColumn = intColumn(columnPath);
                 switch (comparator) {
                     case "=":
                         return Optional.of(FilterApi.eq(intColumn, getInt(literal)));
@@ -227,7 +232,7 @@ public class ParquetFilterUtils {
                 }
                 break;
             case INT64:
-                LongColumn longColumn = FilterApi.longColumn(columnPath);
+                LongColumn longColumn = longColumn(columnPath);
                 switch (comparator) {
                     case "=":
                         return Optional.of(FilterApi.eq(longColumn, getLong(literal)));
@@ -242,7 +247,7 @@ public class ParquetFilterUtils {
                 }
                 break;
             case FLOAT:
-                FloatColumn floatColumn = FilterApi.floatColumn(columnPath);
+                FloatColumn floatColumn = floatColumn(columnPath);
                 switch (comparator) {
                     case "=":
                         return Optional.of(FilterApi.eq(floatColumn, getFloat(literal)));
@@ -257,7 +262,7 @@ public class ParquetFilterUtils {
                 }
                 break;
             case DOUBLE:
-                DoubleColumn doubleColumn = FilterApi.doubleColumn(columnPath);
+                DoubleColumn doubleColumn = doubleColumn(columnPath);
                 switch (comparator) {
                     case "=":
                         return Optional.of(FilterApi.eq(doubleColumn, getDouble(literal)));
@@ -272,7 +277,7 @@ public class ParquetFilterUtils {
                 }
                 break;
             case BINARY:
-                BinaryColumn binaryColumn = FilterApi.binaryColumn(columnPath);
+                BinaryColumn binaryColumn = binaryColumn(columnPath);
                 Binary binary = getBinary(literal);
                 switch (comparator) {
                     case "=":
@@ -332,6 +337,61 @@ public class ParquetFilterUtils {
             return leftFilter;
         }
         return rightFilter;
+    }
+
+    private static Optional<FilterPredicate> convertIsNullIsNotNull(
+            Map<Column, ParquetField> parquetFieldMap,
+            Predicate deltaPredicate,
+            boolean isNotNull) {
+        Expression child = getUnaryChild(deltaPredicate);
+        if (!(child instanceof Column)) {
+            return visitUnsupported(deltaPredicate, "IS NULL predicate must have a column input.");
+        }
+
+        Column column = (Column) child;
+        ParquetField parquetField = parquetFieldMap.get(column);
+        if (parquetField == null) {
+            return visitUnsupported(
+                    deltaPredicate,
+                    "Column used in predicate does not exist in the parquet file.");
+        }
+
+        String columnPath = ColumnPath.get(column.getNames()).toDotString();
+        // Parquet filter keeps records if their value is equal to the provided value.
+        // Nulls are treated the same way the java programming language does.
+        // For example: eq(column, null) will keep all records whose value is null. eq(column, 7)
+        // will keep all records whose value is 7, and will drop records whose value is null
+        // NOTE: this is different from how some query languages handle null.
+        switch (parquetField.primitiveType.getPrimitiveTypeName()) {
+            case BOOLEAN:
+                BooleanColumn booleanColumn = booleanColumn(columnPath);
+                return Optional.of(isNotNull ?
+                        FilterApi.notEq(booleanColumn, null) : FilterApi.eq(booleanColumn, null));
+            case INT32:
+                IntColumn intColumn = intColumn(columnPath);
+                return Optional.of(isNotNull ?
+                        FilterApi.notEq(intColumn, null) : FilterApi.eq(intColumn, null));
+            case INT64:
+                LongColumn longColumn = longColumn(columnPath);
+                return Optional.of(isNotNull ?
+                        FilterApi.notEq(longColumn, null) : FilterApi.eq(longColumn, null));
+            case FLOAT:
+                FloatColumn floatColumn = floatColumn(columnPath);
+                return Optional.of(isNotNull ?
+                        FilterApi.notEq(floatColumn, null) : FilterApi.eq(floatColumn, null));
+            case DOUBLE:
+                DoubleColumn doubleColumn = doubleColumn(columnPath);
+                return Optional.of(isNotNull ?
+                        FilterApi.notEq(doubleColumn, null) : FilterApi.eq(doubleColumn, null));
+            case BINARY:
+                BinaryColumn binaryColumn = binaryColumn(columnPath);
+                return Optional.of(isNotNull ?
+                        FilterApi.notEq(binaryColumn, null) : FilterApi.eq(binaryColumn, null));
+            default:
+                return visitUnsupported(
+                        deltaPredicate,
+                        "Unsupported column type: " + parquetField.primitiveType);
+        }
     }
 
     private static Optional<FilterPredicate> visitUnsupported(
