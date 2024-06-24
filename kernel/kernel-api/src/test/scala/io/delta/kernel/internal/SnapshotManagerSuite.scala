@@ -661,17 +661,17 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       singularCheckpointFileStatuses(Seq(10L))
     testExpectedError[InvalidTableException](
       fileList,
-      expectedErrorMessageContains = "versions ([11, 13]) are not continuous"
+      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
     )
     testExpectedError[InvalidTableException](
       fileList,
       startCheckpoint = Optional.of(10),
-      expectedErrorMessageContains = "versions ([11, 13]) are not continuous"
+      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
     )
     testExpectedError[InvalidTableException](
       fileList,
       versionToLoad = Optional.of(13),
-      expectedErrorMessageContains = "versions ([11, 13]) are not continuous"
+      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
     )
   }
 

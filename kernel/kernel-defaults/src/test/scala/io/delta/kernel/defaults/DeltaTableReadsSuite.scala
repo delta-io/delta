@@ -589,7 +589,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val e = intercept[InvalidTableException] {
       latestSnapshot(goldenTablePath("versions-not-contiguous"))
     }
-    assert(e.getMessage.contains("versions ([0, 2]) are not continuous"))
+    assert(e.getMessage.contains("versions are not continuous: ([0, 2])"))
   }
 
   test("table protocol version greater than reader protocol version") {
