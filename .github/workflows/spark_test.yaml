@@ -49,6 +49,7 @@ jobs:
           # with version containing `-`. In Delta-Spark case, the pypi package generated has the version
           # `-SNAPSHOT` (e.g. `3.3.0-SNAPSHOT`) as the package version is built is using the versin from
           # `version.sbt` file.
+          sudo apt install list python3-pip
           sudo apt install python3-pip=23.2 --fix-missing
           sudo pip3 install pipenv==2021.5.29
           curl https://pyenv.run | bash
