@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.engine;
 
 import java.io.*;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import static java.lang.String.format;
@@ -190,7 +189,7 @@ public class DefaultJsonHandler implements JsonHandler {
             String filePath,
             CloseableIterator<Row> data,
             boolean overwrite) throws IOException {
-        Path path = new Path(URI.create(filePath));
+        Path path = new Path(filePath);
         LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
         try {
             logStore.write(

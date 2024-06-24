@@ -239,7 +239,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       assert(scanFileRows.length == 1)
       val addFileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRows.head)
       // get the relative path to compare
-      assert(new File(addFileStatus.getPath).getName == "special%20p@%23h")
+      assert(new File(addFileStatus.getPath).getName == "special p@#h")
     }
   }
 
