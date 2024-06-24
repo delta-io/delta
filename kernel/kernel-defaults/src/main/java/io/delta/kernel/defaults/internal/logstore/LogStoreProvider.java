@@ -93,11 +93,7 @@ public class LogStoreProvider {
      */
     private static Class<? extends LogStore> getLogStoreClass(String logStoreClassName)
             throws ClassNotFoundException {
-        return Class.forName(
-                        logStoreClassName,
-                        true /* initialize */,
-                        Thread.currentThread().getContextClassLoader())
-                .asSubclass(LogStore.class);
+        return Class.forName(logStoreClassName).asSubclass(LogStore.class);
     }
 
     private static LogStore createLogStore(
