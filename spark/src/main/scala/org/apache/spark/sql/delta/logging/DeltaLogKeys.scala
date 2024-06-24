@@ -124,6 +124,7 @@ trait DeltaLogKeysBase {
   case object TABLE_NAME extends LogKeyShims
   case object TAG extends LogKeyShims
   case object TBL_PROPERTIES extends LogKeyShims
+  case object THREAD_NAME extends LogKeyShims
   case object TIMESTAMP extends LogKeyShims
   case object TIMESTAMP2 extends LogKeyShims
   case object TIME_MS extends LogKeyShims
