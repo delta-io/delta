@@ -4172,3 +4172,30 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 }
 
 class DeltaProtocolVersionSuite extends DeltaProtocolVersionSuiteBase
+  with DeltaProtocolVersionSuiteEdge {
+
+  test("TEST") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.feature.${TestRemovableWriterWithHistoryTruncationFeature.name}='enabled'
+           |)""".stripMargin)
+
+      spark.range(100).write.format("delta").mode("overwrite").save(dir.getCanonicalPath)
+
+      val a = deltaLog.update()
+
+      AlterTableDropFeatureDeltaCommand(
+        table = DeltaTableV2(spark, deltaLog.dataPath),
+        featureName = TestRemovableWriterWithHistoryTruncationFeature.name,
+        truncateHistory = false).run(spark)
+
+      assert(deltaLog.update().protocol === Protocol(1, 1))
+    }
+  }
+
+
+}

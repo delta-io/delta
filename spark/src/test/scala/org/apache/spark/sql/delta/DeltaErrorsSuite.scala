@@ -1600,7 +1600,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
       }
       checkErrorMessage(e, Some("DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED"),
-        Some("0AKDE"), Some("History truncation is only relevant for reader features."))
+        Some("0AKDE"), Some("The particular feature does not require history truncation."))
     }
     {
       val logRetention = DeltaConfigs.LOG_RETENTION

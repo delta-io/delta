@@ -156,7 +156,7 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
 
 /**
  * A trait indicating a feature can be removed. Classes that extend the trait need to
- * implement the following three functions:
+ * implement the following four functions:
  *
  * a) preDowngradeCommand. This is where all required actions for removing the feature are
  *    implemented. For example, to remove the DVs feature we need to remove metadata config
@@ -172,12 +172,20 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
  *    the validation is repeated against the winning txn snapshot. As soon as the protocol
  *    downgrade succeeds, all subsequent interleaved txns are aborted.
  *
- * c) actionUsesFeature. For reader+writer features we check whether past versions contain any
- *    traces of the removed feature. This is achieved by calling [[actionUsesFeature]] for
- *    every action of every reachable commit version in the log. Note, a feature may leave traces
- *    in both data and metadata. Depending on the feature, we need to check several types of
- *    actions such as Metadata, AddFile, RemoveFile etc.
- *    Writer features should directly return false.
+ * c) requiresHistoryTruncation. It indicates whether the table history needs to be clear
+ *    of all feature traces before downgrading the protocol. This is by default true
+ *    for all reader+writer features and false for writer features. It needs to be enabled for
+ *    writer features that store metadata in checkpoints. This is in particular for metadata that
+ *    can affect reading behaviour such as row tracking metadata. This is because oblivious clients
+ *    may replace the relevant checkpoint during metadata cleanup.
+ *    WARNING: Disabling [[requiresHistoryTruncation]] for reader+writer features could result to
+ *    incorrect snapshot reconstruction.
+ *
+ * d) actionUsesFeature. For features that require history truncation we verify whether past
+ *    versions contain any traces of the removed feature. This is achieved by calling
+ *    [[actionUsesFeature]] for every action of every reachable commit version in the log.
+ *    Note, a feature may leave traces in both data and metadata. Depending on the feature, we
+ *    need to check several types of actions such as Metadata, AddFile, RemoveFile etc.
  *
  *    WARNING: actionUsesFeature should not check Protocol actions for the feature being removed,
  *    because at the time actionUsesFeature is invoked the protocol downgrade did not happen yet.
@@ -191,6 +199,7 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
 sealed trait RemovableFeature { self: TableFeature =>
   def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand
   def validateRemoval(snapshot: Snapshot): Boolean
+  def requiresHistoryTruncation: Boolean = isReaderWriterFeature
   def actionUsesFeature(action: Action): Boolean
 
   /**
@@ -216,7 +225,7 @@ sealed trait RemovableFeature { self: TableFeature =>
   def historyContainsFeature(
       spark: SparkSession,
       downgradeTxnReadSnapshot: Snapshot): Boolean = {
-    require(isReaderWriterFeature)
+    require(requiresHistoryTruncation)
     val deltaLog = downgradeTxnReadSnapshot.deltaLog
     val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint.getOrElse(0L)
     val toVersion = downgradeTxnReadSnapshot.version
@@ -356,6 +365,7 @@ object TableFeature {
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
         TestRemovableWriterFeatureWithDependency,
+        TestRemovableWriterWithHistoryTruncationFeature,
         TestRemovableLegacyWriterFeature,
         TestRemovableReaderWriterFeature,
         TestRemovableLegacyReaderWriterFeature,
@@ -1011,4 +1021,32 @@ object TestWriterFeatureWithTransitiveDependency
   extends WriterFeature(name = "testWriterFeatureWithTransitiveDependency") {
 
   override def requiredFeatures: Set[TableFeature] = Set(TestFeatureWithDependency)
+}
+
+object TestRemovableWriterWithHistoryTruncationFeature
+  extends WriterFeature(name = "TestRemovableWriterWithHistoryTruncationFeature")
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableWriterWithHistoryTruncationFeature321_"
+
+  override def metadataRequiresFeatureToBeEnabled(
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  /** Make sure the property is not enabled on the table. */
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !snapshot.metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestWriterWithHistoryValidationFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+    case m: Metadata => m.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+    case _ => false
+  }
+
+  override def requiresHistoryTruncation: Boolean = true
 }
