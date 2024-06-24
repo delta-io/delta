@@ -304,7 +304,7 @@ object IcebergTransactionUtils
     minOf(logRetention, vacuumRetention)
   }
 
-  // Converts a calendar interval string to milliseconds
+  // Converts a string of calendar interval to milliseconds
   private def calendarStrToMs(calendarStr: String): Long = {
     val interval = parseCalendarInterval(calendarStr)
     DeltaConfigs.getMilliSeconds(interval)
