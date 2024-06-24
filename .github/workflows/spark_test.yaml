@@ -45,11 +45,11 @@ jobs:
           mkdir -p ~/buf
           tar -xvzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
           rm buf-Linux-x86_64.tar.gz
-          # Pin the pip version to 23.2.1. From version 23.3, `pip` doesn't allow installing python packages
+          # Pin the pip version to 23.2. From version 23.3, `pip` doesn't allow installing python packages
           # with version containing `-`. In Delta-Spark case, the pypi package generated has the version
           # `-SNAPSHOT` (e.g. `3.3.0-SNAPSHOT`) as the package version is built is using the versin from
           # `version.sbt` file.
-          sudo apt install python3-pip=23.2.1 --fix-missing
+          sudo apt install python3-pip=23.2 --fix-missing
           sudo pip3 install pipenv==2021.5.29
           curl https://pyenv.run | bash
           export PATH="~/.pyenv/bin:$PATH"
