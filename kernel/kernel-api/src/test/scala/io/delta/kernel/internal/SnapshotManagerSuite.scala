@@ -20,9 +20,11 @@ import java.util.{Arrays, Collections, Optional}
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.exceptions.InvalidTableException
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, SidecarFile}
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, VectorTestUtils}
@@ -37,70 +39,82 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     SnapshotManager.verifyDeltaVersions(
       Collections.emptyList(),
       Optional.empty(),
-      Optional.empty())
+      Optional.empty(),
+      new Path("/path/to/table"))
     // contiguous versions
     SnapshotManager.verifyDeltaVersions(
       Arrays.asList(1, 2, 3),
       Optional.empty(),
-      Optional.empty())
+      Optional.empty(),
+      new Path("/path/to/table"))
     // contiguous versions with correct `expectedStartVersion` and `expectedStartVersion`
     SnapshotManager.verifyDeltaVersions(
       Arrays.asList(1, 2, 3),
       Optional.empty(),
-      Optional.of(3))
+      Optional.of(3),
+      new Path("/path/to/table"))
     SnapshotManager.verifyDeltaVersions(
       Arrays.asList(1, 2, 3),
       Optional.of(1),
-      Optional.empty())
+      Optional.empty(),
+      new Path("/path/to/table"))
     SnapshotManager.verifyDeltaVersions(
       Arrays.asList(1, 2, 3),
       Optional.of(1),
-      Optional.of(3))
+      Optional.of(3),
+      new Path("/path/to/table"))
     // `expectedStartVersion` or `expectedEndVersion` doesn't match
     intercept[IllegalArgumentException] {
       SnapshotManager.verifyDeltaVersions(
         Arrays.asList(1, 2),
         Optional.of(0),
-        Optional.empty())
+        Optional.empty(),
+        new Path("/path/to/table"))
     }
     intercept[IllegalArgumentException] {
       SnapshotManager.verifyDeltaVersions(
         Arrays.asList(1, 2),
         Optional.empty(),
-        Optional.of(3))
+        Optional.of(3),
+        new Path("/path/to/table"))
     }
     intercept[IllegalArgumentException] {
       SnapshotManager.verifyDeltaVersions(
         Collections.emptyList(),
         Optional.of(0),
-        Optional.empty())
+        Optional.empty(),
+        new Path("/path/to/table"))
     }
     intercept[IllegalArgumentException] {
       SnapshotManager.verifyDeltaVersions(
         Collections.emptyList(),
         Optional.empty(),
-        Optional.of(3))
+        Optional.of(3),
+        new Path("/path/to/table"))
     }
     // non contiguous versions
-    intercept[IllegalStateException] {
+    intercept[InvalidTableException] {
       SnapshotManager.verifyDeltaVersions(
         Arrays.asList(1, 3),
         Optional.empty(),
-        Optional.empty())
+        Optional.empty(),
+        new Path("/path/to/table"))
     }
     // duplicates in versions
-    intercept[IllegalStateException] {
+    intercept[InvalidTableException] {
       SnapshotManager.verifyDeltaVersions(
         Arrays.asList(1, 2, 2, 3),
         Optional.empty(),
-        Optional.empty())
+        Optional.empty(),
+        new Path("/path/to/table"))
     }
     // unsorted versions
-    intercept[IllegalStateException] {
+    intercept[InvalidTableException] {
       SnapshotManager.verifyDeltaVersions(
         Arrays.asList(3, 2, 1),
         Optional.empty(),
-        Optional.empty())
+        Optional.empty(),
+        new Path("/path/to/table"))
     }
   }
 
@@ -631,11 +645,11 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
            Seq(Optional.empty(), Optional.of(10L)): Seq[Optional[java.lang.Long]]) {
       for (startCheckpoint <-
              Seq(Optional.empty(), Optional.of(10L)): Seq[Optional[java.lang.Long]]) {
-        testExpectedError[IllegalStateException](
+        testExpectedError[InvalidTableException](
           files = singularCheckpointFileStatuses(Seq(10L)),
           startCheckpoint = startCheckpoint,
           versionToLoad = versionToLoad,
-          expectedErrorMessageContains = "Could not find any delta files for version 10"
+          expectedErrorMessageContains = "Missing delta file for version 10"
         )
       }
     }
@@ -645,60 +659,47 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     // checkpoint(10), 010.json, 011.json, 013.json
     val fileList = deltaFileStatuses(Seq(10L, 11L)) ++ deltaFileStatuses(Seq(13L)) ++
       singularCheckpointFileStatuses(Seq(10L))
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       fileList,
-      expectedErrorMessageContains = "Versions ([11, 13]) are not continuous"
+      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
     )
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       fileList,
       startCheckpoint = Optional.of(10),
-      expectedErrorMessageContains = "Versions ([11, 13]) are not continuous"
+      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
     )
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       fileList,
       versionToLoad = Optional.of(13),
-      expectedErrorMessageContains = "Versions ([11, 13]) are not continuous"
+      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
     )
   }
 
-  // TODO address the inconsistent behaviors and throw better error messages for corrupt listings?
-  //  (delta-io/delta#2283)
   test("getLogSegmentForVersion: corrupt listing 000.json...009.json + checkpoint(10)") {
     val fileList = deltaFileStatuses((0L until 10L)) ++ singularCheckpointFileStatuses(Seq(10L))
 
     /* ----------  version to load is 15 (greater than latest checkpoint/delta file) ---------- */
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       fileList,
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Could not find any delta files for version 10"
+      expectedErrorMessageContains = "Missing delta file for version 10"
     )
-    testExpectedError[IllegalStateException](
+    testExpectedError[InvalidTableException](
       fileList,
       startCheckpoint = Optional.of(10),
       versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Could not find any delta files for version 10"
+      expectedErrorMessageContains = "Missing delta file for version 10"
     )
 
     /* ---------- versionToLoad is latest (10) ---------- */
-    // (?) fails when startCheckpoint is provided, passes when it's not
-    testExpectedError[IllegalStateException](
+    testExpectedError[InvalidTableException](
       fileList,
       startCheckpoint = Optional.of(10),
-      expectedErrorMessageContains = "Could not find any delta files for version 10"
+      expectedErrorMessageContains = "Missing delta file for version 10"
     )
-    val logSegment = snapshotManager.getLogSegmentForVersion(
-      createMockFSListFromEngine(fileList),
-      Optional.empty(),
-      Optional.empty()
-    )
-    assert(logSegment.isPresent())
-    checkLogSegment(
-      logSegment.get(),
-      10,
-      Seq.empty,
-      singularCheckpointFileStatuses(Seq(10L)),
-      Some(10),
-      90 // is the last available delta file
+    testExpectedError[InvalidTableException](
+      fileList,
+      expectedErrorMessageContains = "Missing delta file for version 10"
     )
   }
 
@@ -718,41 +719,36 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     )
     /* ---------- versionToLoad is 10 ---------- */
     // (?) throws an error
-    testExpectedError[IllegalStateException](
+    testExpectedError[InvalidTableException](
       fileList,
       versionToLoad = Optional.of(10),
-      expectedErrorMessageContains = "Could not find any delta files for version 10"
+      expectedErrorMessageContains = "Missing delta file for version 10"
     )
-    testExpectedError[IllegalStateException](
+    testExpectedError[InvalidTableException](
       fileList,
       startCheckpoint = Optional.of(10),
       versionToLoad = Optional.of(10),
-      expectedErrorMessageContains = "Could not find any delta files for version 10"
+      expectedErrorMessageContains = "Missing delta file for version 10"
     )
   }
 
   test("getLogSegmentForVersion: corrupted log missing json files / no way to construct history") {
-    def expectedErrorMessage(v: Int): String = {
-      s"""|Log file not found.
-          |Expected: ${FileNames.deltaFile(logPath, 0)}
-          |Found: ${FileNames.deltaFile(logPath, v)}""".stripMargin
-    }
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       deltaFileStatuses(1L until 10L),
-      expectedErrorMessageContains = expectedErrorMessage(1)
+      expectedErrorMessageContains = "missing log file for version 0"
     )
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       deltaFileStatuses(15L until 25L) ++ singularCheckpointFileStatuses(Seq(20L)),
       versionToLoad = Optional.of(17),
-      expectedErrorMessageContains = expectedErrorMessage(15)
+      expectedErrorMessageContains = "missing log file for version 0"
     )
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       deltaFileStatuses(15L until 25L) ++ singularCheckpointFileStatuses(Seq(20L)),
       startCheckpoint = Optional.of(20),
       versionToLoad = Optional.of(17),
-      expectedErrorMessageContains = expectedErrorMessage(15)
+      expectedErrorMessageContains = "missing log file for version 0"
     )
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       deltaFileStatuses((0L until 5L) ++ (6L until 9L)),
       expectedErrorMessageContains = "are not continuous"
     )
@@ -761,11 +757,11 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .map(p => FileStatus.of(p.toString, 10, 10))
       .take(4)
     val deltas = deltaFileStatuses(10L to 13L)
-    testExpectedError[RuntimeException](
+    testExpectedError[InvalidTableException](
       corruptedCheckpointStatuses ++ deltas,
       Optional.empty(),
       Optional.empty(),
-      expectedErrorMessageContains = expectedErrorMessage(10)
+      expectedErrorMessageContains = "missing log file for version 0"
     )
   }
 

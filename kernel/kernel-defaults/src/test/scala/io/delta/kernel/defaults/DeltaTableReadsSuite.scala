@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
@@ -598,10 +598,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("error - version not contiguous") {
-    val e = intercept[IllegalStateException] {
+    val e = intercept[InvalidTableException] {
       latestSnapshot(goldenTablePath("versions-not-contiguous"))
     }
-    assert(e.getMessage.contains("Versions ([0, 2]) are not continuous"))
+    assert(e.getMessage.contains("versions are not continuous: ([0, 2])"))
   }
 
   test("table protocol version greater than reader protocol version") {
