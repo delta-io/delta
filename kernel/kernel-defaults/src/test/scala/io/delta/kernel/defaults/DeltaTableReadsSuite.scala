@@ -511,6 +511,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
+  test(s"table with spaces in the table path") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath + s"/table- -path"
+      spark.sql(s"CREATE TABLE delta.`$target` USING DELTA " +
+        s"SELECT * FROM delta.`${getTestResourceFilePath("basic-with-checkpoint")}`")
+      checkTable(
+        path = target,
+        expectedAnswer = (0 until 150).map(i => TestRow(i.toLong))
+      )
+    }
+  }
+
   test("table with name column mapping mode") {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
