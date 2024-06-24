@@ -174,11 +174,8 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
  *
  * c) requiresHistoryTruncation. It indicates whether the table history needs to be clear
  *    of all feature traces before downgrading the protocol. This is by default true
- *    for all reader+writer features and false for writer features. It needs to be enabled for
- *    writer features that store metadata in checkpoints. This is in particular for metadata that
- *    can affect reading behaviour such as row tracking metadata. This is because oblivious clients
- *    may replace the relevant checkpoint during metadata cleanup.
- *    WARNING: Disabling [[requiresHistoryTruncation]] for reader+writer features could result to
+ *    for all reader+writer features and false for writer features.
+ *    WARNING: Disabling [[requiresHistoryTruncation]] for relevant features could result to
  *    incorrect snapshot reconstruction.
  *
  * d) actionUsesFeature. For features that require history truncation we verify whether past
