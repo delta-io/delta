@@ -90,7 +90,7 @@ public class SnapshotManager {
             if (!contVersions.equals(versions)) {
                 throw new InvalidTableException(
                     tablePath.toString(),
-                    String.format("Missing delta files: versions (%s) are not continuous", versions)
+                    String.format("Missing delta files: versions are not continuous: (%s)", versions)
                 );
             }
         }
