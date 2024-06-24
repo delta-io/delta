@@ -19,8 +19,7 @@ import java.util.*;
 
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.filter2.compat.FilterCompat.Filter;
-import org.apache.parquet.filter2.predicate.FilterApi;
-import org.apache.parquet.filter2.predicate.FilterPredicate;
+import org.apache.parquet.filter2.predicate.*;
 import org.apache.parquet.filter2.predicate.Operators.*;
 import org.apache.parquet.hadoop.metadata.ColumnPath;
 import org.apache.parquet.io.api.Binary;
@@ -366,34 +365,29 @@ public class ParquetFilterUtils {
         // NOTE: this is different from how some query languages handle null.
         switch (parquetField.primitiveType.getPrimitiveTypeName()) {
             case BOOLEAN:
-                BooleanColumn booleanColumn = booleanColumn(columnPath);
-                return Optional.of(isNotNull ?
-                        FilterApi.notEq(booleanColumn, null) : FilterApi.eq(booleanColumn, null));
+                return createIsNullOrIsNotNullPredicate(booleanColumn(columnPath), isNotNull);
             case INT32:
-                IntColumn intColumn = intColumn(columnPath);
-                return Optional.of(isNotNull ?
-                        FilterApi.notEq(intColumn, null) : FilterApi.eq(intColumn, null));
+                return createIsNullOrIsNotNullPredicate(intColumn(columnPath), isNotNull);
             case INT64:
-                LongColumn longColumn = longColumn(columnPath);
-                return Optional.of(isNotNull ?
-                        FilterApi.notEq(longColumn, null) : FilterApi.eq(longColumn, null));
+                return createIsNullOrIsNotNullPredicate(longColumn(columnPath), isNotNull);
             case FLOAT:
-                FloatColumn floatColumn = floatColumn(columnPath);
-                return Optional.of(isNotNull ?
-                        FilterApi.notEq(floatColumn, null) : FilterApi.eq(floatColumn, null));
+                return createIsNullOrIsNotNullPredicate(floatColumn(columnPath), isNotNull);
             case DOUBLE:
-                DoubleColumn doubleColumn = doubleColumn(columnPath);
-                return Optional.of(isNotNull ?
-                        FilterApi.notEq(doubleColumn, null) : FilterApi.eq(doubleColumn, null));
+                return createIsNullOrIsNotNullPredicate(doubleColumn(columnPath), isNotNull);
             case BINARY:
-                BinaryColumn binaryColumn = binaryColumn(columnPath);
-                return Optional.of(isNotNull ?
-                        FilterApi.notEq(binaryColumn, null) : FilterApi.eq(binaryColumn, null));
+                return createIsNullOrIsNotNullPredicate(binaryColumn(columnPath), isNotNull);
             default:
                 return visitUnsupported(
                         deltaPredicate,
                         "Unsupported column type: " + parquetField.primitiveType);
         }
+    }
+
+    private static <T extends Comparable<T>, C extends Operators.Column<T> & SupportsEqNotEq>
+            Optional<FilterPredicate> createIsNullOrIsNotNullPredicate(
+                    C column,
+                    boolean isNotNull) {
+        return Optional.of(isNotNull ? FilterApi.notEq(column, null) : FilterApi.eq(column, null));
     }
 
     private static Optional<FilterPredicate> visitUnsupported(

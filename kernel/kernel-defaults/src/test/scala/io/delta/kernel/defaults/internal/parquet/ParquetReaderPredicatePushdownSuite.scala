@@ -92,8 +92,9 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
 
   private def generateRowsGroup(rowGroupIdx: Int): Seq[Row] = {
     def values(rowId: Int): Seq[Any] = {
-      // One of the columns in each row group is all null depending on the [[rowGroupIdx]] and
-      // This helps to verify the test results for `is null` and `is not null` pushdown
+      // One of the columns in each row group is all nulls or all non-nulls depending on
+      // the [[rowGroupIdx]]. This helps to verify the test results for `is null` and
+      // `is not null` pushdown
       Seq(
         // byteCol
         if (rowGroupIdx == 0) null /* all nulls */
@@ -211,7 +212,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
     (
       lt(col("floatCol"), ofFloat(1000.0f)),
       lt(col("nested", "floatCol"), ofFloat(1000.0f)),
-      Seq(0, 1, 2, 3 /* 4 - all nulls */, 5, 6, 7, 8, 9) // expected row groups
+      Seq(0, 1, 2, 3, 5, 6, 7, 8, 9) // expected row groups - row group 4 has all nulls
     ),
     // filter on double type column
     (
@@ -224,7 +225,8 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
       eq(col("booleanCol"), ofBoolean(true)),
       eq(col("nested", "booleanCol"), ofBoolean(true)),
       // expected row groups
-      Seq(0, 1 /* mix of true/false */, 2, 4, 6, 8 /* 10 - all nulls */, 12, 14, 16, 18)
+      // 1 has mix of true/false (included), 10 has all nulls (not included)
+      Seq(0, 1, 2, 4, 6, 8, 12, 14, 16, 18)
     ),
     // filter on date type column
     (
@@ -251,7 +253,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
       gte(col("truncatedStringCol"), ofString("%050d".format(300))),
       gte(col("nested", "truncatedStringCol"), ofString("%050d".format(300))),
       // expected row groups
-      Seq(3, 4, 5, 6 /* 7 - all nulls */, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+      Seq(3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19) // 7 has all nulls
     ),
     // filter on truncated stats binary type column
     (
@@ -404,25 +406,26 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
     checkAnswer(actData, generateExpData(Seq(15)))
   }
 
-  test("not support") {
+  test("not support on gt") {
     val predicate = not(gt(col("intCol"), ofInt(950)))
     val actData = readUsingKernel(testParquetTable, predicate)
 
-    // Returns all the data in the table except the row group 9 which has all non-nulls
-    // and could have value 950
-    val expRowGroups = Seq(5)
+    // rowgroups until 9 could have values <= 950
+    // rowgroup 2 has all nulls, so it won't be included in the result
+    val expRowGroups = Seq(0, 1, 3, 4, 5, 6, 7, 8, 9)
     val expOutputRowCount = expRowGroups.length * 100 // 100 rows per row group
     assert(actData.size === expOutputRowCount, s"predicate: $predicate")
 
     checkAnswer(actData, generateExpData(expRowGroups))
   }
 
-  test("not support 2") {
-    val predicate = not(eq(col("booleanCol"), ofBoolean(false)))
+  test("not support on equality") {
+    val predicate = not(eq(col("longCol"), ofLong(768)))
     val actData = readUsingKernel(testParquetTable, predicate)
-    // row group 10 has all nulls, row group 1 has all mixed true/false
-    // all other remaining row groups have true for odd row groups and false for even row groups
-    checkAnswer(actData, generateExpData(Seq(1, 3, 5, 7, 9, 10, 11, 13, 15, 17, 19)))
+    // rowgroup 3 has all nulls, so it will be included in the results as
+    // Parquet equality filter is not null safe
+    // every other group has value that is not 768
+    checkAnswer(actData, generateExpData(Seq.range(0, 20)))
   }
 
   test("doesn't work on the repeated columns") {
