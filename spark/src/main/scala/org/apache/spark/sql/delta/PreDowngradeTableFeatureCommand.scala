@@ -56,6 +56,10 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     // Make sure feature data/metadata exist before proceeding.
     if (TestRemovableWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
+    if (DeltaUtils.isTesting) {
+      recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
+    }
+
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
     true
@@ -70,12 +74,6 @@ case class TestWriterWithHistoryValidationFeaturePreDowngradeCommand(table: Delt
     // Make sure feature data/metadata exist before proceeding.
     if (TestRemovableWriterWithHistoryTruncationFeature.validateRemoval(table.initialSnapshot)) {
       return false
-    }
-
-    if (DeltaUtils.isTesting) {
-      recordDeltaEvent(
-        table.deltaLog,
-        "delta.test.TestWriterWithHistoryValidationFeaturePreDowngradeCommand")
     }
 
     val properties = Seq(TestRemovableWriterWithHistoryTruncationFeature.TABLE_PROP_KEY)
