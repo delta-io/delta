@@ -301,7 +301,6 @@ class DeltaCreateTableLikeSuite extends QueryTest
             .verifyTableAndSolidify(
               tableDesc = catalogTableTarget,
               query = None,
-              existingTableOpt = None,
               maybeClusterBySpec = None)
         }
         CreateDeltaTableCommand(
