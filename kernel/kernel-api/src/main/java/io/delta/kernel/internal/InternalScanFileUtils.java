@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal;
 
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -112,7 +113,9 @@ public class InternalScanFileUtils {
 
         // TODO: this is hack until the path in `add.path` is converted to an absolute path
         String tableRoot = scanFileInfo.getString(TABLE_ROOT_ORDINAL);
-        String absolutePath = new Path(tableRoot, path).toString();
+        String absolutePath = new Path(
+                new Path(URI.create(tableRoot)),
+                new Path(URI.create(path))).toString();
 
         return FileStatus.of(absolutePath, size, modificationTime);
     }

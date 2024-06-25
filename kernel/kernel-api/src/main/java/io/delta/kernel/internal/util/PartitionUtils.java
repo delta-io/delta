@@ -527,9 +527,11 @@ public class PartitionUtils {
 
     /**
      * Escapes the given string to be used as a partition value in the path. Basically this escapes
-     * - characters that can't be in a file path. E.g. `a\nb` will be escaped to `a%0Ab`. -
-     * character that are cause ambiguity in partition value parsing. E.g. For partition column `a`
-     * having value `b=c`, the path should be `a=b%3Dc`.
+     * <ul>
+     *     <li>characters that can't be in a file path. E.g. `a\nb` will be escaped to `a%0Ab`.</li>
+     *     <li>character that are cause ambiguity in partition value parsing.
+     *     E.g. For partition column `a` having value `b=c`, the path should be `a=b%3Dc`</li>
+     * </ul>
      *
      * @param value The partition value to escape.
      * @return The escaped partition value.

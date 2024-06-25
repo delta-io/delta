@@ -480,7 +480,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   test("insert into partitioned table - already existing table") {
-    withTempDirAndEngine { (tblPath, engine) =>
+    withTempDirAndEngine { (tempTblPath, engine) =>
+      val tblPath = tempTblPath + "/table+ with special chars"
       val partitionCols = Seq("part1", "part2")
 
       {
