@@ -722,7 +722,7 @@ lazy val hudi = (project in file("hudi"))
     scalaStyleSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
-      "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "compile" excludeAll(
+      "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
         ExclusionRule(organization = "org.apache.hadoop"),
         ExclusionRule(organization = "org.apache.zookeeper"),
       ),
