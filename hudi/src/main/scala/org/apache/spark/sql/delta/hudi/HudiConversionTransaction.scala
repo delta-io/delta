@@ -226,11 +226,10 @@ class HudiConversionTransaction(
             earliestInstantToRetain.getAction,
             earliestInstantToRetain.getState.name))
         .orElse(null)
-      val emptyCleanerPlanExtraMetadata = new java.util.HashMap[String, String]()
       val cleanerPlan = new HoodieCleanerPlan(earliestInstantToRetain, instantTime,
         writeConfig.getCleanerPolicy.name, Collections.emptyMap[String, util.List[String]],
         CleanPlanner.LATEST_CLEAN_PLAN_VERSION, cleanInfoPerPartition,
-        Collections.emptyList[String], emptyCleanerPlanExtraMetadata)
+        Collections.emptyList[String], Collections.emptyMap[String, String])
       // create a clean instant and mark it as requested with the clean plan
       val requestedCleanInstant = new HoodieInstant(HoodieInstant.State.REQUESTED,
         HoodieTimeline.CLEAN_ACTION, cleanTime)
@@ -244,10 +243,9 @@ class HudiConversionTransaction(
         new HoodieCleanStat(HoodieCleaningPolicy.KEEP_LATEST_COMMITS, partitionPath, deletePaths,
           deletePaths, Collections.emptyList[String], earliestInstant.get.getTimestamp, instantTime)
       }).toSeq.asJava
-      val emptyExtraMetadata = new java.util.HashMap[String, String]()
       val cleanMetadata =
         CleanerUtils.convertCleanMetadata(cleanTime, HudiOption.empty[java.lang.Long], cleanStats,
-          emptyExtraMetadata)
+          java.util.Collections.emptyMap[String, String])
       // update the metadata table with the clean metadata so the files' metadata are marked for
       // deletion
       hoodieTableMetadataWriter.performTableServices(HudiOption.empty[String])

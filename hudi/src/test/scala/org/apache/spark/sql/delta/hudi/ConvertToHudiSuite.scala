@@ -248,7 +248,7 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
         HoodieMetadataConfig.newBuilder.enable(true).build)
       val hoodieStorage = new HoodieHadoopStorage(testTablePath, storageConf)
       val paths = JavaConverters.asScalaBuffer(
-          FSUtils.getAllPartitionPaths(engContext, hoodieStorage, testTablePath, true, false))
+        FSUtils.getAllPartitionPaths(engContext, hoodieStorage, testTablePath, true, false))
         .flatMap(partition => JavaConverters.asScalaBuffer(fsView.getLatestBaseFiles(partition)
           .collect(Collectors.toList[HoodieBaseFile])))
         .map(baseFile => baseFile.getPath).sorted
