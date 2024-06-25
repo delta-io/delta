@@ -45,18 +45,8 @@ jobs:
           mkdir -p ~/buf
           tar -xvzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
           rm buf-Linux-x86_64.tar.gz
-          # Pin the pip version to 23.2. From version 23.3, `pip` doesn't allow installing python packages
-          # with version containing `-`. In Delta-Spark case, the pypi package generated has the version
-          # `-SNAPSHOT` (e.g. `3.3.0-SNAPSHOT`) as the package version is built is using the versin from
-          # `version.sbt` file.
-          #sudo apt install list python3-pip
-          #sudo apt install python3-pip=23.2 --fix-missing
-          wget -O get-pip.py https://raw.githubusercontent.com/pypa/get-pip/bd3169817cea180cc37e4a5f53ebfe717bc5c389/public/get-pip.py
-          python3 get-pip.py --no-compile "pip==24.0" "setuptools==69.5.1" "wheel==0.43.0"
-          rm -f get-pip.py
-          pip --version
+          sudo apt install python3-pip --fix-missing
           sudo pip3 install pipenv==2021.5.29
-          export GET_PIP_URL=https://raw.githubusercontent.com/pypa/get-pip/bd3169817cea180cc37e4a5f53ebfe717bc5c389/public/get-pip.py
           curl https://pyenv.run | bash
           export PATH="~/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
@@ -64,6 +54,11 @@ jobs:
           pyenv install 3.8.18
           pyenv global system 3.8.18
           pipenv --python 3.8 install
+          # Update the pip version to 24.0. By default `pyenv.run` installs the latest pip version
+          # available. From version 24.1, `pip` doesn't allow installing python packages
+          # with version containing `-`. In Delta-Spark case, the pypi package generated has the version
+          # `-SNAPSHOT` (e.g. `3.3.0-SNAPSHOT`) as the package version is built is using the versin from
+          # `version.sbt` file.
           pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
           pipenv run pip install pyspark==3.5.0
           pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
