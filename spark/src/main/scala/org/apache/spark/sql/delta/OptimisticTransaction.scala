@@ -264,7 +264,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Contains the execution instrumentation set via thread-local. No-op by default. */
   protected[delta] var executionObserver: TransactionExecutionObserver =
-    TransactionExecutionObserver.threadObserver.get()
+    TransactionExecutionObserver.getObserver
 
   /**
    * Stores the updated metadata (if any) that will result from this txn.
@@ -2140,7 +2140,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
       // Get thread local observer for Fuzz testing purpose.
-      val executionObserver = TransactionExecutionObserver.threadObserver.get()
+      val executionObserver = TransactionExecutionObserver.getObserver
       val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)

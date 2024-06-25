@@ -82,37 +82,15 @@ trait TransactionExecutionObserver
   def transactionAborted(): Unit
 
   override def advanceToNextThreadObserver(): Unit = {
-    TransactionExecutionObserver.threadObserver.set(
+    TransactionExecutionObserver.setObserver(
       nextObserver.getOrElse(NoOpTransactionExecutionObserver))
   }
 }
 
-object TransactionExecutionObserver {
-  /** Thread-local observer instance loaded by [[DeltaLog]] and [[OptimisticTransaction]]. */
-  val threadObserver: ThreadLocal[TransactionExecutionObserver] =
-    ThreadLocal.withInitial(() => NoOpTransactionExecutionObserver)
-
-  /**
-   * Instrument all transactions created and completed within `thunk` with `observer`.
-   *
-   * *Note 1:* Closing over existing transactions with `thunk` will have no effect.
-   * *Note 2:* Do not leak transactions created within `thunk` via the return value.
-   * *Note 3:* Do not create threads with new transactions within `thunk`.
-   *           The observer information is not copied to children threads automatically.
-   *
-   * If you need more flexible usage of [[TransactionExecutionObserver]] use
-   * `TransactionExecutionObserver.threadObserver.set()` instead.
-   */
-  def withObserver[T](observer: TransactionExecutionObserver)(thunk: => T): T = {
-    val oldObserver = threadObserver.get()
-    threadObserver.set(observer)
-    try {
-      thunk
-    } finally {
-      // reset
-      threadObserver.set(oldObserver)
-    }
-  }
+object TransactionExecutionObserver
+  extends ThreadStorageExecutionObserver[TransactionExecutionObserver] {
+  override protected val initialValue: TransactionExecutionObserver =
+    NoOpTransactionExecutionObserver
 }
 
 /** Default observer does nothing. */
