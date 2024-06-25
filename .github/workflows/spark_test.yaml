@@ -56,9 +56,9 @@ jobs:
           pipenv --python 3.8 install
           # Update the pip version to 24.0. By default `pyenv.run` installs the latest pip version
           # available. From version 24.1, `pip` doesn't allow installing python packages
-          # with version containing `-`. In Delta-Spark case, the pypi package generated has the version
-          # `-SNAPSHOT` (e.g. `3.3.0-SNAPSHOT`) as the package version is built is using the versin from
-          # `version.sbt` file.
+          # with version string containing `-`. In Delta-Spark case, the pypi package generated has
+          # `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
+          # the`version.sbt` file.
           pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
           pipenv run pip install pyspark==3.5.0
           pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
