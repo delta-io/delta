@@ -56,6 +56,7 @@ jobs:
           rm -f get-pip.py
           pip --version
           sudo pip3 install pipenv==2021.5.29
+          export GET_PIP_URL=https://raw.githubusercontent.com/pypa/get-pip/bd3169817cea180cc37e4a5f53ebfe717bc5c389/public/get-pip.py
           curl https://pyenv.run | bash
           export PATH="~/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
