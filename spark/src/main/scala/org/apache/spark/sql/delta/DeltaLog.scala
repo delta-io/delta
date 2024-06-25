@@ -194,7 +194,7 @@ class DeltaLog private(
   def startTransaction(
       catalogTableOpt: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    TransactionExecutionObserver.threadObserver.get().startingTransaction {
+    TransactionExecutionObserver.getObserver.startingTransaction {
       new OptimisticTransaction(this, catalogTableOpt, snapshotOpt)
     }
   }
