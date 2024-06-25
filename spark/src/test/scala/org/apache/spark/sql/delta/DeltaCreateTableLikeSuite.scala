@@ -284,6 +284,42 @@ class DeltaCreateTableLikeSuite extends QueryTest
     }
   }
 
+  test("concurrent create Managed Catalog table commands should not fail") {
+    withTempDir { dir =>
+      withTable("t") {
+        def getCatalogTable: CatalogTable = {
+          val storage =
+              CatalogStorageFormat.empty.copy(locationUri =
+                Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
+          val catalogTableTarget = CatalogTable(
+            identifier = TableIdentifier("t"),
+            tableType = CatalogTableType.MANAGED,
+            storage = storage,
+            provider = Some("delta"),
+            schema = new StructType().add("id", "long"))
+          new DeltaCatalog()
+            .verifyTableAndSolidify(
+              tableDesc = catalogTableTarget,
+              query = None,
+              existingTableOpt = None,
+              maybeClusterBySpec = None)
+        }
+        CreateDeltaTableCommand(
+          getCatalogTable,
+          existingTableOpt = None,
+          mode = SaveMode.Ignore,
+          query = None,
+          operation = TableCreationModes.Create).run(spark)
+        CreateDeltaTableCommand(
+          getCatalogTable,
+          existingTableOpt = None, // Set to None to simulate concurrent table creation commands.
+          mode = SaveMode.Ignore,
+          query = None,
+          operation = TableCreationModes.Create).run(spark)
+      }
+    }
+  }
+
   test("CREATE TABLE LIKE where sourceTable is a json table") {
     val srcTbl = "srcTbl"
     val targetTbl = "targetTbl"
@@ -438,42 +474,6 @@ class DeltaCreateTableLikeSuite extends QueryTest
         checkTableCopy(srcTbl, targetTbl, checkDesc = false)
       }.getMessage
       assert(msg.contains("provider does not match"))
-    }
-  }
-
-  test("concurrent create Managed Catalog table commands should not fail") {
-    withTempDir { dir =>
-      withTable("t") {
-        def getCatalogTable: CatalogTable = {
-          val storage =
-            CatalogStorageFormat.empty.copy(locationUri =
-              Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
-          val catalogTableTarget = CatalogTable(
-            identifier = TableIdentifier("t"),
-            tableType = CatalogTableType.MANAGED,
-            storage = storage,
-            provider = Some("delta"),
-            schema = new StructType().add("id", "long"))
-          new DeltaCatalog()
-            .verifyTableAndSolidify(
-              tableDesc = catalogTableTarget,
-              query = None,
-              existingTableOpt = None,
-              maybeClusterBySpec = None)
-        }
-        CreateDeltaTableCommand(
-          getCatalogTable,
-          existingTableOpt = None,
-          mode = SaveMode.Ignore,
-          query = None,
-          operation = TableCreationModes.Create).run(spark)
-        CreateDeltaTableCommand(
-          getCatalogTable,
-          existingTableOpt = None, // Set to None to simulate concurrent table creation commands.
-          mode = SaveMode.Ignore,
-          query = None,
-          operation = TableCreationModes.Create).run(spark)
-      }
     }
   }
 }
