@@ -20,7 +20,6 @@ import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-
 import org.apache.spark.sql.delta.ImplicitDMLCastingSuiteShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
