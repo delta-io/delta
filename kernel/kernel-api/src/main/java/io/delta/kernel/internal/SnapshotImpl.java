@@ -20,6 +20,7 @@ import java.util.Optional;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.engine.CommitCoordinatorClientHandler;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 
@@ -30,7 +31,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
+import static io.delta.kernel.internal.TableConfig.*;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -158,5 +159,13 @@ public class SnapshotImpl implements Snapshot {
         } else {
             return logSegment.lastCommitTimestamp;
         }
+    }
+
+    public Optional<CommitCoordinatorClientHandler> getCommitCoordinatorClientHandlerOpt(
+            Engine engine) {
+        return COORDINATED_COMMITS_COORDINATOR_NAME.fromMetadata(metadata).map(
+                commitCoordinatorStr -> engine.getCommitCoordinatorClientHandler(
+                        commitCoordinatorStr,
+                        COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(metadata)));
     }
 }

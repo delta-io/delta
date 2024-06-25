@@ -16,6 +16,8 @@
 
 package io.delta.kernel.engine;
 
+import java.util.Map;
+
 import io.delta.kernel.annotation.Evolving;
 
 /**
@@ -55,4 +57,13 @@ public interface Engine {
      * @return An implementation of {@link ParquetHandler}.
      */
     ParquetHandler getParquetHandler();
+
+    /**
+     * Get the connector provided {@link CommitCoordinatorClientHandler}.
+     *
+     * @param name Name of the underlying commit coordinator client.
+     * @return An implementation of {@link CommitCoordinatorClientHandler}.
+     */
+    CommitCoordinatorClientHandler getCommitCoordinatorClientHandler(
+            String name, Map<String, String> conf);
 }

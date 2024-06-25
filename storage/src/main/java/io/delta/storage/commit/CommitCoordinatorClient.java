@@ -16,6 +16,7 @@
 
 package io.delta.storage.commit;
 
+import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
 
@@ -94,7 +95,7 @@ public interface CommitCoordinatorClient {
     Map<String, String> tableConf,
     long commitVersion,
     Iterator<String> actions,
-    UpdatedActions updatedActions);
+    UpdatedActions updatedActions) throws CommitFailedException, IOException;
 
   /**
    * API to get the unbackfilled commits for the table represented by the given logPath.
@@ -148,7 +149,7 @@ public interface CommitCoordinatorClient {
     Path logPath,
     Map<String, String> tableConf,
     long version,
-    Long lastKnownBackfilledVersion);
+    Long lastKnownBackfilledVersion) throws IOException;
 
   /**
    * Determines whether this CommitCoordinatorClient is semantically equal to another

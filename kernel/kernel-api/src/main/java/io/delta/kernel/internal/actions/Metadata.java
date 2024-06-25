@@ -19,15 +19,19 @@ import java.util.*;
 import java.util.stream.Collectors;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.data.*;
+import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.*;
-
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+
 
 public class Metadata {
 
@@ -85,6 +89,20 @@ public class Metadata {
     private final Lazy<Set<String>> partitionColNames;
     // Logical data schema excluding partition columns
     private final Lazy<StructType> dataSchema;
+
+    public static Metadata empty() {
+        return new Metadata(
+                java.util.UUID.randomUUID().toString(),
+                Optional.empty(),
+                Optional.empty(),
+                new Format(),
+                "",
+                null,
+                stringArrayValue(Collections.emptyList()),
+                Optional.empty(),
+                VectorUtils.stringStringMapValue(Collections.emptyMap())
+        );
+    }
 
     public Metadata(
         String id,
