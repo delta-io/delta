@@ -63,7 +63,12 @@ class ClusteringColumnSuite extends ClusteredTableTestUtils with DeltaSQLCommand
       val e = intercept[AnalysisException] {
         ClusteringColumn(schema, "b")
       }
-      assert(e.getMessage.contains("Couldn't find column b"))
+      checkError(
+        e,
+        "DELTA_COLUMN_NOT_FOUND_IN_SCHEMA",
+        parameters = Map(
+          "columnName" -> "b",
+          "tableSchema" -> schema.treeString))
     }
   }
 }
