@@ -10,12 +10,11 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.types.StructType;
+import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.connector.sink2.*;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
-import org.apache.flink.streaming.api.connector.sink2.CommittableMessage;
-import org.apache.flink.streaming.api.connector.sink2.SupportsPreCommitTopology;
-import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
+import org.apache.flink.streaming.api.connector.sink2.*;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.types.logical.RowType;
@@ -36,6 +35,7 @@ public class DeltaSink implements Sink<RowData>,
     SupportsWriterState<RowData, DeltaSinkWriterState>,
     SupportsPreCommitTopology<DeltaCommittable, DeltaCommittable>,
     SupportsPreWriteTopology<RowData>,
+    SupportsPostCommitTopology<DeltaCommittable>,
     Serializable {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeltaSink.class);
@@ -173,6 +173,7 @@ public class DeltaSink implements Sink<RowData>,
         //
         // This essentially is what gives us a global committer.
         // TODO: consider injecting checkpointId information explicitly? like in the iceberg PR?
+        // CommittableMessage::getCheckpointId
         return committables.global();
     }
 
@@ -217,5 +218,10 @@ public class DeltaSink implements Sink<RowData>,
     public SimpleVersionedSerializer<DeltaSinkWriterState> getWriterStateSerializer() {
         LOG.info("Scott > DeltaSink > getWriterStateSerializer");
         return new DeltaSinkWriterState.Serializer();
+    }
+
+    @Override
+    public void addPostCommitTopology(DataStream<CommittableMessage<DeltaCommittable>> committables) {
+        committables.global().process(new PostCommitOperator());
     }
 }
