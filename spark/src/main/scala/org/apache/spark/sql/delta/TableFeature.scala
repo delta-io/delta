@@ -171,6 +171,8 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
  *    protocol downgrade is committed to the table. When the protocol downgrade txn conflicts,
  *    the validation is repeated against the winning txn snapshot. As soon as the protocol
  *    downgrade succeeds, all subsequent interleaved txns are aborted.
+ *    The implementation should return true if there are no feature traces in the latest
+ *    version. False otherwise.
  *
  * c) requiresHistoryTruncation. It indicates whether the table history needs to be clear
  *    of all feature traces before downgrading the protocol. This is by default true
