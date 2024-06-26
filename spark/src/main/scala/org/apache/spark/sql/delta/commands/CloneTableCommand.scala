@@ -55,7 +55,8 @@ case class CloneTableCommand(
     sourceTable: CloneSource,
     targetIdent: TableIdentifier,
     tablePropertyOverrides: Map[String, String],
-    targetPath: Path
+    targetPath: Path,
+    isUFI: Boolean = false
 ) extends CloneTableBase(sourceTable, tablePropertyOverrides, targetPath) {
 
   import CloneTableCommand._
@@ -107,13 +108,15 @@ case class CloneTableCommand(
     }
 
     handleClone(
-      sparkSession,
-      txn,
-      targetDeltaLog,
+      spark = sparkSession,
+      txn = txn,
+      destinationTable = targetDeltaLog,
       hdpConf = hdpConf,
       deltaOperation = Clone(
         sourceTable.name, sourceTable.snapshot.map(_.version).getOrElse(-1)
-      ))
+      ),
+      isUFI = isUFI
+    )
   }
 }
 

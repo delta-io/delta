@@ -16,6 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.uniform.UniformIngressUtils
+
+import java.util.Locale
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.{Failure, Success, Try}
@@ -360,6 +363,87 @@ class DeltaAnalysis(session: SparkSession)
         case l: LogicalPlan =>
           throw DeltaErrors.cloneFromUnsupportedSource(
             l.toString, "Unknown")
+      }
+
+    // create uniform ingress table
+    case createUniformStmt: CreateUniformTableStatement =>
+      val source = createUniformStmt.fileFormat.toLowerCase(Locale.ROOT) match {
+        case UniversalFormat.ICEBERG_FORMAT =>
+          CloneIcebergSource(
+            tableIdentifier = TableIdentifier(createUniformStmt.metadataPath),
+            sparkTable = None,
+            tableSchema = None,
+            spark = session
+          )
+        case _ =>
+          throw DeltaErrors.uniformIngressNotSupportedFormat(createUniformStmt.fileFormat)
+      }
+
+      val isReplace = createUniformStmt.isReplace
+      val isCreate = createUniformStmt.isCreate
+      val ifNotExists = createUniformStmt.ifNotExists
+      val (saveMode, tableCreationMode) = resolveCreateTableMode(isCreate, isReplace, ifNotExists)
+
+      import session.sessionState.analyzer.SessionCatalogAndIdentifier
+
+      EliminateSubqueryAliases(createUniformStmt.table) match {
+        case UnresolvedRelation(SessionCatalogAndIdentifier(catalog, ident), _, _) =>
+          if (!isCreate) {
+            throw DeltaErrors.cannotReplaceMissingTableException(ident)
+          }
+          val tableIdentifier = ident.asTableIdentifier
+
+          // <table_uri>/metadata/<version>-<uuid>.metadata.json
+          val externalMetadataPath = new Path(createUniformStmt.metadataPath)
+
+          // note: the external iceberg table path is also used as the path for the
+          // to-be-converted/created delta table.
+          val externalTableUri = externalMetadataPath.getParent.getParent.toUri
+
+          // construct the catalog table for the to-be-created UFI table
+          val catalogTable = new CatalogTable(
+            identifier = tableIdentifier,
+            tableType = CatalogTableType.EXTERNAL,
+            storage = CatalogStorageFormat.empty.copy(locationUri = Some(externalTableUri)),
+            // the schema should be the same as iceberg source
+            schema = source.schema,
+            // special for UFI table
+            properties = UniformIngressUtils.property,
+            provider = Some("delta")
+          )
+
+          // the actual command that creates the UFI table,
+          // note that the SHALLOW CLONE is conducted via the `CloneTableCommand`.
+          CreateDeltaTableCommand(
+            table = catalogTable,
+            existingTableOpt = None,
+            mode = saveMode,
+            query = Some(
+              CloneTableCommand(
+                sourceTable = source,
+                targetIdent = tableIdentifier,
+                tablePropertyOverrides = Map.empty,
+                targetPath = new Path(externalTableUri),
+                isUFI = true
+              )
+            ),
+            operation = tableCreationMode,
+            output = CloneTableCommand.output
+          )
+        case _ => throw DeltaErrors.uniformIngressOperationNotSupported
+      }
+
+    case refreshUniformStmt: RefreshUniformTableStatement =>
+      EliminateSubqueryAliases(refreshUniformStmt.target) match {
+        case DataSourceV2Relation(table: DeltaTableV2, _, _, _, _) =>
+          RefreshUniformTableCommand(
+            table = table,
+            isForce = refreshUniformStmt.isForce,
+            providedMetadataPath = refreshUniformStmt.metadataPath
+          )
+        case u: UnresolvedRelation =>
+          u.tableNotFound(u.multipartIdentifier)
+        case _ => throw DeltaErrors.uniformIngressOperationNotSupported
       }
 
     case restoreStatement @ RestoreTableStatement(target) =>

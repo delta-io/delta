@@ -102,6 +102,12 @@ statement
     | cloneTableHeader SHALLOW CLONE source=qualifiedName clause=temporalClause?
        (TBLPROPERTIES tableProps=propertyList)?
        (LOCATION location=stringLit)?                                   #clone
+    | cloneTableHeader
+        UNIFORM format=qualifiedName
+        METADATA_PATH metadataPath=stringLit                            #createUniformTable
+    | REFRESH TABLE table=qualifiedName
+        (METADATA_PATH metadataPath=stringLit)?
+        (FORCE)?                                                        #refreshUniformTable
     | .*? clusterBySpec+ .*?                                            #clusterBy
     | .*?                                                               #passThrough
     ;
@@ -237,6 +243,7 @@ nonReserved
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
     | REORG | APPLY | PURGE | UPGRADE | UNIFORM | ICEBERG_COMPAT_VERSION
+    | METADATA_PATH
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
     | NO | STATISTICS
@@ -270,6 +277,7 @@ EXISTS: 'EXISTS';
 FALSE: 'FALSE';
 FEATURE: 'FEATURE';
 FOR: 'FOR';
+FORCE: 'FORCE';
 GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
@@ -279,6 +287,7 @@ INVENTORY: 'INVENTORY';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
 LOCATION: 'LOCATION';
+METADATA_PATH: 'METADATA_PATH';
 MINUS: '-';
 NO: 'NO';
 NONE: 'NONE';
@@ -290,6 +299,7 @@ OPTIMIZE: 'OPTIMIZE';
 REORG: 'REORG';
 PARTITIONED: 'PARTITIONED';
 PURGE: 'PURGE';
+REFRESH: 'REFRESH';
 REPLACE: 'REPLACE';
 RESTORE: 'RESTORE';
 RETAIN: 'RETAIN';

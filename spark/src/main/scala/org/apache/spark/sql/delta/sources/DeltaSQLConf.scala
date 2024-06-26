@@ -1194,6 +1194,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  // TODO: ensure if we need this
+  val UNIFORM_READ_ICEBERG_ENABLED = {
+    buildConf("uniform.readIcebergEnabled")
+      .internal()
+      .doc(
+        "If true, users can read the iceberg table after metadata conversion."
+      )
+      .booleanConf
+      .createWithDefault(false)
+  }
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()

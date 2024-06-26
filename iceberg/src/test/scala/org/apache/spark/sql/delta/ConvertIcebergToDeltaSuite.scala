@@ -157,7 +157,6 @@ trait ConvertIcebergToDeltaSuiteBase
       }
   }
 
-
   test("table with deleted files") {
     withTable(table) {
       spark.sql(

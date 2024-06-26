@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
-
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
@@ -31,12 +30,12 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.delta.uniform.UniformIngressUtils
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
@@ -45,8 +44,8 @@ import org.apache.spark.sql.types.StructType
  * Single entry point for all write or declaration operations for Delta tables accessed through
  * the table name.
  *
- * @param table The table identifier for the Delta table
- * @param existingTableOpt The existing table for the same identifier if exists
+ * @param table The catalog table that contains metadata for the delta table.
+ * @param existingTableOpt The existing table for the same identifier if exists.
  * @param mode The save mode when writing data. Relevant when the query is empty or set to Ignore
  *             with `CREATE TABLE IF NOT EXISTS`.
  * @param query The query to commit into the Delta table if it exist. This can come from
@@ -133,7 +132,12 @@ case class CreateDeltaTableCommand(
         // We may have failed a previous write. The retry should still succeed even if we have
         // garbage data
         if (txn.readVersion > -1 || !fs.exists(deltaLog.logPath)) {
-          assertPathEmpty(hadoopConf, tableWithLocation)
+          // the path should be empty for non-UFI table; for UFI table,
+          // an external iceberg table already exists at the specific location,
+          // and we need to bypass the empty path check here.
+          if (!UniformIngressUtils.isUniformIngressTable(table)) {
+            assertPathEmpty(hadoopConf, tableWithLocation)
+          }
         }
       }
     }
@@ -628,6 +632,14 @@ case class CreateDeltaTableCommand(
       table.storage.copy(properties = Map.empty)
     }
 
+    // The special property key-value pair that needs to persist if the
+    // table is UFI table, mainly for distinguish purpose.
+    val ufiProperty = if (UniformIngressUtils.isUniformIngressTable(table)) {
+      UniformIngressUtils.property
+    } else {
+      Map.empty
+    }
+
     // If we have to update the catalog, use the correct schema and table properties, otherwise
     // empty out the schema and property information
     if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
@@ -646,13 +658,13 @@ case class CreateDeltaTableCommand(
         // we store the partition columns as regular data columns.
         partitionColumnNames = Nil,
         properties = UpdateCatalog.updatedProperties(snapshot)
-          ++ additionalProperties,
+          ++ additionalProperties ++ ufiProperty,
         storage = storageProps,
         tracksPartitionsInCatalog = true)
     } else {
       table.copy(
         schema = new StructType(),
-        properties = Map.empty,
+        properties = Map.empty ++ ufiProperty,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,

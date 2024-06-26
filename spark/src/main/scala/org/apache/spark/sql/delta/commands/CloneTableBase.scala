@@ -179,7 +179,8 @@ abstract class CloneTableBase(
       txn: OptimisticTransaction,
       destinationTable: DeltaLog,
       hdpConf: Configuration,
-      deltaOperation: DeltaOperations.Operation): Seq[Row] = {
+      deltaOperation: DeltaOperations.Operation,
+      isUFI: Boolean = false): Seq[Row] = {
     val targetFs = targetPath.getFileSystem(hdpConf)
     val qualifiedTarget = targetFs.makeQualified(targetPath).toString
     val qualifiedSource = {
@@ -199,8 +200,9 @@ abstract class CloneTableBase(
     val (
       addedFileList
       ) = {
+      // TODO: needs further review, see also `UniformTableCommand.scala`.
       // Make sure target table is empty before running clone
-      if (txn.snapshot.allFiles.count() > 0) {
+      if (txn.snapshot.allFiles.count() > 0 && !isUFI) {
         throw DeltaErrors.cloneReplaceNonEmptyTable
       }
       val toAdd = sourceTable.allFiles
