@@ -158,8 +158,8 @@ public class TableFeatures {
     /**
      * Extract the writer features that should be enabled automatically based on the metadata which
      * are not already enabled. For example, the {@code inCommitTimestamp-preview} feature should be
-     * enabled when the delta property name is set to true in the metadata if it is not already
-     * enabled.
+     * enabled when the delta property name (delta.enableInCommitTimestamps-preview) is set to true
+     * in the metadata if it is not already enabled.
      *
      * @param metadata the metadata of the table
      * @return the writer features that should be enabled automatically
