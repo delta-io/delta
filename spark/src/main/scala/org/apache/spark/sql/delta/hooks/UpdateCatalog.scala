@@ -28,11 +28,13 @@ import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, Clus
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaTableIdentifier, OptimisticTransactionImpl, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import org.apache.commons.lang3.exception.ExceptionUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -196,8 +198,9 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
                 "exceptionMsg" -> ExceptionUtils.getMessage(e),
                 "stackTrace" -> ExceptionUtils.getStackTrace(e))
             )
-            logWarning(s"Failed to update the catalog for ${table.identifier} with the latest " +
-              s"table information.", e)
+            logWarning(log"Failed to update the catalog for " +
+              log"${MDC(DeltaLogKeys.TABLE_NAME, table.identifier)} with the latest " +
+              log"table information.", e)
         }
       }
     }

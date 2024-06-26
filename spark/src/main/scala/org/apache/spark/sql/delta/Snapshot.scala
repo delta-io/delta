@@ -22,6 +22,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -34,6 +35,7 @@ import org.apache.spark.sql.delta.util.StateCache
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
@@ -506,31 +508,32 @@ class Snapshot(
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
 
-  override def logInfo(msg: => String): Unit = {
-    super.logInfo(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logInfo(msg: MessageWithContext): Unit = {
+    super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logWarning(msg: => String): Unit = {
-    super.logWarning(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logWarning(msg: MessageWithContext): Unit = {
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logWarning(msg: => String, throwable: Throwable): Unit = {
-    super.logWarning(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
+  def logWarning(msg: MessageWithContext, throwable: Throwable): Unit = {
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg,
+      throwable)
   }
 
-  override def logError(msg: => String): Unit = {
-    super.logError(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logError(msg: MessageWithContext): Unit = {
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logError(msg: => String, throwable: Throwable): Unit = {
-    super.logError(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
+  def logError(msg: MessageWithContext, throwable: Throwable): Unit = {
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg, throwable)
   }
 
   override def toString: String =
     s"${getClass.getSimpleName}(path=$path, version=$version, metadata=$metadata, " +
       s"logSegment=$logSegment, checksumOpt=$checksumOpt)"
 
-  logInfo(s"Created snapshot $this")
+  logInfo(log"Created snapshot ${MDC(DeltaLogKeys.SNAPSHOT, this)}")
   init()
 }
 

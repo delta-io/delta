@@ -28,11 +28,13 @@ import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand.{generateCandidateFileMap, getTouchedFile}
 import org.apache.spark.sql.delta.commands.convert.{ConvertTargetFileManifest, ConvertTargetTable, ConvertUtils}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
@@ -297,13 +299,16 @@ abstract class ConvertToDeltaCommandBase(
         ConvertUtils.createAddFile(
           _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
       if (shouldCollectStats) {
-        logInfo(s"Collecting stats for a batch of ${batch.size} files; " +
-          s"finished $numFiles so far")
+        logInfo(
+          log"Collecting stats for a batch of ${MDC(DeltaLogKeys.NUM_FILES, batch.size)} files; " +
+          log"finished ${MDC(DeltaLogKeys.NUM_FILES2, numFiles)} so far"
+          )
         numFiles += statsBatchSize
         performStatsCollection(spark, txn, adds)
       } else if (collectStats) {
-        logWarning(s"collectStats is set to true but ${DeltaSQLConf.DELTA_COLLECT_STATS.key}" +
-          s" is false. Skip statistics collection")
+        logWarning(log"collectStats is set to true but ${MDC(DeltaLogKeys.CONFIG,
+          DeltaSQLConf.DELTA_COLLECT_STATS.key)}" +
+          log" is false. Skip statistics collection")
         adds.toIterator
       } else {
         adds.toIterator

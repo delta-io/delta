@@ -26,12 +26,14 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -189,7 +191,8 @@ case class CreateDeltaTableCommand(
       tableWithLocation: CatalogTable): Unit = {
     // Note that someone may have dropped and recreated the table in a separate location in the
     // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
-    logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
+    logInfo(log"Table is path-based table: ${MDC(DeltaLogKeys.IS_PATH_TABLE, tableByPath)}. " +
+      log"Update catalog with mode: ${MDC(DeltaLogKeys.OPERATION, operation)}")
     val opStartTs = TimeUnit.NANOSECONDS.toMillis(txnUsedForCommit.txnStartTimeNs)
     val postCommitSnapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
     val didNotChangeMetadata = txnUsedForCommit.metadata == txnUsedForCommit.snapshot.metadata

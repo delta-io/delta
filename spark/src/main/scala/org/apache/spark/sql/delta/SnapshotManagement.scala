@@ -30,6 +30,7 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -38,6 +39,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.{ThreadUtils, Utils}
 
@@ -181,8 +183,8 @@ trait SnapshotManagement { self: DeltaLog =>
       } else {
         // If the thread pool is full, we should not submit more tasks to it. Instead, we should
         // run the task in the current thread.
-        logInfo("Getting un-backfilled commits from commit coordinator in the same " +
-          s"thread for table $dataPath")
+        logInfo(log"Getting un-backfilled commits from commit coordinator in the same " +
+          log"thread for table ${MDC(DeltaLogKeys.PATH, dataPath)}")
         recordDeltaEvent(
           this, CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_LISTING_THREADPOOL_FULL)
         CompletableFuture.completedFuture(getCommitsTask(isAsyncRequest = false))
@@ -670,9 +672,10 @@ trait SnapshotManagement { self: DeltaLog =>
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       checksumOpt: Option[VersionChecksum]): Snapshot = {
     val startingFrom = if (!initSegment.checkpointProvider.isEmpty) {
-      s" starting from checkpoint version ${initSegment.checkpointProvider.version}."
-    } else "."
-    logInfo(s"Loading version ${initSegment.version}$startingFrom")
+      log" starting from checkpoint version " +
+      log"${MDC(DeltaLogKeys.START_VERSION, initSegment.checkpointProvider.version)}."
+    } else log"."
+    logInfo(log"Loading version ${MDC(DeltaLogKeys.VERSION, initSegment.version)}" + startingFrom)
     createSnapshotFromGivenOrEquivalentLogSegment(
         initSegment, tableCommitCoordinatorClientOpt) { segment =>
       new Snapshot(
@@ -738,7 +741,8 @@ trait SnapshotManagement { self: DeltaLog =>
           verifyDeltaVersions(spark, deltaVersions, Some(cp.version + 1), Some(snapshotVersion))
         } catch {
           case NonFatal(e) =>
-            logWarning(s"Failed to find a valid LogSegment for $snapshotVersion", e)
+            logWarning(log"Failed to find a valid LogSegment for " +
+              log"${MDC(DeltaLogKeys.VERSION, snapshotVersion)}", e)
             return None
         }
         Some(LogSegment(
@@ -763,7 +767,8 @@ trait SnapshotManagement { self: DeltaLog =>
           verifyDeltaVersions(spark, deltaVersions, Some(0), Some(snapshotVersion))
         } catch {
           case NonFatal(e) =>
-            logWarning(s"Failed to find a valid LogSegment for $snapshotVersion", e)
+            logWarning(log"Failed to find a valid LogSegment for " +
+              log"${MDC(DeltaLogKeys.VERSION, snapshotVersion)}", e)
             return None
         }
         Some(LogSegment(
@@ -819,7 +824,7 @@ trait SnapshotManagement { self: DeltaLog =>
       tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt
     ).getOrElse {
       // This shouldn't be possible right after a commit
-      logError(s"No delta log found for the Delta table at $logPath")
+      logError(log"No delta log found for the Delta table at ${MDC(DeltaLogKeys.PATH, logPath)}")
       throw DeltaErrors.emptyDirectoryException(logPath.toString)
     }
   }
@@ -849,8 +854,8 @@ trait SnapshotManagement { self: DeltaLog =>
           if (firstError == null) {
             firstError = e
           }
-          logWarning(s"Failed to create a snapshot from log segment: $segment. " +
-            s"Trying a different checkpoint.", e)
+          logWarning(log"Failed to create a snapshot from log segment " +
+            log"${MDC(DeltaLogKeys.SEGMENT, segment)}. Trying a different checkpoint.", e)
           segment = getLogSegmentWithMaxExclusiveCheckpointVersion(
             segment.version,
             segment.checkpointProvider.version,
@@ -860,7 +865,8 @@ trait SnapshotManagement { self: DeltaLog =>
             }
           attempt += 1
         case e: SparkException if firstError != null =>
-          logWarning(s"Failed to create a snapshot from log segment: $segment", e)
+          logWarning(log"Failed to create a snapshot from log segment " +
+            log"${MDC(DeltaLogKeys.SEGMENT, segment)}", e)
           throw firstError
       }
     }
@@ -1095,11 +1101,11 @@ trait SnapshotManagement { self: DeltaLog =>
           tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
           checksumOpt = None)
         previousSnapshotOpt.foreach(logMetadataTableIdChange(_, newSnapshot))
-        logInfo(s"Updated snapshot to $newSnapshot")
+        logInfo(log"Updated snapshot to ${MDC(DeltaLogKeys.SNAPSHOT, newSnapshot)}")
         newSnapshot
       }
     }.getOrElse {
-      logInfo(s"Creating initial snapshot without metadata, because the directory is empty")
+      logInfo("Creating initial snapshot without metadata, because the directory is empty")
       new InitialSnapshot(logPath, this)
     }
   }
@@ -1153,7 +1159,9 @@ trait SnapshotManagement { self: DeltaLog =>
       newChecksumOpt: Option[VersionChecksum],
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       committedVersion: Long): Snapshot = {
-    logInfo(s"Creating a new snapshot v${initSegment.version} for commit version $committedVersion")
+    logInfo(
+      log"Creating a new snapshot v${MDC(DeltaLogKeys.VERSION, initSegment.version)} " +
+      log"for commit version ${MDC(DeltaLogKeys.VERSION2, committedVersion)}")
     createSnapshot(
       initSegment,
       tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
@@ -1203,7 +1211,7 @@ trait SnapshotManagement { self: DeltaLog =>
         previousSnapshot.tableCommitCoordinatorClientOpt,
         committedVersion)
       logMetadataTableIdChange(previousSnapshot, newSnapshot)
-      logInfo(s"Updated snapshot to $newSnapshot")
+      logInfo(log"Updated snapshot to ${MDC(DeltaLogKeys.SNAPSHOT, newSnapshot)}")
       installSnapshot(newSnapshot, updateTimestamp)
     }
   }

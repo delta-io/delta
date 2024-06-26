@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
@@ -154,8 +156,8 @@ object UniversalFormat extends DeltaLogging {
                   remainingSupportedFormats.mkString(","))
             }
 
-            logInfo(s"[tableId=$tableId] IcebergCompat is being disabled. Auto-disabling " +
-              "Universal Format (Iceberg), too.")
+            logInfo(log"[${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " +
+              log"IcebergCompat is being disabled. Auto-disabling Universal Format (Iceberg), too.")
 
             (None, Some(newestMetadata.copy(configuration = newConfiguration)))
           } else {
