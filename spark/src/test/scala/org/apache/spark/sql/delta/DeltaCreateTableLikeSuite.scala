@@ -288,9 +288,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
     withTempDir { dir =>
       withTable("t") {
         def getCatalogTable: CatalogTable = {
-          val storage =
-              CatalogStorageFormat.empty.copy(locationUri =
-                Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
+          val storage = CatalogStorageFormat.empty.copy(
+            locationUri = Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
           val catalogTableTarget = CatalogTable(
             identifier = TableIdentifier("t"),
             tableType = CatalogTableType.MANAGED,
@@ -309,12 +308,14 @@ class DeltaCreateTableLikeSuite extends QueryTest
           mode = SaveMode.Ignore,
           query = None,
           operation = TableCreationModes.Create).run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
         CreateDeltaTableCommand(
           getCatalogTable,
           existingTableOpt = None, // Set to None to simulate concurrent table creation commands.
           mode = SaveMode.Ignore,
           query = None,
           operation = TableCreationModes.Create).run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
       }
     }
   }
