@@ -247,19 +247,25 @@ trait SnapshotManagement { self: DeltaLog =>
       // We should not have any gaps in File-System versions and CommitCoordinator versions after
       // the additional listing.
       val eventData = Map(
-        "initialLogsFromFsListingOpt" ->
-          initialLogTuplesFromFsListingOpt.map(_.map(_._1.getPath.toString)),
-        "additionalLogsFromFsListingOpt" ->
-          additionalLogTuplesFromFsListingOpt.map(_.map(_._1.getPath.toString)),
+        "initialCommitVersionsFromFsListingOpt" ->
+          initialLogTuplesFromFsListingOpt.map(_.map(_._3)),
+        "initialMaxDeltaVersionSeen" -> initialMaxDeltaVersionSeen,
+        "additionalCommitVersionsFromFsListingOpt" ->
+          additionalLogTuplesFromFsListingOpt.map(_.map(_._3)),
         "maxDeltaVersionSeen" -> maxDeltaVersionSeen,
-        "unbackfilledCommits" ->
-          unbackfilledCommitsResponse.getCommits.map(
-            commit => commit.getFileStatus.getPath.toString),
+        "unbackfilledCommitVersions" ->
+          unbackfilledCommitsResponse.getCommits.map(commit => commit.getVersion),
         "latestCommitVersion" -> unbackfilledCommitsResponse.getLatestTableVersion)
       recordDeltaEvent(
         deltaLog = this,
         opType = CoordinatedCommitsUsageLogs.FS_COMMIT_COORDINATOR_LISTING_UNEXPECTED_GAPS,
         data = eventData)
+      if (Utils.isTesting) {
+        throw new IllegalStateException(
+          s"Delta table at $dataPath unexpectedly still requires additional file-system listing " +
+            s"after an additional file-system listing was already performed to reconcile the gap " +
+            s"between concurrent file-system and commit-owner calls. Details: $eventData")
+        }
     }
 
     val finalLogTuplesFromFsListingOpt: Option[Array[(FileStatus, FileType.Value, Long)]] =

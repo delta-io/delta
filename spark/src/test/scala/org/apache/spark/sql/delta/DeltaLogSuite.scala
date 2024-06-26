@@ -528,7 +528,13 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-
+      if (coordinatedCommitsEnabledInTests) {
+        val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
+          "tracking-in-memory",
+          Map.empty[String, String],
+          spark)
+        oc.asInstanceOf[TrackingCommitCoordinatorClient].removeCommitTestOnly(deltaLog.logPath, 1)
+      }
       checkAnswer(
         spark.read.format("delta").load(path),
         spark.range(10).toDF()
