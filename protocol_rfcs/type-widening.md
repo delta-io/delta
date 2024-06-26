@@ -37,7 +37,6 @@ Type changes applied to a table are recorded in the table schema and stored in t
 The value for the key `delta.typeChanges` must be a JSON list of objects, where each object contains the following fields:
 Field Name | optional/required | Description
 -|-|-
-`tableVersion`| required | The version of the table when the type change was applied.
 `fromType`| required | The type of the column or field before the type change.
 `toType`| required | The type of the column or field after the type change.
 `fieldPath`| optional | When updating the type of a map key/value or array element only: the path from the struct field holding the metadata to the map key/value or array element that was updated.
@@ -54,12 +53,10 @@ The following is an example for the definition of a column that went through two
     "metadata" : { 
       "delta.typeChanges": [
         {
-          "tableVersion": 1,
           "fromType": "short",
           "toType": "integer"
         },
         {
-          "tableVersion": 5,
           "fromType": "integer",
           "toType": "long"
         }
@@ -82,7 +79,6 @@ The following is an example for the definition of a column after changing the ty
     "metadata" : { 
       "delta.typeChanges": [
         {
-          "tableVersion": 2,
           "fromType": "float",
           "toType": "double",
           "fieldPath": "key"
@@ -110,7 +106,6 @@ The following is an example for the definition of a column after changing the ty
     "metadata" : { 
       "delta.typeChanges": [
         {
-          "tableVersion": 2,
           "fromType": "decimal(6, 2)",
           "toType": "decimal(10, 4)",
           "fieldPath": "element.key"
