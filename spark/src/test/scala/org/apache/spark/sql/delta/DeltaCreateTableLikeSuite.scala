@@ -17,14 +17,21 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.net.URI
+import java.util.UUID
 
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.commands.{CreateDeltaTableCommand, TableCreationModes}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 
 class DeltaCreateTableLikeSuite extends QueryTest
   with SharedSparkSession
@@ -274,6 +281,42 @@ class DeltaCreateTableLikeSuite extends QueryTest
         spark.sql(s"CREATE TABLE $targetTbl LIKE  $srcTbl")
       }.getMessage
       msg.contains("Table `default`.`targetTbl` already exists.")
+    }
+  }
+
+  test("concurrent create Managed Catalog table commands should not fail") {
+    withTempDir { dir =>
+      withTable("t") {
+        def getCatalogTable: CatalogTable = {
+          val storage = CatalogStorageFormat.empty.copy(
+            locationUri = Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
+          val catalogTableTarget = CatalogTable(
+            identifier = TableIdentifier("t"),
+            tableType = CatalogTableType.MANAGED,
+            storage = storage,
+            provider = Some("delta"),
+            schema = new StructType().add("id", "long"))
+          new DeltaCatalog()
+            .verifyTableAndSolidify(
+              tableDesc = catalogTableTarget,
+              query = None,
+              maybeClusterBySpec = None)
+        }
+        CreateDeltaTableCommand(
+          getCatalogTable,
+          existingTableOpt = None,
+          mode = SaveMode.Ignore,
+          query = None,
+          operation = TableCreationModes.Create).run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+        CreateDeltaTableCommand(
+          getCatalogTable,
+          existingTableOpt = None, // Set to None to simulate concurrent table creation commands.
+          mode = SaveMode.Ignore,
+          query = None,
+          operation = TableCreationModes.Create).run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+      }
     }
   }
 
