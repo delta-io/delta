@@ -967,55 +967,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {
-    val actSchema = tableSchema(path)
-    assert(actSchema === expSchema)
-
-    // verify data using Kernel reader
-    checkTable(path, expData)
-
-    // verify data using Spark reader.
-    // Spark reads the timestamp partition columns in local timezone vs. Kernel reads in UTC. We
-    // need to set the timezone to UTC before reading the data using Spark to make the tests pass
-    withSparkTimeZone("UTC") { () =>
-      val resultSpark = spark.sql(s"SELECT * FROM delta.`$path`").collect().map(TestRow(_))
-      checkAnswer(resultSpark, expData)
-    }
-  }
-
-  def verifyCommitInfo(
-    tablePath: String,
-    version: Long,
-    partitionCols: Seq[String] = Seq.empty,
-    isBlindAppend: Boolean = true,
-    operation: Operation = CREATE_TABLE): Unit = {
-    val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
-      .filter(s"version = $version")
-      .select(
-        "version",
-        "operationParameters.partitionBy",
-        "isBlindAppend",
-        "engineInfo",
-        "operation")
-      .collect().last
-
-    assert(row.getAs[Long]("version") === version)
-    assert(row.getAs[Long]("partitionBy") ===
-      (if (partitionCols == null) null else OBJ_MAPPER.writeValueAsString(partitionCols.asJava)))
-    assert(row.getAs[Boolean]("isBlindAppend") === isBlindAppend)
-    assert(row.getAs[Seq[String]]("engineInfo") ===
-      "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
-    assert(row.getAs[String]("operation") === operation.getDescription)
-  }
-
-  def verifyCommitResult(
-    result: TransactionCommitResult,
-    expVersion: Long,
-    expIsReadyForCheckpoint: Boolean): Unit = {
-    assert(result.getVersion === expVersion)
-    assert(result.isReadyForCheckpoint === expIsReadyForCheckpoint)
-  }
-
   def removeUnsupportedTypes(structType: StructType): StructType = {
     def process(dataType: DataType): Option[DataType] = dataType match {
       case a: ArrayType =>

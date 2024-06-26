@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults
 
-import io.delta.kernel.Operation.CREATE_TABLE
+import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
@@ -30,7 +30,7 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
+import scala.collection.immutable.{ListMap, Seq}
 import scala.collection.mutable
 import io.delta.kernel.internal.TableConfig._
 import io.delta.kernel.utils.FileStatus;
@@ -50,7 +50,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assert(getInCommitTimestamp(engine, table, 0).get >= beforeCommitAttemptStartTime)
-      assert(ver0Snapshot.getProtocol.getWriterFeatures.contains("inCommitTimestamp-preview"))
+      assertHasWriterFeature(ver0Snapshot, "inCommitTimestamp-preview")
     }
   }
 
@@ -67,7 +67,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
-      assert(!ver0Snapshot.getProtocol.getWriterFeatures.contains("inCommitTimestamp-preview"))
+      assertHasNoWriterFeature(ver0Snapshot, "inCommitTimestamp-preview")
       assert(getInCommitTimestamp(engine, table, 0).isEmpty)
 
       val beforeCommitAttemptStartTime = System.currentTimeMillis
@@ -80,7 +80,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         expectedValue = true)
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assert(ver1Snapshot.getProtocol.getWriterFeatures.contains("inCommitTimestamp-preview"))
+      assertHasWriterFeature(ver1Snapshot, "inCommitTimestamp-preview")
       assert(
         getInCommitTimestamp(engine, table, 1).get >= beforeCommitAttemptStartTime)
     }
@@ -129,7 +129,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         Optional.of(getInCommitTimestamp(engine, table, version = 1).get))
       assertMetadataProp(
         ver1Snapshot,
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION, Optional.of(1L))
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+        Optional.of(1L))
 
       appendData(
         engine,
@@ -146,7 +147,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         Optional.of(getInCommitTimestamp(engine, table, version = 1).get))
       assertMetadataProp(
         ver2Snapshot,
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION, Optional.of(1L))
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+        Optional.of(1L))
     }
   }
 
@@ -205,14 +207,64 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val metadata = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl].getMetadata
       val inCommitTimestamp = getInCommitTimestamp(engine, table, version = 1).get
       assert(metadata.toString == String.format(
-        "Metadata(%s,Optional.empty,Optional.empty," +
-        "Format(parquet,Map()),{\n  \"type\" : \"struct\",\n  \"fields\" : [ {\n" +
-        "  \"name\" : \"id\",\n  \"type\" : \"integer\",\n  \"nullable\" : true, \n" +
-        "  \"metadata\" : {}\n} ]\n}," +
-        "List(),Map(delta.enableInCommitTimestamps-preview -> true, " +
-        "delta.inCommitTimestampEnablementVersion-preview -> 1, " +
-        "delta.inCommitTimestampEnablementTimestamp-preview -> %s)," +
-        "Optional[%s])", metadata.getId, inCommitTimestamp.toString, metadata.getCreatedTime.get))
+        "Metadata{id='%s', name=Optional.empty, description=Optional.empty, " +
+          "format=Format{provider='parquet', options={}}, " +
+          "schemaString='{\n  \"type\" : \"struct\",\n  \"fields\" : [ {\n" +
+          "  \"name\" : \"id\",\n  \"type\" : \"integer\",\n  \"nullable\" : true, \n" +
+          "  \"metadata\" : {}\n} ]\n}', " +
+          "partitionColumns=List(), createdTime=Optional[%s], " +
+          "configuration={delta.enableInCommitTimestamps-preview=true, " +
+          "delta.inCommitTimestampEnablementVersion-preview=1, " +
+          "delta.inCommitTimestampEnablementTimestamp-preview=%s}}",
+        metadata.getId,
+        metadata.getCreatedTime.get,
+        inCommitTimestamp.toString))
+    }
+  }
+
+  test("Table with ICT enabled is readable") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = TableImpl.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn = txnBuilder
+        .withSchema(engine, testSchema)
+        .build(engine)
+
+      txn.commit(engine, emptyIterable())
+
+      val commitResult = appendData(
+        engine,
+        tablePath,
+        schema = testSchema,
+        partCols = Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
+
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(
+        ver1Snapshot,
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
+        Optional.of(getInCommitTimestamp(engine, table, version = 1).get))
+      assertMetadataProp(
+        ver1Snapshot,
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+        Optional.of(1L))
+
+      val expData = dataBatches1.flatMap(_.toTestRows)
+
+      verifyCommitResult(commitResult, expVersion = 1, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
+      verifyWrittenContent(tablePath, testSchema, expData)
+      verifyTableProperties(tablePath,
+        ListMap(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> true,
+        "delta.feature.inCommitTimestamp-preview" -> "supported",
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey
+          -> getInCommitTimestamp(engine, table, version = 1).get,
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> 1L),
+        3,
+        7)
     }
   }
 

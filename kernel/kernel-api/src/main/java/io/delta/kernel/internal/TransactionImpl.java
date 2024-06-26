@@ -69,13 +69,13 @@ public class TransactionImpl
     private final Path dataPath;
     private final Path logPath;
     private final Protocol protocol;
-    private Metadata metadata;
-    private boolean shouldUpdateMetadata;
     private final SnapshotImpl readSnapshot;
     private final Optional<SetTransaction> setTxnOpt;
+    private final boolean shouldUpdateProtocol;
+    private Metadata metadata;
+    private boolean shouldUpdateMetadata;
 
     private boolean closed; // To avoid trying to commit the same transaction again.
-    private final boolean shouldUpdateProtocol;
 
     public TransactionImpl(
             boolean isNewTable,
@@ -125,22 +125,9 @@ public class TransactionImpl
                     "Transaction is already attempted to commit. Create a new transaction.");
 
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
-            // Generate the commit action with the inCommitTimestamp if ICT is enabled. And if ICT
-            // is enabled for the current transaction, update the metadata with the ICT enablement
-            // info.
+            // Generate the commit action with the inCommitTimestamp if ICT is enabled.
             CommitInfo attemptCommitInfo = generateCommitAction(engine);
-            attemptCommitInfo.getInCommitTimestamp().ifPresent(
-                    inCommitTimestamp -> {
-                        Optional<Metadata> metadataWithICTInfo =
-                                InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-                                        engine,
-                                        inCommitTimestamp,
-                                        readSnapshot,
-                                        metadata,
-                                        readSnapshot.getVersion(engine) + 1L);
-                        metadataWithICTInfo.ifPresent(this::updateMetadata);
-                    }
-            );
+            updateMetadataWithICTIfRequired(engine, attemptCommitInfo);
             int numRetries = 0;
             do {
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
@@ -176,6 +163,23 @@ public class TransactionImpl
                 shouldUpdateMetadata ? this.metadata : "-", metadata);
         this.metadata = metadata;
         this.shouldUpdateMetadata = true;
+    }
+
+    private void updateMetadataWithICTIfRequired(Engine engine, CommitInfo attemptCommitInfo) {
+        // If ICT is enabled for the current transaction, update the metadata with the ICT
+        // enablement info.
+        attemptCommitInfo.getInCommitTimestamp().ifPresent(
+                inCommitTimestamp -> {
+                    Optional<Metadata> metadataWithICTInfo =
+                            InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+                                    engine,
+                                    inCommitTimestamp,
+                                    readSnapshot,
+                                    metadata,
+                                    readSnapshot.getVersion(engine) + 1L);
+                    metadataWithICTInfo.ifPresent(this::updateMetadata);
+                }
+        );
     }
 
     private TransactionCommitResult doCommit(

@@ -15,10 +15,7 @@
  */
 package io.delta.kernel.internal;
 
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -67,11 +64,6 @@ public class TableConfig<T> {
     );
 
     /**
-     * All the valid properties that can be set on the table.
-     */
-    private static final HashMap<String, TableConfig> validProperties = new HashMap<>();
-
-    /**
      * This table property is used to track the enablement of the {@code inCommitTimestamps}.
      * <p>
      * When enabled, commit metadata includes a monotonically increasing timestamp that allows for
@@ -113,19 +105,24 @@ public class TableConfig<T> {
                     "needs to be a long."
             );
 
+    /**
+     * All the valid properties that can be set on the table.
+     */
+    private static final Map<String, TableConfig<?>> VALID_PROPERTIES = Collections.unmodifiableMap(
+            new HashMap<String, TableConfig<?>>() {{
+                addConfig(this, TOMBSTONE_RETENTION);
+                addConfig(this, CHECKPOINT_INTERVAL);
+                addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
+                addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
+                addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
+            }}
+    );
+
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;
     private final Predicate<T> validator;
     private final String helpMessage;
-
-    static {
-        addConfig(validProperties, TOMBSTONE_RETENTION);
-        addConfig(validProperties, CHECKPOINT_INTERVAL);
-        addConfig(validProperties, IN_COMMIT_TIMESTAMPS_ENABLED);
-        addConfig(validProperties, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
-        addConfig(validProperties, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
-    }
 
     private TableConfig(
             String key,
@@ -176,7 +173,7 @@ public class TableConfig<T> {
             String key = kv.getKey().toLowerCase(Locale.ROOT);
             String value = kv.getValue();
             if (key.startsWith("delta.")) {
-                TableConfig tableConfig = validProperties.get(key);
+                TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
                 if (tableConfig != null) {
                     tableConfig.validate(value);
                     validatedConfigurations.put(tableConfig.getKey(), value);
@@ -197,7 +194,7 @@ public class TableConfig<T> {
         }
     }
 
-    private static void addConfig(Map<String, TableConfig> configs, TableConfig config) {
+    private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
         configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
     }
 }

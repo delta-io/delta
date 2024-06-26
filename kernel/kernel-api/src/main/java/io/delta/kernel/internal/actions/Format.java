@@ -82,17 +82,9 @@ public class Format {
 
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Format(");
-        sb.append(provider).append(",");
-        sb.append("Map(");
-        for (Map.Entry<String, String> entry : options.entrySet()) {
-            sb.append(entry.getKey()).append(" -> ").append(entry.getValue()).append(", ");
-        }
-        if (sb.substring(sb.length() - 2).equals(", ")) {
-            sb.setLength(sb.length() - 2);
-        }
-        sb.append("))");
-        return sb.toString();
+        return "Format{" +
+                "provider='" + provider + '\'' +
+                ", options=" + options +
+                '}';
     }
 }

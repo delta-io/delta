@@ -84,13 +84,13 @@ public class CommitInfo {
                     .boxed()
                     .collect(toMap(i -> FULL_SCHEMA.at(i).getName(), i -> i));
 
-    private Optional<Long> inCommitTimestamp;
     private final long timestamp;
     private final String engineInfo;
     private final String operation;
     private final Map<String, String> operationParameters;
     private final boolean isBlindAppend;
     private final String txnId;
+    private Optional<Long> inCommitTimestamp;
 
     public CommitInfo(
             Optional<Long> inCommitTimestamp,

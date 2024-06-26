@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.actions;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 import io.delta.kernel.data.*;
 import io.delta.kernel.types.ArrayType;
@@ -26,6 +25,7 @@ import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 
@@ -55,7 +55,7 @@ public class Protocol {
     private final int minReaderVersion;
     private final int minWriterVersion;
     private final List<String> readerFeatures;
-    private List<String> writerFeatures;
+    private final List<String> writerFeatures;
 
     public Protocol(
         int minReaderVersion,
@@ -110,28 +110,19 @@ public class Protocol {
         return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
     }
 
-    public Protocol withNewWriterFeatures(Set<String> writerFeatures) {
+    public Protocol withNewWriterFeatures(
+            Set<String> writerFeatures) {
+        Tuple2<Integer, Integer> newProtocolVersions =
+                TableFeatures.minProtocolVersionFromAutomaticallyEnabledFeatures(
+                        writerFeatures);
         List<String> newWriterFeatures = new ArrayList<>(writerFeatures);
         if (this.writerFeatures != null) {
             newWriterFeatures.addAll(this.writerFeatures);
         }
-        this.writerFeatures = newWriterFeatures;
-        return this;
-    }
-
-    /**
-     * Extract the writer features that should be enabled automatically based on the metadata which
-     * are not already enabled. For example, the {@code inCommitTimestamp-preview} feature should be
-     * enabled when the delta property name is set to true in the metadata if it is not already
-     * enabled.
-     *
-     * @param metadata the metadata of the table
-     * @return the writer features that should be enabled automatically
-     */
-    public Set<String> extractAutomaticallyEnabledWriterFeatures(Metadata metadata) {
-        return TableFeatures.getSupportedWriterFeatures().stream()
-                .filter(f -> TableFeatures.metadataRequiresWriterFeatureToBeEnabled(metadata, f))
-                .filter(f -> writerFeatures == null || !writerFeatures.contains(f))
-                .collect(Collectors.toSet());
+        return new Protocol(
+                newProtocolVersions._1,
+                newProtocolVersions._2,
+                this.readerFeatures == null ? null : new ArrayList<>(this.readerFeatures),
+                newWriterFeatures);
     }
 }

@@ -134,12 +134,6 @@ public class Metadata {
     public String toString() {
         List<String> partitionColumnsStr = VectorUtils.toJavaList(partitionColumns);
         StringBuilder sb = new StringBuilder();
-        sb.append("Metadata(");
-        sb.append(id).append(",");
-        sb.append(name).append(",");
-        sb.append(description).append(",");
-        sb.append(format).append(",");
-        sb.append(schemaString).append(",");
         sb.append("List(");
         for (String partitionColumn : partitionColumnsStr) {
             sb.append(partitionColumn).append(", ");
@@ -147,18 +141,17 @@ public class Metadata {
         if (sb.substring(sb.length() - 2).equals(", ")) {
             sb.setLength(sb.length() - 2);  // Remove the last comma and space
         }
-        sb.append("),");
-        sb.append("Map(");
-        for (Map.Entry<String, String> entry : configuration.get().entrySet()) {
-            sb.append(entry.getKey()).append(" -> ").append(entry.getValue()).append(", ");
-        }
-        if (sb.substring(sb.length() - 2).equals(", ")) {
-            sb.setLength(sb.length() - 2);  // Remove the last comma and space
-        }
-        sb.append("),");
-        sb.append(createdTime);
         sb.append(")");
-        return sb.toString();
+        return "Metadata{" +
+                "id='" + id + '\'' +
+                ", name=" + name +
+                ", description=" + description +
+                ", format=" + format +
+                ", schemaString='" + schemaString + '\'' +
+                ", partitionColumns=" + sb +
+                ", createdTime=" + createdTime +
+                ", configuration=" + configuration.get() +
+                '}';
     }
 
     public String getSchemaString() {

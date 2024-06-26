@@ -18,7 +18,7 @@ package io.delta.kernel.defaults
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
@@ -26,7 +26,7 @@ import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
+import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
@@ -37,6 +37,7 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.Operation.CREATE_TABLE
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -47,7 +48,7 @@ import java.io.File
 import java.nio.file.{Files, Paths}
 import java.util.Optional
 import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
+import scala.collection.immutable.{ListMap, Seq}
 
 /**
  * Common utility methods for write test suites.
@@ -325,6 +326,14 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assertMetadataProp(snapshot, key, Optional.empty())
   }
 
+  def assertHasWriterFeature(snapshot: SnapshotImpl, writerFeature: String): Unit = {
+    assert(snapshot.getProtocol.getWriterFeatures.contains(writerFeature))
+  }
+
+  def assertHasNoWriterFeature(snapshot: SnapshotImpl, writerFeature: String): Unit = {
+    assert(!snapshot.getProtocol.getWriterFeatures.contains(writerFeature))
+  }
+
   def setTablePropAndVerify(
     engine: Engine,
     tablePath: String,
@@ -340,5 +349,74 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertMetadataProp(snapshot, key, expectedValue)
+  }
+
+  def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {
+    val actSchema = tableSchema(path)
+    assert(actSchema === expSchema)
+
+    // verify data using Kernel reader
+    checkTable(path, expData)
+
+    // verify data using Spark reader.
+    // Spark reads the timestamp partition columns in local timezone vs. Kernel reads in UTC. We
+    // need to set the timezone to UTC before reading the data using Spark to make the tests pass
+    withSparkTimeZone("UTC") { () =>
+      val resultSpark = spark.sql(s"SELECT * FROM delta.`$path`").collect().map(TestRow(_))
+      checkAnswer(resultSpark, expData)
+    }
+  }
+
+  def verifyCommitInfo(
+    tablePath: String,
+    version: Long,
+    partitionCols: Seq[String] = Seq.empty,
+    isBlindAppend: Boolean = true,
+    operation: Operation = CREATE_TABLE): Unit = {
+    val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
+      .filter(s"version = $version")
+      .select(
+        "version",
+        "operationParameters.partitionBy",
+        "isBlindAppend",
+        "engineInfo",
+        "operation")
+      .collect().last
+
+    assert(row.getAs[Long]("version") === version)
+    assert(row.getAs[Long]("partitionBy") ===
+      (if (partitionCols == null) null else OBJ_MAPPER.writeValueAsString(partitionCols.asJava)))
+    assert(row.getAs[Boolean]("isBlindAppend") === isBlindAppend)
+    assert(row.getAs[Seq[String]]("engineInfo") ===
+      "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
+    assert(row.getAs[String]("operation") === operation.getDescription)
+  }
+
+  def verifyCommitResult(
+    result: TransactionCommitResult,
+    expVersion: Long,
+    expIsReadyForCheckpoint: Boolean): Unit = {
+    assert(result.getVersion === expVersion)
+    assert(result.isReadyForCheckpoint === expIsReadyForCheckpoint)
+  }
+
+  def verifyTableProperties(
+    tablePath: String,
+    expProperties: ListMap[String, Any], minReaderVersion: Int, minWriterVersion: Int): Unit = {
+    val resultProperties = spark.sql(s"DESCRIBE EXTENDED delta.`$tablePath`")
+      .filter("col_name = 'Table Properties'")
+      .select("data_type")
+      .collect().map(TestRow(_))
+
+    val builder = new StringBuilder("[")
+
+    expProperties.foreach { case (key, value) =>
+      builder.append(s"$key=$value,")
+    }
+
+    builder.append(s"delta.minReaderVersion=$minReaderVersion,")
+    builder.append(s"delta.minWriterVersion=$minWriterVersion")
+    builder.append("]")
+    checkAnswer(resultProperties, Seq(builder.toString()).map(TestRow(_)))
   }
 }
