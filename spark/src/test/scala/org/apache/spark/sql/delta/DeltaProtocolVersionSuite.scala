@@ -3514,7 +3514,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
   for (truncateHistory <- BOOLEAN_DOMAIN)
   test("Writer features that require history validation/truncation." +
-      s" - truncateHistory: $truncateHistory") {
+      s"truncateHistory: $truncateHistory") {
     withTempDir { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val deltaLog = DeltaLog.forTable(spark, dir, clock)
