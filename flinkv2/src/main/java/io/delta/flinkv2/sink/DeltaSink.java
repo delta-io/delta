@@ -30,6 +30,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * Runs in its own subtask in a single thread.
+ */
 public class DeltaSink implements Sink<RowData>,
     SupportsCommitter<DeltaCommittable>,
     SupportsWriterState<RowData, DeltaSinkWriterState>,
@@ -197,6 +200,8 @@ public class DeltaSink implements Sink<RowData>,
     public StatefulSinkWriter<RowData, DeltaSinkWriterState> restoreWriter(
             WriterInitContext context, Collection<DeltaSinkWriterState> recoveredState)
             throws IOException {
+        // TODO: re-calculate the mockTxnStateJson (i.e. rebase on the latest table version)
+
         Set<String> writerIds = recoveredState.stream()
             .map(DeltaSinkWriterState::getWriterId)
             .collect(Collectors.toSet());
