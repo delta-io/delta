@@ -986,7 +986,8 @@ trait CDCReaderImpl extends DeltaLogging {
    * Determine if the metadata provided has cdc enabled or not.
    */
   def isCDCEnabledOnTable(metadata: Metadata, spark: SparkSession): Boolean = {
-    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)
+    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(
+      protocol = Protocol(), metadata, spark)
   }
 
   /**

@@ -430,7 +430,7 @@ class DeltaLog private(
     val protocolEnabledFeatures = targetProtocol.writerFeatureNames
       .flatMap(TableFeature.featureNameToFeature)
     val activeFeatures =
-      Protocol.extractAutomaticallyEnabledFeatures(spark, targetMetadata, Some(targetProtocol))
+      Protocol.extractAutomaticallyEnabledFeatures(spark, targetMetadata, targetProtocol)
     val activeButNotEnabled = activeFeatures.diff(protocolEnabledFeatures)
     if (activeButNotEnabled.nonEmpty) {
       throw DeltaErrors.tableFeatureMismatchException(activeButNotEnabled.map(_.name))
