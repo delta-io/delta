@@ -63,7 +63,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient extends CommitCoordinatorC
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
-    val executionObserver = TransactionExecutionObserver.threadObserver.get()
+    val executionObserver = TransactionExecutionObserver.getObserver
     val tablePath = CoordinatedCommitsUtils.getTablePath(logPath)
     if (commitVersion == 0) {
       throw CommitFailedException(

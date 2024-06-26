@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.ExpireSnapshots
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 
@@ -184,6 +185,12 @@ class IcebergConversionTransaction(
     }
   }
 
+  class ExpireSnapshotHelper(expireSnapshot: ExpireSnapshots)
+      extends TransactionHelper(expireSnapshot) {
+
+    override def opType: String = "expireSnapshot"
+  }
+
   //////////////////////
   // Member variables //
   //////////////////////
@@ -236,6 +243,12 @@ class IcebergConversionTransaction(
 
   def getRewriteHelper(): RewriteHelper = {
     val ret = new RewriteHelper(txn.newRewrite())
+    fileUpdates += ret
+    ret
+  }
+
+  def getExpireSnapshotHelper(): ExpireSnapshotHelper = {
+    val ret = new ExpireSnapshotHelper(txn.expireSnapshots())
     fileUpdates += ret
     ret
   }

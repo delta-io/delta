@@ -176,6 +176,9 @@ trait DeltaConfigsBase extends DeltaLogging {
         case lKey if lKey.startsWith("delta.") =>
           Option(entries.get(lKey.stripPrefix("delta."))) match {
             case Some(deltaConfig) => deltaConfig(value) // validate the value
+            case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
+              // always allow any delta universal format config with key converted to lower case
+              lKey -> value
             case None if allowArbitraryProperties =>
               logConsole(
                 s"You are setting a property: $key that is not recognized by this " +

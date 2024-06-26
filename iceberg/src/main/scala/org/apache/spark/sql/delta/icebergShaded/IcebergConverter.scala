@@ -24,6 +24,7 @@ import scala.util.control.Breaks._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, OptimisticTransactionImpl, Snapshot, UniversalFormat, UniversalFormatConverter}
+import org.apache.spark.sql.delta.DeltaOperations.OPTIMIZE_OPERATION_NAME
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -291,6 +292,10 @@ class IcebergConverter(spark: SparkSession)
     // or to the specified batch size.
     val actionBatchSize =
       spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_ACTIONS_TO_CONVERT)
+    // If there exists any OPTIMIZE action inside actions to convert,
+    // It will trigger snapshot expiration for iceberg table
+    var needsExpireSnapshot = false
+
     prevConvertedSnapshotOpt match {
       case Some(prevSnapshot) =>
         // Read the actions directly from the delta json files.
@@ -313,9 +318,12 @@ class IcebergConverter(spark: SparkSession)
         actionsToConvert.foreach { actionsIter =>
           try {
             actionsIter.grouped(actionBatchSize).foreach { actionStrs =>
+              val actions = actionStrs.map(Action.fromJson)
+              needsExpireSnapshot ||= existsOptimize(actions)
+
               runIcebergConversionForActions(
                 icebergTxn,
-                actionStrs.map(Action.fromJson),
+                actions,
                 log.dataPath,
                 prevConvertedSnapshotOpt)
             }
@@ -342,6 +350,7 @@ class IcebergConverter(spark: SparkSession)
 
         actionsToConvert.grouped(actionBatchSize)
           .foreach { actions =>
+            needsExpireSnapshot ||= existsOptimize(actions)
             runIcebergConversionForActions(icebergTxn, actions, log.dataPath, None)
           }
 
@@ -350,6 +359,13 @@ class IcebergConverter(spark: SparkSession)
           icebergTxn.updateTableMetadata(snapshotToConvert.metadata, snapshotToConvert.metadata)
         }
     }
+    if (needsExpireSnapshot) {
+      logInfo(s"Committing iceberg snapshot expiration for uniform table " +
+        s"[path = ${log.logPath}] tableId=${log.tableId}]")
+      val expireSnapshotHelper = icebergTxn.getExpireSnapshotHelper()
+      expireSnapshotHelper.commit()
+    }
+
     icebergTxn.commit()
     Some(snapshotToConvert.version, snapshotToConvert.timestamp)
   }
@@ -458,4 +474,12 @@ class IcebergConverter(spark: SparkSession)
         }
     }
   }
+
+  private def existsOptimize(actions: Seq[Action]): Boolean = {
+    actions.exists { action =>
+      val sa = action.wrap
+      sa.commitInfo != null && sa.commitInfo.operation == OPTIMIZE_OPERATION_NAME
+    }
+  }
+
 }

@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
@@ -511,6 +511,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
+  test(s"table with spaces in the table path") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath + s"/table- -path"
+      spark.sql(s"CREATE TABLE delta.`$target` USING DELTA " +
+        s"SELECT * FROM delta.`${getTestResourceFilePath("basic-with-checkpoint")}`")
+      checkTable(
+        path = target,
+        expectedAnswer = (0 until 150).map(i => TestRow(i.toLong))
+      )
+    }
+  }
+
   test("table with name column mapping mode") {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
@@ -586,10 +598,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("error - version not contiguous") {
-    val e = intercept[IllegalStateException] {
+    val e = intercept[InvalidTableException] {
       latestSnapshot(goldenTablePath("versions-not-contiguous"))
     }
-    assert(e.getMessage.contains("Versions ([0, 2]) are not continuous"))
+    assert(e.getMessage.contains("versions are not continuous: ([0, 2])"))
   }
 
   test("table protocol version greater than reader protocol version") {
@@ -619,10 +631,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       val source = goldenTablePath("data-reader-partition-values")
       spark.sql(s"CREATE TABLE delta.`$target` SHALLOW CLONE delta.`$source`")
 
-      val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
-
-      assert(expAnswer.size == 3)
-      checkTable(target, expAnswer)
+      withSparkTimeZone("UTC") {
+        val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
+        assert(expAnswer.size == 3)
+        checkTable(target, expAnswer)
+      }
     }
   }
 

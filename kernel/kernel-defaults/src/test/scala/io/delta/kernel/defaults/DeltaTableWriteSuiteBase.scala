@@ -361,7 +361,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     // verify data using Spark reader.
     // Spark reads the timestamp partition columns in local timezone vs. Kernel reads in UTC. We
     // need to set the timezone to UTC before reading the data using Spark to make the tests pass
-    withSparkTimeZone("UTC") { () =>
+    withSparkTimeZone("UTC") {
       val resultSpark = spark.sql(s"SELECT * FROM delta.`$path`").collect().map(TestRow(_))
       checkAnswer(resultSpark, expData)
     }
