@@ -24,6 +24,8 @@ import org.apache.hudi.common.fs.FSUtils
 import org.apache.hudi.common.model.HoodieBaseFile
 import org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
 import org.apache.hudi.metadata.HoodieMetadataFileSystemView
+import org.apache.hudi.storage.StorageConfiguration
+import org.apache.hudi.storage.hadoop.{HadoopStorageConfiguration, HoodieHadoopStorage}
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.avro.SchemaConverters
@@ -184,7 +186,8 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       }
 
       val metaClient: HoodieTableMetaClient = HoodieTableMetaClient.builder
-        .setConf(log.newDeltaHadoopConf()).setBasePath(log.dataPath.toString)
+        .setConf(new HadoopStorageConfiguration(log.newDeltaHadoopConf()))
+        .setBasePath(log.dataPath.toString)
         .setLoadActiveTimelineOnLoad(true)
         .build
       // Timeline requires a clean commit for proper removal of entries from the Hudi Metadata Table
@@ -214,8 +217,9 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
 
   def buildHudiMetaClient(): HoodieTableMetaClient = {
     val hadoopConf: Configuration = _sparkSession.sparkContext.hadoopConfiguration
+    val storageConf : StorageConfiguration[_] = new HadoopStorageConfiguration(hadoopConf)
     HoodieTableMetaClient.builder
-      .setConf(hadoopConf).setBasePath(testTablePath)
+      .setConf(storageConf).setBasePath(testTablePath)
       .setLoadActiveTimelineOnLoad(true)
       .build
   }
@@ -236,13 +240,15 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       // To avoid requiring Hudi spark dependencies, we first lookup the active base files and then
       // assert by reading those active base files (parquet) directly
       val hadoopConf: Configuration = _sparkSession.sparkContext.hadoopConfiguration
+      val storageConf : StorageConfiguration[_] = new HadoopStorageConfiguration(hadoopConf)
       val metaClient: HoodieTableMetaClient = buildHudiMetaClient()
-      val engContext: HoodieLocalEngineContext = new HoodieLocalEngineContext(hadoopConf)
+      val engContext: HoodieLocalEngineContext = new HoodieLocalEngineContext(storageConf)
       val fsView: HoodieMetadataFileSystemView = new HoodieMetadataFileSystemView(engContext,
         metaClient, metaClient.getActiveTimeline.getCommitsTimeline.filterCompletedInstants,
         HoodieMetadataConfig.newBuilder.enable(true).build)
+      val hoodieStorage = new HoodieHadoopStorage(testTablePath, storageConf)
       val paths = JavaConverters.asScalaBuffer(
-        FSUtils.getAllPartitionPaths(engContext, testTablePath, true, false))
+        FSUtils.getAllPartitionPaths(engContext, hoodieStorage, testTablePath, true, false))
         .flatMap(partition => JavaConverters.asScalaBuffer(fsView.getLatestBaseFiles(partition)
           .collect(Collectors.toList[HoodieBaseFile])))
         .map(baseFile => baseFile.getPath).sorted
