@@ -233,11 +233,11 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
             }
         };
 
-        if (java.util.concurrent.ThreadLocalRandom.current().nextInt() % 5 == 0) {
-            throw new RuntimeException(
-                String.format("!!!!! RANDOM FAILURE ---- Scott > DeltaCommitter[%s] > commitSingleCheckpointId [BEFORE txn.commit]", committerId)
-            );
-        }
+//        if (java.util.concurrent.ThreadLocalRandom.current().nextInt() % 5 == 0) {
+//            throw new RuntimeException(
+//                String.format("!!!!! RANDOM FAILURE ---- Scott > DeltaCommitter[%s] > commitSingleCheckpointId [BEFORE txn.commit]", committerId)
+//            );
+//        }
 
         TransactionCommitResult result = txn.commit(engine, dataActions);
 
