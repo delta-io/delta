@@ -345,7 +345,7 @@ object TableFeature {
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
       TypeWideningPreviewTableFeature,
-      TypeWideningStableTableFeature,
+      TypeWideningTableFeature,
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
       DeletionVectorsTableFeature,
@@ -773,7 +773,7 @@ object TypeWideningPreviewTableFeature
       metadata: Metadata,
       spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata) &&
     // Don't automatically enable the preview feature if the stable feature is already supported.
-    !protocol.isFeatureSupported(TypeWideningStableTableFeature)
+    !protocol.isFeatureSupported(TypeWideningTableFeature)
 }
 
 /**
@@ -782,7 +782,7 @@ object TypeWideningPreviewTableFeature
  * The feature spec is finalized though and by supporting the stable feature here we guarantee that
  * this version can already read any table created in the future.
  */
-object TypeWideningStableTableFeature
+object TypeWideningTableFeature
   extends TypeWideningTableFeatureBase(name = "typeWidening")
 
 /**
@@ -1076,6 +1076,7 @@ object TestRemovableWriterWithHistoryTruncationFeature
   val TABLE_PROP_KEY = "_123TestRemovableWriterWithHistoryTruncationFeature321_"
 
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)

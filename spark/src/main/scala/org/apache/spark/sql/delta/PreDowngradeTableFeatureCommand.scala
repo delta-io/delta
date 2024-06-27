@@ -300,7 +300,7 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
    * @return Return true if files were rewritten or metadata was removed. False otherwise.
    */
   override def removeFeatureTracesIfNeeded(): Boolean = {
-    if (TypeWideningStableTableFeature.validateRemoval(table.initialSnapshot)) return false
+    if (TypeWideningTableFeature.validateRemoval(table.initialSnapshot)) return false
 
     val startTimeNs = System.nanoTime()
     val properties = Seq(DeltaConfigs.ENABLE_TYPE_WIDENING.key)

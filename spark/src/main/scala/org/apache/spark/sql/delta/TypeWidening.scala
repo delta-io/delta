@@ -27,7 +27,7 @@ object TypeWidening {
    * Returns whether the protocol version supports the Type Widening table feature.
    */
   def isSupported(protocol: Protocol): Boolean =
-    Seq(TypeWideningPreviewTableFeature, TypeWideningStableTableFeature)
+    Seq(TypeWideningPreviewTableFeature, TypeWideningTableFeature)
       .exists(protocol.isFeatureSupported)
 
   /**
@@ -42,7 +42,7 @@ object TypeWidening {
       throw new IllegalStateException(
         s"Table property '${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' is " +
           s"set on the table but this table version doesn't support table feature " +
-          s"'${TableFeatureProtocolUtils.propertyKey(TypeWideningStableTableFeature)}'.")
+          s"'${TableFeatureProtocolUtils.propertyKey(TypeWideningTableFeature)}'.")
     }
     isEnabled
   }

@@ -575,7 +575,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
 
     assert(protocol.isFeatureSupported(TypeWideningPreviewTableFeature) === preview,
       s"Expected the preview feature to be ${supported(preview)} but it is ${supported(!preview)}.")
-    assert(protocol.isFeatureSupported(TypeWideningStableTableFeature) === stable,
+    assert(protocol.isFeatureSupported(TypeWideningTableFeature) === stable,
       s"Expected the stable feature to be ${supported(stable)} but it is ${supported(!stable)}.")
     assert(TypeWidening.isSupported(protocol) === preview || stable,
       s"Expected type widening to be ${supported(preview || stable)} but it is " +
@@ -593,7 +593,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     // The stable feature isn't supported and can't be dropped.
     assertFeatureSupported(preview = true, stable = false)
     dropTableFeature(
-      feature = TypeWideningStableTableFeature,
+      feature = TypeWideningTableFeature,
       expectedOutcome = ExpectedOutcome.FAIL_FEATURE_NOT_PRESENT,
       expectedNumFilesRewritten = 0,
       expectedColumnTypes = Map("a" -> ByteType)
@@ -625,7 +625,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     assertFeatureSupported(preview = false, stable = false)
     // This is undocumented for type widening but users can manually add the preview/stable feature
     // to the table instead of using the table property.
-    addTableFeature(tempPath, TypeWideningStableTableFeature)
+    addTableFeature(tempPath, TypeWideningTableFeature)
     assertFeatureSupported(preview = false, stable = true)
 
     addTableFeature(tempPath, TypeWideningPreviewTableFeature)
@@ -636,7 +636,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
     // Dropping the stable feature doesn't also drop the preview feature.
     dropTableFeature(
-      feature = TypeWideningStableTableFeature,
+      feature = TypeWideningTableFeature,
       expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
       expectedNumFilesRewritten = 1,
       expectedColumnTypes = Map("a" -> IntegerType)
@@ -645,7 +645,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
 
     advancePastRetentionPeriod()
     dropTableFeature(
-      feature = TypeWideningStableTableFeature,
+      feature = TypeWideningTableFeature,
       expectedOutcome = ExpectedOutcome.SUCCESS,
       expectedNumFilesRewritten = 0,
       expectedColumnTypes = Map("a" -> IntegerType)
@@ -668,7 +668,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
-    addTableFeature(tempPath, TypeWideningStableTableFeature)
+    addTableFeature(tempPath, TypeWideningTableFeature)
     assertFeatureSupported(preview = false, stable = true)
 
     // Enable the table property, this should keep the stable feature but not add the preview one.
@@ -686,7 +686,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     )
     // The stable table feature can be dropped.
     dropTableFeature(
-      feature = TypeWideningStableTableFeature,
+      feature = TypeWideningTableFeature,
       expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
       expectedNumFilesRewritten = 1,
       expectedColumnTypes = Map("a" -> IntegerType)
@@ -695,7 +695,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
 
     advancePastRetentionPeriod()
     dropTableFeature(
-      feature = TypeWideningStableTableFeature,
+      feature = TypeWideningTableFeature,
       expectedOutcome = ExpectedOutcome.SUCCESS,
       expectedNumFilesRewritten = 0,
       expectedColumnTypes = Map("a" -> IntegerType)
