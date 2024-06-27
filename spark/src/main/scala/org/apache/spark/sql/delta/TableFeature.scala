@@ -781,6 +781,10 @@ object TypeWideningPreviewTableFeature
  * when setting the type widening table property as the feature is still in preview in this version.
  * The feature spec is finalized though and by supporting the stable feature here we guarantee that
  * this version can already read any table created in the future.
+ *
+ * Note: Users can manually add both the preview and stable features to a table using ADD FEATURE,
+ * although that's undocumented for type widening. This is allowed: the two feature specifications
+ * are compatible and supported.
  */
 object TypeWideningTableFeature
   extends TypeWideningTableFeatureBase(name = "typeWidening")

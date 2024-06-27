@@ -628,6 +628,8 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     addTableFeature(tempPath, TypeWideningTableFeature)
     assertFeatureSupported(preview = false, stable = true)
 
+    // Users can manually add both features to the table that way: this is allowed, the two
+    // specifications are compatible and supported.
     addTableFeature(tempPath, TypeWideningPreviewTableFeature)
     assertFeatureSupported(preview = true, stable = true)
 
