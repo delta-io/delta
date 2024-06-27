@@ -32,6 +32,7 @@ import org.apache.spark.sql.avro.SchemaConverters
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{ManualClock, Utils}
 import org.scalatest.concurrent.Eventually
@@ -213,6 +214,25 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       + s"date(from_unixtime($nowSeconds)), 32.1, 1.23, 456, 'hello world', "
       + s"timestamp(from_unixtime($nowSeconds)))")
     verifyFilesAndSchemaMatch()
+  }
+
+  test("all batches of actions are converted") {
+    withSQLConf(
+      DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT.key -> "3"
+    ) {
+      _sparkSession.sql(
+        s"""CREATE TABLE `$testTableName` (col1 INT)
+           | USING DELTA
+           |LOCATION '$testTablePath'""".stripMargin)
+      for (i <- 1 to 10) {
+        _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES ($i)")
+      }
+      _sparkSession.sql(
+        s"""ALTER TABLE `$testTableName` SET TBLPROPERTIES (
+           |  'delta.universalFormat.enabledFormats' = 'hudi'
+           |)""".stripMargin)
+      verifyFilesAndSchemaMatch()
+    }
   }
 
   def buildHudiMetaClient(): HoodieTableMetaClient = {

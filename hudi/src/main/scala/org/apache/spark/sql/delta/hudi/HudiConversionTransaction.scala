@@ -86,9 +86,10 @@ class HudiConversionTransaction(
   private var metaClient = providedMetaClient
   private val instantTime = convertInstantToCommit(
     Instant.ofEpochMilli(postCommitSnapshot.timestamp))
-  private var writeStatuses: util.List[WriteStatus] = Collections.emptyList[WriteStatus]
+  private var writeStatuses: util.List[WriteStatus] =
+    new util.ArrayList[WriteStatus]()
   private var partitionToReplacedFileIds: util.Map[String, util.List[String]] =
-    Collections.emptyMap[String, util.List[String]]
+    new util.HashMap[String, util.List[String]]()
 
   private val version = postCommitSnapshot.version
   /** Tracks if this transaction has already committed. You can only commit once. */
@@ -101,7 +102,7 @@ class HudiConversionTransaction(
   def setCommitFileUpdates(actions: scala.collection.Seq[Action]): Unit = {
     // for all removed files, group by partition path and then map to
     // the file group ID (name in this case)
-    partitionToReplacedFileIds = actions
+    val newPartitionToReplacedFileIds = actions
       .map(_.wrap)
       .filter(action => action.remove != null)
       .map(_.remove)
@@ -111,8 +112,9 @@ class HudiConversionTransaction(
         (partitionPath, path.getName)})
       .groupBy(_._1).map(v => (v._1, v._2.map(_._2).asJava))
       .asJava
+    partitionToReplacedFileIds.putAll(newPartitionToReplacedFileIds)
     // Convert the AddFiles to write statuses for the commit
-    writeStatuses = actions
+    val newWriteStatuses = actions
       .map(_.wrap)
       .filter(action => action.add != null)
       .map(_.add)
@@ -120,6 +122,7 @@ class HudiConversionTransaction(
         convertAddFile(add, tablePath, instantTime)
       })
       .asJava
+    writeStatuses.addAll(newWriteStatuses)
   }
 
   def commit(): Unit = {
