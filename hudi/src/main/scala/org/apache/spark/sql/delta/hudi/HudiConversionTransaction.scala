@@ -125,7 +125,7 @@ class HudiConversionTransaction(
   def commit(): Unit = {
     assert(!committed, "Cannot commit. Transaction already committed.")
     val writeConfig = getWriteConfig(hudiSchema, getNumInstantsToRetain, 10, 7*24)
-    val engineContext: HoodieEngineContext = new HoodieJavaEngineContext(metaClient.getHadoopConf)
+    val engineContext: HoodieEngineContext = new HoodieJavaEngineContext(metaClient.getStorageConf)
     val writeClient = new HoodieJavaWriteClient[AnyRef](engineContext, writeConfig)
     try {
       writeClient.startCommitWithTime(instantTime, HoodieTimeline.REPLACE_COMMIT_ACTION)
@@ -229,7 +229,7 @@ class HudiConversionTransaction(
       val cleanerPlan = new HoodieCleanerPlan(earliestInstantToRetain, instantTime,
         writeConfig.getCleanerPolicy.name, Collections.emptyMap[String, util.List[String]],
         CleanPlanner.LATEST_CLEAN_PLAN_VERSION, cleanInfoPerPartition,
-        Collections.emptyList[String])
+        Collections.emptyList[String], Collections.emptyMap[String, String])
       // create a clean instant and mark it as requested with the clean plan
       val requestedCleanInstant = new HoodieInstant(HoodieInstant.State.REQUESTED,
         HoodieTimeline.CLEAN_ACTION, cleanTime)
@@ -244,7 +244,8 @@ class HudiConversionTransaction(
           deletePaths, Collections.emptyList[String], earliestInstant.get.getTimestamp, instantTime)
       }).toSeq.asJava
       val cleanMetadata =
-        CleanerUtils.convertCleanMetadata(cleanTime, HudiOption.empty[java.lang.Long], cleanStats)
+        CleanerUtils.convertCleanMetadata(cleanTime, HudiOption.empty[java.lang.Long], cleanStats,
+          java.util.Collections.emptyMap[String, String])
       // update the metadata table with the clean metadata so the files' metadata are marked for
       // deletion
       hoodieTableMetadataWriter.performTableServices(HudiOption.empty[String])

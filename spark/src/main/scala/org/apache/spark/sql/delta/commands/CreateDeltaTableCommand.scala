@@ -603,7 +603,7 @@ case class CreateDeltaTableCommand(
       case TableCreationModes.Create =>
         spark.sessionState.catalog.createTable(
           cleaned,
-          ignoreIfExists = existingTableOpt.isDefined,
+          ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
           validateLocation = false)
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
           if existingTableOpt.isDefined =>

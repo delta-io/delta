@@ -305,7 +305,7 @@ case class AlterTableDropFeatureDeltaCommand(
         throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
       }
 
-      if (truncateHistory && !removableFeature.isReaderWriterFeature) {
+      if (truncateHistory && !removableFeature.requiresHistoryTruncation) {
         throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
       }
 
@@ -322,11 +322,11 @@ case class AlterTableDropFeatureDeltaCommand(
       //
       // Note, for features that cannot be disabled we solely rely for correctness on
       // validateRemoval.
-      val isReaderWriterFeature = removableFeature.isReaderWriterFeature
+      val requiresHistoryValidation = removableFeature.requiresHistoryTruncation
       val startTimeNs = System.nanoTime()
       val preDowngradeMadeChanges =
         removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
-      if (isReaderWriterFeature) {
+      if (requiresHistoryValidation) {
         // Generate a checkpoint after the cleanup that is based on commits that do not use
         // the feature. This intends to help slow-moving tables to qualify for history truncation
         // asap. The checkpoint is based on a new commit to avoid creating a checkpoint
@@ -359,7 +359,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // Note, if this txn conflicts, we check all winning commits for traces of the feature.
       // Therefore, we do not need to check again for historical versions during conflict
       // resolution.
-      if (isReaderWriterFeature) {
+      if (requiresHistoryValidation) {
         // Clean up expired logs before checking history. This also makes sure there is no
         // concurrent metadataCleanup during findEarliestReliableCheckpoint. Note, this
         // cleanUpExpiredLogs call truncates the cutoff at a minute granularity.
