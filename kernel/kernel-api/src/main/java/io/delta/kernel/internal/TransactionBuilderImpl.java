@@ -37,6 +37,7 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
@@ -111,8 +112,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         boolean isNewTable = snapshot.getVersion(engine) < 0;
         validate(engine, snapshot, isNewTable);
 
-        Metadata  metadata = snapshot.getMetadata();
         boolean shouldUpdateMetadata = false;
+        boolean shouldUpdateProtocol = false;
+        Metadata metadata = snapshot.getMetadata();
+        Protocol protocol = snapshot.getProtocol();
         if (tableProperties.isPresent()) {
             Map<String, String> validatedProperties =
                     TableConfig.validateProperties(tableProperties.get());
@@ -121,6 +124,23 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             if (!newProperties.isEmpty()) {
                 shouldUpdateMetadata = true;
                 metadata = metadata.withNewConfiguration(newProperties);
+            }
+
+            Set<String> newWriterFeatures =
+                    TableFeatures.extractAutomaticallyEnabledWriterFeatures(metadata, protocol);
+            if (!newWriterFeatures.isEmpty()) {
+                logger.info("Automatically enabling writer features: {}", newWriterFeatures);
+                shouldUpdateProtocol = true;
+                List<String> oldWriterFeatures = protocol.getWriterFeatures();
+                protocol = protocol.withNewWriterFeatures(newWriterFeatures);
+                List<String> curWriterFeatures = protocol.getWriterFeatures();
+                checkArgument(
+                        !Objects.equals(oldWriterFeatures, curWriterFeatures));
+                TableFeatures.validateWriteSupportedTable(
+                        protocol,
+                        metadata,
+                        metadata.getSchema(),
+                        table.getPath(engine));
             }
         }
 
@@ -131,10 +151,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 snapshot,
                 engineInfo,
                 operation,
-                snapshot.getProtocol(),
+                protocol,
                 metadata,
                 setTxnOpt,
-                shouldUpdateMetadata);
+                shouldUpdateMetadata,
+                shouldUpdateProtocol);
     }
 
     /**
@@ -224,7 +245,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 schema.get(), /* schema */
                 stringArrayValue(partitionColumnsCasePreserving), /* partitionColumns */
                 Optional.of(currentTimeMillis), /* createdTime */
-                stringStringMapValue(Collections.emptyMap())
+                stringStringMapValue(Collections.emptyMap()) /* configuration */
         );
     }
 

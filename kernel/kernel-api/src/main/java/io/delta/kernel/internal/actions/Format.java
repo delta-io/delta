@@ -79,4 +79,12 @@ public class Format {
 
         return new GenericRow(Format.FULL_SCHEMA, formatMap);
     }
+
+    @Override
+    public String toString() {
+        return "Format{" +
+                "provider='" + provider + '\'' +
+                ", options=" + options +
+                '}';
+    }
 }
