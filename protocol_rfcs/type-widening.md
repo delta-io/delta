@@ -8,14 +8,20 @@ This protocol change introduces the Type Widening feature, which enables changin
 # Type Widening
 > ***New Section after the [Clustered Table](#clustered-table) section***
 
-The Type Widening feature enables changing the type of a column or field in an existing Delta table
-to a wider type.
+The Type Widening feature enables changing the type of a column or field in an existing Delta table to a wider type.
 
-The **supported type changes** are:
-- Integer widening: `Byte` -> `Short` -> `Int` -> `Long`
-- Floating-point widening: `Float` -> `Double`
-- Decimal widening: `Decimal(p, s)` -> `Decimal(p + k1, s + k2)` where `k1 >= k2 >= 0`. `p` and `s` denote the decimal precision and scale respectively.
-- Date widening: `Date` -> `Timestamp without timezone`
+The supported type changes are:
+- Integer widening:
+  - `Byte` -> `Short` -> `Int` -> `Long`
+- Floating-point widening:
+  - `Float` -> `Double`
+  - `Byte`, `Short` or `Int` -> `Double`
+- Date widening:
+  - `Date` -> `Timestamp without timezone`
+- Decimal widening - `p` and `s` denote the decimal precision and scale respectively.
+  - `Decimal(p, s)` -> `Decimal(p + k1, s + k2)` where `k1 >= k2 >= 0`.
+  - `Byte`, `Short` or `Int` -> `Decimal(10 + k1, k2)` where `k1 >= k2 >= 0`.
+  - `Long` -> `Decimal(20 + k1, k2)` where `k1 >= k2 >= 0`.
 
 To support this feature:
 - The table must be on Reader version 3 and Writer Version 7.
@@ -31,7 +37,6 @@ Type changes applied to a table are recorded in the table schema and stored in t
 The value for the key `delta.typeChanges` must be a JSON list of objects, where each object contains the following fields:
 Field Name | optional/required | Description
 -|-|-
-`tableVersion`| required | The version of the table when the type change was applied.
 `fromType`| required | The type of the column or field before the type change.
 `toType`| required | The type of the column or field after the type change.
 `fieldPath`| optional | When updating the type of a map key/value or array element only: the path from the struct field holding the metadata to the map key/value or array element that was updated.
@@ -48,12 +53,10 @@ The following is an example for the definition of a column that went through two
     "metadata" : { 
       "delta.typeChanges": [
         {
-          "tableVersion": 1,
           "fromType": "short",
           "toType": "integer"
         },
         {
-          "tableVersion": 5,
           "fromType": "integer",
           "toType": "long"
         }
@@ -76,7 +79,6 @@ The following is an example for the definition of a column after changing the ty
     "metadata" : { 
       "delta.typeChanges": [
         {
-          "tableVersion": 2,
           "fromType": "float",
           "toType": "double",
           "fieldPath": "key"
@@ -104,7 +106,6 @@ The following is an example for the definition of a column after changing the ty
     "metadata" : { 
       "delta.typeChanges": [
         {
-          "tableVersion": 2,
           "fromType": "decimal(6, 2)",
           "toType": "decimal(10, 4)",
           "fieldPath": "element.key"
@@ -116,23 +117,19 @@ The following is an example for the definition of a column after changing the ty
 
 ## Writer Requirements for Type Widening
 
-When Type Widening is enabled (when the table property `delta.enableTypeWidening` is set to `true`), then:
-- Writers must reject applying any **unsupported type change**.
-- Writers should allow updating the table schema to apply a **supported type change** to a column, struct field, map key/value or array element.
-- Writers must record type change information in the `metadata` of the nearest ancestor [StructField](#struct-field). See [Type Change Metadata](#type-change-metadata).
-
 When Type Widening is supported (when the `writerFeatures` field of a table's `protocol` action contains `enableTypeWidening`), then:
-- Writers must preserve the `delta.typeChanges` field in the metadata fields in the schema when a schema is updated.
-- Writers can remove an element from a `delta.typeChanges` field in the metadata fields in the schema when all active `add` actions in the latest version of the table have a `defaultRowCommitVersion` value that is not NULL and that is greater or equal to the `tableVersion` value of that `delta.typeChanges` element.
-- Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
-- Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
+- Writers must reject applying any unsupported type change.
+- Writers must record type change information in the `metadata` of the nearest ancestor [StructField](#struct-field). See [Type Change Metadata](#type-change-metadata).
+- Writers must preserve the `delta.typeChanges` field in the metadata fields in the schema when the table schema is updated.
+- Writers may remove the `delta.typeChanges` metadata in the table schema if all data files use the same column and field types as the table schema. 
 
-The last two requirements related to `defaultRowCommitVersion` are a subset of the requirements from [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking) that may be implemented separately without introducing a dependency on the [Row Tracking](#row-tracking) table feature.
+When Type Widening is enabled (when the table property `delta.enableTypeWidening` is set to `true`), then:
+- Writers should allow updating the table schema to apply a supported type change to a column, struct field, map key/value or array element.
 
 ## Reader Requirements for Type Widening
 When Type Widening is supported (when the `readerFeatures` field of a table's `protocol` action contains `enableTypeWidening`), then:
-- Readers must allow reading data files written before the table underwent any **supported type change**, and must convert such values to the current, wider type.
-- Readers must validate that type changes in the `delta.typeChanges` field in the table schema for the table version they are reading are supported and fail when finding any **unsupported type change**.
+- Readers must allow reading data files written before the table underwent any supported type change, and must convert such values to the current, wider type.
+- Readers must validate that they support all type changes in the `delta.typeChanges` field in the table schema for the table version they are reading and fail when finding any unsupported type change.
 
 ### Column Metadata
 > ***Change to existing section (underlined)***
