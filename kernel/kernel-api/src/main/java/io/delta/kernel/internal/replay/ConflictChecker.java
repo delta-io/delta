@@ -160,9 +160,11 @@ public class ConflictChecker {
         }
 
         /**
-         * Return the latest CommitTimestamp of the table.
+         * Return the latest commit timestamp of the table. For ICT enabled tables, this is the
+         * ICT of the latest winning transaction commit file. For non-ICT enabled tables, this
+         * is the modification time of the latest winning transaction commit file.
          *
-         * @return latest CommitTimestamp of the table.
+         * @return latest commit timestamp of the table.
          */
         public long getLatestCommitTimestamp() {
             return latestCommitTimestamp;
@@ -259,6 +261,17 @@ public class ConflictChecker {
         }
     }
 
+    /**
+     * Get the last commit timestamp of the table. For ICT enabled tables, this is the ICT of the
+     * latest winning transaction commit file. For non-ICT enabled tables, this is the modification
+     * time of the latest winning transaction commit file.
+     *
+     * @param engine                {@link Engine} instance to use
+     * @param lastWinningVersion    last winning version of the table
+     * @param winningCommits        list of winning transaction commit files
+     * @param winningCommitInfoOpt  winning commit info
+     * @return last commit timestamp of the table
+     */
     private long getLastCommitTimestamp(
             Engine engine,
             long lastWinningVersion,

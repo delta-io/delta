@@ -152,12 +152,13 @@ public class TransactionImpl
                             rebaseState.getLatestCommitTimestamp(),
                             attemptCommitInfo.getInCommitTimestamp());
                     if (updatedInCommitTimestamp.isPresent()) {
-                        Optional<Metadata> metadataWithICTInfo = getUpdatedMetadataAfterConflict(
-                                engine,
-                                updatedInCommitTimestamp.get(),
-                                metadata,
-                                rebaseState.getLatestVersion()
-                        );
+                        Optional<Metadata> metadataWithICTInfo =
+                                getMetadataWithUpdatedICTEnablementInfo(
+                                        engine,
+                                        updatedInCommitTimestamp.get(),
+                                        metadata,
+                                        rebaseState.getLatestVersion()
+                                );
                         metadataWithICTInfo.ifPresent(this::updateMetadata);
                     }
                     attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
@@ -208,7 +209,7 @@ public class TransactionImpl
         return attemptInCommitTimestamp;
     }
 
-    private Optional<Metadata> getUpdatedMetadataAfterConflict(
+    private Optional<Metadata> getMetadataWithUpdatedICTEnablementInfo(
             Engine engine,
             Long updatedInCommitTimestamp,
             Metadata attemptMetadata,
