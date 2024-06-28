@@ -34,7 +34,7 @@ object HudiSchemaUtils extends DeltaLogging {
      * corresponding Avro type.
      */
     def transform[E <: DataType](elem: E, isNullable: Boolean, currentPath: String): Schema =
-      elem match {
+    elem match {
       case StructType(fields) =>
 
         val avroFields: util.List[Schema.Field] = fields.map(f =>
