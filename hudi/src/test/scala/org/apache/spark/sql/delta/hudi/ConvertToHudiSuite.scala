@@ -203,7 +203,8 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   test("validate various data types") {
     _sparkSession.sql(
       s"""CREATE TABLE `$testTableName` (col1 BIGINT, col2 BOOLEAN, col3 DATE,
-         | col4 DOUBLE, col5 FLOAT, col6 INT, col7 STRING, col8 TIMESTAMP)
+         | col4 DOUBLE, col5 FLOAT, col6 INT, col7 STRING, col8 TIMESTAMP,
+         | col9 STRUCT<field1: INT, field2: STRING>)
          | USING DELTA
          |LOCATION '$testTablePath'
          |TBLPROPERTIES (
@@ -212,7 +213,8 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     val nowSeconds = Instant.now().getEpochSecond
     _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES (123, true, "
       + s"date(from_unixtime($nowSeconds)), 32.1, 1.23, 456, 'hello world', "
-      + s"timestamp(from_unixtime($nowSeconds)))")
+      + s"timestamp(from_unixtime($nowSeconds)), "
+      + s"named_struct('field1', 789, 'field2', 'hello'))")
     verifyFilesAndSchemaMatch()
   }
 
