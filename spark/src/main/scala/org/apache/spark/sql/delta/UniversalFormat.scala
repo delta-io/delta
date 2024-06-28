@@ -101,7 +101,6 @@ object UniversalFormat extends DeltaLogging {
       if (DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(newestMetadata)) {
         throw DeltaErrors.uniFormHudiDeleteVectorCompat()
       }
-      // TODO: remove once map/list support is added https://github.com/delta-io/delta/issues/2738
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
         f.isInstanceOf[NullType]
       } match {
