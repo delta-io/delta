@@ -103,7 +103,7 @@ object UniversalFormat extends DeltaLogging {
       }
       // TODO: remove once map/list support is added https://github.com/delta-io/delta/issues/2738
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
-        f.isInstanceOf[MapType] || f.isInstanceOf[ArrayType] || f.isInstanceOf[NullType]
+        f.isInstanceOf[NullType]
       } match {
         case Some(unsupportedType) =>
           throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)

@@ -150,18 +150,55 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     }
   }
 
-  for (invalidFieldDef <- Seq("col3 ARRAY<STRING>", "col3 MAP<STRING, STRING>")) {
-    test(s"Table Throws Exception for Unsupported Type ($invalidFieldDef)") {
-      intercept[DeltaUnsupportedOperationException] {
-        _sparkSession.sql(
-          s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING, $invalidFieldDef) USING DELTA
-             |LOCATION '$testTablePath'
-             |TBLPROPERTIES (
-             |  'delta.universalFormat.enabledFormats' = 'hudi',
-             |  'delta.enableDeletionVectors' = false
-             |)""".stripMargin)
-      }
-    }
+  test(s"Conversion behavior for lists") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName` (col1 ARRAY<INT>) USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES (array(1, 2, 3))")
+    verifyFilesAndSchemaMatch()
+  }
+
+  test(s"Conversion behavior for lists of structs") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName`
+         |(col1 ARRAY<STRUCT<field1: INT, field2: STRING>>) USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(s"INSERT INTO `$testTableName` " +
+      s"VALUES (array(named_struct('field1', 1, 'field2', 'hello'), " +
+      s"named_struct('field1', 2, 'field2', 'world')))")
+    verifyFilesAndSchemaMatch()
+  }
+
+  test(s"Conversion behavior for lists of lists") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName`
+         |(col1 ARRAY<ARRAY<INT>>) USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(s"INSERT INTO `$testTableName` " +
+      s"VALUES (array(array(1, 2, 3), array(4, 5, 6)))")
+    verifyFilesAndSchemaMatch()
+  }
+
+  test(s"Conversion behavior for maps") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName` (col1 MAP<STRING, INT>) USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(
+      s"INSERT INTO `$testTableName` VALUES (map('a', 1, 'b', 2, 'c', 3))"
+    )
+    verifyFilesAndSchemaMatch()
   }
 
   test("validate Hudi timeline archival and cleaning") {
