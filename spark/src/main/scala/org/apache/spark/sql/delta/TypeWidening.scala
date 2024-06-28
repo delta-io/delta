@@ -27,7 +27,8 @@ object TypeWidening {
    * Returns whether the protocol version supports the Type Widening table feature.
    */
   def isSupported(protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(TypeWideningTableFeature)
+    Seq(TypeWideningPreviewTableFeature, TypeWideningTableFeature)
+      .exists(protocol.isFeatureSupported)
 
   /**
    * Returns whether Type Widening is enabled on this table version. Checks that Type Widening is
