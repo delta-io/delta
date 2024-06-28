@@ -37,6 +37,7 @@ import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -72,6 +73,7 @@ public class TransactionImpl
     private final SnapshotImpl readSnapshot;
     private final Optional<SetTransaction> setTxnOpt;
     private final boolean shouldUpdateProtocol;
+    private final Clock clock;
     private Metadata metadata;
     private boolean shouldUpdateMetadata;
 
@@ -88,7 +90,8 @@ public class TransactionImpl
             Metadata metadata,
             Optional<SetTransaction> setTxnOpt,
             boolean shouldUpdateMetadata,
-            boolean shouldUpdateProtocol) {
+            boolean shouldUpdateProtocol,
+            Clock clock) {
         this.isNewTable = isNewTable;
         this.dataPath = dataPath;
         this.logPath = logPath;
@@ -100,6 +103,7 @@ public class TransactionImpl
         this.setTxnOpt = setTxnOpt;
         this.shouldUpdateMetadata = shouldUpdateMetadata;
         this.shouldUpdateProtocol = shouldUpdateProtocol;
+        this.clock = clock;
     }
 
     @Override
@@ -239,14 +243,22 @@ public class TransactionImpl
         return setTxnOpt;
     }
 
+    /**
+     * Generates a timestamp which is greater than the commit timestamp of the readSnapshot. This
+     * can result in an additional file read and that this will only happen if ICT is enabled.
+     */
     private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
             Engine engine, long currentTimestamp) {
-        boolean ictEnabled = IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
-        return ictEnabled ? Optional.of(currentTimestamp) : Optional.empty();
+        if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+            long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
+            return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
+        } else {
+            return Optional.empty();
+        }
     }
 
     private CommitInfo generateCommitAction(Engine engine) {
-        long commitAttemptStartTime = System.currentTimeMillis();
+        long commitAttemptStartTime = clock.getTimeMillis();
         return new CommitInfo(
                 generateInCommitTimestampForFirstCommitAttempt(
                         engine, commitAttemptStartTime),
