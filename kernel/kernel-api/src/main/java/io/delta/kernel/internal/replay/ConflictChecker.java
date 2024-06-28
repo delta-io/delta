@@ -17,6 +17,7 @@ package io.delta.kernel.internal.replay;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
@@ -91,11 +92,13 @@ public class ConflictChecker {
 
     public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
         List<FileStatus> winningCommits = getWinningCommitFiles(engine);
-        Optional<CommitInfo> winningCommitInfoOpt = Optional.empty();
+        AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt =
+                new AtomicReference<>(Optional.empty());
 
         // no winning commits. why did we get the transaction conflict?
         checkState(!winningCommits.isEmpty(), "No winning commits found.");
 
+        long lastWinningVersion = getLastWinningTxnVersion(winningCommits);
         // Read the actions from the winning commits
         try (ActionsIterator actionsIterator = new ActionsIterator(
                 engine,
@@ -103,33 +106,29 @@ public class ConflictChecker {
                 CONFLICT_RESOLUTION_SCHEMA,
                 Optional.empty())) {
 
-            List<ActionWrapper> actionBatchList = new ArrayList<>();
-            actionsIterator.forEachRemaining(actionBatchList::add);
-            for (int i = 0; i < actionBatchList.size(); i++) {
-                ActionWrapper actionBatch = actionBatchList.get(i);
+            actionsIterator.forEachRemaining(actionBatch -> {
                 checkArgument(!actionBatch.isFromCheckpoint());  // no checkpoints should be read
                 ColumnarBatch batch = actionBatch.getColumnarBatch();
-                if (i == actionBatchList.size() - 1) {
+                if (actionBatch.getVersion() == lastWinningVersion) {
                     CommitInfo commitInfo =
                             getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
-                    winningCommitInfoOpt = Optional.ofNullable(commitInfo);
+                    winningCommitInfoOpt.set(Optional.ofNullable(commitInfo));
                 }
 
                 handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
                 handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
                 handleTxn(batch.getColumnVector(TXN_ORDINAL));
-            }
+            });
         } catch (IOException ioe) {
             throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
         }
 
         // if we get here, we have successfully rebased (i.e no logical conflicts)
         // against the winning transactions
-        long lastWinningVersion = getLastWinningTxnVersion(winningCommits);
         return new TransactionRebaseState(
                 lastWinningVersion,
                 getLastCommitTimestamp(
-                        engine, lastWinningVersion, winningCommits, winningCommitInfoOpt));
+                        engine, lastWinningVersion, winningCommits, winningCommitInfoOpt.get()));
     }
 
     /**
