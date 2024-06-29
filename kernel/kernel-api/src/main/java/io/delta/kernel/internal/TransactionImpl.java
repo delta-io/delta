@@ -149,8 +149,8 @@ public class TransactionImpl
                     commitAsVersion = newCommitAsVersion;
                     Optional<Long> updatedInCommitTimestamp =
                             getUpdatedInCommitTimestampAfterConflict(
-                            rebaseState.getLatestCommitTimestamp(),
-                            attemptCommitInfo.getInCommitTimestamp());
+                                    rebaseState.getLatestCommitTimestamp(),
+                                    attemptCommitInfo.getInCommitTimestamp());
                     if (updatedInCommitTimestamp.isPresent()) {
                         Optional<Metadata> metadataWithICTInfo =
                                 getMetadataWithUpdatedICTEnablementInfo(
