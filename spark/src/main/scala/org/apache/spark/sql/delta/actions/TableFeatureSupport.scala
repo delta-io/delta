@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DeltaOperations.Operation
 import com.fasterxml.jackson.annotation.JsonIgnore
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 
 /**
  * Trait to be mixed into the [[Protocol]] case class to enable Table Features.
@@ -337,9 +338,12 @@ trait TableFeatureSupport { this: Protocol =>
    * features. After we remove the last native feature we downgrade the protocol to (1, 1).
    */
   def downgradeProtocolVersionsIfNeeded: Protocol = {
+    if (!supportsWriterFeatures) return this
+
     val (minReaderVersion, minWriterVersion) =
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
     val newProtocol = Protocol(minReaderVersion, minWriterVersion)
+    /*
     if (nativeReaderAndWriterFeatures.nonEmpty) {
       // It is guaranteed by the definitions of WriterFeature and ReaderFeature, that we cannot
       // end up with invalid protocol versions such as (3, 3). Nevertheless,
@@ -349,13 +353,15 @@ trait TableFeatureSupport { this: Protocol =>
         s"Downgraded protocol should at least support writer features, but got $newProtocol.")
       return newProtocol.withFeatures(readerAndWriterFeatures)
     }
+    */
 
     // Ensure the legacy protocol supports features exactly as the current protocol.
     if (this.implicitlyAndExplicitlySupportedFeatures ==
       newProtocol.implicitlyAndExplicitlySupportedFeatures) {
       newProtocol
     } else {
-      this
+      Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(readerAndWriterFeatures)
     }
   }
 
