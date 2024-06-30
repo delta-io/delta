@@ -343,17 +343,6 @@ trait TableFeatureSupport { this: Protocol =>
     val (minReaderVersion, minWriterVersion) =
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
     val newProtocol = Protocol(minReaderVersion, minWriterVersion)
-    /*
-    if (nativeReaderAndWriterFeatures.nonEmpty) {
-      // It is guaranteed by the definitions of WriterFeature and ReaderFeature, that we cannot
-      // end up with invalid protocol versions such as (3, 3). Nevertheless,
-      // we double check it here.
-      assert(
-        newProtocol.supportsWriterFeatures,
-        s"Downgraded protocol should at least support writer features, but got $newProtocol.")
-      return newProtocol.withFeatures(readerAndWriterFeatures)
-    }
-    */
 
     // Ensure the legacy protocol supports features exactly as the current protocol.
     if (this.implicitlyAndExplicitlySupportedFeatures ==
@@ -363,6 +352,19 @@ trait TableFeatureSupport { this: Protocol =>
       Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
         .withFeatures(readerAndWriterFeatures)
     }
+  }
+
+  /**
+   *
+   */
+  def denormalize: Protocol = {
+    if (supportsWriterFeatures) return this
+
+    val (minReaderVersion, minWriterVersion) =
+      TableFeatureProtocolUtils.minimumRequiredVersions(implicitlySupportedFeatures.toSeq)
+
+    Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
+      .withFeatures(implicitlySupportedFeatures)
   }
 
   /**

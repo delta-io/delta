@@ -1,3 +1,19 @@
+/*
+ * Copyright (2024) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.QueryTest
@@ -12,15 +28,21 @@ class DeltaProtocolTransitionsSuite
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
-  protected def protocolToTBLProperties(protocol: Protocol): Seq[String] = {
-    val versionProperties =
-      s"""
-         |delta.minReaderVersion = ${protocol.minReaderVersion},
-         |delta.minWriterVersion = ${protocol.minWriterVersion}""".stripMargin
+  protected def protocolToTBLProperties(
+      protocol: Protocol,
+      skipVersions: Boolean = false): Seq[String] = {
+    val versionProperties = if (skipVersions && protocol.readerAndWriterFeatures.nonEmpty) {
+      Nil
+    } else {
+      Seq(s"""
+           |delta.minReaderVersion = ${protocol.minReaderVersion},
+           |delta.minWriterVersion = ${protocol.minWriterVersion}""".stripMargin)
+    }
     val featureProperties =
       protocol.readerAndWriterFeatureNames.map("delta.feature." + _ + " = 'Supported'")
-    Seq(versionProperties) ++ featureProperties
+    versionProperties ++ featureProperties
   }
+
   protected def testProtocolTransition(
      createTableProtocol: Option[Protocol] = None,
      alterTableProtocol: Option[Protocol] = None,
@@ -41,13 +63,13 @@ class DeltaProtocolTransitionsSuite
 
       alterTableProtocol.map { p =>
         sql(s"""ALTER TABLE delta.`${deltaLog.dataPath}` SET TBLPROPERTIES (
-           |${protocolToTBLProperties(p).mkString(",")}
+           |${protocolToTBLProperties(p, skipVersions = true).mkString(",")}
            |)""".stripMargin)
       }
 
       // Drop features.
       dropFeatures.foreach { f =>
-        sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` DROP FEATURE $f")
+        sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` DROP FEATURE ${f.name}")
       }
 
       assert(deltaLog.update().protocol === expectedProtocol)
@@ -74,5 +96,125 @@ class DeltaProtocolTransitionsSuite
       createTableProtocol = Some(Protocol(2, 7).withFeature(TestRemovableReaderWriterFeature)),
       expectedProtocol = Protocol(3, 7).withFeature(TestRemovableReaderWriterFeature))
     */
+  }
+
+  test("CREATE TABLE invalid legacy protocols") {
+    /*
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 5)),
+      expectedProtocol = Protocol(1, 4))
+    */
+  }
+
+  test("ADD FEATURE normalization") {
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 1)),
+      alterTableProtocol = Some(Protocol(1, 4)),
+      expectedProtocol = Protocol(1, 4))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 2)),
+      alterTableProtocol = Some(Protocol(1, 4)),
+      expectedProtocol = Protocol(1, 4))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 4)),
+      alterTableProtocol = Some(Protocol(1, 2)),
+      expectedProtocol = Protocol(1, 4))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 4)),
+      alterTableProtocol = Some(Protocol(1, 4)),
+      expectedProtocol = Protocol(1, 4))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 6)),
+      alterTableProtocol = Some(Protocol(2, 5)),
+      expectedProtocol = Protocol(2, 6))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(2, 5)),
+      alterTableProtocol = Some(Protocol(1, 6)),
+      expectedProtocol = Protocol(2, 6))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 7).withFeature(TestWriterFeature)),
+      alterTableProtocol = Some(Protocol(1, 2)),
+      expectedProtocol = Protocol(1, 7).withFeatures(
+        Seq(TestWriterFeature, AppendOnlyTableFeature, InvariantsTableFeature)))
+
+    testProtocolTransition(
+      createTableProtocol =
+        Some(Protocol(1, 7).withFeatures(Seq(TestWriterFeature, IdentityColumnsTableFeature))),
+      alterTableProtocol = Some(Protocol(1, 2)),
+      expectedProtocol = Protocol(1, 7).withFeatures(
+        Seq(TestWriterFeature,
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          IdentityColumnsTableFeature)))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 7).withFeature(InvariantsTableFeature)),
+      alterTableProtocol = Some(Protocol(1, 2)),
+      expectedProtocol = Protocol(1, 2))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 2)),
+      alterTableProtocol = Some(Protocol(1, 7).withFeature(CheckConstraintsTableFeature)),
+      expectedProtocol = Protocol(1, 3))
+  }
+
+  test("DROP FEATURE normalization") {
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 3)),
+      dropFeatures = Seq(CheckConstraintsTableFeature),
+      expectedProtocol = Protocol(1, 2))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(2, 5)),
+      dropFeatures = Seq(ColumnMappingTableFeature),
+      expectedProtocol = Protocol(1, 4))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(2, 6)),
+      dropFeatures = Seq(ColumnMappingTableFeature),
+      expectedProtocol = Protocol(1, 6))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 4)),
+      dropFeatures = Seq(CheckConstraintsTableFeature),
+      expectedProtocol = Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        GeneratedColumnsTableFeature,
+        ChangeDataFeedTableFeature)))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 7).withFeatures(
+        Seq(AppendOnlyTableFeature, InvariantsTableFeature, TestRemovableWriterFeature))),
+      dropFeatures = Seq(TestRemovableWriterFeature),
+      expectedProtocol = Protocol(1, 2))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(3, 7).withFeatures(Seq(
+        InvariantsTableFeature,
+        ColumnMappingTableFeature,
+        TestRemovableWriterFeature,
+        TestRemovableReaderWriterFeature))),
+      dropFeatures = Seq(TestRemovableReaderWriterFeature),
+      expectedProtocol = Protocol(2, 7).withFeatures(Seq(
+        InvariantsTableFeature,
+        ColumnMappingTableFeature,
+        TestRemovableWriterFeature)))
+
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(3, 7).withFeatures(Seq(
+        InvariantsTableFeature,
+        TestRemovableWriterFeature,
+        TestRemovableReaderWriterFeature))),
+      dropFeatures = Seq(TestRemovableReaderWriterFeature),
+      expectedProtocol = Protocol(1, 7).withFeatures(Seq(
+        InvariantsTableFeature,
+        TestRemovableWriterFeature)))
   }
 }
