@@ -538,7 +538,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       val newProtocolForLatestMetadata =
         Protocol(readerVersionAsTableProp, writerVersionAsTableProp)
-      val proposedNewProtocol = protocolBeforeUpdate.merge(newProtocolForLatestMetadata)
+
+      // When the protocol versions are explicitly set on table features protocol we may
+      // downgrade to legacy protocol versions. Legacy protocol versions can only be
+      // used if a table supports *exactly* the set of features in that legacy protocol
+      // version, with no "gaps". By merging in the protocol features from a particular
+      // protocol version, we may end up with such a "gap-free" protocol. E.g. if a table
+      // has only table feature "checkConstraints" (added by writer protocol version 3)
+      // but not "invariants" and "appendOnly", then setting the minWriterVersion to
+      // 2 or 3 will add "invariants" and "appendOnly", filling in the gaps for writer
+      // protocol version 3, and then we can downgrade to version 3.
+      val proposedNewProtocol = protocolBeforeUpdate
+        .merge(newProtocolForLatestMetadata)
 
       if (proposedNewProtocol != protocolBeforeUpdate) {
         // The merged protocol has higher versions and/or supports more features.
@@ -620,8 +631,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         Protocol(
           readerVersionForNewProtocol,
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-          .merge(newProtocolBeforeAddingFeatures)
-          .withFeatures(newFeaturesFromTableConf))
+          .withFeatures(newFeaturesFromTableConf)
+          .merge(newProtocolBeforeAddingFeatures))
     }
 
     // We are done with protocol versions and features, time to remove related table properties.

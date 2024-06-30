@@ -229,25 +229,16 @@ trait TableFeatureSupport { this: Protocol =>
 
   /**
    * Determine whether this protocol can be safely upgraded to a new protocol `to`. This means:
-   *   - this protocol has reader protocol version less than or equals to `to`.
-   *   - this protocol has writer protocol version less than or equals to `to`.
    *   - all features supported by this protocol are supported by `to`.
    *
    * Examples regarding feature status:
-   *   - from `[appendOnly]` to `[appendOnly]` => allowed
-   *   - from `[appendOnly, changeDataFeed]` to `[appendOnly]` => not allowed
-   *   - from `[appendOnly]` to `[appendOnly, changeDataFeed]` => allowed
+   *   - from `[appendOnly]` to `[appendOnly]` => allowed.
+   *   - from `[appendOnly, changeDataFeed]` to `[appendOnly]` => not allowed.
+   *   - from `[appendOnly]` to `[appendOnly, changeDataFeed]` => allowed.
    */
-  def canUpgradeTo(to: Protocol): Boolean = {
-    if (to.minReaderVersion < this.minReaderVersion) return false
-    if (to.minWriterVersion < this.minWriterVersion) return false
-
-    val thisFeatures =
-      this.readerAndWriterFeatureNames ++ this.implicitlySupportedFeatures.map(_.name)
-    val toFeatures = to.readerAndWriterFeatureNames ++ to.implicitlySupportedFeatures.map(_.name)
-    // all features supported by `this` are supported by `to`
-    thisFeatures.subsetOf(toFeatures)
-  }
+  def canUpgradeTo(to: Protocol): Boolean =
+    // All features supported by `this` are supported by `to`.
+    implicitlyAndExplicitlySupportedFeatures.subsetOf(to.implicitlyAndExplicitlySupportedFeatures)
 
   /**
    * Determine whether this protocol can be safely downgraded to a new protocol `to`.
@@ -287,12 +278,9 @@ trait TableFeatureSupport { this: Protocol =>
     val mergedProtocol = Protocol(mergedReaderVersion, mergedWriterVersion)
       .withReaderFeatures(mergedReaderFeatures)
       .withWriterFeatures(mergedWriterFeatures)
+      .withFeatures(mergedImplicitFeatures)
 
-    if (mergedProtocol.supportsReaderFeatures || mergedProtocol.supportsWriterFeatures) {
-      mergedProtocol.withFeatures(mergedImplicitFeatures)
-    } else {
-      mergedProtocol
-    }
+    mergedProtocol.downgradeProtocolVersionsIfNeeded
   }
 
   /**
@@ -340,7 +328,7 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
-   * If the current protocol does not contain any non-legacy table features and the remaining
+   * If the current protocol does not contain any native table features and the remaining
    * set of legacy table features exactly matches a legacy protocol version, it downgrades the
    * protocol to the minimum reader/writer versions required to support the protocol's legacy
    * features.
@@ -349,27 +337,18 @@ trait TableFeatureSupport { this: Protocol =>
    * features. After we remove the last native feature we downgrade the protocol to (1, 1).
    */
   def downgradeProtocolVersionsIfNeeded: Protocol = {
-    if (nativeReaderAndWriterFeatures.nonEmpty) {
-      val (minReaderVersion, minWriterVersion) =
-        TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
-      // It is guaranteed by the definitions of WriterFeature and ReaderFeature, that we cannot
-      // end up with invalid protocol versions such as (3, 3). Nevertheless,
-      // we double check it here.
-      val newProtocol =
-        Protocol(minReaderVersion, minWriterVersion).withFeatures(readerAndWriterFeatures)
-      assert(
-        newProtocol.supportsWriterFeatures,
-        s"Downgraded protocol should at least support writer features, but got $newProtocol.")
-      return newProtocol
-    }
-
     val (minReaderVersion, minWriterVersion) =
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
     val newProtocol = Protocol(minReaderVersion, minWriterVersion)
-
-    assert(
-      !newProtocol.supportsReaderFeatures && !newProtocol.supportsWriterFeatures,
-      s"Downgraded protocol should not support table features, but got $newProtocol.")
+    if (nativeReaderAndWriterFeatures.nonEmpty) {
+      // It is guaranteed by the definitions of WriterFeature and ReaderFeature, that we cannot
+      // end up with invalid protocol versions such as (3, 3). Nevertheless,
+      // we double check it here.
+      assert(
+        newProtocol.supportsWriterFeatures,
+        s"Downgraded protocol should at least support writer features, but got $newProtocol.")
+      return newProtocol.withFeatures(readerAndWriterFeatures)
+    }
 
     // Ensure the legacy protocol supports features exactly as the current protocol.
     if (this.implicitlyAndExplicitlySupportedFeatures ==

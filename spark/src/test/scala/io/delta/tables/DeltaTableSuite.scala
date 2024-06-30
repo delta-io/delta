@@ -575,12 +575,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       val table = DeltaTable.forPath(spark, path, fsOptions)
       table.addFeatureSupport(TestWriterFeature.name)
       assert(log.update().protocol === Protocol(1, 7)
-        .merge(Protocol(1, 2)).withFeature(TestWriterFeature))
+        .withFeature(TestWriterFeature).merge(Protocol(1, 2)))
       table.addFeatureSupport(TestReaderWriterFeature.name)
       assert(
         log.update().protocol === Protocol(3, 7)
-          .merge(Protocol(1, 2))
-          .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature)))
+          .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature))
+          .merge(Protocol(1, 2)))
 
       // update the protocol again with invalid feature name.
       assert(intercept[DeltaTableFeatureException] {
