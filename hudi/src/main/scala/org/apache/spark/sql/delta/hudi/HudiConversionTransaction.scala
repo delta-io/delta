@@ -48,6 +48,7 @@ import org.apache.hudi.config.HoodieArchivalConfig
 import org.apache.hudi.config.HoodieCleanConfig
 import org.apache.hudi.config.HoodieIndexConfig
 import org.apache.hudi.config.HoodieWriteConfig
+import org.apache.hudi.exception.{HoodieException, HoodieRollbackException}
 import org.apache.hudi.index.HoodieIndex.IndexType.INMEMORY
 import org.apache.hudi.table.HoodieJavaTable
 import org.apache.hudi.table.action.clean.CleanPlanner
@@ -154,6 +155,16 @@ class HudiConversionTransaction(
       markInstantsAsCleaned(table, writeClient.getConfig, engineContext)
       runArchiver(table, writeClient.getConfig, engineContext)
     } catch {
+      case e: HoodieException if e.getMessage == "Failed to update metadata"
+        || e.getMessage == "Error getting all file groups in pending clustering"
+        || e.getMessage == "Error fetching partition paths from metadata table" =>
+        logInfo(s"[Thread=${Thread.currentThread().getName}] " +
+          s"Failed to fully update Hudi metadata table for Delta snapshot version $version. " +
+          s"This is likely due to a concurrent commit and should not lead to data corruption.")
+      case e: HoodieRollbackException =>
+        logInfo(s"[Thread=${Thread.currentThread().getName}] " +
+          s"Failed to rollback Hudi metadata table for Delta snapshot version $version. " +
+          s"This is likely due to a concurrent commit and should not lead to data corruption.")
       case NonFatal(e) =>
         recordHudiCommit(Some(e))
         throw e
