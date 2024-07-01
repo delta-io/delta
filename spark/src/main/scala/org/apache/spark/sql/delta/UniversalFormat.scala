@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
+import org.apache.spark.sql.types.NullType
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
@@ -33,8 +33,9 @@ import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
  * The UniForm Delta feature governs and implements the actual conversion of Delta metadata into
  * other formats.
  *
- * Currently, UniForm only supports Iceberg. When `delta.universalFormat.enabledFormats` contains
- * "iceberg", we say that Universal Format (Iceberg) is enabled.
+ * UniForm supports both Iceberg and Hudi. When `delta.universalFormat.enabledFormats` contains
+ * "iceberg", we say that Universal Format (Iceberg) is enabled. When it contains "hudi", we say
+ * that Universal Format (Hudi) is enabled.
  *
  * [[enforceInvariantsAndDependencies]] ensures that all of UniForm's requirements for the
  * specified format are met (e.g. for 'iceberg' that IcebergCompatV1 or V2 is enabled).
