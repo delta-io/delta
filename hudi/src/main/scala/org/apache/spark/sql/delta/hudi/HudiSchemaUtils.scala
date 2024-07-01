@@ -45,12 +45,16 @@ object HudiSchemaUtils extends DeltaLogging {
         finalizeSchema(
           Schema.createRecord(currentPath, null, null, false, avroFields),
           isNullable)
-      // TODO: Add List and Map support: https://github.com/delta-io/delta/issues/2738
+
       case ArrayType(elementType, containsNull) =>
-        throw new UnsupportedOperationException("UniForm Hudi doesn't support Array columns")
+        finalizeSchema(
+          Schema.createArray(transform(elementType, containsNull, currentPath)),
+          isNullable)
 
       case MapType(keyType, valueType, valueContainsNull) =>
-        throw new UnsupportedOperationException("UniForm Hudi doesn't support Map columns")
+        finalizeSchema(
+          Schema.createMap(transform(valueType, valueContainsNull, currentPath)),
+          isNullable)
 
       case atomicType: AtomicType => convertAtomic(atomicType, isNullable)
 
