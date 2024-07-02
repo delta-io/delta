@@ -18,6 +18,7 @@ package io.delta.kernel.expressions;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.*;
@@ -246,5 +247,19 @@ public final class Literal implements Expression {
     @Override
     public List<Expression> getChildren() {
         return Collections.emptyList();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Literal literal = (Literal) o;
+        return Objects.equals(getValue(), literal.getValue()) &&
+            Objects.equals(getDataType(), literal.getDataType());
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(getValue(), getDataType());
     }
 }

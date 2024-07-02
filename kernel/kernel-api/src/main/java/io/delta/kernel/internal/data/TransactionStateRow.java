@@ -28,7 +28,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.VectorUtils;
 
 public class TransactionStateRow extends GenericRow {
-    private static final StructType SCHEMA = new StructType()
+    public static final StructType SCHEMA = new StructType()
             .add("logicalSchemaString", StringType.STRING)
             .add("partitionColumns", new ArrayType(StringType.STRING, false))
             .add("tablePath", StringType.STRING);
