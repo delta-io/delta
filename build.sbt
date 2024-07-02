@@ -547,6 +547,7 @@ lazy val storage = (project in file("storage"))
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
 
+      "software.amazon.awssdk" % "s3" % "2.18.40",
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
     ),
@@ -568,7 +569,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "software.amazon.awssdk" % "dynamodb" % "2.18.40",
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
