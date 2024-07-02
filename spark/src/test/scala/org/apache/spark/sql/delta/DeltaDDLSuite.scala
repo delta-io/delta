@@ -293,6 +293,18 @@ abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
     }
   }
 
+  test("create table with same schema") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      sql(s"DROP TABLE IF EXISTS test_table1")
+      sql(s"DROP TABLE IF EXISTS test_table2")
+      sql(s"CREATE TABLE  test_table1(c_char Char(10),c_varchar VARCHAR(10))" +
+        s" using delta  LOCATION '$path'")
+      sql(s"CREATE TABLE  test_table2(c_char Char(10),c_varchar VARCHAR(10))" +
+        s" using delta  LOCATION '$path'")
+    }
+  }
+
   test("ALTER TABLE ADD COLUMNS with NOT NULL in struct type - not supported") {
     withTempDir { dir =>
       val tableName = "delta_test_not_null_struct"
