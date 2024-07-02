@@ -49,7 +49,7 @@ connectCommon / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
 
 // Dependent library versions
-val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
+val defaultSparkVersion = "4.0.0-preview1"
 val flinkVersion = "1.16.1"
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
@@ -96,16 +96,19 @@ def getSparkVersion(): String = {
     "latest",
     SPARK_MASTER_VERSION,
     LATEST_RELEASED_SPARK_VERSION,
-    latestReleasedSparkVersionShort
+    latestReleasedSparkVersionShort,
+    "4.0.0-preview1"
   )
 
   // e.g. build/sbt -DsparkVersion=master, build/sbt -DsparkVersion=4.0.0-SNAPSHOT
-  val input = sys.props.getOrElse("sparkVersion", LATEST_RELEASED_SPARK_VERSION)
+  val input = sys.props.getOrElse("sparkVersion", defaultSparkVersion)
   input match {
     case LATEST_RELEASED_SPARK_VERSION | "latest" | `latestReleasedSparkVersionShort` =>
       LATEST_RELEASED_SPARK_VERSION
     case SPARK_MASTER_VERSION | "master" =>
       SPARK_MASTER_VERSION
+    case "4.0.0-preview1" =>
+      "4.0.0-preview1"
     case _ =>
       throw new IllegalArgumentException(s"Invalid sparkVersion: $input. Must be one of " +
           s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
@@ -171,6 +174,38 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     crossScalaVersions := Seq(scala213),
     targetJvm := "17",
     resolvers += "Spark master staging" at "https://repository.apache.org/content/groups/snapshots/",
+    Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
+    Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
+    Antlr4 / antlr4Version := "4.13.1",
+    Test / javaOptions ++= Seq(
+      // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+      "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+    )
+
+    // Java-/Scala-/Uni-Doc Settings
+    // This isn't working yet against Spark Master.
+    // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
+    //    generating delta-spark unidoc compiles delta-iceberg
+    // 2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
+    //    issue above.
+  )
+
+  // TODO are we going to have issues generating the docs as mentioned above?
+  case "4.0.0-preview1" => Seq(
+    scalaVersion := scala213,
+    crossScalaVersions := Seq(scala213),
+    targetJvm := "17",
+    resolvers += "Apache Spark 4.0 Preview (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1454/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
     Antlr4 / antlr4Version := "4.13.1",
