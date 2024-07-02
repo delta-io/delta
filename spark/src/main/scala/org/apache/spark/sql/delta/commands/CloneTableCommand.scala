@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.connector.catalog.Table
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{LongType, StructType}
@@ -84,7 +85,8 @@ case class CloneTableCommand(
   def handleClone(
       sparkSession: SparkSession,
       txn: OptimisticTransaction,
-      targetDeltaLog: DeltaLog): Seq[Row] = {
+      targetDeltaLog: DeltaLog,
+      commandMetrics: Option[Map[String, SQLMetric]] = None): Seq[Row] = {
     if (!targetPath.isAbsolute) {
       throw DeltaErrors.cloneOnRelativePath(targetIdent.toString)
     }
@@ -116,7 +118,8 @@ case class CloneTableCommand(
       hdpConf = hdpConf,
       deltaOperation = Clone(
         sourceTable.name, sourceTable.snapshot.map(_.version).getOrElse(-1)
-      ))
+      ),
+      commandMetrics = commandMetrics)
   }
 }
 
