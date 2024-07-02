@@ -367,6 +367,7 @@ class IcebergConverter(spark: SparkSession)
     }
 
     icebergTxn.commit()
+    validateIcebergCommit(snapshotToConvert, catalogTable)
     Some(snapshotToConvert.version, snapshotToConvert.timestamp)
   }
 
@@ -482,4 +483,36 @@ class IcebergConverter(spark: SparkSession)
     }
   }
 
+  /**
+   * Validate the Iceberg conversion by comparing the number of files and size in bytes
+   * between the converted Iceberg table and the Delta table.
+   * TODO: throw exception and proactively abort conversion transaction
+   */
+  private def validateIcebergCommit(snapshotToConvert: Snapshot, catalogTable: CatalogTable) = {
+    val table = loadIcebergTable(snapshotToConvert, catalogTable)
+    val lastConvertedDeltaVersion = IcebergConverter.getLastConvertedDeltaVersion(table)
+    table.map {t =>
+      if (lastConvertedDeltaVersion.contains(snapshotToConvert.version) &&
+          t.currentSnapshot() != null) {
+        val icebergNumOfFiles = t.currentSnapshot().summary().asScala
+          .getOrElse("total-data-files", "-1").toLong
+        val icebergTotalBytes = t.currentSnapshot().summary().asScala
+          .getOrElse("total-files-size", "-1").toLong
+
+        if (icebergNumOfFiles != snapshotToConvert.numOfFiles ||
+            icebergTotalBytes != snapshotToConvert.sizeInBytes) {
+          recordDeltaEvent(
+            snapshotToConvert.deltaLog, "delta.iceberg.conversion.mismatch",
+            data = Map(
+              "lastConvertedDeltaVersion" -> snapshotToConvert.version,
+              "numOfFiles" -> snapshotToConvert.numOfFiles,
+              "icebergNumOfFiles" -> icebergNumOfFiles,
+              "sizeInBytes" -> snapshotToConvert.sizeInBytes,
+              "icebergTotalBytes" -> icebergTotalBytes
+            )
+          )
+        }
+      }
+    }
+  }
 }
