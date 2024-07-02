@@ -51,7 +51,7 @@ connectServer / sparkVersion := getSparkVersion()
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
 val flinkVersion = "1.16.1"
-val hadoopVersion = "3.3.4"
+val hadoopVersion = "3.4.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -568,7 +568,8 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "software.amazon.awssdk" % "s3" % "2.23.19" % "provided",
+      "software.amazon.awssdk" % "dynamodb" % "2.23.19" % "provided",
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
