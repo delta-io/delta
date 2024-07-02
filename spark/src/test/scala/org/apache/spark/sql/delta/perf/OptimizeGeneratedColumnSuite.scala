@@ -698,6 +698,52 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
   )
 
   testOptimizablePartitionExpression(
+    "value DOUBLE",
+    "part BIGINT",
+    Map("part" -> "CEIL(value)"),
+    expectedPartitionExpr = CeilPartitionExpr("part"),
+    filterTestCases = Seq(
+      "value < 2.1" -> Seq("((part <= CEIL(2.1D)) OR ((part <= CEIL(2.1D)) IS NULL))"),
+      "value <= 2.1" -> Seq("((part <= CEIL(2.1D)) OR ((part <= CEIL(2.1D)) IS NULL))"),
+      "value = 2.1" -> Seq("((part = CEIL(2.1D)) OR ((part = CEIL(2.1D)) IS NULL))"),
+      "value >= 2.1" -> Seq("((part >= CEIL(2.1D)) OR ((part >= CEIL(2.1D)) IS NULL))"),
+      "value > 2.1" -> Seq("((part >= CEIL(2.1D)) OR ((part >= CEIL(2.1D)) IS NULL))"),
+      "value is null" -> Seq("(part IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "value DECIMAL",
+    "part1 DECIMAL",
+    Map("part1" -> "CEIL(value)"),
+    expectedPartitionExpr = CeilPartitionExpr("part1"),
+    filterTestCases = Seq(
+      "value < 2.12" -> Seq("((part1 <= CEIL(2BD)) OR ((part1 <= CEIL(2BD)) IS NULL))"),
+      "value <= 2.12" -> Seq("((part1 <= CEIL(2BD)) OR ((part1 <= CEIL(2BD)) IS NULL))"),
+      "value = CAST(2.12 AS DECIMAL(10, 0))" ->
+        Seq("((part1 = CEIL(2BD)) OR ((part1 = CEIL(2BD)) IS NULL))"),
+      "value >= 2.12" -> Seq("((part1 >= CEIL(2BD)) OR ((part1 >= CEIL(2BD)) IS NULL))"),
+      "value > 2.12" -> Seq("((part1 >= CEIL(2BD)) OR ((part1 >= CEIL(2BD)) IS NULL))"),
+      "value is null" -> Seq("(part1 IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
+    "value BIGINT",
+    "part3 BIGINT",
+    Map("part3" -> "CEIL(value)"),
+    expectedPartitionExpr = CeilPartitionExpr("part3"),
+    filterTestCases = Seq(
+      "value < 3" -> Seq("((part3 <= CEIL(3L)) OR ((part3 <= CEIL(3L)) IS NULL))"),
+      "value <= 3" -> Seq("((part3 <= CEIL(3L)) OR ((part3 <= CEIL(3L)) IS NULL))"),
+      "value = 3" -> Seq("((part3 = CEIL(3L)) OR ((part3 = CEIL(3L)) IS NULL))"),
+      "value >= 3" -> Seq("((part3 >= CEIL(3L)) OR ((part3 >= CEIL(3L)) IS NULL))"),
+      "value > 3" -> Seq("((part3 >= CEIL(3L)) OR ((part3 >= CEIL(3L)) IS NULL))"),
+      "value is null" -> Seq("(part3 IS NULL)")
+    )
+  )
+
+  testOptimizablePartitionExpression(
     "value STRING",
     "substr STRING",
     Map("substr" -> "SUBSTRING(value, 1, 3)"),

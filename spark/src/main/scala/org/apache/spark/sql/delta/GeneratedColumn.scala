@@ -405,6 +405,12 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
                 case Substring(ExtractBaseColumn(name, StringType), IntegerLiteral(pos),
                     IntegerLiteral(len)) =>
                   createExpr(name)(SubstringPartitionExpr(partColName, pos, len))
+                case Ceil(ExtractBaseColumn(name, DoubleType)) =>
+                  createExpr(name)(CeilPartitionExpr(partColName))
+                case Ceil(ExtractBaseColumn(name, LongType)) =>
+                  createExpr(name)(CeilPartitionExpr(partColName))
+                case Ceil(ExtractBaseColumn(name, DecimalType.Fixed(_, _))) =>
+                  createExpr(name)(CeilPartitionExpr(partColName))
                 case TruncTimestamp(
                   StringLiteral(format), ExtractBaseColumn(name, TimestampType), _) =>
                     createExpr(name)(TimestampTruncPartitionExpr(format, partColName))
