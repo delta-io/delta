@@ -29,7 +29,6 @@ import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
@@ -129,7 +128,7 @@ abstract class TahoeFileIndex(
 
     if (addFile.deletionVector != null) {
       metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED,
-        JsonUtils.toJson(addFile.deletionVector))
+        addFile.deletionVector.serializeToBase64())
 
       // Set the filter type to IF_CONTAINED by default to let [[DeltaParquetFileFormat]] filter
       // out rows unless a filter type was explicitly provided in rowIndexFilters. This can happen
