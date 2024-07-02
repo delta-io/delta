@@ -495,6 +495,9 @@ trait SnapshotManagement { self: DeltaLog =>
         deltaVersion(file) > newCheckpointVersion
       }
 
+      val newVersion =
+        deltasAfterCheckpoint.lastOption.map(deltaVersion).getOrElse(newCheckpoint.get.version)
+
       // Here we validate that we are able to create a valid LogSegment by just using commit deltas
       // and without considering minor-compacted deltas. We want to fail early if log is messed up
       // i.e. some commit deltas are missing (although compacted-deltas are present).
@@ -507,20 +510,19 @@ trait SnapshotManagement { self: DeltaLog =>
       // `validateLogSegmentWithoutCompactedDeltas` to false in that case.
       if (validateLogSegmentWithoutCompactedDeltas) {
         validateDeltaVersions(deltasAfterCheckpoint, newCheckpointVersion, versionToLoad)
+        // `deltas` should always contain the newVersion i.e. the latest delta version after
+        // checkpoint or the checkpoint version unless we have a bug in log cleanup.
+        if (!deltas.exists(deltaVersion(_) == newVersion)) {
+        throw new IllegalStateException(
+          s"Could not find any delta files for version $newVersion")
+        }
       }
 
-      val newVersion =
-        deltasAfterCheckpoint.lastOption.map(deltaVersion).getOrElse(newCheckpoint.get.version)
       // reuse the oldCheckpointProvider if it is same as what we are looking for.
       val checkpointProviderOpt = newCheckpoint.map { ci =>
         oldCheckpointProviderOpt
           .collect { case cp if cp.version == ci.version => cp }
           .getOrElse(ci.getCheckpointProvider(this, checkpoints, lastCheckpointInfo))
-      }
-      // In the case where `deltasAfterCheckpoint` is empty, `deltas` should still not be empty,
-      // they may just be before the checkpoint version unless we have a bug in log cleanup.
-      if (deltas.isEmpty) {
-        throw new IllegalStateException(s"Could not find any delta files for version $newVersion")
       }
       if (versionToLoad.exists(_ != newVersion)) {
         throwNonExistentVersionError(versionToLoad.get)
