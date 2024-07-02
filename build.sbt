@@ -16,7 +16,18 @@
 
 // scalastyle:off line.size.limit
 
+import java.io.BufferedInputStream
 import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermission
+import java.util
+
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
+import org.apache.commons.compress.utils.IOUtils
+
+import scala.collection.mutable
+import scala.sys.process._
+import scala.util.Using
 
 import sbt.internal.inc.Analysis
 import sbtprotoc.ProtocPlugin.autoImport._
@@ -46,6 +57,7 @@ val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
+connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
 
 // Dependent library versions
@@ -252,6 +264,98 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
+  ).configureUnidoc(
+    generatedJavaDoc = false,
+    generateScalaDoc = false
+  )
+
+lazy val connectClient = (project in file("spark-connect/client"))
+  .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
+  .settings(
+    name := "delta-connect-client",
+    commonSettings,
+    releaseSettings,
+    Compile / compile := runTaskOnlyOnSparkMaster(
+      task = Compile / compile,
+      taskName = "compile",
+      projectName = "delta-connect-client",
+      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
+    ).value,
+    Test / test := runTaskOnlyOnSparkMaster(
+      task = Test / test,
+      taskName = "test",
+      projectName = "delta-connect-client",
+      emptyValue = ()
+    ).value,
+    publish := runTaskOnlyOnSparkMaster(
+      task = publish,
+      taskName = "publish",
+      projectName = "delta-connect-client",
+      emptyValue = ()
+    ).value,
+    crossSparkSettings(),
+    libraryDependencies ++= Seq(
+      "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
+
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "provided",
+
+      // Test deps
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.apache.spark" %% "spark-common-utils" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
+    ),
+    (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
+    (Test / resourceGenerators) += Def.task {
+      val location = url("https://dist.apache.org/repos/dist/release/spark/spark-4.0.0-preview1/spark-4.0.0-preview1-bin-hadoop3.tgz")
+      val destDir = (Test / resourceManaged).value / "spark"
+      if (!destDir.exists()) {
+        IO.createDirectory(destDir)
+        val files = mutable.Buffer.empty[File]
+        Using(new BufferedInputStream(location.openStream())) { bi =>
+          Using(new GzipCompressorInputStream(bi)) { gi =>
+            Using(new TarArchiveInputStream(gi)) { ti =>
+              var entry = ti.getNextEntry
+              while (entry != null) {
+                val dest = destDir / entry.getName
+                if (entry.isDirectory) {
+                  dest.mkdirs()
+                } else {
+                  files += dest
+                  Using(Files.newOutputStream(dest.toPath)) { os =>
+                    IOUtils.copy(ti, os)
+                  }
+
+                  val perms = new util.HashSet[PosixFilePermission]()
+                  perms.add(PosixFilePermission.OWNER_EXECUTE)
+                  perms.add(PosixFilePermission.OWNER_READ)
+                  perms.add(PosixFilePermission.OWNER_WRITE)
+                  Files.setPosixFilePermissions(dest.toPath, perms)
+                }
+                entry = ti.getNextEntry
+              }
+            }
+          }
+        }
+        files
+      } else {
+        destDir.get()
+      }
+    }.taskValue,
+    (Test / resourceGenerators) += Def.task {
+      val src = url("https://repository.apache.org/content/groups/public/org/apache/spark/spark-connect_2.13/4.0.0-preview1/spark-connect_2.13-4.0.0-preview1.jar")
+      val dest = (Test / resourceManaged).value / "spark-connect.jar"
+      if (!dest.exists()) {
+        src #> dest !;
+        Seq(dest)
+      } else {
+        dest.get()
+      }
+    }.taskValue
+  ).configureUnidoc(
+    generatedJavaDoc = false,
+    generateScalaDoc = false
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
