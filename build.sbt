@@ -112,6 +112,8 @@ def getSparkVersion(): String = {
   }
 }
 
+// Test - some random change
+
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := default_scala_version.value,
