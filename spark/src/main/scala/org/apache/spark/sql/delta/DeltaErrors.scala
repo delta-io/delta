@@ -2476,6 +2476,11 @@ trait DeltaErrorsBase
     )
   }
 
+  def identityColumnAlterNonIdentityColumnError(): Throwable = {
+    new AnalysisException(
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY cannot be called on non IDENTITY columns")
+  }
+
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,

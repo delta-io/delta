@@ -598,6 +598,13 @@ case class AlterTableChangeColumnDeltaCommand(
           verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
 
           val newField = {
+            if (syncIdentity) {
+              assert(oldColumn == newColumn)
+              val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+              val field = IdentityColumn.syncIdentity(newColumn, df)
+              txn.readWholeTable()
+              field
+            } else {
               // Take the name, comment, nullability and data type from newField
               // It's crucial to keep the old column's metadata, which may contain column mapping
               // metadata.
@@ -626,6 +633,7 @@ case class AlterTableChangeColumnDeltaCommand(
                     SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
                   nullable = newColumn.nullable,
                   metadata = updatedColumnMetadata)
+            }
           }
 
           // Replace existing field with new field
