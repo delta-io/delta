@@ -341,7 +341,7 @@ case class DeltaParquetFileFormat(
             s"Unexpected row index filter type: ${unexpectedFilterType}")
         }
         rowIndexFilter.createInstance(
-          DeletionVectorDescriptor.fromJson(dvDescriptorOpt.get.asInstanceOf[String]),
+          DeletionVectorDescriptor.deserializeFromBase64(dvDescriptorOpt.get.asInstanceOf[String]),
           serializableHadoopConf.value,
           tablePath.map(new Path(_)))
       } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {

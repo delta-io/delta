@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.util.{BinPackingIterator, DeltaEncoder, JsonUtils, PathWithFileSystem, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{BinPackingIterator, DeltaEncoder, PathWithFileSystem, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -406,7 +406,7 @@ object DeletionVectorBitmapGenerator {
       // file its existing DeletionVectorDescriptor
       val basePath = txn.deltaLog.dataPath.toString
       val filePathToDV = candidateFiles.map { add =>
-        val serializedDV = Option(add.deletionVector).map(dvd => JsonUtils.toJson(dvd))
+        val serializedDV = Option(add.deletionVector).map(_.serializeToBase64())
         // Paths in the metadata column are canonicalized. Thus we must canonicalize the DV path.
         FileToDvDescriptor(
           SparkPath.fromPath(absolutePath(basePath, add.path)).urlEncoded,
@@ -661,7 +661,7 @@ object DeletionVectorWriter extends DeltaLogging {
          |It is likely that _metadata.file_path is not encoded by Spark as expected.
          |""".stripMargin)
 
-    val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.fromJson(_))
+    val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.deserializeFromBase64)
     val finalDvDescriptor = fileDvDescriptor match {
       case Some(existingDvDescriptor) if row.deletedRowIndexCount > 0 =>
         // Load the existing bit map

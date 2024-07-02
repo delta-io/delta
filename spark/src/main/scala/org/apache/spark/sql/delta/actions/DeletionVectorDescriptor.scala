@@ -16,8 +16,9 @@
 
 package org.apache.spark.sql.delta.actions
 
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream, DataInputStream, DataOutputStream}
 import java.net.URI
-import java.util.UUID
+import java.util.{Base64, UUID}
 
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.util.{Codec, DeltaEncoder, JsonUtils}
@@ -167,6 +168,34 @@ case class DeletionVectorDescriptor(
     // (cardinality(8) + sizeInBytes(4)) + storageType + pathOrInlineDv + option[offset(4)]
     12 + storageType.length + pathOrInlineDv.length + (if (offset.isDefined) 4 else 0)
   }
+
+  /*
+   * Serialize the DV descriptor to a base64 encoded string.
+   */
+  def serializeToBase64(): String = {
+    val bs = new ByteArrayOutputStream()
+    val ds = new DataOutputStream(bs)
+    try {
+      ds.writeLong(cardinality)
+      ds.writeInt(sizeInBytes)
+
+      val storageTypeBytes = storageType.getBytes()
+      assert(storageTypeBytes.length == 1, s"Storage type must be 1byte value: $storageType")
+      ds.writeByte(storageTypeBytes.head)
+
+      if (storageType != INLINE_DV_MARKER) {
+        assert(offset.isDefined)
+        ds.writeInt(offset.get)
+      } else {
+        assert(offset.isEmpty)
+      }
+
+      ds.writeUTF(pathOrInlineDv)
+      Base64.getEncoder.encodeToString(bs.toByteArray)
+    } finally {
+      ds.close()
+    }
+  }
 }
 
 object DeletionVectorDescriptor {
@@ -263,10 +292,6 @@ object DeletionVectorDescriptor {
     sizeInBytes = 0,
     cardinality = 0)
 
-  private[delta] def fromJson(jsonString: String): DeletionVectorDescriptor = {
-    JsonUtils.fromJson[DeletionVectorDescriptor](jsonString)
-  }
-
   private[delta] def encodeUUID(id: UUID, randomPrefix: String): String = {
     val uuidData = Codec.Base85Codec.encodeUUID(id)
     // This should always be true and we are relying on it for separating out the
@@ -276,4 +301,24 @@ object DeletionVectorDescriptor {
   }
 
   def encodeData(bytes: Array[Byte]): String = Codec.Base85Codec.encodeBytes(bytes)
+
+  /*
+   * Deserialize the base64 encoded string to a DV descriptor.
+   *
+   * The format must be in sync with [[DeletionVectorDescriptor.serializeToBase64]].
+   */
+  def deserializeFromBase64(encoded: String): DeletionVectorDescriptor = {
+    val buffer = Base64.getDecoder.decode(encoded)
+    val ds = new DataInputStream(new ByteArrayInputStream(buffer))
+    try {
+      val cardinality = ds.readLong()
+      val sizeInBytes = ds.readInt()
+      val storageType = ds.readByte().toChar.toString
+      val offset = if (storageType != INLINE_DV_MARKER) Some(ds.readInt()) else None
+      val pathOrInlineDv = ds.readUTF()
+      DeletionVectorDescriptor(storageType, pathOrInlineDv, offset, sizeInBytes, cardinality)
+    } finally {
+      ds.close()
+    }
+  }
 }
