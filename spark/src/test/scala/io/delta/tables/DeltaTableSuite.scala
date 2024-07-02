@@ -34,6 +34,7 @@ import org.apache.hadoop.fs.{Path, UnsupportedFileSystemException}
 import org.apache.spark.SparkException
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -123,6 +124,37 @@ class DeltaTableSuite extends QueryTest
 
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       testForNameOnNonDeltaName(s"delta.`$dir`")
+    }
+  }
+
+  private def canonicalized(df: DataFrame): LogicalPlan = df.queryExecution.analyzed.canonicalized
+
+  test("toDf - forPath") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      val sparkDf = spark.read.format("delta").load(dir.getAbsolutePath)
+      val tableDf = DeltaTable.forPath(spark, dir.getAbsolutePath).toDF
+      assert(canonicalized(sparkDf) === canonicalized(tableDf))
+    }
+  }
+
+  test("toDf - forName") {
+    withTempDir { dir =>
+      withTable("deltaTable") {
+        testData.write.format("delta").saveAsTable("deltaTable")
+        val sparkDf = spark.table("deltaTable")
+        val tableDf = DeltaTable.forName(spark, "deltaTable").toDF
+        assert(canonicalized(sparkDf) === canonicalized(tableDf))
+      }
+    }
+  }
+
+  test("toDf - forName - with delta.`path`") {
+    withTempDir { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      val sparkDf = spark.read.format("delta").load(dir.getAbsolutePath)
+      val tableDf = DeltaTable.forName(spark, s"delta.`$dir`").toDF
+      assert(canonicalized(sparkDf) === canonicalized(tableDf))
     }
   }
 
