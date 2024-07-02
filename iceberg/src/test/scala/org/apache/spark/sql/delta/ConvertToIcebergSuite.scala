@@ -36,12 +36,9 @@ import org.apache.spark.util.Utils
  * A standalone HMS can be created using the following docker command.
  *  ************************************************************
  *  docker run -d -p 9083:9083 --env SERVICE_NAME=metastore \
- *  --name metastore-standalone apache/hive:4.0.0-beta-1
+ *  --name metastore-standalone apache/hive:4.0.0
  *  ************************************************************
  *  The URL of this standalone HMS is thrift://localhost:9083
- *
- *  By default this hms will use `/opt/hive/data/warehouse` as warehouse path.
- *  Please make sure this path exists prior to running the suite.
  */
 class ConvertToIcebergSuite extends QueryTest with Eventually {
 
@@ -50,10 +47,10 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
   private var _sparkSessionWithIceberg: SparkSession = null
 
   private val PORT = 9083
-  private val WAREHOUSE_PATH = "/opt/hive/data/warehouse/"
+  private val WAREHOUSE_PATH = Utils.createTempDir(this.suiteName)
 
   private val testTableName: String = "deltatable"
-  private var testTablePath: String = s"$WAREHOUSE_PATH$testTableName"
+  private val testTablePath: String = s"$WAREHOUSE_PATH/$testTableName"
 
   override def spark: SparkSession = _sparkSession
 
@@ -108,7 +105,9 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
     if (hmsReady(PORT)) {
       runDeltaSql(
         s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
+           |LOCATION '$testTablePath'
            |TBLPROPERTIES (
+           |  'delta.enableIcebergCompatV2' = 'true',
            |  'delta.columnMapping.mode' = 'name',
            |  'delta.universalFormat.enabledFormats' = 'iceberg'
            |)""".stripMargin)
@@ -123,6 +122,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
         withDefaultTablePropsInSQLConf {
           deltaSpark.range(10).write.format("delta")
             .option("path", testTablePath)
+            .option("delta.enableIcebergCompatV2", "true")
             .saveAsTable(testTableName)
         }
       }
@@ -130,6 +130,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
         deltaSpark.range(10, 20, 1)
           .write.format("delta").mode("append")
           .option("path", testTablePath)
+          .option("delta.enableIcebergCompatV2", "true")
           .saveAsTable(testTableName)
       }
       verifyReadWithIceberg(testTableName, 0 to 19 map (Row(_)))
