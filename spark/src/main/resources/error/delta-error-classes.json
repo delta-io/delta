@@ -1508,7 +1508,7 @@
   },
   "DELTA_MERGE_UNRESOLVED_EXPRESSION" : {
     "message" : [
-      "Cannot resolve <sqlExpr> in <clause> given <cols>"
+      "Cannot resolve <sqlExpr> in <clause> given columns <cols>."
     ],
     "sqlState" : "42601"
   },
@@ -2918,11 +2918,6 @@
   "_LEGACY_ERROR_TEMP_DELTA_0010" : {
     "message" : [
       "<optionalPrefixMessage>Found unsupported expression <expression> while parsing target column name parts."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0011" : {
-    "message" : [
-      "Failed to resolve plan."
     ]
   },
   "_LEGACY_ERROR_TEMP_DELTA_0012" : {
