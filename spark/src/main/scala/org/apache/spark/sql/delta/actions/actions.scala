@@ -254,7 +254,9 @@ object Protocol {
 
     val (readerVersion, writerVersion, enabledFeatures) =
       minProtocolComponentsFromMetadata(spark, metadata)
-    Protocol(readerVersion, writerVersion).withFeatures(enabledFeatures)
+    Protocol(readerVersion, writerVersion)
+      .withFeatures(enabledFeatures)
+      .downgradeProtocolVersionsIfNeeded
   }
 
   /**
