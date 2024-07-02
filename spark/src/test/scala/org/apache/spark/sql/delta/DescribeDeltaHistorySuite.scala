@@ -21,10 +21,11 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DescribeDeltaHistorySuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.scalactic.source.Position
 import org.scalatest.Tag
 
@@ -42,7 +43,8 @@ trait DescribeDeltaHistorySuiteBase
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
-  with MergeIntoMetricsBase {
+  with MergeIntoMetricsBase
+  with CoordinatedCommitsBaseSuite {
 
   import testImplicits._
 
@@ -137,6 +139,21 @@ trait DescribeDeltaHistorySuiteBase
       .head
       .getMap(0)
       .asInstanceOf[Map[String, String]]
+  }
+
+  // Returns necessary delta property json expected for the test. If coordinated commit is enabled,
+  // a few properties will be automatically populated, and this method will take care of it.
+  protected def getPropertiesJson(extraProperty: Option[Map[String, String]] = None): String = {
+    val coordinatedCommitsProperty = if (coordinatedCommitsEnabledInTests) {
+      getCoordinatedCommitsDefaultProperties()
+    } else {
+      Map.empty[String, String]
+    }
+    // For history command, the output omits the empty config value, so we also need to
+    // manually omit the value here.
+    val properties = coordinatedCommitsProperty.filterNot { case (_, value) => value == "{}" }
+    val finalProperties = extraProperty.map(properties ++ _).getOrElse(properties)
+    JsonUtils.toJson(finalProperties)
   }
 
   testWithFlag("basic case - Scala history with path-based table") {
@@ -256,6 +273,7 @@ trait DescribeDeltaHistorySuiteBase
            |comment 'this is my table'
            |tblproperties (delta.appendOnly=true)
          """.stripMargin)
+      val appendOnlyTableProperty = Map("delta.appendOnly" -> "true")
       checkLastOperation(
         spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_test")).location.getPath,
         Seq(
@@ -263,7 +281,7 @@ trait DescribeDeltaHistorySuiteBase
           "true",
           """["b"]""",
           """[]""",
-          """{"delta.appendOnly":"true"}""",
+          getPropertiesJson(Some(appendOnlyTableProperty)),
           "this is my table"),
         Seq(
           $"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
@@ -279,7 +297,7 @@ trait DescribeDeltaHistorySuiteBase
         .option("path", tempDir).saveAsTable("delta_test")
       checkLastOperation(
         tempDir,
-        Seq("CREATE TABLE AS SELECT", "false", """[]""", """[]""", "{}", null),
+        Seq("CREATE TABLE AS SELECT", "false", """[]""", """[]""", getPropertiesJson(), null),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
           $"operationParameters.clusterBy", $"operationParameters.properties",
           $"operationParameters.description"))
@@ -297,13 +315,15 @@ trait DescribeDeltaHistorySuiteBase
            |partitioned by (b)
            |as select 1 as a, 'x' as b
          """.stripMargin)
+      val appendOnlyProperty = Map[String, String]("delta.appendOnly" -> "true")
       checkLastOperation(
         tempDir,
         Seq("CREATE TABLE AS SELECT",
           "false",
           """["b"]""",
           """[]""",
-          """{"delta.appendOnly":"true"}""", null),
+          getPropertiesJson(Some(appendOnlyProperty)),
+          null),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
           $"operationParameters.clusterBy", $"operationParameters.properties",
           $"operationParameters.description"))
@@ -321,7 +341,7 @@ trait DescribeDeltaHistorySuiteBase
       checkLastOperation(
         tempDir2,
         Seq("CREATE TABLE AS SELECT",
-          "false", """[]""", """[]""", """{}""", "this is my table"),
+          "false", """[]""", """[]""", getPropertiesJson(), "this is my table"),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
           $"operationParameters.clusterBy", $"operationParameters.properties",
           $"operationParameters.description"))
@@ -1481,3 +1501,8 @@ trait DescribeDeltaHistorySuiteBase
 
 class DescribeDeltaHistorySuite
   extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest
+
+class DescribeDeltaHistoryWithCoordinatedCommitsSuite
+  extends DescribeDeltaHistorySuite {
+    override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+}

@@ -233,11 +233,7 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
         )
         txn.commit(newMetadata :: Nil, DeltaOperations.ManualUpdate)
         val coordinatedCommitsProperties = batchSizeOpt.map(_ =>
-            Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> "tracking-in-memory",
-              DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key ->
-                "{\"randomConf\":\"randomConfValue\"}",
-              DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key -> "{}",
-              DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
+          getCoordinatedCommitsDefaultProperties(withICT = true))
           .getOrElse(Map.empty)
         checkResult(sql(s"DESCRIBE DETAIL $tableName"),
           Seq(Map("foo" -> "bar") ++ coordinatedCommitsProperties),
