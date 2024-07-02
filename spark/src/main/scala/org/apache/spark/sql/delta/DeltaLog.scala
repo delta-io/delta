@@ -895,10 +895,8 @@ object DeltaLog extends DeltaLogging {
     }
   }
 
-  /** Invalidate the cached DeltaLog object for the given `dataPath`. */
-  def invalidateCache(spark: SparkSession, dataPath: Path): Unit = {
+  private def invalidateCacheImpl(spark: SparkSession, rawPath: Path): Unit = {
     try {
-      val rawPath = logPathFor(dataPath)
       // scalastyle:off deltahadoopconfiguration
       // This method cannot be called from DataFrameReader/Writer so it's safe to assume the user
       // has set the correct file system configurations in the session configs.
@@ -926,6 +924,11 @@ object DeltaLog extends DeltaLogging {
     } catch {
       case NonFatal(e) => logWarning(e.getMessage, e)
     }
+  }
+
+  /** Invalidate the cached DeltaLog object for the given `dataPath`. */
+  def invalidateCache(spark: SparkSession, dataPath: Path): Unit = {
+    invalidateCacheImpl(spark, logPathFor(dataPath))
   }
 
   def clearCache(): Unit = {
