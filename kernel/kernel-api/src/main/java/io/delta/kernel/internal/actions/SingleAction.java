@@ -47,7 +47,8 @@ public class SingleAction {
             // .add("add", AddFile.FULL_SCHEMA) // not needed for blind appends
             // .add("remove", RemoveFile.FULL_SCHEMA) // not needed for blind appends
             .add("metaData", Metadata.FULL_SCHEMA)
-            .add("protocol", Protocol.FULL_SCHEMA);
+            .add("protocol", Protocol.FULL_SCHEMA)
+            .add("commitInfo", CommitInfo.FULL_SCHEMA);
     // Once we start supporting domain metadata/row tracking enabled tables, we should add the
     // schema for domain metadata fields here.
 

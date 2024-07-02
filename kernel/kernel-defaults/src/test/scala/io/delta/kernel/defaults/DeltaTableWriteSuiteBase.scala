@@ -298,6 +298,21 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     txnBuilder.build(engine)
   }
 
+  def commitAppendData(
+    engine: Engine = defaultEngine,
+    txn: Transaction,
+    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+
+    val txnState = txn.getTransactionState(engine)
+
+    val actions = data.map { case (partValues, partData) =>
+      stageData(txnState, partValues, partData)
+    }
+
+    val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
+    txn.commit(engine, combineActions)
+  }
+
   def appendData(
     engine: Engine = defaultEngine,
     tablePath: String,
@@ -309,14 +324,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     tableProperties: Map[String, String] = null): TransactionCommitResult = {
 
     val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
-    val txnState = txn.getTransactionState(engine)
-
-    val actions = data.map { case (partValues, partData) =>
-      stageData(txnState, partValues, partData)
-    }
-
-    val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
-    txn.commit(engine, combineActions)
+    commitAppendData(engine, txn, data)
   }
 
   def assertMetadataProp(
