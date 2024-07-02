@@ -1196,9 +1196,7 @@ trait DeltaSQLConfBase {
 
   val DELTA_UNIFORM_HUDI_SYNC_CONVERT_ENABLED =
     buildConf("uniform.hudi.sync.convert.enabled")
-      .doc("If enabled, Hudi conversion will be done synchronously. " +
-        "This can cause slow down in Delta commits and should only be used " +
-        "for debugging or in test suites.")
+      .doc("If enabled, Hudi conversion will be done synchronously.")
       .internal()
       .booleanConf
       .createWithDefault(false)
