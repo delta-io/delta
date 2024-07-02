@@ -27,7 +27,7 @@ import org.apache.spark.sql.SparkSession
  * A standalone HMS can be created using the following docker command.
  *  ************************************************************
  *  docker run -d -p 9083:9083 --env SERVICE_NAME=metastore \
- *  --name metastore-standalone apache/hive:4.0.0-beta-1
+ *  --name metastore-standalone apache/hive:4.0.0
  *  ************************************************************
  *  The URL of this standalone HMS is thrift://localhost:9083
  *
