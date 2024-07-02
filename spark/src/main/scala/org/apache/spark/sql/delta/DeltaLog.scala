@@ -101,12 +101,16 @@ class DeltaLog private(
 
   checkRequiredConfigurations()
 
+  // Some change 2
+
   /**
    * Keep a reference to `SparkContext` used to create `DeltaLog`. `DeltaLog` cannot be used when
    * `SparkContext` is stopped. We keep the reference so that we can check whether the cache is
    * still valid and drop invalid `DeltaLog`` objects.
    */
   private val sparkContext = new WeakReference(spark.sparkContext)
+
+  // Some change 3
 
   /**
    * Returns the Hadoop [[Configuration]] object which can be used to access the file system. All
