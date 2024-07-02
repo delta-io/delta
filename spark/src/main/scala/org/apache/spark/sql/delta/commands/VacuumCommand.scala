@@ -201,6 +201,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       dryRun: Boolean = true,
       retentionHours: Option[Double] = None,
       inventory: Option[DataFrame] = None,
+      commandMetrics: Map[String, SQLMetric] = Map.empty,
       clock: Clock = new SystemClock): DataFrame = {
     recordDeltaOperation(deltaLog, "delta.gc") {
 
@@ -370,7 +371,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
           } catch {
             case t: Throwable =>
-              logVacuumEnd(deltaLog, spark, path)
+              logVacuumEnd(deltaLog, spark, path, commandMetrics = commandMetrics)
               throw t
           }
           val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
@@ -389,7 +390,13 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             vacuumEndTime = System.currentTimeMillis,
             numPartitionColumns = partitionColumns.size)
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-          logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
+          logVacuumEnd(
+            deltaLog,
+            spark,
+            path,
+            commandMetrics = commandMetrics,
+            Some(filesDeleted),
+            Some(dirCounts))
           logInfo(log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, filesDeleted)} files " +
             log"(${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} bytes) and directories in " +
             log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories. " +
@@ -501,12 +508,17 @@ trait VacuumCommandImpl extends DeltaCommand {
       deltaLog: DeltaLog,
       spark: SparkSession,
       path: Path,
+      commandMetrics: Map[String, SQLMetric],
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
     if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), path)) {
       val txn = deltaLog.startTransaction()
       val status = if (filesDeleted.isEmpty && dirCounts.isEmpty) { "FAILED" } else { "COMPLETED" }
       if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
+        // Populate top level metrics.
+        commandMetrics.get("numDeletedFiles").foreach(_.set(filesDeleted.get))
+        commandMetrics.get("numVacuumedDirectories").foreach(_.set(dirCounts.get))
+        // Additionally, create a separate metrics map in case the commandMetrics is empty.
         val metrics = Map[String, SQLMetric](
           "numDeletedFiles" -> createMetric(spark.sparkContext, "number of files deleted."),
           "numVacuumedDirectories" ->
