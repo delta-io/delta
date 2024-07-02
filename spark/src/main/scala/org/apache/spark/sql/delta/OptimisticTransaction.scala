@@ -40,7 +40,7 @@ import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
@@ -378,6 +378,51 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     checkDeletionVectorFilesHaveWideBounds = false
   }
 
+  // An array of tuples where each tuple represents a pair (colName, newHighWatermark).
+  // This is collected after a write into Delta table with IDENTITY columns. If it's not
+  // empty, we will update the high water marks during transaction commit. Note that the same
+  // column can have multiple entries here if A single transaction involves multiple write
+  // operations. E.g. Overwrite+ReplaceWhere operation involves two phases: Phase-1 to write just
+  // new data and Phase-2 to delete old data. So both phases can generate tuples for a given column
+  // here.
+  protected val updatedIdentityHighWaterMarks = ArrayBuffer.empty[(String, Long)]
+
+  // The names of columns for which we will track the IDENTITY high water marks at transaction
+  // writes.
+  protected var trackHighWaterMarks: Option[Set[String]] = None
+
+  def setTrackHighWaterMarks(track: Set[String]): Unit = {
+    assert(trackHighWaterMarks.isEmpty, "The tracking set shouldn't have been set")
+    trackHighWaterMarks = Some(track)
+  }
+
+  /**
+   * Records an update to the metadata that should be committed with this transaction. As this is
+   * called after write, it skips checking `!hasWritten`. We do not have a full protocol of what
+   * `updating metadata after write` should behave, as currently this is only used to update
+   * IDENTITY columns high water marks. As a result, it goes through all the steps needed to update
+   * schema BEFORE writes, except skipping the check mentioned above. Note that schema evolution
+   * and IDENTITY update can happen inside a single transaction so this function does not check
+   * we have only one metadata update in a transaction.
+   *
+   * IMPORTANT: It is the responsibility of the caller to ensure that files currently present in
+   * the table and written by this transaction are valid under the new metadata.
+   */
+  private def updateMetadataAfterWrite(updatedMetadata: Metadata): Unit = {
+    updateMetadataInternal(updatedMetadata, ignoreDefaultProperties = false)
+  }
+
+  // Called before commit to update table schema with collected IDENTITY column high water marks
+  // so that the change can be committed to delta log.
+  def precommitUpdateSchemaWithIdentityHighWaterMarks(): Unit = {
+    if (updatedIdentityHighWaterMarks.nonEmpty) {
+      val newSchema = IdentityColumn.updateSchema(
+        metadata.schema, updatedIdentityHighWaterMarks.toSeq)
+      val updatedMetadata = metadata.copy(schemaString = newSchema.json)
+      updateMetadataAfterWrite(updatedMetadata)
+    }
+  }
+
   /** The set of distinct partitions that contain added files by current transaction. */
   protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
 
@@ -637,6 +682,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // The new table case has been handled by [[Protocol.forNewTable]] earlier in this method.
     if (!canAssignAnyNewProtocol) {
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
+    }
+
+    if (isCreatingNewTable) {
+      IdentityColumn.logTableCreation(deltaLog, newMetadataTmp.schema)
     }
 
     newMetadataTmp = MaterializedRowId.updateMaterializedColumnName(
@@ -1130,6 +1179,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       // Check for internal SetTransaction conflicts and dedup.
       val finalActions = checkForSetTransactionConflictAndDedup(actions ++ this.actions.toSeq)
+
+      // Update schema for IDENTITY column writes if necessary. This has to be called before
+      // `prepareCommit` because it might change metadata and `prepareCommit` is responsible for
+      // converting updated metadata into a `Metadata` action.
+      precommitUpdateSchemaWithIdentityHighWaterMarks()
 
       // Try to commit at the next version.
       var preparedActions =

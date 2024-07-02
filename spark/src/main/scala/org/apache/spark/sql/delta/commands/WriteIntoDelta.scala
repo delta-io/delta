@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, CharVarcharUtils}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -260,6 +261,24 @@ case class WriteIntoDelta(
               sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED) &&
               cdcExistsInRemoveOp) {
             var dataWithDefaultExprs = data
+            // Add identity columns if they are not in `data`.
+            // Column names for which we will track identity column high water marks.
+            val trackHighWaterMarks = scala.collection.mutable.Set[String]()
+            val topLevelOutputNames = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
+            val selectExprs = txn.metadata.schema.map { f =>
+              if (ColumnWithDefaultExprUtils.isIdentityColumn(f) &&
+                !topLevelOutputNames.contains(f.name)) {
+                // Track high water marks for generated IDENTITY values.
+                trackHighWaterMarks += f.name
+                IdentityColumn.createIdentityColumnGenerationExprAsColumn(f)
+              } else {
+                SchemaUtils.fieldToColumn(f).alias(f.name)
+              }
+            }
+            if (trackHighWaterMarks.nonEmpty) {
+              txn.setTrackHighWaterMarks(trackHighWaterMarks.toSet)
+              dataWithDefaultExprs = data.select(selectExprs: _*)
+            }
 
             // pack new data and cdc data into an array of structs and unpack them into rows
             // to share values in outputCols on both branches, avoiding re-evaluating
