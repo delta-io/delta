@@ -1165,6 +1165,9 @@ class DeltaTableBuilder(object):
         dataType: Union[str, DataType],
         nullable: bool = True,
         generatedAlwaysAs: Optional[str] = None,
+        generatedAlwaysAsIdentity: Optional[bool] = None,
+        identityStart: Optional[int] = None,
+        identityStep: Optional[int] = None,
         comment: Optional[str] = None,
     ) -> "DeltaTableBuilder":
         """
@@ -1180,6 +1183,14 @@ class DeltaTableBuilder(object):
                                   as a function of other columns.
                                   See online documentation for details on Generated Columns.
         :type generatedAlwaysAs: str
+        :param generatedAlwaysAsIdentity: whether the column is generated always as an identity
+                                          column or if users can provide values.
+        :type generatedAlwaysAsIdentity: bool
+        :param identityStart: the start for the identity column. Default is 1.
+        :type identityStart: int
+        :param identityStep: the step for the identity column. Default is 1.
+        :type identityStep: int
+        :type generatedAlwaysAsIdentity: bool
         :param comment: the column comment
         :type comment: str
 
@@ -1203,11 +1214,47 @@ class DeltaTableBuilder(object):
         if type(nullable) is not bool:
             self._raise_type_error("Column nullable must be bool.", [nullable])
         _col_jbuilder = _col_jbuilder.nullable(nullable)
+
         if generatedAlwaysAs is not None:
+            if generatedAlwaysAsIdentity is not None or identityStart is not None or identityStep is not None:
+               raise ValueError(
+                    "Column identity generation (generatedAlwaysAsIdentity) cannot be set with generatedAlwaysAs.",
+                    [generatedAlwaysAs, generatedAlwaysAsIdentity, identityStart, identityStep])
+
             if type(generatedAlwaysAs) is not str:
                 self._raise_type_error("Column generation expression must be str.",
                                        [generatedAlwaysAs])
             _col_jbuilder = _col_jbuilder.generatedAlwaysAs(generatedAlwaysAs)
+
+        if generatedAlwaysAsIdentity is not None:
+            if type(generatedAlwaysAsIdentity) is not bool:
+                self._raise_type_error("Column generatedAlwaysAsIdentity must be bool.", [generatedAlwaysAsIdentity])
+
+            if dataType != LongType():
+                self._raise_type_error(
+                    "Column identity generation requires the column to be of LongType.",
+                    [dataType])
+            if identityStep == 0:
+                raise ValueError("Column identity generation requires identityStep to be non-zero.")
+
+            _id_col_start = identityStart if identityStart is not None else 1
+            _id_col_step = identityStep if identityStep is not None else 1
+
+            if type(_id_col_step) is not int:
+                self._raise_type_error("Column identityStep must be int.", [identityStep])
+            if type(_id_col_start) is not int:
+                self._raise_type_error("Column identityStart must be int.", [identityStart])
+
+            if generatedAlwaysAsIdentity:
+                _col_jbuilder = _col_jbuilder.generatedAlwaysAsIdentity(_id_col_start, _id_col_step)
+            else:
+                _col_jbuilder = _col_jbuilder.generatedByDefaultAsIdentity(_id_col_start, _id_col_step)
+        else:
+            if identityStart is not None or identityStep is not None:
+                self._raise_type_error(
+                    "Column identity generation requires generatedAlwaysAsIdentity to be set.",
+                    [generatedAlwaysAsIdentity, identityStart, identityStep])
+
         if comment is not None:
             if type(comment) is not str:
                 self._raise_type_error("Column comment must be str.", [comment])

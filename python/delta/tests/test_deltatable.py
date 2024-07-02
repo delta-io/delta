@@ -977,6 +977,18 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.addColumn("a", "int", generatedAlwaysAs=1)  # type: ignore[arg-type]
 
+        # bad generatedAlwaysAsIdentity
+        with self.assertRaises(TypeError):
+            builder.addColumn("a", "int", generatedAlwaysAsIdentity=1)  # type: ignore[arg-type]
+
+        # bad identityStep
+        with self.assertRaises(TypeError):
+            builder.addColumn("a", "int", generatedAlwaysAsIdentity=True, identityStep="a")  # type: ignore[arg-type]
+
+        # bad identityStart
+        with self.assertRaises(TypeError):
+            builder.addColumn("a", "int", generatedAlwaysAsIdentity=True, identityStart="a")  # type: ignore[arg-type]
+
         # bad nullable
         with self.assertRaises(TypeError):
             builder.addColumn("a", "int", nullable=1)  # type: ignore[arg-type]
