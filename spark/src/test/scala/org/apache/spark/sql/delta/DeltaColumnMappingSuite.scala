@@ -1907,8 +1907,9 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""CREATE TABLE $testTableName
            |USING DELTA
            |TBLPROPERTIES(
-           |'$minReaderKey' = '2',
-           |'$minWriterKey' = '7'
+           |'$minReaderKey' = '3',
+           |'$minWriterKey' = '7',
+           |'${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true'
            |)
            |AS SELECT * FROM RANGE(1)
            |""".stripMargin)

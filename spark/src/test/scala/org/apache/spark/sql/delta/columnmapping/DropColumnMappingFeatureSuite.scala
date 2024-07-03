@@ -71,9 +71,12 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
          |USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
          |""".stripMargin)
-    val e = intercept[DeltaTableFeatureException] {
+    val e = intercept[DeltaAnalysisException] {
       dropColumnMappingTableFeature()
     }
+    checkError(e,
+      errorClass = "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
+      parameters = Map("invalidColumnNames" -> "col1 with special chars ,;{}()\n\t="))
   }
 
   test("drop column mapping from a table without table feature") {
@@ -82,17 +85,12 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
          |USING delta
          |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
          |        '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false',
-         |        'delta.minReaderVersion' = '1',
-         |        'delta.minWriterVersion' = '1')
+         |        'delta.minReaderVersion' = '3',
+         |        'delta.minWriterVersion' = '7')
          |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
          |  FROM RANGE(0, $totalRows, 1, $numFiles)
          |""".stripMargin)
-    val e = intercept[DeltaTableFeatureException] {
-      dropColumnMappingTableFeature()
-    }
-    checkError(e,
-      errorClass = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
-      parameters = Map("feature" -> "columnMapping"))
+    testDroppingColumnMapping()
   }
 
   test("drop column mapping from a table with table feature") {

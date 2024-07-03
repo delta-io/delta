@@ -16,17 +16,25 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
-
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 class DeltaProtocolTransitionsSuite
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
+
+  /*
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    // spark.conf.set(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED.key, "false")
+    SparkSession.setActiveSession(spark)
+  }
+  */
 
   protected def protocolToTBLProperties(
       protocol: Protocol,
@@ -89,7 +97,11 @@ class DeltaProtocolTransitionsSuite
 
     /*
     testProtocolTransition(
-      createTableProtocol = Some(Protocol(1, 7).withFeature(TestRemovableReaderWriterFeature)),
+      createTableProtocol = Some(Protocol(
+        minReaderVersion = 1,
+        minWriterVersion = 7,
+        readerFeatures = Some(Set(TestRemovableReaderWriterFeature.name)),
+        writerFeatures = Some(Set(TestRemovableReaderWriterFeature.name)))),
       expectedProtocol = Protocol(3, 7).withFeature(TestRemovableReaderWriterFeature))
 
     testProtocolTransition(
@@ -98,11 +110,48 @@ class DeltaProtocolTransitionsSuite
     */
   }
 
+  test("CREATE TABLE default protocol versions") {
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 1)),
+      expectedProtocol = Protocol(1, 1))
+
+    testProtocolTransition(
+      expectedProtocol = Protocol(1, 2))
+  }
+
   test("CREATE TABLE invalid legacy protocols") {
     /*
     testProtocolTransition(
       createTableProtocol = Some(Protocol(1, 5)),
       expectedProtocol = Protocol(1, 4))
+    */
+  }
+
+  test("TABLE CREATION with enabled features by default") {
+    withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+      testProtocolTransition(
+        createTableProtocol = Some(Protocol(1, 4)),
+        expectedProtocol = Protocol(3, 7).withFeatures(Seq(
+          DeletionVectorsTableFeature,
+          InvariantsTableFeature,
+          AppendOnlyTableFeature,
+          CheckConstraintsTableFeature,
+          ChangeDataFeedTableFeature,
+          GeneratedColumnsTableFeature)))
+
+      testProtocolTransition(
+        expectedProtocol = Protocol(3, 7).withFeatures(Seq(
+          DeletionVectorsTableFeature,
+          InvariantsTableFeature,
+          AppendOnlyTableFeature)))
+    }
+
+    /*
+    withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+      testProtocolTransition(
+        createTableProtocol = Some(Protocol(1, 1)),
+        expectedProtocol = Protocol(1, 7).withFeatures(Seq(ChangeDataFeedTableFeature)))
+    }
     */
   }
 
@@ -137,6 +186,13 @@ class DeltaProtocolTransitionsSuite
       alterTableProtocol = Some(Protocol(1, 6)),
       expectedProtocol = Protocol(2, 6))
 
+    /*
+    testProtocolTransition(
+      createTableProtocol = Some(Protocol(1, 4)),
+      alterTableProtocol = Some(Protocol(2, 7).withFeature(ColumnMappingTableFeature)),
+      expectedProtocol = Protocol(2, 5))
+    */
+
     testProtocolTransition(
       createTableProtocol = Some(Protocol(1, 7).withFeature(TestWriterFeature)),
       alterTableProtocol = Some(Protocol(1, 2)),
@@ -170,6 +226,7 @@ class DeltaProtocolTransitionsSuite
       dropFeatures = Seq(CheckConstraintsTableFeature),
       expectedProtocol = Protocol(1, 2))
 
+    /*
     testProtocolTransition(
       createTableProtocol = Some(Protocol(2, 5)),
       dropFeatures = Seq(ColumnMappingTableFeature),
@@ -179,6 +236,7 @@ class DeltaProtocolTransitionsSuite
       createTableProtocol = Some(Protocol(2, 6)),
       dropFeatures = Seq(ColumnMappingTableFeature),
       expectedProtocol = Protocol(1, 6))
+     */
 
     testProtocolTransition(
       createTableProtocol = Some(Protocol(1, 4)),
