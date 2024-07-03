@@ -156,10 +156,6 @@ trait DeltaColumnMappingBase extends DeltaLogging {
             (newProtocol.supportsWriterFeatures && satisfiesReaderVersion)) {
           newProtocol = newProtocol.withFeature(ColumnMappingTableFeature)
         }
-
-        if (!satisfiesColumnMappingProtocol(newProtocol)) {
-          throw DeltaErrors.changeColumnMappingModeOnOldProtocol(oldProtocol)
-        }
       }
     }
 

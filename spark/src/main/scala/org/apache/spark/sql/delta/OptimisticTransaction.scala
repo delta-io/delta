@@ -548,8 +548,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // but not "invariants" and "appendOnly", then setting the minWriterVersion to
       // 2 or 3 will add "invariants" and "appendOnly", filling in the gaps for writer
       // protocol version 3, and then we can downgrade to version 3.
-      val proposedNewProtocol = protocolBeforeUpdate
-        .merge(newProtocolForLatestMetadata)
+      val proposedNewProtocol = protocolBeforeUpdate.merge(newProtocolForLatestMetadata)
 
       if (proposedNewProtocol != protocolBeforeUpdate) {
         // The merged protocol has higher versions and/or supports more features.

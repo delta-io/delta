@@ -1355,18 +1355,6 @@ class DeltaColumnMappingSuite extends QueryTest
     }
   }
 
-  test("legal mode change without explicit upgrade") {
-    val e = intercept[UnsupportedOperationException] {
-      withTable("t1") {
-        createTableWithSQLAPI("t1")
-        alterTableWithProps("t1", props = Map(
-          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
-      }
-    }
-    assert(e.getMessage.contains("Your current table protocol version does not" +
-      " support changing column mapping modes"))
-  }
-
   test("getPhysicalNameFieldMap") {
     // To keep things simple, we use schema `schemaWithPhysicalNamesNested` such that the
     // physical name is just the logical name repeated three times.

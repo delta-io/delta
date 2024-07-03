@@ -2043,41 +2043,18 @@ trait DeltaErrorsBase
         mode.name))
   }
 
-  def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
-    val requiredProtocol = {
-      if (oldProtocol.supportsReaderFeatures || oldProtocol.supportsWriterFeatures) {
-        Protocol(
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-          .withFeature(ColumnMappingTableFeature)
-      } else {
-        ColumnMappingTableFeature.minProtocolVersion
-      }
-    }
-
-    new DeltaColumnMappingUnsupportedException(
-      errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL",
-      messageParameters = Array(
-        s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
-        s"$requiredProtocol",
-        s"$oldProtocol",
-        columnMappingAdviceMessage(requiredProtocol)))
-  }
-
   private def columnMappingAdviceMessage(
       requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
+    val readerVersion = requiredProtocol.minReaderVersion
+    val writerVersion = requiredProtocol.minWriterVersion
     s"""
        |Please enable Column Mapping on your Delta table with mapping mode 'name'.
        |You can use one of the following commands.
        |
-       |If your table is already on the required protocol version:
        |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
        |
-       |If your table is not on the required protocol version and requires a protocol upgrade:
-       |ALTER TABLE table_name SET TBLPROPERTIES (
-       |   'delta.columnMapping.mode' = 'name',
-       |   'delta.minReaderVersion' = '${requiredProtocol.minReaderVersion}',
-       |   'delta.minWriterVersion' = '${requiredProtocol.minWriterVersion}')
+       |Note, if your table is not on the required protocol version it will be upgraded.
+       |Column mapping requires at least protocol ($readerVersion, $writerVersion)
        |""".stripMargin
   }
 
