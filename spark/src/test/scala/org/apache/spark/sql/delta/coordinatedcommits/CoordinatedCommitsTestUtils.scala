@@ -222,7 +222,11 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
       logPath: Path,
       commitVersion: Long
   ): Unit = {
-    delegatingCommitCoordinatorClient.perTableMap.get(logPath).commitsMap.remove(commitVersion)
+    val tableData = delegatingCommitCoordinatorClient.perTableMap.get(logPath)
+    tableData.commitsMap.remove(commitVersion)
+    if (commitVersion == tableData.maxCommitVersion) {
+      tableData.maxCommitVersion -= 1
+    }
   }
 
   override def backfillToVersion(
@@ -292,6 +296,7 @@ trait CoordinatedCommitsBaseSuite extends SparkFunSuite with SharedSparkSession 
     coordinatedCommitsBackfillBatchSize.foreach { batchSize =>
       CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(batchSize))
     }
+    DeltaLog.clearCache()
   }
 
   protected def isICTEnabledForNewTables: Boolean = {

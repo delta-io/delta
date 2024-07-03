@@ -33,23 +33,28 @@ object HudiSchemaUtils extends DeltaLogging {
      * Recursively (i.e. for all nested elements) transforms the delta DataType `elem` into its
      * corresponding Avro type.
      */
-    def transform[E <: DataType](elem: E, isNullable: Boolean): Schema = elem match {
+    def transform[E <: DataType](elem: E, isNullable: Boolean, currentPath: String): Schema =
+    elem match {
       case StructType(fields) =>
 
         val avroFields: util.List[Schema.Field] = fields.map(f =>
           new Schema.Field(
             f.name,
-            transform(f.dataType, f.nullable),
+            transform(f.dataType, f.nullable, s"$currentPath.${f.name}"),
             f.getComment().orNull)).toList.asJava
         finalizeSchema(
-          Schema.createRecord(elem.typeName, null, null, false, avroFields),
+          Schema.createRecord(currentPath, null, null, false, avroFields),
           isNullable)
-      // TODO: Add List and Map support: https://github.com/delta-io/delta/issues/2738
+
       case ArrayType(elementType, containsNull) =>
-        throw new UnsupportedOperationException("UniForm Hudi doesn't support Array columns")
+        finalizeSchema(
+          Schema.createArray(transform(elementType, containsNull, currentPath)),
+          isNullable)
 
       case MapType(keyType, valueType, valueContainsNull) =>
-        throw new UnsupportedOperationException("UniForm Hudi doesn't support Map columns")
+        finalizeSchema(
+          Schema.createMap(transform(valueType, valueContainsNull, currentPath)),
+          isNullable)
 
       case atomicType: AtomicType => convertAtomic(atomicType, isNullable)
 
@@ -57,7 +62,7 @@ object HudiSchemaUtils extends DeltaLogging {
         throw new UnsupportedOperationException(s"Cannot convert Delta type $other to Hudi")
     }
 
-    transform(deltaSchema, false)
+    transform(deltaSchema, false, "root")
   }
 
   private def finalizeSchema(targetSchema: Schema, isNullable: Boolean): Schema = {

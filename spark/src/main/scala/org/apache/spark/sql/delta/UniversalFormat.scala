@@ -18,12 +18,14 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
+import org.apache.spark.sql.types.NullType
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
@@ -31,8 +33,9 @@ import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
  * The UniForm Delta feature governs and implements the actual conversion of Delta metadata into
  * other formats.
  *
- * Currently, UniForm only supports Iceberg. When `delta.universalFormat.enabledFormats` contains
- * "iceberg", we say that Universal Format (Iceberg) is enabled.
+ * UniForm supports both Iceberg and Hudi. When `delta.universalFormat.enabledFormats` contains
+ * "iceberg", we say that Universal Format (Iceberg) is enabled. When it contains "hudi", we say
+ * that Universal Format (Hudi) is enabled.
  *
  * [[enforceInvariantsAndDependencies]] ensures that all of UniForm's requirements for the
  * specified format are met (e.g. for 'iceberg' that IcebergCompatV1 or V2 is enabled).
@@ -99,9 +102,8 @@ object UniversalFormat extends DeltaLogging {
       if (DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(newestMetadata)) {
         throw DeltaErrors.uniFormHudiDeleteVectorCompat()
       }
-      // TODO: remove once map/list support is added https://github.com/delta-io/delta/issues/2738
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
-        f.isInstanceOf[MapType] || f.isInstanceOf[ArrayType] || f.isInstanceOf[NullType]
+        f.isInstanceOf[NullType]
       } match {
         case Some(unsupportedType) =>
           throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
@@ -154,8 +156,8 @@ object UniversalFormat extends DeltaLogging {
                   remainingSupportedFormats.mkString(","))
             }
 
-            logInfo(s"[tableId=$tableId] IcebergCompat is being disabled. Auto-disabling " +
-              "Universal Format (Iceberg), too.")
+            logInfo(log"[${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " +
+              log"IcebergCompat is being disabled. Auto-disabling Universal Format (Iceberg), too.")
 
             (None, Some(newestMetadata.copy(configuration = newConfiguration)))
           } else {

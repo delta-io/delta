@@ -948,7 +948,7 @@
   },
   "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED" : {
     "message" : [
-      "History truncation is only relevant for reader features."
+      "The particular feature does not require history truncation."
     ],
     "sqlState" : "0AKDE"
   },

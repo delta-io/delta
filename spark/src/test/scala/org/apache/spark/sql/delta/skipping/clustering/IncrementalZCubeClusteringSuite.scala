@@ -191,7 +191,9 @@ class IncrementalZCubeClusteringSuite extends QueryTest
 
   test("test changing clustering columns") {
     withSQLConf(
-      SQLConf.MAX_RECORDS_PER_FILE.key -> "2") {
+      SQLConf.MAX_RECORDS_PER_FILE.key -> "2",
+      // Enable update catalog for verifyClusteringColumns.
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
       withClusteredTable(
         table = table,
         schema = "col1 int, col2 int",

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.hooks
 import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot, UniversalFormat}
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_UNIFORM_HUDI_SYNC_CONVERT_ENABLED
 
 import org.apache.spark.sql.SparkSession
 
@@ -41,9 +42,11 @@ object HudiConverterHook extends PostCommitHook with DeltaLogging {
         !UniversalFormat.hudiEnabled(postCommitSnapshot.metadata)) {
       return
     }
-    postCommitSnapshot
-      .deltaLog
-      .hudiConverter
-      .enqueueSnapshotForConversion(postCommitSnapshot, txn)
+    val converter = postCommitSnapshot.deltaLog.hudiConverter
+    if (spark.sessionState.conf.getConf(DELTA_UNIFORM_HUDI_SYNC_CONVERT_ENABLED)) {
+      converter.convertSnapshot(postCommitSnapshot, txn)
+    } else {
+      converter.enqueueSnapshotForConversion(postCommitSnapshot, txn)
+    }
   }
 }

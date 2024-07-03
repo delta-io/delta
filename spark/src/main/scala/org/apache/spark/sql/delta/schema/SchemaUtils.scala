@@ -24,12 +24,14 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMod
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
@@ -1396,7 +1398,8 @@ def normalizeColumnNamesInDataType(
       }
     } catch {
       case NonFatal(e) =>
-        logWarning(s"Failed to log undefined types for table ${deltaLog.logPath}", e)
+        logWarning(log"Failed to log undefined types for table " +
+          log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}", e)
     }
   }
 }

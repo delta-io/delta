@@ -80,7 +80,10 @@ class TestDeltaSharingClientForCDFUtils(
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
     readerFeatures: String = "",
     queryTablePaginationEnabled: Boolean = false,
-    maxFilesPerReq: Int = 100000)
+    maxFilesPerReq: Int = 100000,
+    enableAsyncQuery: Boolean = false,
+    asyncQueryPollIntervalMillis: Long = 10000L,
+    asyncQueryMaxDuration: Long = 600000L)
     extends DeltaSharingClient {
 
   import CDFTesTUtils._

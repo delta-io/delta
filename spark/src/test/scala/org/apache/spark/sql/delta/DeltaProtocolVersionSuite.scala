@@ -3512,6 +3512,51 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       truncateHistory = truncateHistory)
   }
 
+  for (truncateHistory <- BOOLEAN_DOMAIN)
+  test("Writer features that require history validation/truncation." +
+      s" - truncateHistory: $truncateHistory") {
+    withTempDir { dir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      val deltaLog = DeltaLog.forTable(spark, dir, clock)
+
+      createTableWithFeature(deltaLog,
+        TestRemovableWriterWithHistoryTruncationFeature,
+        TestRemovableWriterWithHistoryTruncationFeature.TABLE_PROP_KEY)
+
+      // Add some data.
+      spark.range(100).write.format("delta").mode("overwrite").save(dir.getCanonicalPath)
+
+      val e1 = intercept[DeltaTableFeatureException] {
+        AlterTableDropFeatureDeltaCommand(
+          DeltaTableV2(spark, deltaLog.dataPath),
+          TestRemovableWriterWithHistoryTruncationFeature.name).run(spark)
+      }
+      checkError(
+        exception = e1,
+        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        parameters = Map(
+          "feature" -> TestRemovableWriterWithHistoryTruncationFeature.name,
+          "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+          "logRetentionPeriod" -> "30 days",
+          "truncateHistoryLogRetentionPeriod" -> "24 hours"))
+
+      // Pretend retention period has passed.
+      val clockAdvanceMillis = if (truncateHistory) {
+        DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
+      } else {
+        deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
+      }
+      clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+
+      AlterTableDropFeatureDeltaCommand(
+        table = DeltaTableV2(spark, deltaLog.dataPath),
+        featureName = TestRemovableWriterWithHistoryTruncationFeature.name,
+        truncateHistory = truncateHistory).run(spark)
+
+      assert(deltaLog.update().protocol === Protocol(1, 1))
+    }
+  }
+
   private def dropV2CheckpointsTableFeature(spark: SparkSession, log: DeltaLog): Unit = {
     spark.sql(s"ALTER TABLE delta.`${log.dataPath}` DROP FEATURE " +
       s"`${V2CheckpointTableFeature.name}`")

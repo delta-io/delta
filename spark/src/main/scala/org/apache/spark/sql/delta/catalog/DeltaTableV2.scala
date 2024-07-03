@@ -22,6 +22,8 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -193,6 +195,13 @@ case class DeltaTableV2(
         base.put(TableCatalog.PROP_EXTERNAL, "true")
       }
     }
+    // Don't use [[PROP_CLUSTERING_COLUMNS]] from CatalogTable because it may be stale.
+    // Since ALTER TABLE updates it using an async post-commit hook.
+    clusterBySpec.foreach { clusterBy =>
+      ClusterBySpec.toProperties(clusterBy).foreach { case (key, value) =>
+        base.put(key, value)
+      }
+    }
     Option(initialSnapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
     base.asJava
   }
@@ -321,6 +330,17 @@ case class DeltaTableV2(
 
   override def v1Table: CatalogTable = ttSafeCatalogTable.getOrElse {
     throw DeltaErrors.invalidV1TableCall("v1Table", "DeltaTableV2")
+  }
+
+  lazy val clusterBySpec: Option[ClusterBySpec] = {
+    // Always get the clustering columns from metadata domain in delta log.
+    if (ClusteredTableUtils.isSupported(initialSnapshot.protocol)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(
+        initialSnapshot)
+      Some(ClusterBySpec.fromColumnNames(clusteringColumns))
+    } else {
+      None
+    }
   }
 }
 

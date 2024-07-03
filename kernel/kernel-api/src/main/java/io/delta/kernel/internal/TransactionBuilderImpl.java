@@ -37,6 +37,7 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
@@ -51,6 +52,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     private Optional<StructType> schema = Optional.empty();
     private Optional<List<String>> partitionColumns = Optional.empty();
     private Optional<SetTransaction> setTxnOpt = Optional.empty();
+    private Optional<Map<String, String>> tableProperties = Optional.empty();
 
     public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
         this.table = table;
@@ -86,6 +88,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     @Override
+    public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
+        this.tableProperties = Optional.of(new HashMap<>(properties));
+        return this;
+    }
+
+    @Override
     public Transaction build(Engine engine) {
         SnapshotImpl snapshot;
         try {
@@ -104,6 +112,38 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         boolean isNewTable = snapshot.getVersion(engine) < 0;
         validate(engine, snapshot, isNewTable);
 
+        boolean shouldUpdateMetadata = false;
+        boolean shouldUpdateProtocol = false;
+        Metadata metadata = snapshot.getMetadata();
+        Protocol protocol = snapshot.getProtocol();
+        if (tableProperties.isPresent()) {
+            Map<String, String> validatedProperties =
+                    TableConfig.validateProperties(tableProperties.get());
+            Map<String, String> newProperties =
+                    metadata.filterOutUnchangedProperties(validatedProperties);
+            if (!newProperties.isEmpty()) {
+                shouldUpdateMetadata = true;
+                metadata = metadata.withNewConfiguration(newProperties);
+            }
+
+            Set<String> newWriterFeatures =
+                    TableFeatures.extractAutomaticallyEnabledWriterFeatures(metadata, protocol);
+            if (!newWriterFeatures.isEmpty()) {
+                logger.info("Automatically enabling writer features: {}", newWriterFeatures);
+                shouldUpdateProtocol = true;
+                List<String> oldWriterFeatures = protocol.getWriterFeatures();
+                protocol = protocol.withNewWriterFeatures(newWriterFeatures);
+                List<String> curWriterFeatures = protocol.getWriterFeatures();
+                checkArgument(
+                        !Objects.equals(oldWriterFeatures, curWriterFeatures));
+                TableFeatures.validateWriteSupportedTable(
+                        protocol,
+                        metadata,
+                        metadata.getSchema(),
+                        table.getPath(engine));
+            }
+        }
+
         return new TransactionImpl(
                 isNewTable,
                 table.getDataPath(),
@@ -111,9 +151,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 snapshot,
                 engineInfo,
                 operation,
-                snapshot.getProtocol(),
-                snapshot.getMetadata(),
-                setTxnOpt);
+                protocol,
+                metadata,
+                setTxnOpt,
+                shouldUpdateMetadata,
+                shouldUpdateProtocol,
+                table.getClock());
     }
 
     /**
@@ -163,6 +206,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     private class InitialSnapshot extends SnapshotImpl {
         InitialSnapshot(Path dataPath, LogReplay logReplay, Metadata metadata, Protocol protocol) {
             super(dataPath, LogSegment.empty(table.getLogPath()), logReplay, protocol, metadata);
+        }
+
+        @Override
+        public long getTimestamp(Engine engine) {
+            return -1L;
         }
     }
 

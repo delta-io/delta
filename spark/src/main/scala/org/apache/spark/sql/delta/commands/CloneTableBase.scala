@@ -36,6 +36,7 @@ import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LeafCommand
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{Clock, SerializableConfiguration}
 // scalastyle:on import.ordering.noEmptyLine
@@ -179,7 +180,8 @@ abstract class CloneTableBase(
       txn: OptimisticTransaction,
       destinationTable: DeltaLog,
       hdpConf: Configuration,
-      deltaOperation: DeltaOperations.Operation): Seq[Row] = {
+      deltaOperation: DeltaOperations.Operation,
+      commandMetrics: Option[Map[String, SQLMetric]]): Seq[Row] = {
     val targetFs = targetPath.getFileSystem(hdpConf)
     val qualifiedTarget = targetFs.makeQualified(targetPath).toString
     val qualifiedSource = {
@@ -245,6 +247,13 @@ abstract class CloneTableBase(
         addedFileCount,
         addedFilesSize)
       val commitOpMetrics = getOperationMetricsForDeltaLog(opMetrics)
+
+      // Propagate the metrics back to the caller.
+      commandMetrics.foreach { commandMetrics =>
+        commitOpMetrics.foreach { kv =>
+          commandMetrics(kv._1).set(kv._2)
+        }
+      }
 
         recordDeltaOperation(
           destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {

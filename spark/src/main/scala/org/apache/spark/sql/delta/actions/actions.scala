@@ -279,17 +279,15 @@ object Protocol {
   def extractAutomaticallyEnabledFeatures(
       spark: SparkSession,
       metadata: Metadata,
-      protocol: Option[Protocol] = None): Set[TableFeature] = {
+      protocol: Protocol): Set[TableFeature] = {
     val protocolEnabledFeatures = protocol
-      .map(_.writerFeatureNames)
-      .getOrElse(Set.empty)
+      .writerFeatureNames
       .flatMap(TableFeature.featureNameToFeature)
     val metadataEnabledFeatures = TableFeature
       .allSupportedFeaturesMap.values
       .collect {
         case f: TableFeature with FeatureAutomaticallyEnabledByMetadata
-          if f.metadataRequiresFeatureToBeEnabled(metadata, spark) =>
-          f.asInstanceOf[TableFeature]
+          if f.metadataRequiresFeatureToBeEnabled(protocol, metadata, spark) => f
       }
       .toSet
 
@@ -322,7 +320,7 @@ object Protocol {
     // let [[getDependencyClosure]] collect them.
     val metaEnabledFeatures =
       extractAutomaticallyEnabledFeatures(
-        spark, metadata, Some(Protocol().withFeatures(tablePropEnabledFeatures)))
+        spark, metadata, Protocol().withFeatures(tablePropEnabledFeatures))
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
     // Determine the min reader and writer version required by features in table properties or
@@ -383,8 +381,9 @@ object Protocol {
    */
   def minProtocolComponentsFromAutomaticallyEnabledFeatures(
       spark: SparkSession,
-      metadata: Metadata): (Int, Int, Set[TableFeature]) = {
-    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
+      metadata: Metadata,
+      current: Protocol): (Int, Int, Set[TableFeature]) = {
+    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata, current)
     var (readerVersion, writerVersion) = (0, 0)
     enabledFeatures.foreach { feature =>
       readerVersion = math.max(readerVersion, feature.minReaderVersion)
@@ -456,7 +455,7 @@ object Protocol {
     assertMetadataContainsNoProtocolProps(metadata)
 
     val (readerVersion, writerVersion, minRequiredFeatures) =
-      minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata)
+      minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata, current)
 
     // Increment the reader and writer version to accurately add enabled legacy table features
     // either to the implicitly enabled table features or the table feature lists

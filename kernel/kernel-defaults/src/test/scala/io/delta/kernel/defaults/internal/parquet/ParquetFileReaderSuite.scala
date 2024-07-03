@@ -122,6 +122,19 @@ class ParquetFileReaderSuite extends AnyFunSuite
       readParquetFilesUsingSpark(tablePath, readSchema) /* expected */)
   }
 
+  test("read columns with int96 timestamp_ntz") {
+    // Spark doesn't support writing timestamp_NTZ as INT96 (although reads are)
+    // So we're reusing a pre-written file directly.
+    val filePath = getTestResourceFilePath("parquet/parquet-timestamp_ntz_int96.parquet")
+    val readSchema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("time", TimestampNTZType.TIMESTAMP_NTZ)
+    checkAnswer(
+      readParquetFilesUsingKernel(filePath, readSchema), /* actual */
+      Seq(TestRow(1, 915181200000000L) /* expected */)
+    )
+  }
+
   test("request row indices") {
     val readSchema = new StructType()
       .add("id", LongType.LONG)

@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.coordinatedcommits._
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -48,6 +49,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkException
+import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
@@ -264,7 +266,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
   /** Contains the execution instrumentation set via thread-local. No-op by default. */
   protected[delta] var executionObserver: TransactionExecutionObserver =
-    TransactionExecutionObserver.threadObserver.get()
+    TransactionExecutionObserver.getObserver
 
   /**
    * Stores the updated metadata (if any) that will result from this txn.
@@ -643,7 +645,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
 
     assertMetadata(newMetadataTmp)
-    logInfo(s"Updated metadata from ${newMetadata.getOrElse("-")} to $newMetadataTmp")
+    logInfo(log"Updated metadata from " +
+      log"${MDC(DeltaLogKeys.METADATA_OLD, newMetadata.getOrElse("-"))} to " +
+      log"${MDC(DeltaLogKeys.METADATA_NEW, newMetadataTmp)}")
     newMetadata = Some(newMetadataTmp)
   }
 
@@ -1209,7 +1213,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(firstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
-      logInfo(s"Committed delta #$commitVersion to ${deltaLog.logPath}")
+      logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, commitVersion)} to " +
+        log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}")
       (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
     } catch {
       case e: DeltaConcurrentModificationException =>
@@ -1565,17 +1570,20 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           // FS -> CC conversion
           val (commitCoordinatorName, commitCoordinatorConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(finalMetadata)
-          logInfo(s"Table ${deltaLog.logPath} transitioning from file-system based table to " +
-            s"coordinated-commits table: [commit-coordinator: $commitCoordinatorName, " +
-            s"conf: $commitCoordinatorConf]")
+          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} transitioning from " +
+            log"file-system based table to coordinated-commits table: " +
+            log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, commitCoordinatorName)}" +
+            log", conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, commitCoordinatorConf)}]")
           newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
             deltaLog.logPath, readVersion, finalMetadata, protocol))
         case (None, Some(readCommitCoordinatorClient)) =>
           // CC -> FS conversion
           val (newOwnerName, newOwnerConf) =
             CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
-          logInfo(s"Table ${deltaLog.logPath} transitioning from coordinated-commits table to " +
-            s"file-system table: [commit-coordinator: $newOwnerName, conf: $newOwnerConf]")
+          logInfo(log"Table ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} transitioning from " +
+            log"coordinated-commits table to file-system table: " +
+            log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, newOwnerName)}, " +
+            log"conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, newOwnerConf)}]")
         case (Some(newCommitCoordinatorClient), Some(readCommitCoordinatorClient))
             if !readCommitCoordinatorClient.semanticsEquals(newCommitCoordinatorClient) =>
           // CC1 -> CC2 conversion is not allowed.
@@ -1615,7 +1623,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
 
-    logInfo(s"Committed delta #$attemptVersion to ${deltaLog.logPath}. Wrote $commitSize actions.")
+    logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, attemptVersion)} to " +
+      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}. Wrote " +
+      log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize)} actions.")
 
     deltaLog.checkpoint(currentSnapshot)
     currentSnapshot
@@ -2014,8 +2024,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       isolationLevel: IsolationLevel): Snapshot = {
     val actions = currentTransactionInfo.finalActionsToCommit
     logInfo(
-      s"Attempting to commit version $attemptVersion with ${actions.size} actions with " +
-        s"$isolationLevel isolation level")
+      log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
+      log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size)} actions with " +
+      log"${MDC(DeltaLogKeys.ISOLATION_LEVEL, isolationLevel)} isolation level")
 
     if (readVersion > -1 && metadata.id != snapshot.metadata.id) {
       val msg = s"Change in the table id detected in txn. Table id for txn on table at " +
@@ -2140,7 +2151,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
       // Get thread local observer for Fuzz testing purpose.
-      val executionObserver = TransactionExecutionObserver.threadObserver.get()
+      val executionObserver = TransactionExecutionObserver.getObserver
       val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
@@ -2270,8 +2281,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       assert(mismatch.isEmpty,
         s"Expected ${mismatch.map(_._1).mkString(",")} but got ${mismatch.map(_._2).mkString(",")}")
 
-      val logPrefixStr = s"[attempt $attemptNumber]"
-      val txnDetailsLogStr = {
+      val logPrefix = log"[attempt ${MDC(DeltaLogKeys.ATTEMPT, attemptNumber)}] "
+      val txnDetailsLog = {
         var adds = 0L
         var removes = 0L
         currentTransactionInfo.actions.foreach {
@@ -2279,12 +2290,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           case _: RemoveFile => removes += 1
           case _ =>
         }
-        s"$adds adds, $removes removes, ${readPredicates.size} read predicates, " +
-          s"${readFiles.size} read files"
+        log"${MDC(DeltaLogKeys.NUM_ACTIONS, adds)} adds, " +
+        log"${MDC(DeltaLogKeys.NUM_ACTIONS2, removes)} removes, " +
+        log"${MDC(DeltaLogKeys.NUM_PREDICATES, readPredicates.size)} read predicates, " +
+        log"${MDC(DeltaLogKeys.NUM_FILES, readFiles.size)} read files"
       }
 
-      logInfo(s"$logPrefixStr Checking for conflicts with versions " +
-        s"[$checkVersion, $nextAttemptVersion) with current txn having $txnDetailsLogStr")
+      logInfo(logPrefix +
+        log"Checking for conflicts with versions " +
+        log"[${MDC(DeltaLogKeys.VERSION, checkVersion)}, " +
+        log"${MDC(DeltaLogKeys.VERSION2, nextAttemptVersion)}) " +
+        log"with current txn having " + txnDetailsLog)
 
       var updatedCurrentTransactionInfo = currentTransactionInfo
       (checkVersion until nextAttemptVersion)
@@ -2294,13 +2310,19 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           updatedCurrentTransactionInfo,
           otherCommitFileStatus,
           commitIsolationLevel)
-        logInfo(s"$logPrefixStr No conflicts in version $otherCommitVersion, " +
-          s"${clock.getTimeMillis() - commitAttemptStartTimeMillis} ms since start")
+        logInfo(logPrefix +
+          log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
+          log"${MDC(DeltaLogKeys.DURATION,
+            clock.getTimeMillis() - commitAttemptStartTimeMillis)} ms since start")
       }
 
-      logInfo(s"$logPrefixStr No conflicts with versions [$checkVersion, $nextAttemptVersion) " +
-        s"with current txn having $txnDetailsLogStr, " +
-        s"${clock.getTimeMillis() - commitAttemptStartTimeMillis} ms since start")
+      logInfo(logPrefix +
+        log"No conflicts with versions " +
+        log"[${MDC(DeltaLogKeys.VERSION, checkVersion)}, " +
+        log"${MDC(DeltaLogKeys.VERSION2, nextAttemptVersion)}) " +
+        log"with current txn having " + txnDetailsLog +
+        log"${MDC(DeltaLogKeys.TIME_MS, clock.getTimeMillis() - commitAttemptStartTimeMillis)} " +
+        log"ms since start")
       (nextAttemptVersion, updatedCurrentTransactionInfo)
     }
   }
@@ -2369,8 +2391,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       hook.run(spark, this, version, postCommitSnapshot, committedActions)
     } catch {
       case NonFatal(e) =>
-        logWarning(s"Error when executing post-commit hook ${hook.name} " +
-          s"for commit $version", e)
+        logWarning(log"Error when executing post-commit hook " +
+          log"${MDC(DeltaLogKeys.HOOK_NAME, hook.name)} " +
+          log"for commit ${MDC(DeltaLogKeys.VERSION, version)}", e)
         recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
           "hook" -> hook.name,
           "version" -> version,
@@ -2383,28 +2406,29 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   private[delta] def unregisterPostCommitHooksWhere(predicate: PostCommitHook => Boolean): Unit =
     postCommitHooks --= postCommitHooks.filter(predicate)
 
-  protected lazy val logPrefix: String = {
+  protected lazy val logPrefix: MessageWithContext = {
     def truncate(uuid: String): String = uuid.split("-").head
-    s"[tableId=${truncate(snapshot.metadata.id)},txnId=${truncate(txnId)}] "
+    log"[tableId=${MDC(DeltaLogKeys.METADATA_ID, truncate(snapshot.metadata.id))}," +
+    log"txnId=${MDC(DeltaLogKeys.TXN_ID, truncate(txnId))}] "
   }
 
-  override def logInfo(msg: => String): Unit = {
+  def logInfo(msg: MessageWithContext): Unit = {
     super.logInfo(logPrefix + msg)
   }
 
-  override def logWarning(msg: => String): Unit = {
+  def logWarning(msg: MessageWithContext): Unit = {
     super.logWarning(logPrefix + msg)
   }
 
-  override def logWarning(msg: => String, throwable: Throwable): Unit = {
+  def logWarning(msg: MessageWithContext, throwable: Throwable): Unit = {
     super.logWarning(logPrefix + msg, throwable)
   }
 
-  override def logError(msg: => String): Unit = {
+  def logError(msg: MessageWithContext): Unit = {
     super.logError(logPrefix + msg)
   }
 
-  override def logError(msg: => String, throwable: Throwable): Unit = {
+  def logError(msg: MessageWithContext, throwable: Throwable): Unit = {
     super.logError(logPrefix + msg, throwable)
   }
 

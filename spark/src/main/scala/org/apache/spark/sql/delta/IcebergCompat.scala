@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.types._
 
 /**
@@ -163,14 +165,16 @@ case class IcebergCompat(
 
         // Update Protocol and Metadata if necessary
         val protocolResult = if (tblFeatureUpdates.nonEmpty) {
-          logInfo(s"[tableId=$tableId] IcebergCompatV1 auto-supporting table features: " +
-            s"${tblFeatureUpdates.map(_.name)}")
+          logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " +
+            log"IcebergCompatV1 auto-supporting table features: " +
+            log"${MDC(DeltaLogKeys.TABLE_FEATURES, tblFeatureUpdates.map(_.name))}")
           Some(newestProtocol.merge(tblFeatureUpdates.map(Protocol.forTableFeature).toSeq: _*))
         } else None
 
         val metadataResult = if (tblPropertyUpdates.nonEmpty) {
-          logInfo(s"[tableId=$tableId] IcebergCompatV1 auto-setting table properties: " +
-            s"$tblPropertyUpdates")
+          logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " +
+            log"IcebergCompatV1 auto-setting table properties: " +
+            log"${MDC(DeltaLogKeys.TBL_PROPERTIES, tblPropertyUpdates)}")
           val newConfiguration = newestMetadata.configuration ++ tblPropertyUpdates.toMap
           var tmpNewMetadata = newestMetadata.copy(configuration = newConfiguration)
 

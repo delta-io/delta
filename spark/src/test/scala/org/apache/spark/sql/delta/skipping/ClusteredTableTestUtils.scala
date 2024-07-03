@@ -17,10 +17,14 @@
 package org.apache.spark.sql.delta.skipping
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumn, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{CLUSTERING_PARAMETER_KEY, ZORDER_PARAMETER_KEY}
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.hooks.UpdateCatalog
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.junit.Assert.assertEquals
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.DataFrame
@@ -210,7 +214,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
   def verifyClusteringColumns(
       tableIdentifier: TableIdentifier,
-      expectedLogicalClusteringColumns: Seq[String]
+      expectedLogicalClusteringColumns: Seq[String],
+      skipCatalogCheck: Boolean = false
     ): Unit = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
     verifyClusteringColumnsInternal(
@@ -218,6 +223,23 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
       tableIdentifier.table,
       expectedLogicalClusteringColumns
     )
+
+    if (skipCatalogCheck) {
+      return
+    }
+
+    val updateCatalogEnabled = spark.conf.get(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)
+    assert(updateCatalogEnabled,
+      "need to enable [[DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED]] to verify catalog updates.")
+    UpdateCatalog.awaitCompletion(10000)
+    val catalog = spark.sessionState.catalog
+    catalog.refreshTable(tableIdentifier)
+    val table = catalog.getTableMetadata(tableIdentifier)
+
+    // Verify CatalogTable's clusterBySpec.
+    assert(ClusteredTableUtils.getClusterBySpecOptional(table).isDefined)
+    assertEquals(ClusterBySpec.fromColumnNames(expectedLogicalClusteringColumns),
+      ClusteredTableUtils.getClusterBySpecOptional(table).get)
   }
 
   def verifyClusteringColumns(
@@ -243,6 +265,24 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     verifyDescribeHistoryOperationParameters(
       tableNameOrPath
     )
+
+    // Verify DESCRIBE DETAIL's properties doesn't contain the "clusteringColumns" key.
+    val describeDetailProps = sql(s"describe detail $tableNameOrPath")
+      .select("properties")
+      .first
+      .getAs[Map[String, String]](0)
+    assert(!describeDetailProps.contains(ClusteredTableUtils.PROP_CLUSTERING_COLUMNS))
+
+    // Verify SHOW TBLPROPERTIES contains the correct clustering columns.
+    val clusteringColumnsVal =
+      sql(s"show tblproperties $tableNameOrPath")
+        .filter($"key" === ClusteredTableUtils.PROP_CLUSTERING_COLUMNS)
+        .select("value")
+        .first
+        .getString(0)
+    val clusterBySpec = ClusterBySpec.fromProperties(
+      Map(ClusteredTableUtils.PROP_CLUSTERING_COLUMNS -> clusteringColumnsVal)).get
+    assert(expectedLogicalClusteringColumns === clusterBySpec.columnNames.map(_.toString))
   }
 }
 
