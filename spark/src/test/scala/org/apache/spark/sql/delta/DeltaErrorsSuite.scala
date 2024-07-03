@@ -25,6 +25,7 @@ import java.util.Locale
 import scala.sys.process.Process
 
 // scalastyle:off import.ordering.noEmptyLine
+// scalastyle:off line.size.limit
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
@@ -584,7 +585,6 @@ trait DeltaErrorsSuiteBase
         "'spark.databricks.delta.properties.defaults.columnMapping.mode' cannot be set to `id` " +
         "when using CONVERT TO DELTA."))
     }
-    // scalastyle:off line.size.limit
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
         throw DeltaErrors.schemaChangeDuringMappingModeChangeNotSupported(
