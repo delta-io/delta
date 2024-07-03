@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.schema
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -475,7 +476,7 @@ class CheckConstraintsSuite extends QueryTest
         parameters = Map("constraints" -> "`c1`, `c2`")
       )
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("table"))
-      assert(deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
+      assert(deltaLog.update().protocol === Protocol(1, 3))
 
       sql("ALTER TABLE table DROP CONSTRAINT c1")
       val error2 = intercept[AnalysisException] {
@@ -486,11 +487,11 @@ class CheckConstraintsSuite extends QueryTest
         errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
         parameters = Map("constraints" -> "`c2`")
       )
-      assert(deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
+      assert(deltaLog.update().protocol === Protocol(1, 3))
 
       sql("ALTER TABLE table DROP CONSTRAINT c2")
       sql("ALTER TABLE table DROP FEATURE checkConstraints")
-      assert(!deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
+      assert(deltaLog.update().protocol === Protocol(1, 2))
     }
   }
 }

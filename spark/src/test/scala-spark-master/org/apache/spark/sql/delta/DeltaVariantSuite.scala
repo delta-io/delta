@@ -53,8 +53,8 @@ class DeltaVariantSuite
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
       assert(
-        getProtocolForTable("tbl") ==
-        VariantTypeTableFeature.minProtocolVersion.withFeature(VariantTypeTableFeature)
+        getProtocolForTable("tbl") == VariantTypeTableFeature.minProtocolVersion
+          .Features(Seq(AppendOnlyTableFeature, InvariantsTableFeature, VariantTypeTableFeature))
       )
     }
   }

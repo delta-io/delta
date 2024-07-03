@@ -133,6 +133,8 @@ class DeltaTableFeatureSuite
           Some(metadata))
         .readerAndWriterFeatureNames ===
         Set(
+          AppendOnlyTableFeature.name,
+          InvariantsTableFeature.name,
           TestWriterFeatureWithTransitiveDependency.name,
           TestFeatureWithDependency.name,
           TestReaderWriterFeature.name))
@@ -333,6 +335,8 @@ class DeltaTableFeatureSuite
         val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
         val protocol = log.update().protocol
         assert(protocol.readerAndWriterFeatureNames === Set(
+          AppendOnlyTableFeature.name,
+          InvariantsTableFeature.name,
           ColumnMappingTableFeature.name,
           TestWriterFeature.name))
       }
@@ -386,6 +390,8 @@ class DeltaTableFeatureSuite
             commandName, targetTableName = "tbl", sourceTableName = "tbl", tblProperties))
           val protocol = log.update().protocol
           assert(protocol.readerAndWriterFeatureNames === Set(
+            AppendOnlyTableFeature.name,
+            InvariantsTableFeature.name,
             ChangeDataFeedTableFeature.name,
             TestWriterFeature.name))
         }
