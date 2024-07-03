@@ -150,7 +150,7 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
         s"""
            |ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES (
            |  'delta.minReaderVersion' = '2',
-           |  'delta.minWriterVersion' = '2'
+           |  'delta.minWriterVersion' = '5'
            |)
            |""".stripMargin) // makes the latest table version 16
 
@@ -170,7 +170,7 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
         .select("protocol.minReaderVersion", "protocol.minWriterVersion")
         .collect().toSeq.map(TestRow(_))
 
-      val expected = Seq(TestRow(2, 2))
+      val expected = Seq(TestRow(2, 5))
 
       checkAnswer(result, expected)
     }
