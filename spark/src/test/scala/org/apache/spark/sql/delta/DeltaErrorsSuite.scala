@@ -584,6 +584,7 @@ trait DeltaErrorsSuiteBase
         "'spark.databricks.delta.properties.defaults.columnMapping.mode' cannot be set to `id` " +
         "when using CONVERT TO DELTA."))
     }
+    // scalastyle:off line.size.limit
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
         throw DeltaErrors.schemaChangeDuringMappingModeChangeNotSupported(
