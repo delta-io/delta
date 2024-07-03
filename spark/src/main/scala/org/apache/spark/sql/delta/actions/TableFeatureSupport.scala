@@ -281,7 +281,7 @@ trait TableFeatureSupport { this: Protocol =>
       .withWriterFeatures(mergedWriterFeatures)
       .withFeatures(mergedImplicitFeatures)
 
-    mergedProtocol.downgradeProtocolVersionsIfNeeded
+    mergedProtocol.denormalize.normalize
   }
 
   /**
@@ -325,7 +325,7 @@ trait TableFeatureSupport { this: Protocol =>
       case f =>
         throw DeltaErrors.dropTableFeatureNonRemovableFeature(f.name)
     }
-    newProtocol.downgradeProtocolVersionsIfNeeded
+    newProtocol.normalize
   }
 
   /**
@@ -337,7 +337,7 @@ trait TableFeatureSupport { this: Protocol =>
    * Note, when a table is initialized with table features (3, 7), by default there are no legacy
    * features. After we remove the last native feature we downgrade the protocol to (1, 1).
    */
-  def downgradeProtocolVersionsIfNeeded: Protocol = {
+  def normalize: Protocol = {
     if (!supportsWriterFeatures) return this
 
     val (minReaderVersion, minWriterVersion) =
@@ -360,7 +360,7 @@ trait TableFeatureSupport { this: Protocol =>
   def denormalize: Protocol = {
     if (supportsWriterFeatures) return this
 
-    val (minReaderVersion, minWriterVersion) =
+    val (minReaderVersion, _) =
       TableFeatureProtocolUtils.minimumRequiredVersions(implicitlySupportedFeatures.toSeq)
 
     Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)

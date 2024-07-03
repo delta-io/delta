@@ -256,7 +256,8 @@ object Protocol {
       minProtocolComponentsFromMetadata(spark, metadata)
     Protocol(readerVersion, writerVersion)
       .withFeatures(enabledFeatures)
-      .downgradeProtocolVersionsIfNeeded
+      .denormalize
+      .normalize
   }
 
   /**

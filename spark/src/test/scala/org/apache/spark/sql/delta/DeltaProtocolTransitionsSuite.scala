@@ -119,12 +119,29 @@ class DeltaProtocolTransitionsSuite
       expectedProtocol = Protocol(1, 2))
   }
 
-  test("CREATE TABLE invalid legacy protocols") {
-    /*
+  // , (1, 5)
+  for ((readerVersion, writerVersion) <- Seq((2, 1), (2, 2), (2, 3), (2, 4)))
+  test("Invalid legacy protocol normalization" +
+    s" - invalidProtocol($readerVersion, $writerVersion)") {
+
+    val expectedReaderVersion = 1
+    val expectedWriterVersion = Math.min(writerVersion, 4)
+
     testProtocolTransition(
-      createTableProtocol = Some(Protocol(1, 5)),
-      expectedProtocol = Protocol(1, 4))
-    */
+      createTableProtocol = Some(Protocol(readerVersion, writerVersion)),
+      expectedProtocol = Protocol(expectedReaderVersion, expectedWriterVersion))
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> readerVersion.toString,
+        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> writerVersion.toString) {
+      testProtocolTransition(
+        expectedProtocol = Protocol(expectedReaderVersion, expectedWriterVersion))
+
+     testProtocolTransition(
+       createTableProtocol = Some(Protocol(1, 1)),
+       alterTableProtocol = Some(Protocol(readerVersion, writerVersion)),
+       expectedProtocol = Protocol(expectedReaderVersion, expectedWriterVersion))
+    }
   }
 
   test("TABLE CREATION with enabled features by default") {
