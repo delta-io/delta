@@ -22,7 +22,6 @@ import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.util.Utils
@@ -97,7 +96,7 @@ case class DeletionVectorStoredBitmap(
 
   override def cardinality: Long = dvDescriptor.cardinality
 
-  override lazy val getUniqueId: String = JsonUtils.toJson(dvDescriptor)
+  override lazy val getUniqueId: String = dvDescriptor.serializeToBase64()
 
   private def isEmpty: Boolean = dvDescriptor.isEmpty
 
