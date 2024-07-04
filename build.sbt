@@ -50,7 +50,7 @@ connectServer / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
-val flinkVersion = "1.16.1"
+val flinkVersion = "1.19.1"
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
