@@ -79,12 +79,6 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     GeneratedColumn.isGeneratedColumn(protocol, col)
   }
 
-  // Return true if the column `col` cannot be included as the input data column of COPY INTO.
-  // TODO: ideally column with default value can be optionally excluded.
-  def shouldBeExcludedInCopyInto(protocol: Protocol, col: StructField): Boolean = {
-    GeneratedColumn.isGeneratedColumn(protocol, col)
-  }
-
   // Return true if the table with `metadata` has default expressions.
   def tableHasDefaultExpr(
       protocol: Protocol,
