@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
+import scala.collection.mutable
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
@@ -263,7 +265,7 @@ case class WriteIntoDelta(
             var dataWithDefaultExprs = data
             // Add identity columns if they are not in `data`.
             // Column names for which we will track identity column high water marks.
-            val trackHighWaterMarks = scala.collection.mutable.Set[String]()
+            val trackHighWaterMarks = mutable.Set.empty[String]
             val topLevelOutputNames = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
             val selectExprs = txn.metadata.schema.map { f =>
               if (ColumnWithDefaultExprUtils.isIdentityColumn(f) &&

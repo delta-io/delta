@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.stats.{
   DeltaJobStatisticsTracker,
   StatisticsCollection
 }
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
@@ -466,8 +467,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           bucketSpec = None,
           statsTrackers = optionalStatsTracker.toSeq
             ++ statsTrackers
-            ++ identityTrackerOpt.toSeq
-          ,
+            ++ identityTrackerOpt.toSeq,
           options = options)
       } catch {
         case InnerInvariantViolationException(violationException) =>
@@ -514,7 +514,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     if (resultFiles.nonEmpty && !isOptimize) registerPostCommitHook(AutoCompact)
     // Record the updated high water marks to be used during transaction commit.
-    identityTrackerOpt.foreach { tracker =>
+    identityTrackerOpt.ifDefined { tracker =>
       updatedIdentityHighWaterMarks.appendAll(tracker.highWaterMarks.toSeq)
     }
 
