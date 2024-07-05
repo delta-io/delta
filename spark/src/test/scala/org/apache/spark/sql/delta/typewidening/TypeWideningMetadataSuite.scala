@@ -52,6 +52,9 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
     super.beforeAll()
     sql(s"CREATE TABLE $testTableName (a int) USING delta TBLPROPERTIES (" +
       s"'${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'true', " +
+      // Force the stable feature to be used by default in tests instead of the preview feature,
+      // which is the one currently enabled by default. Tests that cover aspects specific to the
+      // preview - e.p. populating the `tableVersion` field - explicitly enable the preview feature.
       s"'${propertyKey(TypeWideningTableFeature)}' = 'supported')")
   }
 
@@ -488,6 +491,33 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
         .add("c", IntegerType)
         .add("d", LongType)))
     assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) === newSchema -> Seq.empty)
+  }
+
+  test("addTypeWideningMetadata/removeTypeWideningMetadata with preview feature") {
+    val newSchema = StructType.fromDDL("a short")
+    val oldSchema = StructType.fromDDL("a byte")
+
+    // Create a new transaction with the preview feature supported.
+    val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier(testTableName))
+    val txn = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+        .startTransaction(catalogTableOpt = Some(table))
+    txn.updateProtocol(txn.protocol.withFeature(TypeWideningPreviewTableFeature))
+    val schema = TypeWideningMetadata.addTypeWideningMetadata(txn, newSchema, oldSchema)
+
+    // Type widening metadata is added with field `tableVersion` populated as this uses the preview
+    // feature. That field is deprecated in the stable version of the feature.
+    assert(schema("a") === StructField("a", ShortType,
+      metadata = new MetadataBuilder()
+        .putMetadataArray("delta.typeChanges", Array(
+          new MetadataBuilder()
+          .putLong("tableVersion", 1)
+          .putString("fromType", "byte")
+          .putString("toType", "short")
+          .build()
+        )).build()
+    ))
+    assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
+      newSchema -> Seq(Seq.empty -> schema("a")))
   }
 
   test("updateTypeChangeVersion with no type changes") {

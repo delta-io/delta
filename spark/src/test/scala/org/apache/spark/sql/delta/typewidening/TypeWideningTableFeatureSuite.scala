@@ -724,6 +724,8 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
             .build()
         )).build()))
 
+    // It's allowed to manually add both the preview and stable feature to the same table - the
+    // specs are compatible. In that case, we still populate the `tableVersion` field.
     addTableFeature(tempPath, TypeWideningTableFeature)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
     assert(readDeltaTable(tempPath).schema === new StructType()
@@ -735,6 +737,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
             .putString("toType", "short")
             .build(),
           new MetadataBuilder()
+            .putLong("tableVersion", 6)
             .putString("fromType", "short")
             .putString("toType", "integer")
             .build()

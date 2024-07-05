@@ -57,7 +57,8 @@ private[delta] case class TypeChange(
 
 private[delta] object TypeChange {
   // tableVersion was a field present during the preview and removed afterwards. We preserve it if
-  // it's already present in the type change metadata of the table to avoid breaking older clients.
+  // it's already present in the type change metadata of the table to avoid breaking older clients
+  // that use it to decide which files must be rewritten when dropping the feature.
   val TABLE_VERSION_METADATA_KEY: String = "tableVersion"
   val FROM_TYPE_METADATA_KEY: String = "fromType"
   val TO_TYPE_METADATA_KEY: String = "toType"
@@ -140,10 +141,9 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
     val schemaWithMetadata = SchemaMergingUtils.transformColumns(schema, oldSchema) {
       case (_, newField, Some(oldField), _) =>
         var typeChanges = collectTypeChanges(oldField.dataType, newField.dataType)
-        // The version field isn't used anymore but we need to populate it in case the table doesn't
-        // use the stable feature, as preview clients may then still access the table and rely on
-        // the field being present.
-        if (!txn.protocol.isFeatureSupported(TypeWideningTableFeature)) {
+        // The version field isn't used anymore but we need to populate it in case the table uses
+        // the preview feature, as preview clients may then rely on the field being present.
+        if (txn.protocol.isFeatureSupported(TypeWideningPreviewTableFeature)) {
           typeChanges = typeChanges.map { change =>
             change.copy(version = Some(txn.getFirstAttemptVersion))
           }
