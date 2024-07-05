@@ -15,74 +15,70 @@
  */
 package io.delta.kernel.internal;
 
+import java.io.IOException;
 import java.util.Optional;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.snapshot.SnapshotHint;
 import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 
 /**
  * Implementation of {@link Snapshot}.
  */
 public class SnapshotImpl implements Snapshot {
+    private final Path logPath;
     private final Path dataPath;
     private final long version;
     private final LogReplay logReplay;
     private final Protocol protocol;
     private final Metadata metadata;
     private final LogSegment logSegment;
+    private Optional<Long> inCommitTimestampOpt;
 
     public SnapshotImpl(
-            Path logPath,
             Path dataPath,
-            long version,
             LogSegment logSegment,
-            TableClient tableClient,
-            long timestamp,
-            Optional<SnapshotHint> snapshotHint) {
+            LogReplay logReplay,
+            Protocol protocol,
+            Metadata metadata) {
+        this.logPath = new Path(dataPath, "_delta_log");
         this.dataPath = dataPath;
-        this.version = version;
+        this.version = logSegment.version;
         this.logSegment = logSegment;
-        this.logReplay = new LogReplay(
-            logPath,
-            dataPath,
-            version,
-            tableClient,
-            logSegment,
-            snapshotHint);
-        this.protocol = logReplay.getProtocol();
-        this.metadata = logReplay.getMetadata();
+        this.logReplay = logReplay;
+        this.protocol = protocol;
+        this.metadata = metadata;
+        this.inCommitTimestampOpt = Optional.empty();
     }
 
     @Override
-    public long getVersion(TableClient tableClient) {
+    public long getVersion(Engine engine) {
         return version;
     }
 
     @Override
-    public StructType getSchema(TableClient tableClient) {
+    public StructType getSchema(Engine engine) {
         return getMetadata().getSchema();
     }
 
     @Override
-    public ScanBuilder getScanBuilder(TableClient tableClient) {
+    public ScanBuilder getScanBuilder(Engine engine) {
         return new ScanBuilderImpl(
             dataPath,
             protocol,
             metadata,
-            getSchema(tableClient),
-            logReplay,
-            tableClient
+            getSchema(engine),
+            logReplay, engine
         );
     }
 
@@ -95,11 +91,10 @@ public class SnapshotImpl implements Snapshot {
     }
 
     public CreateCheckpointIterator getCreateCheckpointIterator(
-            TableClient tableClient) {
+            Engine engine) {
         long minFileRetentionTimestampMillis =
                 System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
-        return new CreateCheckpointIterator(
-                tableClient,
+        return new CreateCheckpointIterator(engine,
                 logSegment,
                 minFileRetentionTimestampMillis
         );
@@ -115,11 +110,53 @@ public class SnapshotImpl implements Snapshot {
      * @return Last transaction version or {@link Optional#empty()} if no transaction identifier
      * exists for this application.
      */
-    public Optional<Long> getLatestTransactionVersion(String applicationId) {
-        return logReplay.getLatestTransactionIdentifier(applicationId);
+    public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
+        return logReplay.getLatestTransactionIdentifier(engine, applicationId);
     }
 
     public LogSegment getLogSegment() {
         return logSegment;
+    }
+
+    public Path getLogPath() {
+        return logPath;
+    }
+
+    public Path getDataPath() {
+        return dataPath;
+    }
+
+    /**
+     * Returns the timestamp of the latest commit of this snapshot.
+     * For an uninitialized snapshot, this returns -1.
+     * <p>
+     * When InCommitTimestampTableFeature is enabled, the timestamp
+     * is retrieved from the CommitInfo of the latest commit which
+     * can result in an IO operation.
+     * <p>
+     * For non-ICT tables, this is the same as the file modification time of the latest commit in
+     * the snapshot.
+     *
+     * @param engine the engine to use for IO operations
+     * @return the timestamp of the latest commit
+     */
+    public long getTimestamp(Engine engine) {
+        if (TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+            if (!inCommitTimestampOpt.isPresent()) {
+                try {
+                    Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(
+                            engine, logPath, logSegment.version);
+                    inCommitTimestampOpt = Optional.of(CommitInfo.getRequiredInCommitTimestamp(
+                            commitInfoOpt,
+                            String.valueOf(logSegment.version),
+                            dataPath));
+                } catch (IOException e) {
+                    throw new RuntimeException("Failed to get inCommitTimestamp with IO", e);
+                }
+            }
+            return inCommitTimestampOpt.get();
+        } else {
+            return logSegment.lastCommitTimestamp;
+        }
     }
 }

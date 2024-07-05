@@ -913,6 +913,28 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
     }
   }
 
+  test("filters should be pushed down") {
+    val tblName = "tbl"
+    withTable(tblName) {
+      createTblWithThreeVersions(tblName = Some(tblName))
+      val plans = DeltaTestUtils.withAllPlansCaptured(spark) {
+        val res = spark.read.format("delta")
+          .option(DeltaOptions.CDC_READ_OPTION, "true")
+          .option("startingVersion", 0)
+          .option("endingVersion", 1)
+          .table(tblName)
+          .select("id", "_change_type")
+          .where(col("id") < lit(5))
+        assert(res.columns === Seq("id", "_change_type"))
+        checkAnswer(
+          res,
+          spark.range(5)
+            .withColumn("_change_type", lit("insert")))
+      }
+      assert(plans.map(_.executedPlan).toString
+        .contains("PushedFilters: [*IsNotNull(id), *LessThan(id,5)]"))
+    }
+  }
 
   test("start version or timestamp is not provided") {
     val tblName = "tbl"

@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
+import io.delta.kernel.engine.{JsonHandler, ParquetHandler, Engine}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
@@ -42,7 +42,7 @@ import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
-import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
+import io.delta.kernel.defaults.engine.{DefaultJsonHandler, DefaultParquetHandler, DefaultEngine}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
@@ -99,15 +99,15 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     val snapshot = latestSnapshot(tablePath)
     hits.foreach { predicate =>
       val scanFiles = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient)
-          .withFilter(defaultTableClient, predicate)
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, predicate)
           .build())
       assert(scanFiles.nonEmpty, s"Expected hit but got miss for $predicate")
     }
     misses.foreach { predicate =>
       val scanFiles = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient)
-          .withFilter(defaultTableClient, predicate)
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, predicate)
           .build())
       assert(scanFiles.isEmpty, s"Expected miss but got hit for $predicate\n" +
         s"Returned scan files have stats: ${getScanFileStats(scanFiles)}"
@@ -123,8 +123,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     val snapshot = latestSnapshot(tablePath)
     filterToNumExpFiles.foreach { case (filter, numExpFiles) =>
       val scanFiles = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient)
-          .withFilter(defaultTableClient, filter)
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, filter)
           .build())
       assert(scanFiles.length == numExpFiles,
         s"Expected $numExpFiles but found ${scanFiles.length} for $filter")
@@ -1006,8 +1006,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           predicate: Predicate, expNumPartitions: Int, expNumFiles: Long): Unit = {
         val snapshot = latestSnapshot(tableDir.getCanonicalPath)
         val scanFiles = collectScanFileRows(
-          snapshot.getScanBuilder(defaultTableClient)
-            .withFilter(defaultTableClient, predicate)
+          snapshot.getScanBuilder(defaultEngine)
+            .withFilter(defaultEngine, predicate)
             .build())
         assert(scanFiles.length == expNumFiles,
           s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
@@ -1465,10 +1465,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
   test("don't read stats column when there is no usable data skipping filter") {
     val path = goldenTablePath("data-skipping-basic-stats-all-types")
-    val tableClient = tableClientDisallowedStatsReads
+    val engine = engineDisallowedStatsReads
 
-    def snapshot(tableClient: TableClient): Snapshot = {
-      Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
+    def snapshot(engine: Engine): Snapshot = {
+      Table.forPath(engine, path).getLatestSnapshot(engine)
     }
 
     def verifyNoStatsColumn(scanFiles: CloseableIterator[FilteredColumnarBatch]): Unit = {
@@ -1480,25 +1480,25 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
     // no filter --> don't read stats
     verifyNoStatsColumn(
-      snapshot(tableClientDisallowedStatsReads)
-        .getScanBuilder(tableClient).build()
-        .getScanFiles(tableClient))
+      snapshot(engineDisallowedStatsReads)
+        .getScanBuilder(engine).build()
+        .getScanFiles(engine))
 
     // partition filter only --> don't read stats
     val partFilter = equals(new Column("part"), ofInt(1))
     verifyNoStatsColumn(
-      snapshot(tableClientDisallowedStatsReads)
-        .getScanBuilder(tableClient).withFilter(tableClient, partFilter).build()
-        .getScanFiles(tableClient))
+      snapshot(engineDisallowedStatsReads)
+        .getScanBuilder(engine).withFilter(engine, partFilter).build()
+        .getScanFiles(engine))
 
     // no eligible data skipping filter --> don't read stats
     val nonEligibleFilter = lessThan(
       new ScalarExpression("%", Seq(col("as_int"), ofInt(10)).asJava),
       ofInt(1))
     verifyNoStatsColumn(
-      snapshot(tableClientDisallowedStatsReads)
-        .getScanBuilder(tableClient).withFilter(tableClient, nonEligibleFilter).build()
-        .getScanFiles(tableClient))
+      snapshot(engineDisallowedStatsReads)
+        .getScanBuilder(engine).withFilter(engine, nonEligibleFilter).build()
+        .getScanFiles(engine))
   }
 
   test("data skipping - prune schema correctly for various predicates") {
@@ -1532,18 +1532,18 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         greaterThan(col("as_long"), ofInt(0))
       ) -> Set(nestedCol("minValues.as_int"), nestedCol("maxValues.as_long"))
     ).foreach { case (predicate, expectedCols) =>
-      val tableClient = tableClientVerifyJsonParseSchema(verifySchema(expectedCols))
+      val engine = engineVerifyJsonParseSchema(verifySchema(expectedCols))
       collectScanFileRows(
-        Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
-          .getScanBuilder(tableClient)
-          .withFilter(tableClient, predicate)
+        Table.forPath(engine, path).getLatestSnapshot(engine)
+          .getScanBuilder(engine)
+          .withFilter(engine, predicate)
           .build(),
-        tableClient = tableClient)
+        engine = engine)
     }
   }
 
   //////////////////////////////////////////////////////////////////////////////////////////
-  // Check the includeStats parameter on ScanImpl.getScanFiles(tableClient, includeStats)
+  // Check the includeStats parameter on ScanImpl.getScanFiles(engine, includeStats)
   //////////////////////////////////////////////////////////////////////////////////////////
 
   test("check ScanImpl.getScanFiles for includeStats=true") {
@@ -1551,7 +1551,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
       def checkStatsPresent(scan: Scan): Unit = {
-        val scanFileBatches = scan.asInstanceOf[ScanImpl].getScanFiles(defaultTableClient, true)
+        val scanFileBatches = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
         scanFileBatches.forEach { batch =>
           assert(batch.getData().getSchema() == InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS)
         }
@@ -1559,15 +1559,15 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       // No query filter
       checkStatsPresent(
         latestSnapshot(tempDir.getCanonicalPath)
-          .getScanBuilder(defaultTableClient)
+          .getScanBuilder(defaultEngine)
           .build()
       )
       // Query filter but no valid data skipping filter
       checkStatsPresent(
         latestSnapshot(tempDir.getCanonicalPath)
-          .getScanBuilder(defaultTableClient)
+          .getScanBuilder(defaultEngine)
           .withFilter(
-            defaultTableClient,
+            defaultEngine,
             greaterThan(
               new ScalarExpression("+", Seq(col("id"), ofInt(10)).asJava),
               ofInt(100)
@@ -1577,9 +1577,9 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       // With valid data skipping filter present
       checkStatsPresent(
         latestSnapshot(tempDir.getCanonicalPath)
-          .getScanBuilder(defaultTableClient)
+          .getScanBuilder(defaultEngine)
           .withFilter(
-            defaultTableClient,
+            defaultEngine,
             greaterThan(
               col("id"),
               ofInt(0)
@@ -1600,12 +1600,12 @@ object ScanSuite {
   }
 
   /**
-   * Returns a custom table client implementation that doesn't allow "add.stats" in the read schema
+   * Returns a custom engine implementation that doesn't allow "add.stats" in the read schema
    * for parquet or json handlers.
    */
-  def tableClientDisallowedStatsReads: TableClient = {
+  def engineDisallowedStatsReads: Engine = {
     val hadoopConf = new Configuration()
-    new DefaultTableClient(hadoopConf) {
+    new DefaultEngine(hadoopConf) {
 
       override def getParquetHandler: ParquetHandler = {
         new DefaultParquetHandler(hadoopConf) {
@@ -1633,9 +1633,9 @@ object ScanSuite {
     }
   }
 
-  def tableClientVerifyJsonParseSchema(verifyFx: StructType => Unit): TableClient = {
+  def engineVerifyJsonParseSchema(verifyFx: StructType => Unit): Engine = {
     val hadoopConf = new Configuration()
-    new DefaultTableClient(hadoopConf) {
+    new DefaultEngine(hadoopConf) {
       override def getJsonHandler: JsonHandler = {
         new DefaultJsonHandler(hadoopConf) {
           override def parseJson(stringVector: ColumnVector, schema: StructType,

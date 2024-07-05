@@ -19,8 +19,8 @@ package io.delta.kernel.internal.replay;
 import java.io.IOException;
 import java.util.*;
 
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.internal.actions.SetTransaction;
@@ -78,7 +78,7 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
     private static final int[] METADATA_ORDINAL = getPathOrdinals(CHECKPOINT_SCHEMA, "metaData");
     private static final int[] TXN_ORDINAL = getPathOrdinals(CHECKPOINT_SCHEMA, "txn");
 
-    private final TableClient tableClient;
+    private final Engine engine;
     private final LogSegment logSegment;
 
     /**
@@ -120,10 +120,10 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
     /////////////////
 
     public CreateCheckpointIterator(
-            TableClient tableClient,
+            Engine engine,
             LogSegment logSegment,
             long minFileRetentionTimestampMillis) {
-        this.tableClient = tableClient;
+        this.engine = engine;
         this.logSegment = logSegment;
         this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
     }
@@ -170,8 +170,7 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
 
     private void initActionIterIfRequired() {
         if (this.actionsIter == null) {
-            this.actionsIter = new ActionsIterator(
-                    tableClient,
+            this.actionsIter = new ActionsIterator(engine,
                     logSegment.allLogFilesReversed(),
                     CHECKPOINT_SCHEMA,
                     Optional.empty() /* checkpoint predicate */);
@@ -368,7 +367,7 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
     }
 
     private ColumnVector createSelectionVector(boolean[] selectionVectorBuffer, int size) {
-        return tableClient.getExpressionHandler()
+        return engine.getExpressionHandler()
                 .createSelectionVector(selectionVectorBuffer, 0, size);
     }
 }

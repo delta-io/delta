@@ -79,32 +79,32 @@ object DataSkippingPredicateBuilder {
 private [stats] class ColumnPredicateBuilder extends DataSkippingPredicateBuilder {
   def equalTo(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] = {
-    statsProvider.getPredicateWithStatTypes(colPath, MIN, MAX) { (min, max) =>
+    statsProvider.getPredicateWithStatTypes(colPath, value.expr.dataType, MIN, MAX) { (min, max) =>
       min <= value && value <= max
     }
   }
 
   def notEqualTo(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] = {
-    statsProvider.getPredicateWithStatTypes(colPath, MIN, MAX) { (min, max) =>
+    statsProvider.getPredicateWithStatTypes(colPath, value.expr.dataType, MIN, MAX) { (min, max) =>
       min < value || value < max
     }
   }
 
   def lessThan(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] =
-    statsProvider.getPredicateWithStatType(colPath, MIN)(_ < value)
+    statsProvider.getPredicateWithStatType(colPath, value.expr.dataType, MIN)(_ < value)
 
   def lessThanOrEqual(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] =
-    statsProvider.getPredicateWithStatType(colPath, MIN)(_ <= value)
+    statsProvider.getPredicateWithStatType(colPath, value.expr.dataType, MIN)(_ <= value)
 
   def greaterThan(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] =
-    statsProvider.getPredicateWithStatType(colPath, MAX)(_ > value)
+    statsProvider.getPredicateWithStatType(colPath, value.expr.dataType, MAX)(_ > value)
 
   def greaterThanOrEqual(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] =
-    statsProvider.getPredicateWithStatType(colPath, MAX)(_ >= value)
+    statsProvider.getPredicateWithStatType(colPath, value.expr.dataType, MAX)(_ >= value)
 }
 

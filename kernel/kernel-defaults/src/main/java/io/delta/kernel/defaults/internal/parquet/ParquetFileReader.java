@@ -16,8 +16,6 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.net.URI;
 import java.util.*;
 import static java.util.Objects.requireNonNull;
 
@@ -34,6 +32,7 @@ import org.apache.parquet.schema.MessageType;
 import static org.apache.parquet.hadoop.ParquetInputFormat.*;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -85,8 +84,8 @@ public class ParquetFileReader {
                     hasNotConsumedNextElement = reader.nextKeyValue() &&
                             reader.getCurrentValue() != null;
                     return hasNotConsumedNextElement;
-                } catch (IOException | InterruptedException ie) {
-                    throw new RuntimeException(ie);
+                } catch (IOException | InterruptedException ex) {
+                    throw new KernelEngineException("Error reading Parquet file: " + path, ex);
                 }
             }
 
@@ -113,7 +112,7 @@ public class ParquetFileReader {
                     org.apache.parquet.hadoop.ParquetFileReader fileReader = null;
                     try {
                         Configuration confCopy = configuration;
-                        Path filePath = new Path(URI.create(path));
+                        Path filePath = new Path(path);
 
                         // We need physical schema in order to construct a filter that can be
                         // pushed into the `parquet-mr` reader. For that reason read the footer
@@ -148,7 +147,7 @@ public class ParquetFileReader {
                         reader.initialize(fileReader, confCopy);
                     } catch (IOException e) {
                         Utils.closeCloseablesSilently(fileReader, reader);
-                        throw new UncheckedIOException(e);
+                        throw new KernelEngineException("Error reading Parquet file: " + path, e);
                     }
                 }
             }

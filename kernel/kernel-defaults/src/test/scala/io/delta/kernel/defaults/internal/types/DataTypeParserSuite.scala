@@ -146,6 +146,8 @@ class DataTypeParserSuite extends AnyFunSuite {
         |{
         |  "null" : null,
         |  "int" : 10,
+        |  "long-1" : -16070400023423400,
+        |  "long-2" : 16070400023423400,
         |  "double" : 2.22,
         |  "boolean" : true,
         |  "string" : "10",
@@ -161,6 +163,8 @@ class DataTypeParserSuite extends AnyFunSuite {
     val expectedFieldMetadataAllTypes = FieldMetadata.builder()
       .putNull("null")
       .putLong("int", 10)
+      .putLong("long-1", -16070400023423400L)
+      .putLong("long-2", 16070400023423400L)
       .putDouble("double", 2.22)
       .putBoolean("boolean", true)
       .putString("string", "10")

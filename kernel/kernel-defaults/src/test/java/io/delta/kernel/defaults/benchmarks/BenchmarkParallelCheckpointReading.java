@@ -26,9 +26,9 @@ import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 
 import io.delta.kernel.*;
-import io.delta.kernel.client.ParquetHandler;
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.ParquetHandler;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -36,8 +36,8 @@ import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.util.Utils;
 
-import io.delta.kernel.defaults.client.DefaultParquetHandler;
-import io.delta.kernel.defaults.client.DefaultTableClient;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.defaults.engine.DefaultParquetHandler;
 
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 
@@ -112,18 +112,18 @@ public class BenchmarkParallelCheckpointReading {
     @Benchmark
     @BenchmarkMode(Mode.AverageTime)
     public void benchmark(BenchmarkData benchmarkData, Blackhole blackhole) throws Exception {
-        TableClient tableClient = createTableClient(benchmarkData.parallelReaderCount);
-        Table table = Table.forPath(tableClient, testTablePath);
+        Engine engine = createEngine(benchmarkData.parallelReaderCount);
+        Table table = Table.forPath(engine, testTablePath);
 
-        Snapshot snapshot = table.getLatestSnapshot(tableClient);
-        ScanBuilder scanBuilder = snapshot.getScanBuilder(tableClient);
+        Snapshot snapshot = table.getLatestSnapshot(engine);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder(engine);
         Scan scan = scanBuilder.build();
 
         // Scan state is not used, but get it so that we simulate the real use case.
-        Row row = scan.getScanState(tableClient);
+        Row row = scan.getScanState(engine);
         blackhole.consume(row); // To avoid dead code elimination by the JIT compiler
         long fileSize = 0;
-        try (CloseableIterator<FilteredColumnarBatch> batchIter = scan.getScanFiles(tableClient)) {
+        try (CloseableIterator<FilteredColumnarBatch> batchIter = scan.getScanFiles(engine)) {
             while (batchIter.hasNext()) {
                 FilteredColumnarBatch batch = batchIter.next();
                 try (CloseableIterator<Row> rowIter = batch.getRows()) {
@@ -144,13 +144,13 @@ public class BenchmarkParallelCheckpointReading {
         org.openjdk.jmh.Main.main(args);
     }
 
-    private static TableClient createTableClient(int numberOfParallelThreads) {
+    private static Engine createEngine(int numberOfParallelThreads) {
         Configuration hadoopConf = new Configuration();
         if (numberOfParallelThreads <= 0) {
-            return DefaultTableClient.create(hadoopConf);
+            return DefaultEngine.create(hadoopConf);
         }
 
-        return new DefaultTableClient(hadoopConf) {
+        return new DefaultEngine(hadoopConf) {
             @Override
             public ParquetHandler getParquetHandler() {
                 return new ParallelParquetHandler(hadoopConf, numberOfParallelThreads);

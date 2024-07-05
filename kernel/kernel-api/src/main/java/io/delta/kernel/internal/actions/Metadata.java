@@ -19,8 +19,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.data.GenericRow;
@@ -32,14 +32,14 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 public class Metadata {
 
     public static Metadata fromColumnVector(
-            ColumnVector vector, int rowId, TableClient tableClient) {
+            ColumnVector vector, int rowId, Engine engine) {
         if (vector.isNullAt(rowId)) {
             return null;
         }
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = tableClient.getJsonHandler().deserializeStructType(schemaJson);
+        StructType schema = engine.getJsonHandler().deserializeStructType(schemaJson);
 
         return new Metadata(
             requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
@@ -114,6 +114,46 @@ public class Metadata {
                 .collect(Collectors.toList())));
     }
 
+    public Metadata withNewConfiguration(Map<String, String> configuration) {
+        Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
+        newConfiguration.putAll(configuration);
+        return new Metadata(
+            this.id,
+            this.name,
+            this.description,
+            this.format,
+            this.schemaString,
+            this.schema,
+            this.partitionColumns,
+            this.createdTime,
+            VectorUtils.stringStringMapValue(newConfiguration)
+        );
+    }
+
+    @Override
+    public String toString() {
+        List<String> partitionColumnsStr = VectorUtils.toJavaList(partitionColumns);
+        StringBuilder sb = new StringBuilder();
+        sb.append("List(");
+        for (String partitionColumn : partitionColumnsStr) {
+            sb.append(partitionColumn).append(", ");
+        }
+        if (sb.substring(sb.length() - 2).equals(", ")) {
+            sb.setLength(sb.length() - 2);  // Remove the last comma and space
+        }
+        sb.append(")");
+        return "Metadata{" +
+                "id='" + id + '\'' +
+                ", name=" + name +
+                ", description=" + description +
+                ", format=" + format +
+                ", schemaString='" + schemaString + '\'' +
+                ", partitionColumns=" + sb +
+                ", createdTime=" + createdTime +
+                ", configuration=" + configuration.get() +
+                '}';
+    }
+
     public String getSchemaString() {
         return schemaString;
     }
@@ -162,6 +202,21 @@ public class Metadata {
 
     public Map<String, String> getConfiguration() {
         return Collections.unmodifiableMap(configuration.get());
+    }
+
+    /**
+     * Filter out the key-value pair matches exactly with the old properties.
+     *
+     * @param newProperties the new properties to be filtered
+     *
+     * @return the filtered properties
+     */
+    public Map<String, String> filterOutUnchangedProperties(Map<String, String> newProperties) {
+        Map<String, String> oldProperties = getConfiguration();
+        return newProperties.entrySet().stream()
+                .filter(entry -> !oldProperties.containsKey(entry.getKey()) ||
+                        !oldProperties.get(entry.getKey()).equals(entry.getValue()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     /**

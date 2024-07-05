@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.client.ExpressionHandler;
+import io.delta.kernel.engine.ExpressionHandler;
 
 /**
  * Defines predicate scalar expression which is an extension of {@link ScalarExpression}
@@ -101,6 +101,12 @@ import io.delta.kernel.client.ExpressionHandler;
  *   <ul>
  *    <li>SQL semantic: <code>expr IS NULL</code></li>
  *    <li>Since version: 3.2.0</li>
+ *   </ul>
+ *  </li>
+ *  <li>Name: <code>LIKE</code>
+ *   <ul>
+ *    <li>SQL semantic: <code>expr LIKE expr</code></li>
+ *    <li>Since version: 3.3.0</li>
  *   </ul>
  *  </li>
  * </ol>

@@ -23,11 +23,12 @@ import org.apache.hadoop.fs.Path
 /**
  * Provides access to resolve Delta commit files names based on the commit-version.
  *
- * This class is part of the changes introduced to accommodate the adoption of managed-commits in
- * Delta Lake. Previously, certain code paths assumed the existence of delta files for a specific
- * version at a predictable path `_delta_log/$version.json`. With managed-commits, delta files may
- * alternatively be located at `_delta_log/_commits/$version.$uuid.json`. DeltaCommitFileProvider
- * attempts to locate the correct delta files from the Snapshot's LogSegment.
+ * This class is part of the changes introduced to accommodate the adoption of coordinated-commits
+ * in Delta Lake. Previously, certain code paths assumed the existence of delta files for a specific
+ * version at a predictable path `_delta_log/$version.json`. With coordinated-commits, delta files
+ * may alternatively be located at `_delta_log/_commits/$version.$uuid.json`.
+ * DeltaCommitFileProvider attempts to locate the correct delta files from the Snapshot's
+ * LogSegment.
  *
  * @param logPath The path to the Delta table log directory.
  * @param maxVersionInclusive The maximum version of the Delta table (inclusive).

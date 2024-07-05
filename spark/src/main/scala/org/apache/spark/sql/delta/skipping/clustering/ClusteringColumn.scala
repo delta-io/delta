@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.skipping.clustering
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
@@ -40,8 +40,12 @@ object ClusteringColumn {
     val physicalNameParts = logicalNameParts.foldLeft[(DataType, Seq[String])]((schema, Nil)) {
       (partial, namePart) =>
         val (currStructType, currPhysicalNameSeq) = partial
-        val field =
-          currStructType.asInstanceOf[StructType].find(field => resolver(field.name, namePart)).get
+        val field = currStructType.asInstanceOf[StructType].find(
+          field => resolver(field.name, namePart)) match {
+          case Some(f) => f
+          case None =>
+            throw DeltaErrors.columnNotInSchemaException(logicalName, schema)
+        }
         (field.dataType, currPhysicalNameSeq :+ DeltaColumnMapping.getPhysicalName(field))
     }._2
     ClusteringColumn(physicalNameParts)

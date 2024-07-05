@@ -151,7 +151,7 @@ class RemoveColumnMappingCDCSuite extends RemoveColumnMappingSuiteUtils {
 
   private case object Downgrade extends Operation {
     override def runOperation(): Unit = {
-      disableColumnMapping()
+      unsetColumnMappingProperty(useUnset = false)
       insertMoreRows()
     }
   }
@@ -196,10 +196,6 @@ class RemoveColumnMappingCDCSuite extends RemoveColumnMappingSuiteUtils {
     }
   }
 
-  private val firstColumn = "first_column_name"
-  private val thirdColumn = "third_column_name"
-  private val renamedThirdColumn = "renamed_third_column_name"
-
   private def createTable(): Unit = {
     val columnMappingMode = "none"
     sql(s"""CREATE TABLE $testTableName
@@ -212,32 +208,9 @@ class RemoveColumnMappingCDCSuite extends RemoveColumnMappingSuiteUtils {
              |""".stripMargin)
   }
 
-  private def enableColumnMapping(): Unit = {
-    sql(
-      s"""ALTER TABLE $testTableName
-        SET TBLPROPERTIES (
-        '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
-        'delta.minReaderVersion' = '2',
-        'delta.minWriterVersion' = '5')""")
-  }
-
-  private def disableColumnMapping(): Unit = {
-    unsetColumnMappingProperty(useUnset = false)
-  }
-
   private def insertMoreRows(): Unit = {
     sql(s"INSERT INTO $testTableName SELECT * FROM $testTableName LIMIT $totalRows")
   }
-
-  private def renameColumn(): Unit = {
-    sql(s"ALTER TABLE $testTableName RENAME COLUMN $thirdColumn TO $renamedThirdColumn")
-  }
-
-  private def dropColumn(): Unit = {
-    sql(s"ALTER TABLE $testTableName DROP COLUMN $thirdColumn")
-  }
-
-  private def deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
 
   private def getCDCAndFailIncompatibleSchemaChange(
       startVersion: Long,

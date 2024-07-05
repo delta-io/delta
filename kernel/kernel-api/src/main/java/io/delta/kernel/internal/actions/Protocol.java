@@ -17,14 +17,15 @@ package io.delta.kernel.internal.actions;
 
 import java.util.*;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.*;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
+import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 
@@ -103,9 +104,25 @@ public class Protocol {
         Map<Integer, Object> protocolMap = new HashMap<>();
         protocolMap.put(0, minReaderVersion);
         protocolMap.put(1, minWriterVersion);
-        protocolMap.put(2, readerFeatures == null ? null : stringArrayValue(readerFeatures));
-        protocolMap.put(3, writerFeatures == null ? null : stringArrayValue(writerFeatures));
+        protocolMap.put(2, stringArrayValue(readerFeatures));
+        protocolMap.put(3, stringArrayValue(writerFeatures));
 
         return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
+    }
+
+    public Protocol withNewWriterFeatures(
+            Set<String> writerFeatures) {
+        Tuple2<Integer, Integer> newProtocolVersions =
+                TableFeatures.minProtocolVersionFromAutomaticallyEnabledFeatures(
+                        writerFeatures);
+        List<String> newWriterFeatures = new ArrayList<>(writerFeatures);
+        if (this.writerFeatures != null) {
+            newWriterFeatures.addAll(this.writerFeatures);
+        }
+        return new Protocol(
+                newProtocolVersions._1,
+                newProtocolVersions._2,
+                this.readerFeatures == null ? null : new ArrayList<>(this.readerFeatures),
+                newWriterFeatures);
     }
 }

@@ -19,10 +19,10 @@ package io.delta.kernel.internal.replay;
 import java.io.IOException;
 import java.util.Optional;
 
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -115,22 +115,21 @@ public class LogReplay {
 
     private final Path dataPath;
     private final LogSegment logSegment;
-    private final TableClient tableClient;
     private final Tuple2<Protocol, Metadata> protocolAndMetadata;
 
     public LogReplay(
             Path logPath,
             Path dataPath,
             long snapshotVersion,
-            TableClient tableClient,
+            Engine engine,
             LogSegment logSegment,
             Optional<SnapshotHint> snapshotHint) {
         assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
         this.dataPath = dataPath;
         this.logSegment = logSegment;
-        this.tableClient = tableClient;
-        this.protocolAndMetadata = loadTableProtocolAndMetadata(snapshotHint, snapshotVersion);
+        this.protocolAndMetadata =
+                loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
     }
 
     /////////////////
@@ -145,8 +144,8 @@ public class LogReplay {
         return this.protocolAndMetadata._2;
     }
 
-    public Optional<Long> getLatestTransactionIdentifier(String applicationId) {
-        return loadLatestTransactionVersion(applicationId);
+    public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
+        return loadLatestTransactionVersion(engine, applicationId);
     }
 
     /**
@@ -165,15 +164,15 @@ public class LogReplay {
      * </ol>
      */
     public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
+            Engine engine,
             boolean shouldReadStats,
             Optional<Predicate> checkpointPredicate) {
         final CloseableIterator<ActionWrapper> addRemoveIter =
-                new ActionsIterator(
-                        tableClient,
+                new ActionsIterator(engine,
                         logSegment.allLogFilesReversed(),
                         getAddRemoveReadSchema(shouldReadStats),
                         checkpointPredicate);
-        return new ActiveAddFilesIterator(tableClient, addRemoveIter, dataPath);
+        return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath);
     }
 
     ////////////////////
@@ -188,7 +187,8 @@ public class LogReplay {
      * delta files newer than the hint to search for any new P & M. If we don't find them, we can
      * just use the P and/or M from the hint.
      */
-    private Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+    protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
+            Engine engine,
             Optional<SnapshotHint> snapshotHint,
             long snapshotVersion) {
 
@@ -204,8 +204,7 @@ public class LogReplay {
         Metadata metadata = null;
 
         try (CloseableIterator<ActionWrapper> reverseIter =
-                     new ActionsIterator(
-                             tableClient,
+                     new ActionsIterator(engine,
                              logSegment.allLogFilesReversed(),
                              PROTOCOL_METADATA_READ_SCHEMA,
                              Optional.empty())) {
@@ -245,11 +244,12 @@ public class LogReplay {
 
                     for (int i = 0; i < metadataVector.getSize(); i++) {
                         if (!metadataVector.isNullAt(i)) {
-                            metadata = Metadata.fromColumnVector(metadataVector, i, tableClient);
+                            metadata = Metadata.fromColumnVector(metadataVector, i, engine);
 
                             if (protocol != null) {
                                 // Stop since we have found the latest Protocol and Metadata.
-                                TableFeatures.validateReadSupportedTable(protocol, metadata);
+                                TableFeatures.validateReadSupportedTable(
+                                    protocol, metadata, dataPath.toString());
                                 return new Tuple2<>(protocol, metadata);
                             }
 
@@ -286,10 +286,9 @@ public class LogReplay {
         );
     }
 
-    private Optional<Long> loadLatestTransactionVersion(String applicationId) {
+    private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
         try (CloseableIterator<ActionWrapper> reverseIter =
-                     new ActionsIterator(
-                             tableClient,
+                     new ActionsIterator(engine,
                              logSegment.allLogFilesReversed(),
                              SET_TRANSACTION_READ_SCHEMA,
                              Optional.empty())) {

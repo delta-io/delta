@@ -708,39 +708,36 @@ trait GeneratedColumnSuiteBase
 
   test("disallow column type evolution") {
     withTableName("disallow_column_type_evolution") { table =>
-      // "CAST(HASH(c1 + 32767s) AS SMALLINT)" is a special expression that returns different
-      // results for SMALLINT and INT. For example, "CAST(hash(32767 + 32767s) AS SMALLINT)" returns
-      // 9876, but "SELECT CAST(hash(32767s + 32767s) AS SMALLINT)" returns 31349. Hence we should
-      // not allow updating column type from SMALLINT to INT.
-      createTable(table, None, "c1 SMALLINT, c2 SMALLINT",
-        Map("c2" -> "CAST(HASH(c1 + 32767s) AS SMALLINT)"), Nil)
+    // "HASH(c1)" returns different results for INT and LONG. For example, "SELECT hash(32767)"
+    // returns 1249274084, but "SELECT hash(32767L)" returns -860381306. Hence we should
+    // not allow updating column type from INT to LONG.
+    createTable(table, None, "c1 INT, c2 INT",
+        Map("c2" -> "HASH(c1)"), Nil)
       val tableSchema = spark.table(table).schema
-      withSQLConf(SQLConf.ANSI_ENABLED.key -> "false") {
-        Seq(32767.toShort).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
-      }
+      Seq(32767).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
       assert(tableSchema == spark.table(table).schema)
-      // Insert an INT to `c1` should fail rather than changing the `c1` type to INT
+      // Insert a LONG to `c1` should fail rather than changing the `c1` type to LONG.
       checkError(
         exception = intercept[AnalysisException] {
-          Seq(32767).toDF("c1").write.format("delta").mode("append")
+          Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
         errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "c1",
-          "columnType" -> "SMALLINT",
-          "dataType" -> "INT",
-          "generatedColumns" -> "c2 -> CAST(HASH(c1 + 32767s) AS SMALLINT)"
-      ))
-      checkAnswer(spark.table(table), Row(32767, 31349) :: Nil)
+          "columnType" -> "INT",
+          "dataType" -> "BIGINT",
+          "generatedColumns" -> "c2 -> HASH(c1)"
+        ))
+      checkAnswer(spark.table(table), Row(32767, 1249274084) :: Nil)
     }
   }
 
-  testSparkLatestOnly("disallow column type evolution - nesting") {
+  test("disallow column type evolution - nesting") {
     withTableName("disallow_column_type_evolution") { table =>
-      createTable(table, None, "a SMALLINT, c1 STRUCT<a: SMALLINT>, c2 SMALLINT",
-        Map("c2" -> "CAST(HASH(a - 10s) AS SMALLINT)"), Nil)
+      createTable(table, None, "a SMALLINT, c1 STRUCT<a: SMALLINT>, c2 INT",
+        Map("c2" -> "HASH(a)"), Nil)
       val tableSchema = spark.table(table).schema
       Seq(32767.toShort).toDF("a")
         .selectExpr("a", "named_struct('a', a) as c1")
@@ -768,25 +765,23 @@ trait GeneratedColumnSuiteBase
           "columnName" -> "a",
           "columnType" -> "SMALLINT",
           "dataType" -> "INT",
-          "generatedColumns" -> "c2 -> CAST(HASH(a - 10s) AS SMALLINT)"
+          "generatedColumns" -> "c2 -> HASH(a)"
         )
       )
     }
   }
 
-  // scalastyle:off line.size.limit
-  testSparkLatestOnly("changing the type of a nested field named the same as the generated column") {
-  // scalastyle:on line.size.limit
+  test("changing the type of a nested field named the same as the generated column") {
     withTableName("disallow_column_type_evolution") { table =>
-      createTable(table, None, "a INT, t STRUCT<gen: SMALLINT>, gen SMALLINT",
-        Map("gen" -> "CAST(HASH(a - 10s) AS SMALLINT)"), Nil)
+      createTable(table, None, "a INT, t STRUCT<gen: SMALLINT>, gen INT",
+        Map("gen" -> "HASH(a)"), Nil)
       // Changing the type of `t.gen` should succeed since it's not actually the generated column.
       Seq((32767, 32767)).toDF("a", "gen")
         .selectExpr("a", "named_struct('gen', gen) as t")
         .write.format("delta").mode("append")
         .option("mergeSchema", "true")
         .saveAsTable(table)
-      checkAnswer(spark.table(table), Row(32767, Row(32767), -22677) :: Nil)
+      checkAnswer(spark.table(table), Row(32767, Row(32767), 1249274084) :: Nil)
     }
   }
 

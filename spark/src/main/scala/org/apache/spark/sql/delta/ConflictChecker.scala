@@ -23,13 +23,15 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.managedcommit.UpdatedActions
+import org.apache.spark.sql.delta.coordinatedcommits.UpdatedActions
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.fs.FileStatus
 
+import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
 import org.apache.spark.sql.types.StructType
@@ -653,13 +655,16 @@ private[delta] class ConflictChecker(
   protected def logMetrics(): Unit = {
     val totalTimeTakenMs = System.currentTimeMillis() - startTimeMs
     val timingStr = timingStats.keys.toSeq.sorted.map(k => s"$k=${timingStats(k)}").mkString(",")
-    logInfo(s"[$logPrefix] Timing stats against $winningCommitVersion " +
-      s"[$timingStr, totalTimeTakenMs: $totalTimeTakenMs]")
+    logInfo(log"[" + logPrefix + log"] Timing stats against " +
+      log"${MDC(DeltaLogKeys.VERSION, winningCommitVersion)} " +
+      log"[${MDC(DeltaLogKeys.TIME_STATS, timingStr)}, totalTimeTakenMs: " +
+      log"${MDC(DeltaLogKeys.TIME_MS, totalTimeTakenMs)}]")
   }
 
-  protected lazy val logPrefix: String = {
+  protected lazy val logPrefix: MessageWithContext = {
     def truncate(uuid: String): String = uuid.split("-").head
-    s"[tableId=${truncate(initialCurrentTransactionInfo.readSnapshot.metadata.id)}," +
-      s"txnId=${truncate(initialCurrentTransactionInfo.txnId)}] "
+    log"[tableId=${MDC(DeltaLogKeys.TABLE_ID,
+      truncate(initialCurrentTransactionInfo.readSnapshot.metadata.id))}," +
+    log"txnId=${MDC(DeltaLogKeys.TXN_ID, truncate(initialCurrentTransactionInfo.txnId))}] "
   }
 }

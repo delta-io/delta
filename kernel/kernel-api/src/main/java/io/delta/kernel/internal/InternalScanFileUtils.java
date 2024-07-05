@@ -15,12 +15,13 @@
  */
 package io.delta.kernel.internal;
 
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 
 import io.delta.kernel.Scan;
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
@@ -36,7 +37,7 @@ import io.delta.kernel.internal.util.VectorUtils;
 
 /**
  * Utilities to extract information out of the scan file rows returned by
- * {@link Scan#getScanFiles(TableClient)}.
+ * {@link Scan#getScanFiles(Engine)}.
  */
 public class InternalScanFileUtils {
     private InternalScanFileUtils() {}
@@ -67,7 +68,7 @@ public class InternalScanFileUtils {
         .add(TABLE_ROOT_STRUCT_FIELD);
 
     /**
-     * Schema of the returned scan files when {@link ScanImpl#getScanFiles(TableClient, boolean)}
+     * Schema of the returned scan files when {@link ScanImpl#getScanFiles(Engine, boolean)}
      * is called with {@code includeStats=true}.
      */
     public static final StructType SCAN_FILE_SCHEMA_WITH_STATS = new StructType()
@@ -112,7 +113,9 @@ public class InternalScanFileUtils {
 
         // TODO: this is hack until the path in `add.path` is converted to an absolute path
         String tableRoot = scanFileInfo.getString(TABLE_ROOT_ORDINAL);
-        String absolutePath = new Path(tableRoot, path).toString();
+        String absolutePath = new Path(
+                new Path(URI.create(tableRoot)),
+                new Path(URI.create(path))).toString();
 
         return FileStatus.of(absolutePath, size, modificationTime);
     }

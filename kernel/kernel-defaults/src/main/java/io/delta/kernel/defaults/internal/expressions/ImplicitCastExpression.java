@@ -24,7 +24,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.DataType;
 
-import io.delta.kernel.defaults.client.DefaultExpressionHandler;
+import io.delta.kernel.defaults.engine.DefaultExpressionHandler;
 
 /**
  * An implicit cast expression to convert the input type to another given type. Here is the valid

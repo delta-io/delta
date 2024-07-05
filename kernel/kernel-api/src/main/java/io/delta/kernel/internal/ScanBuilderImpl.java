@@ -20,7 +20,7 @@ import java.util.Optional;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 
@@ -40,7 +40,7 @@ public class ScanBuilderImpl
     private final Metadata metadata;
     private final StructType snapshotSchema;
     private final LogReplay logReplay;
-    private final TableClient tableClient;
+    private final Engine engine;
 
     private StructType readSchema;
     private Optional<Predicate> predicate;
@@ -51,19 +51,19 @@ public class ScanBuilderImpl
             Metadata metadata,
             StructType snapshotSchema,
             LogReplay logReplay,
-            TableClient tableClient) {
+            Engine engine) {
         this.dataPath = dataPath;
         this.protocol = protocol;
         this.metadata = metadata;
         this.snapshotSchema = snapshotSchema;
         this.logReplay = logReplay;
-        this.tableClient = tableClient;
+        this.engine = engine;
         this.readSchema = snapshotSchema;
         this.predicate = Optional.empty();
     }
 
     @Override
-    public ScanBuilder withFilter(TableClient tableClient, Predicate predicate) {
+    public ScanBuilder withFilter(Engine engine, Predicate predicate) {
         if (this.predicate.isPresent()) {
             throw new IllegalArgumentException("There already exists a filter in current builder");
         }
@@ -72,7 +72,7 @@ public class ScanBuilderImpl
     }
 
     @Override
-    public ScanBuilder withReadSchema(TableClient tableClient, StructType readSchema) {
+    public ScanBuilder withReadSchema(Engine engine, StructType readSchema) {
         // TODO: validate the readSchema is a subset of the table schema
         this.readSchema = readSchema;
         return this;

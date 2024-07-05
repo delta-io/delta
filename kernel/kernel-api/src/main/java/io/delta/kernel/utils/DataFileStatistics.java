@@ -91,4 +91,9 @@ public class DataFileStatistics {
     public Map<Column, Long> getNullCounts() {
         return nullCounts;
     }
+
+    public String serializeAsJson() {
+        // TODO: implement this
+        return "{}";
+    }
 }

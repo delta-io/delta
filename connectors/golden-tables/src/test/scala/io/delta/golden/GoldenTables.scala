@@ -17,12 +17,13 @@
 package io.delta.golden
 
 import java.io.File
-import java.math.{BigDecimal => JBigDecimal}
+import java.math.{BigInteger, BigDecimal => JBigDecimal}
 import java.sql.Timestamp
 import java.time.ZoneOffset.UTC
 import java.time.LocalDateTime
-import java.util.{Locale, TimeZone}
+import java.util.{Locale, Random, TimeZone}
 
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
@@ -299,7 +300,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
       val file = AddFile("abc", Map.empty, 1, 1, true)
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0L),
+        FileNames.unsafeDeltaFile(log.logPath, 0L),
         Iterator(selectedAction, file).map(a => JsonUtils.toJson(a.wrap)))
     }
   }
@@ -365,8 +366,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     val metadata = Metadata(
       schemaString = new StructType().add("id", IntegerType).json
     )
-    log.store.write(
-      FileNames.deltaFile(log.logPath, 0L),
+    log.store.write(FileNames.unsafeDeltaFile(log.logPath, 0L),
 
       // Protocol reader version explicitly set too high
       // Also include a Metadata
@@ -402,7 +402,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
 
     val addFile = AddFile("abc", Map.empty, 1, 1, true)
     log.store.write(
-      FileNames.deltaFile(log.logPath, 0L),
+      FileNames.unsafeDeltaFile(log.logPath, 0L),
       Iterator(Metadata(), Protocol(), commitInfoFile, addFile).map(a => JsonUtils.toJson(a.wrap)))
   }
 
@@ -474,7 +474,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
       file.setLastModified(ts)
       startVersion += 1
     }
@@ -1038,7 +1038,18 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     writeBasicTimestampTable(tablePath, TimeZone.getTimeZone("PST"))
   }
 
+  generateGoldenTable("parquet-all-types-legacy-format") { tablePath =>
+    withSQLConf(("spark.sql.parquet.writeLegacyFormat", "true")) {
+      generateAllTypesTable(tablePath)
+    }
+  }
+
   generateGoldenTable("parquet-all-types") { tablePath =>
+    // generating using the standard parquet format
+    generateAllTypesTable(tablePath)
+  }
+
+  def generateAllTypesTable(tablePath: String): Unit = {
     val timeZone = java.util.TimeZone.getTimeZone("UTC")
     java.util.TimeZone.setDefault(timeZone)
     import java.sql._
@@ -1113,6 +1124,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
         if (i % 61 != 0) new java.sql.Date(i * 20000000L) else null,
         if (i % 62 != 0) new Timestamp(i * 23423523L) else null,
         if (i % 69 != 0) LocalDateTime.ofEpochSecond(i * 234234L, 200012, UTC) else null,
+        // nested_struct
         if (i % 63 != 0) {
           if (i % 19 == 0) {
             // write a struct with all fields null
@@ -1121,6 +1133,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
             Row(i.toString, if (i % 23 != 0) Row(i) else null)
           }
         } else null,
+        // array_of_prims
         if (i % 25 != 0) {
           if (i % 29 == 0) {
             scala.Array()
@@ -1128,6 +1141,7 @@ class GoldenTables extends QueryTest with SharedSparkSession {
             scala.Array(i, null, i + 1)
           }
         } else null,
+        // array_of_arrays
         if (i % 8 != 0) {
           val singleElemArray = scala.Array(i)
           val doubleElemArray = scala.Array(i + 10, i + 20)
@@ -1144,7 +1158,11 @@ class GoldenTables extends QueryTest with SharedSparkSession {
             case 6 => scala.Array()
           }
         } else null,
-        scala.Array(Row(i.longValue()), null),
+        // array_of_structs
+        if (i % 10 != 0) {
+          scala.Array(Row(i.longValue()), null)
+        } else null,
+        // map_of_prims
         if (i % 28 != 0) {
           if (i % 30 == 0) {
             Map()
@@ -1155,7 +1173,11 @@ class GoldenTables extends QueryTest with SharedSparkSession {
             )
           }
         } else null,
-        Map(i + 1 -> (if (i % 10 == 0) Row((i * 20).longValue()) else null)),
+        // map_of_rows
+        if (i % 25 != 0) {
+          Map(i + 1 -> (if (i % 10 == 0) Row((i * 20).longValue()) else null))
+        } else null,
+        // map_of_arrays
         if (i % 30 != 0) {
           if (i % 24 == 0) {
             Map()
@@ -1180,7 +1202,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       .mode("append")
       .save(tablePath)
   }
-
 
   def writeBasicDecimalTable(tablePath: String): Unit = {
     val data = Seq(
@@ -1212,6 +1233,53 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     withSQLConf(("spark.sql.parquet.writeLegacyFormat", "true")) {
       writeBasicDecimalTable(tablePath)
     }
+  }
+
+  generateGoldenTable("decimal-various-scale-precision") { tablePath =>
+    val fields = ArrayBuffer[StructField]()
+    Seq(0, 4, 7, 12, 15, 18, 25, 35, 38).foreach { precision =>
+      Seq.range(start = 0, end = precision, step = 6).foreach { scale =>
+        fields.append(
+          StructField(s"decimal_${precision}_${scale}", DecimalType(precision, scale)))
+      }
+    }
+
+    val schema = StructType(fields)
+
+    val random = new Random(27 /* seed */)
+    def generateRandomBigDecimal(precision: Int, scale: Int): JBigDecimal = {
+      // Generate a random BigInteger with the specified precision
+      val unscaledValue = new BigInteger(precision, random)
+
+      // Create a BigDecimal with the unscaled value and the specified scale
+      new JBigDecimal(unscaledValue, scale)
+    }
+
+    val rows = ArrayBuffer[Row]()
+    Seq.range(start = 0, end = 3).foreach { i =>
+      val rowValues = ArrayBuffer[BigDecimal]()
+      Seq(0, 4, 7, 12, 15, 18, 25, 35, 38).foreach { precision =>
+        Seq.range(start = 0, end = precision, step = 3).foreach { scale =>
+          i match {
+            case 0 =>
+              rowValues.append(null)
+            case 1 =>
+              // Generate a positive random BigDecimal with the specified precision and scale
+              rowValues.append(generateRandomBigDecimal(precision, scale))
+            case 2 =>
+              // Generate a negative random BigDecimal with the specified precision and scale
+              rowValues.append(generateRandomBigDecimal(precision, scale).negate())
+          }
+        }
+      }
+      rows.append(Row(rowValues: _*))
+    }
+
+    spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+      .repartition(1)
+      .write
+      .format("delta")
+      .save(tablePath)
   }
 
   for (parquetFormat <- Seq("v1", "v2")) {

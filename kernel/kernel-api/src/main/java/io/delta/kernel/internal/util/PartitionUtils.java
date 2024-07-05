@@ -15,9 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
-import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.Timestamp;
@@ -28,9 +26,9 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import static java.util.Arrays.asList;
 
-import io.delta.kernel.client.ExpressionHandler;
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
@@ -38,7 +36,9 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 
 public class PartitionUtils {
     private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
@@ -109,6 +109,87 @@ public class PartitionUtils {
         }
 
         return dataBatch;
+    }
+
+    /**
+     * Convert the given partition values to a {@link MapValue} that can be serialized to a Delta
+     * commit file.
+     *
+     * @param partitionValueMap Expected the partition column names to be same case as in the
+     *                          schema. We want to preserve the case of the partition column names
+     *                          when serializing to the Delta commit file.
+     * @return {@link MapValue} representing the serialized partition values that can be written to
+     * a Delta commit file.
+     */
+    public static MapValue serializePartitionMap(Map<String, Literal> partitionValueMap) {
+        if (partitionValueMap == null || partitionValueMap.isEmpty()) {
+            return VectorUtils.stringStringMapValue(Collections.emptyMap());
+        }
+
+        Map<String, String> serializedPartValues = new HashMap<>();
+        for(Map.Entry<String, Literal> entry : partitionValueMap.entrySet()) {
+            serializedPartValues.put(
+                    entry.getKey(), // partition column name
+                    serializePartitionValue(entry.getValue())); // serialized partition value as str
+        }
+
+        return VectorUtils.stringStringMapValue(serializedPartValues);
+    }
+
+    /**
+     * Validate {@code partitionValues} contains values for every partition column in the table
+     * and the type of the value is correct. Once validated the partition values are sanitized
+     * to match the case of the partition column names in the table schema and returned
+     *
+     * @param tableSchema       Schema of the table.
+     * @param partitionColNames Partition column name. These should be from the table metadata
+     *                          that retain the same case as in the table schema.
+     * @param partitionValues   Map of partition column to value map given by the connector
+     * @return Sanitized partition values.
+     */
+    public static Map<String, Literal> validateAndSanitizePartitionValues(
+            StructType tableSchema,
+            List<String> partitionColNames,
+            Map<String, Literal> partitionValues) {
+
+        if (!toLowerCaseSet(partitionColNames)
+                .equals(toLowerCaseSet(partitionValues.keySet()))) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Partition values provided are not matching the partition columns. " +
+                                    "Partition columns: %s, Partition values: %s",
+                            partitionColNames, partitionValues));
+        }
+
+        // Convert the partition column names in given `partitionValues` to schema case. Schema
+        // case is the exact case the column name was given by the connector when creating the
+        // table. Comparing the column names is case-insensitive, but preserve the case as stored
+        // in the table metadata when writing the partition column name to DeltaLog
+        // (`partitionValues` in `AddFile`) or generating the target directory for writing the
+        // data belonging to a partition.
+        Map<String, Literal> schemaCasePartitionValues =
+                casePreservingPartitionColNames(partitionColNames, partitionValues);
+
+        // validate types are the same
+        schemaCasePartitionValues.entrySet().forEach(entry -> {
+            String partColName = entry.getKey();
+            Literal partValue = entry.getValue();
+            StructField partColField = tableSchema.get(partColName);
+
+            // this shouldn't happen as we have already validated the partition column names
+            checkArgument(
+                    partColField != null,
+                    "Partition column " + partColName + " is not present in the table schema");
+            DataType partColType = partColField.getDataType();
+
+            if (!partColType.equivalent(partValue.getDataType())) {
+                throw new IllegalArgumentException(String.format(
+                        "Partition column %s is of type %s but the value provided is of type %s",
+                        partColName, partColType, partValue.getDataType()));
+            }
+        });
+
+        return schemaCasePartitionValues;
     }
 
     /**
@@ -191,7 +272,7 @@ public class PartitionUtils {
     /**
      * Utility method to rewrite the partition predicate referring to the table schema as predicate
      * referring to the {@code partitionValues} in scan files read from Delta log. The scan file
-     * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(TableClient)}.
+     * batch is returned by the {@link io.delta.kernel.Scan#getScanFiles(Engine)}.
      * <p>
      * E.g. given predicate on partition columns:
      *   {@code p1 = 'new york' && p2 >= 26} where p1 is of type string and p2 is of int
@@ -277,12 +358,7 @@ public class PartitionUtils {
                 // Follow the delta-spark behavior to use "__HIVE_DEFAULT_PARTITION__" for null
                 serializedValue = "__HIVE_DEFAULT_PARTITION__";
             } else {
-                try {
-                    serializedValue = URLEncoder.encode(serializedValue, "UTF-8");
-                } catch (UnsupportedEncodingException e) {
-                    throw new RuntimeException(
-                            "Failed to encode partition value: " + serializedValue, e);
-                }
+                serializedValue = escapePartitionValue(serializedValue);
             }
             String partitionDirectory = partitionColName + "=" + serializedValue;
             targetDirectory = new Path(targetDirectory, partitionDirectory);
@@ -425,5 +501,52 @@ public class PartitionUtils {
             return new String((byte[]) value, StandardCharsets.UTF_8);
         }
         throw new UnsupportedOperationException("Unsupported partition column type: " + dataType);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    // The following string escaping code is mainly copied from Spark                             //
+    // (org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils) which is copied from          //
+    // Hive (o.a.h.h.common.FileUtils).                                                           //
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    private static final BitSet CHARS_TO_ESCAPE = new BitSet(128);
+
+    static {
+        // ASCII 01-1F are HTTP control characters that need to be escaped.
+        char[] controlChars = new char[] {
+            '\u0001', '\u0002', '\u0003', '\u0004', '\u0005', '\u0006', '\u0007', '\b',
+            '\t', '\n', '\u000B', '\f', '\r', '\u000E', '\u000F', '\u0010', '\u0011',
+            '\u0012', '\u0013', '\u0014', '\u0015', '\u0016', '\u0017', '\u0018', '\u0019',
+            '\u001A', '\u001B', '\u001C', '\u001D', '\u001E', '\u001F', '"', '#', '%', '\'',
+            '*', '/', ':', '=', '?', '\\', '\u007F', '{', '[', ']', '^'
+        };
+
+        for (char c : controlChars) {
+            CHARS_TO_ESCAPE.set(c);
+        }
+    }
+
+    /**
+     * Escapes the given string to be used as a partition value in the path. Basically this escapes
+     * <ul>
+     *     <li>characters that can't be in a file path. E.g. `a\nb` will be escaped to `a%0Ab`.</li>
+     *     <li>character that are cause ambiguity in partition value parsing.
+     *     E.g. For partition column `a` having value `b=c`, the path should be `a=b%3Dc`</li>
+     * </ul>
+     *
+     * @param value The partition value to escape.
+     * @return The escaped partition value.
+     */
+    private static String escapePartitionValue(String value) {
+        StringBuilder escaped = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c >= 0 && c < CHARS_TO_ESCAPE.size() && CHARS_TO_ESCAPE.get(c)) {
+                escaped.append('%');
+                escaped.append(String.format("%02X", (int) c));
+            } else {
+                escaped.append(c);
+            }
+        }
+        return escaped.toString();
     }
 }

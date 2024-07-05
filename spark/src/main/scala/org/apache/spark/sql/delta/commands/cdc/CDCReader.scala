@@ -24,14 +24,16 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
@@ -147,6 +149,8 @@ object CDCReader extends CDCReaderImpl
 
     override val schema: StructType = cdcReadSchema(snapshotForBatchSchema.metadata.schema)
 
+    override def unhandledFilters(filters: Array[Filter]): Array[Filter] = Array.empty
+
     override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
       val df = changesToBatchDF(
         deltaLog,
@@ -158,7 +162,9 @@ object CDCReader extends CDCReaderImpl
         sqlContext.sparkSession,
         readSchemaSnapshot = Some(snapshotForBatchSchema))
 
-      df.select(requiredColumns.map(SchemaUtils.fieldNameToColumn): _*).rdd
+      val filter = new Column(DeltaSourceUtils.translateFilters(filters))
+      val projections = requiredColumns.map(SchemaUtils.fieldNameToColumn)
+      df.filter(filter).select(projections: _*).rdd
     }
   }
 
@@ -296,8 +302,8 @@ trait CDCReaderImpl extends DeltaLogging {
     }
 
     logInfo(
-      s"startingVersion: ${startingVersion.version}, " +
-        s"endingVersion: ${endingVersionOpt.map(_.version)}")
+      log"startingVersion: ${MDC(DeltaLogKeys.START_VERSION, startingVersion.version)}, " +
+      log"endingVersion: ${MDC(DeltaLogKeys.END_VERSION, endingVersionOpt.map(_.version))}")
 
     val startingSnapshot = snapshotToUse.deltaLog.getSnapshotAt(startingVersion.version)
     val columnMappingEnabledAtStartingVersion =
@@ -943,9 +949,9 @@ trait CDCReaderImpl extends DeltaLogging {
       isStreaming: Boolean = false): DataFrame = {
 
     val relation = HadoopFsRelation(
-      index,
-      index.partitionSchema,
-      cdcReadSchema(index.schema),
+      location = index,
+      partitionSchema = index.partitionSchema,
+      dataSchema = cdcReadSchema(index.schema),
       bucketSpec = None,
       new DeltaParquetFileFormat(index.protocol, index.metadata, isCDCRead = true),
       options = index.deltaLog.options)(spark)
@@ -980,7 +986,8 @@ trait CDCReaderImpl extends DeltaLogging {
    * Determine if the metadata provided has cdc enabled or not.
    */
   def isCDCEnabledOnTable(metadata: Metadata, spark: SparkSession): Boolean = {
-    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)
+    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(
+      protocol = Protocol(), metadata, spark)
   }
 
   /**

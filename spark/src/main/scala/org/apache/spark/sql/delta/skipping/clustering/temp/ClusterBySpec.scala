@@ -66,6 +66,21 @@ object ClusterBySpec {
   def toProperty(clusterBySpec: ClusterBySpec): (String, String) = {
     ClusteredTableUtils.PROP_CLUSTERING_COLUMNS -> clusterBySpec.toJson
   }
+
+  def fromProperties(properties: Map[String, String]): Option[ClusterBySpec] = {
+    properties.get(ClusteredTableUtils.PROP_CLUSTERING_COLUMNS).map { clusteringColumns =>
+      fromProperty(clusteringColumns)
+    }
+  }
+
+  def toProperties(clusterBySpec: ClusterBySpec): Map[String, String] = {
+    val columnValue = mapper.writeValueAsString(clusterBySpec.columnNames.map(_.fieldNames))
+    Map(ClusteredTableUtils.PROP_CLUSTERING_COLUMNS -> columnValue)
+  }
+
+  def fromColumnNames(names: Seq[String]): ClusterBySpec = {
+    ClusterBySpec(names.map(FieldReference(_)))
+  }
 }
 
 /**

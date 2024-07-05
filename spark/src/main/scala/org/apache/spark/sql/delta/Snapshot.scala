@@ -21,7 +21,8 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.managedcommit.{CommitOwnerClient, CommitOwnerProvider, TableCommitOwnerClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -34,6 +35,7 @@ import org.apache.spark.sql.delta.util.StateCache
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
@@ -228,13 +230,15 @@ class Snapshot(
   }
 
   /**
-   * [[CommitOwnerClient]] for the given delta table as of this snapshot.
-   * - This must be present when managed commit is enabled.
-   * - This must be None when managed commit is disabled.
+   * [[CommitCoordinatorClient]] for the given delta table as of this snapshot.
+   * - This must be present when coordinated commits is enabled.
+   * - This must be None when coordinated commits is disabled.
    */
-  val tableCommitOwnerClientOpt: Option[TableCommitOwnerClient] = initializeTableCommitOwner()
-  protected def initializeTableCommitOwner(): Option[TableCommitOwnerClient] = {
-    CommitOwnerProvider.getTableCommitOwner(this)
+  val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = {
+    initializeTableCommitCoordinator()
+  }
+  protected def initializeTableCommitCoordinator(): Option[TableCommitCoordinatorClient] = {
+    CoordinatedCommitsUtils.getTableCommitCoordinator(spark, this)
   }
 
   /** Number of columns to collect stats on for data skipping */
@@ -474,21 +478,22 @@ class Snapshot(
    * Ensures that commit files are backfilled up to the current version in the snapshot.
    *
    * This method checks if there are any un-backfilled versions up to the current version and
-   * triggers the backfilling process using the commit-owner. It verifies that the delta file for
-   * the current version exists after the backfilling process.
+   * triggers the backfilling process using the commit-coordinator. It verifies that the delta file
+   * for the current version exists after the backfilling process.
    *
    * @throws IllegalStateException
    *   if the delta file for the current version is not found after backfilling.
    */
   def ensureCommitFilesBackfilled(): Unit = {
-    val tableCommitOwnerClient = tableCommitOwnerClientOpt.getOrElse {
+    val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       return
     }
     val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
     if (minUnbackfilledVersion <= version) {
       val hadoopConf = deltaLog.newDeltaHadoopConf()
-      tableCommitOwnerClient.backfillToVersion(
-        startVersion = minUnbackfilledVersion, endVersion = Some(version))
+      tableCommitCoordinatorClient.backfillToVersion(
+        version,
+        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)
       val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
       if (!fs.exists(expectedBackfilledDeltaFile)) {
@@ -503,31 +508,32 @@ class Snapshot(
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
 
-  override def logInfo(msg: => String): Unit = {
-    super.logInfo(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logInfo(msg: MessageWithContext): Unit = {
+    super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logWarning(msg: => String): Unit = {
-    super.logWarning(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logWarning(msg: MessageWithContext): Unit = {
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logWarning(msg: => String, throwable: Throwable): Unit = {
-    super.logWarning(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
+  def logWarning(msg: MessageWithContext, throwable: Throwable): Unit = {
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg,
+      throwable)
   }
 
-  override def logError(msg: => String): Unit = {
-    super.logError(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logError(msg: MessageWithContext): Unit = {
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logError(msg: => String, throwable: Throwable): Unit = {
-    super.logError(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
+  def logError(msg: MessageWithContext, throwable: Throwable): Unit = {
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg, throwable)
   }
 
   override def toString: String =
     s"${getClass.getSimpleName}(path=$path, version=$version, metadata=$metadata, " +
       s"logSegment=$logSegment, checksumOpt=$checksumOpt)"
 
-  logInfo(s"Created snapshot $this")
+  logInfo(log"Created snapshot ${MDC(DeltaLogKeys.SNAPSHOT, this)}")
   init()
 }
 
@@ -593,7 +599,7 @@ class InitialSnapshot(
   override def protocol: Protocol = computedState.protocol
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
 
-  // The [[InitialSnapshot]] is not backed by any external commit-owner.
-  override def initializeTableCommitOwner(): Option[TableCommitOwnerClient] = None
+  // The [[InitialSnapshot]] is not backed by any external commit-coordinator.
+  override def initializeTableCommitCoordinator(): Option[TableCommitCoordinatorClient] = None
   override def timestamp: Long = -1L
 }

@@ -26,6 +26,10 @@ The following <Delta> features break forward compatibility. Features are enabled
    V2 Checkpoints, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
    Domain metadata, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[Domain Metadata Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata)
    Clustering, [Delta Lake 3.1.0](https://github.com/delta-io/delta/releases/tag/v3.1.0),[_](/delta-clustering.md)
+   Row Tracking, [Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-row-tracking.md)
+   Type widening (Preview),[Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-type-widening.md)
+   Coordinated Commits (Preview),[Delta Lake 4.0.0 Preview](https://github.com/delta-io/delta/releases/tag/v4.0.0rc1), [_](/delta-coordinated-commits.md)
+   Variant Type (Preview), [Delta Lake 4.0.0 Preview](https://github.com/delta-io/delta/releases/tag/v4.0.0rc1),[Variant Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)
 
 <a id="table-protocol"></a>
 
@@ -106,6 +110,11 @@ The following table shows minimum protocol versions required for <Delta> feature
    Timestamp without Timezone,7,3,[TimestampNTZType](https://spark.apache.org/docs/latest/sql-ref-datatypes.html)
    Iceberg Compatibility V1,7,2,[IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
    V2 Checkpoints,7,3,[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
+   Vacuum Protocol Check,7,3,[Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check)
+   Row Tracking,7,3,[_](/delta-row-tracking.md)
+   Type widening (Preview),7,3,[_](/delta-type-widening.md)
+   Coordinated Commits (Preview),7,3,[_](/delta-coordinated-commits.md)
+   Variant Type (Preview),7,3,[Variant Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)
 
 <a id="upgrade"></a>
 

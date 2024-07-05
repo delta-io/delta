@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.icebergShaded
 
+import java.util.ConcurrentModificationException
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
@@ -29,7 +31,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
-import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
+import shadedForDelta.org.apache.iceberg.ExpireSnapshots
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 
@@ -48,12 +50,15 @@ case object REPLACE_TABLE extends IcebergTableOp
  * @param conf Configuration for Iceberg Hadoop interactions.
  * @param postCommitSnapshot Latest Delta snapshot associated with this Iceberg commit.
  * @param tableOp How to instantiate the underlying Iceberg table. Defaults to WRITE_TABLE.
+ * @param lastConvertedIcebergSnapshotId the iceberg snapshot this Iceberg txn should write to.
+ * @param lastConvertedDeltaVersion the delta version this Iceberg txn starts from.
  */
 class IcebergConversionTransaction(
     protected val catalogTable: CatalogTable,
     protected val conf: Configuration,
     protected val postCommitSnapshot: Snapshot,
     protected val tableOp: IcebergTableOp = WRITE_TABLE,
+    protected val lastConvertedIcebergSnapshotId: Option[Long] = None,
     protected val lastConvertedDeltaVersion: Option[Long] = None) extends DeltaLogging {
 
   ///////////////////////////
@@ -180,6 +185,12 @@ class IcebergConversionTransaction(
     }
   }
 
+  class ExpireSnapshotHelper(expireSnapshot: ExpireSnapshots)
+      extends TransactionHelper(expireSnapshot) {
+
+    override def opType: String = "expireSnapshot"
+  }
+
   //////////////////////
   // Member variables //
   //////////////////////
@@ -197,7 +208,7 @@ class IcebergConversionTransaction(
     DeltaFileProviderUtils.createJsonStatsParser(postCommitSnapshot.statsSchema)
 
   /** Visible for testing. */
-  private[icebergShaded]val txn = createIcebergTxn()
+  private[icebergShaded]val (txn, startFromSnapshotId) = withStartSnapshotId(createIcebergTxn())
 
   /** Tracks if this transaction has already committed. You can only commit once. */
   private var committed = false
@@ -232,6 +243,12 @@ class IcebergConversionTransaction(
 
   def getRewriteHelper(): RewriteHelper = {
     val ret = new RewriteHelper(txn.newRewrite())
+    fileUpdates += ret
+    ret
+  }
+
+  def getExpireSnapshotHelper(): ExpireSnapshotHelper = {
+    val ret = new ExpireSnapshotHelper(txn.expireSnapshots())
     fileUpdates += ret
     ret
   }
@@ -320,6 +337,25 @@ class IcebergConversionTransaction(
       .set(IcebergConverter.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
       .commit()
 
+    // We ensure the iceberg txns are serializable by only allowing them to commit against
+    // lastConvertedIcebergSnapshotId.
+    //
+    // If the startFromSnapshotId is non-empty and not the same as lastConvertedIcebergSnapshotId,
+    // there is a new iceberg transaction committed after we read lastConvertedIcebergSnapshotId,
+    // and before this check. We explicitly abort by throwing exceptions.
+    //
+    // If startFromSnapshotId is empty, the txn must be one of the following:
+    // 1. CREATE_TABLE
+    // 2. Writing to an empty table
+    // 3. REPLACE_TABLE
+    // In either case this txn is safe to commit.
+    //
+    // Iceberg will further guarantee that txns passed this check are serializable.
+    if (startFromSnapshotId.isDefined && lastConvertedIcebergSnapshotId != startFromSnapshotId) {
+      throw new ConcurrentModificationException("Cannot commit because the converted " +
+        s"metadata is based on a stale iceberg snapshot $lastConvertedIcebergSnapshotId"
+      )
+    }
     try {
       txn.commitTransaction()
       if (tableOp == CREATE_TABLE) {
@@ -398,6 +434,16 @@ class IcebergConversionTransaction(
   ////////////////////
   // Helper Methods //
   ////////////////////
+
+  /**
+   * We fetch the txn table's current snapshot id before any writing is made on the transaction.
+   * This id should equal [[lastConvertedIcebergSnapshotId]] for the transaction to commit.
+   *
+   * @param txn the iceberg transaction
+   * @return txn and the snapshot id just before this txn
+   */
+  private def withStartSnapshotId(txn: IcebergTransaction): (IcebergTransaction, Option[Long]) =
+    (txn, Option(txn.table().currentSnapshot()).map(_.snapshotId()))
 
   private def recordIcebergCommit(errorOpt: Option[Throwable] = None): Unit = {
     val icebergTxnTypes =

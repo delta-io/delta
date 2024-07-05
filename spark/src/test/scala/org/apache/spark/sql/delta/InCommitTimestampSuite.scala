@@ -25,7 +25,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.managedcommit.{CommitOwnerProvider, ManagedCommitBaseSuite, ManagedCommitTestUtils, TrackingInMemoryCommitOwnerBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
@@ -40,7 +40,7 @@ class InCommitTimestampSuite
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaTestUtilsBase
-    with ManagedCommitTestUtils {
+    with CoordinatedCommitsTestUtils {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -67,8 +67,8 @@ class InCommitTimestampSuite
     }
   }
 
-  // Managed Commits will also automatically enable ICT.
-  testWithDefaultCommitOwnerUnset(
+  // Coordinated Commits will also automatically enable ICT.
+  testWithDefaultCommitCoordinatorUnset(
     "Create a non-inCommitTimestamp table and then enable timestamp") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
@@ -140,6 +140,44 @@ class InCommitTimestampSuite
       // Make sure that this transaction resulted in a conflict.
       assert(filterUsageRecords(usageRecords, "delta.commit.retry").length == 1)
       assert(getInCommitTimestamp(deltaLog, 2) > getInCommitTimestamp(deltaLog, 1))
+    }
+  }
+
+  for (useCommitLarge <- BOOLEAN_DOMAIN)
+  test("txn.commit should use clock.currentTimeMillis() for ICT" +
+    s" [useCommitLarge: $useCommitLarge]") {
+    withTempDir { tempDir =>
+      spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
+      // Clear the DeltaLog cache so that a new DeltaLog is created with the manual clock.
+      DeltaLog.clearCache()
+      val expectedCommit1Time = System.currentTimeMillis()
+      val clock = new ManualClock(expectedCommit1Time)
+      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val ver0Snapshot = deltaLog.snapshot
+      assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(ver0Snapshot.metadata))
+      val usageRecords = Log4jUsageLogger.track {
+        if (useCommitLarge) {
+          deltaLog.startTransaction().commitLarge(
+            spark,
+            Seq(createTestAddFile("1")).toIterator,
+            newProtocolOpt = None,
+            DeltaOperations.ManualUpdate,
+            context = Map.empty,
+            metrics = Map.empty)
+        } else {
+          deltaLog.startTransaction().commit(
+            Seq(createTestAddFile("1")),
+            DeltaOperations.ManualUpdate,
+            tags = Map.empty
+          )
+        }
+      }
+      val ver1Snapshot = deltaLog.snapshot
+      val retrievedTimestamp = getInCommitTimestamp(deltaLog, version = 1)
+      assert(ver1Snapshot.timestamp == retrievedTimestamp)
+      assert(ver1Snapshot.timestamp == expectedCommit1Time)
+      val expectedOpType = if (useCommitLarge) "delta.commit.large" else "delta.commit"
+      assert(filterUsageRecords(usageRecords, expectedOpType).length == 1)
     }
   }
 
@@ -260,8 +298,9 @@ class InCommitTimestampSuite
     }
   }
 
-  // Managed Commits will also automatically enable ICT.
-  testWithDefaultCommitOwnerUnset("Enablement tracking works when ICT is enabled post commit 0") {
+  // Coordinated Commits will also automatically enable ICT.
+  testWithDefaultCommitCoordinatorUnset(
+    "Enablement tracking works when ICT is enabled post commit 0") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
@@ -287,8 +326,8 @@ class InCommitTimestampSuite
     }
   }
 
-  // Managed Commits will also automatically enable ICT.
-  testWithDefaultCommitOwnerUnset("Conflict resolution of enablement version") {
+  // Coordinated Commits will also automatically enable ICT.
+  testWithDefaultCommitCoordinatorUnset("Conflict resolution of enablement version") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
@@ -323,8 +362,8 @@ class InCommitTimestampSuite
     }
   }
 
-  // Managed Commits will also automatically enable ICT.
-  testWithDefaultCommitOwnerUnset(
+  // Coordinated Commits will also automatically enable ICT.
+  testWithDefaultCommitCoordinatorUnset(
     "commitLarge should correctly set the enablement tracking properties") {
     withTempDir { tempDir =>
       spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
@@ -555,8 +594,8 @@ class InCommitTimestampSuite
     }
   }
 
-  // Managed Commits will also automatically enable ICT.
-  testWithDefaultCommitOwnerUnset("DeltaHistoryManager.getActiveCommitAtTime: " +
+  // Coordinated Commits will also automatically enable ICT.
+  testWithDefaultCommitCoordinatorUnset("DeltaHistoryManager.getActiveCommitAtTime: " +
     "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
@@ -640,8 +679,8 @@ class InCommitTimestampSuite
     }
   }
 
-  // Managed Commits will also automatically enable ICT.
-  testWithDefaultCommitOwnerUnset("DeltaHistoryManager.getHistory --- " +
+  // Coordinated Commits will also automatically enable ICT.
+  testWithDefaultCommitCoordinatorUnset("DeltaHistoryManager.getHistory --- " +
       "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
@@ -949,25 +988,25 @@ class InCommitTimestampSuite
   }
 }
 
-class InCommitTimestampWithManagedCommitSuite
+class InCommitTimestampWithCoordinatedCommitsSuite
   extends InCommitTimestampSuite
-    with ManagedCommitBaseSuite {
+    with CoordinatedCommitsBaseSuite {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")
   }
 
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(5)
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(5)
 
-  test("getActiveCommitAtTime works correctly within managed commit range") {
-    CommitOwnerProvider.clearNonDefaultBuilders()
-    val builder = TrackingInMemoryCommitOwnerBuilder(batchSize = 10)
-    CommitOwnerProvider.registerBuilder(builder)
+  test("getActiveCommitAtTime works correctly within coordinated commits range") {
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
+    val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
+    CommitCoordinatorProvider.registerBuilder(builder)
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
       val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
-      val tableCommitOwnerClient = deltaLog.snapshot.tableCommitOwnerClientOpt.get
+      val tableCommitCoordinatorClient = deltaLog.snapshot.tableCommitCoordinatorClientOpt.get
       val numberAdditionalCommits = 4
       // Create 4 unbackfilled commits.
       for (i <- 1 to numberAdditionalCommits) {
@@ -975,10 +1014,10 @@ class InCommitTimestampWithManagedCommitSuite
       }
       val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
       val unbackfilledCommits =
-        tableCommitOwnerClient
-          .getCommits(1)
-          .commits
-          .map { commit => DeltaHistoryManager.Commit(commit.version, commit.commitTimestamp)}
+        tableCommitCoordinatorClient
+          .getCommits(Some(1))
+          .getCommits
+          .map { commit => DeltaHistoryManager.Commit(commit.getVersion, commit.getCommitTimestamp)}
       val commits = (Seq(commit0) ++ unbackfilledCommits).toList
       // Search for the exact timestamp.
       for (commit <- commits) {

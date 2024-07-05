@@ -20,8 +20,8 @@ import java.io.IOException;
 import java.util.Optional;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.client.TableClient;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -47,7 +47,7 @@ public interface Scan {
     /**
      * Get an iterator of data files to scan.
      *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
+     * @param engine {@link Engine} instance to use in Delta Kernel.
      * @return iterator of {@link FilteredColumnarBatch}s where each selected row in
      * the batch corresponds to one scan file. Schema of each row is defined as follows:
      * <p>
@@ -56,10 +56,12 @@ public interface Scan {
      *   <li>name: {@code add}, type: {@code struct}</li>
      *   <li>Description: Represents `AddFile` DeltaLog action</li>
      *   <li><ul>
-     *    <li>name: {@code path}, type: {@code string}, description: location of the file.</li>
+     *    <li>name: {@code path}, type: {@code string}, description: location of the file.
+     *    The path is a URI as specified by RFC 2396 URI Generic Syntax, which needs to be decoded
+     *    to get the data file path.</li>
      *    <li>name: {@code partitionValues}, type: {@code map(string, string)},
      *       description: A map from partition column to value for this logical file. </li>
-     *    <li>name: {@code size}, type: {@code log}, description: size of the file.</li>
+     *    <li>name: {@code size}, type: {@code long}, description: size of the file.</li>
      *    <li>name: {@code modificationTime}, type: {@code log}, description: the time this
      *       logical file was created, as milliseconds since the epoch.</li>
      *    <li>name: {@code dataChange}, type: {@code boolean}, description: When false the
@@ -72,22 +74,28 @@ public interface Scan {
      *      <a href=https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Deletion-Vectors>
      *          Protocol</a><ul>
      *       <li>name: {@code storageType}, type: {@code string}</li>
-     *       <li>name: {@code pathOrInlineDv}, type: {@code string}</li>
+     *       <li>name: {@code pathOrInlineDv}, type: {@code string}, description: The path is a
+     *       URI as specified by RFC 2396 URI Generic Syntax, which needs to be decoded to get the
+     *       data file path.</li>
      *       <li>name: {@code offset}, type: {@code log}</li>
      *       <li>name: {@code sizeInBytes}, type: {@code log}</li>
      *       <li>name: {@code cardinality}, type: {@code log}</li>
      *    </ul></li>
+     *    <li>name: {@code tags}, type: {@code map(string, string)}, description: Map containing
+     *      metadata about the scan file.</li>
      *   </ul></li>
      *  </ul></li>
      *  <li><ul>
      *      <li>name: {@code tableRoot}, type: {@code string}</li>
-     *      <li>Description: Absolute path of the table location. NOTE: this is temporary. Will
-     *      be removed in future. @see <a href=https://github.com/delta-io/delta/issues/2089>
-     *          </a></li>
+     *      <li>Description: Absolute path of the table location. The path is a URI as specified by
+     *      RFC 2396 URI Generic Syntax, which needs to be decode to get the data file path.
+     *      NOTE: this is temporary. Will be removed in future.
+     *      @see <a href=https://github.com/delta-io/delta/issues/2089></a>
+     *      </li>
      *  </ul></li>
      * </ol>
      */
-    CloseableIterator<FilteredColumnarBatch> getScanFiles(TableClient tableClient);
+    CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
 
     /**
      * Get the remaining filter that is not guaranteed to be satisfied for the data Delta Kernel
@@ -101,17 +109,17 @@ public interface Scan {
      * Get the scan state associated with the current scan. This state is common across all
      * files in the scan to be read.
      *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
+     * @param engine {@link Engine} instance to use in Delta Kernel.
      * @return Scan state in {@link Row} format.
      */
-    Row getScanState(TableClient tableClient);
+    Row getScanState(Engine engine);
 
     /**
      * Transform the physical data read from the table data file into the logical data that expected
      * out of the Delta table.
      *
-     * @param tableClient      Connector provided {@link TableClient} implementation.
-     * @param scanState        Scan state returned by {@link Scan#getScanState(TableClient)}
+     * @param engine      Connector provided {@link Engine} implementation.
+     * @param scanState        Scan state returned by {@link Scan#getScanState(Engine)}
      * @param scanFile         Scan file from where the physical data {@code physicalDataIter} is
      *                         read from.
      * @param physicalDataIter Iterator of {@link ColumnarBatch}s containing the physical data read
@@ -123,7 +131,7 @@ public interface Scan {
      * @throws IOException when error occurs while reading the data.
      */
     static CloseableIterator<FilteredColumnarBatch> transformPhysicalData(
-            TableClient tableClient,
+            Engine engine,
             Row scanState,
             Row scanFile,
             CloseableIterator<ColumnarBatch> physicalDataIter) throws IOException {
@@ -142,8 +150,8 @@ public interface Scan {
                 if (inited) {
                     return;
                 }
-                physicalReadSchema = ScanStateRow.getPhysicalSchema(tableClient, scanState);
-                logicalReadSchema = ScanStateRow.getLogicalSchema(tableClient, scanState);
+                physicalReadSchema = ScanStateRow.getPhysicalSchema(engine, scanState);
+                logicalReadSchema = ScanStateRow.getLogicalSchema(engine, scanState);
 
                 tablePath = ScanStateRow.getTableRoot(scanState);
                 inited = true;
@@ -182,7 +190,7 @@ public interface Scan {
                     }
                     if (!dv.equals(currDV)) {
                         Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
-                            DeletionVectorUtils.loadNewDvAndBitmap(tableClient, tablePath, dv);
+                            DeletionVectorUtils.loadNewDvAndBitmap(engine, tablePath, dv);
                         this.currDV = dvInfo._1;
                         this.currBitmap = dvInfo._2;
                     }
@@ -197,7 +205,7 @@ public interface Scan {
                 // Add partition columns
                 nextDataBatch =
                     PartitionUtils.withPartitionColumns(
-                        tableClient.getExpressionHandler(),
+                        engine.getExpressionHandler(),
                         nextDataBatch,
                         InternalScanFileUtils.getPartitionValues(scanFile),
                         physicalReadSchema

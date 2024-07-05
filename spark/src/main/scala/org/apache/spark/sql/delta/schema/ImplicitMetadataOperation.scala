@@ -21,9 +21,11 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -107,7 +109,9 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         throw DeltaErrors.unexpectedDataChangeException("Create a Delta table")
       }
       val description = configuration.get("comment").orNull
-      val cleanedConfs = configuration.filterKeys(_ != "comment").toMap
+      // Filter out the property for clustering columns from Metadata action.
+      val cleanedConfs = ClusteredTableUtils.removeClusteringColumnsProperty(
+        configuration.filterKeys(_ != "comment").toMap)
       txn.updateMetadata(
         Metadata(
           description = description,
@@ -131,7 +135,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       txn.updateMetadataForTableOverwrite(newMetadata)
     } else if (isNewSchema && canMergeSchema && !isNewPartitioning
         ) {
-      logInfo(s"New merged schema: ${mergedSchema.treeString}")
+      logInfo(log"New merged schema: ${MDC(DeltaLogKeys.SCHEMA, mergedSchema.treeString)}")
       recordDeltaEvent(txn.deltaLog, "delta.ddl.mergeSchema")
       if (rearrangeOnly) {
         throw DeltaErrors.unexpectedDataChangeException("Change the Delta table schema")
@@ -181,7 +185,7 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       clusterBySpecOpt: Option[ClusterBySpec] = None): Seq[DomainMetadata] = {
     if (canUpdateMetadata && (!txn.deltaLog.tableExists || isReplacingTable)) {
       val newDomainMetadata = Seq.empty[DomainMetadata] ++
-        ClusteredTableUtils.getDomainMetadataOptional(clusterBySpecOpt, txn)
+        ClusteredTableUtils.getDomainMetadataFromTransaction(clusterBySpecOpt, txn)
       if (!txn.deltaLog.tableExists) {
         newDomainMetadata
       } else {
