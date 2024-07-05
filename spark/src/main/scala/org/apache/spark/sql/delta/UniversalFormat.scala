@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.types.NullType
+import org.apache.spark.sql.types.{ByteType, CalendarIntervalType, NullType, ShortType, TimestampNTZType, VariantType}
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
@@ -103,7 +103,8 @@ object UniversalFormat extends DeltaLogging {
         throw DeltaErrors.uniFormHudiDeleteVectorCompat()
       }
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
-        f.isInstanceOf[NullType]
+        f.isInstanceOf[NullType] | f.isInstanceOf[ByteType] | f.isInstanceOf[ShortType] |
+        f.isInstanceOf[TimestampNTZType] | f.isInstanceOf[VariantType]
       } match {
         case Some(unsupportedType) =>
           throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
