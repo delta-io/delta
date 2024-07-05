@@ -27,6 +27,7 @@ spark_delta = SparkSession.builder \
 
 def get_delta_df(spark, table_name):
     hudi_table_path = os.path.join(warehouse_path, table_name)
+    print('hudi_table_path:', hudi_table_path)
     df_delta = spark.read.format("delta").load(hudi_table_path)
     return df_delta
 
@@ -106,6 +107,20 @@ spark_delta.sql(f"INSERT INTO {hudi_table_base_name}_4 VALUES (named_struct('fie
 df_delta_4 = get_delta_df(spark_delta, f"{hudi_table_base_name}_4")
 df_delta_4.show()
 
+# time travel
+spark_delta.sql(f"""CREATE TABLE {hudi_table_base_name}_5 (col1 INT, col2 STRING) USING DELTA
+                TBLPROPERTIES('delta.universalFormat.enabledFormats' = 'hudi',
+                              'delta.columnMapping.mode' = 'name')""")
+spark_delta.sql(f"INSERT INTO {hudi_table_base_name}_5 VALUES (1, 'a')")
+spark_delta.sql(f"INSERT INTO {hudi_table_base_name}_5 VALUES (2, 'b')")
+
+df_history_5 = spark_delta.sql(f"DESCRIBE HISTORY {hudi_table_base_name}_5")
+timestamp = df_history_5.collect()[0]['timestamp'] # get the timestamp of the first commit
+df_delta_5 = spark_delta.sql(f"""
+    SELECT * FROM {hudi_table_base_name}_5
+    TIMESTAMP AS OF '{timestamp}'""")
+df_delta_5.show()
+
 time.sleep(5)
 
 ###################### Read tables from Hudi engine ######################
@@ -140,5 +155,11 @@ assertDataFrameEqual(df_delta_3, df_hudi_3)
 df_hudi_4 = get_hudi_df(spark_hudi, f"{hudi_table_base_name}_4")
 df_hudi_4.show()
 assertDataFrameEqual(df_delta_4, df_hudi_4)
+
+df_hudi_5 = spark_hudi.sql(f"""
+    SELECT * FROM {hudi_table_base_name}_5
+    TIMESTAMP AS OF '{timestamp}'""")
+df_hudi_5.show()
+assertDataFrameEqual(df_delta_5, df_hudi_5)
 
 print('UniForm Hudi integration test passed!')
