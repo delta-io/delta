@@ -371,13 +371,7 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       assert(paths.equals(expectedFiles),
         s"Files do not match.\nExpected: $expectedFiles\nActual: $paths")
       // Assert schemas are equal
-      val expectedSchema = StructType(deltaDF.schema.map {
-        case StructField(name, ShortType, nullable, _) =>
-          StructField(name, IntegerType, nullable)
-        case StructField(name, ByteType, nullable, _) =>
-          StructField(name, IntegerType, nullable)
-        case other => other
-      })
+      val expectedSchema = deltaDF.schema
 
       assert(hudiSchemaAsStruct.equals(expectedSchema),
         s"Schemas do not match.\nExpected: $expectedSchema\nActual: $hudiSchemaAsStruct")
