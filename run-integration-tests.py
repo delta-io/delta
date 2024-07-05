@@ -256,8 +256,9 @@ def run_uniform_hudi_integration_tests(root_dir, version, extra_maven_repo, use_
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = ','.join([
-        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)])
-    jars = path.join(root_dir, "hudi/target/scala-2.12/delta-hudi-assembly_2.12-%s.jar" % (version))
+        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version),
+        "org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.0"])
+    jars = ','.join([path.join(root_dir, "hudi/target/scala-2.12/delta-hudi-assembly_2.12-%s.jar" % (version))])
 
     repo = extra_maven_repo if extra_maven_repo else ""
 
