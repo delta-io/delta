@@ -15,6 +15,7 @@
  */
 package io.delta.kernel;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -97,5 +98,5 @@ public interface TransactionBuilder {
      * @throws UnknownConfigurationException if any of the properties are unknown to
      *                                      {@link TableConfig}.
      */
-    Transaction build(Engine engine);
+    Transaction build(Engine engine) throws IOException;
 }

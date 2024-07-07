@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal;
 
+import java.io.IOException;
 import java.util.*;
 import static java.util.Objects.requireNonNull;
 
@@ -33,6 +34,7 @@ import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
+import io.delta.kernel.internal.util.CoordinatedCommitsUtils;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
@@ -97,7 +99,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     @Override
-    public Transaction build(Engine engine) {
+    public Transaction build(Engine engine) throws IOException {
         SnapshotImpl snapshot;
         try {
             snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
@@ -115,6 +117,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         boolean isNewTable = snapshot.getVersion(engine) < 0;
         validate(engine, snapshot, isNewTable);
 
+        CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(engine, snapshot, logger);
+
         boolean shouldUpdateMetadata = false;
         boolean shouldUpdateProtocol = false;
         Metadata metadata = snapshot.getMetadata();
@@ -122,16 +126,18 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         if (tableProperties.isPresent()) {
             Map<String, String> validatedProperties =
                     TableConfig.validateProperties(engine, tableProperties.get());
-            Map<String, String> newProperties =
+            Tuple2<Set<String>, Map<String, String>> newProperties =
                     metadata.filterOutUnchangedProperties(validatedProperties);
-
+            Set<String> unsetProperties = newProperties._1;
+            Map<String, String> changedProperties = newProperties._2;
             ColumnMapping.verifyColumnMappingChange(
-                    metadata.getConfiguration(), newProperties, isNewTable);
-
-            if (!newProperties.isEmpty()) {
+                    metadata.getConfiguration(), changedProperties, isNewTable);
+            if (!unsetProperties.isEmpty() || !changedProperties.isEmpty()) {
                 shouldUpdateMetadata = true;
-                getPropertiesWithDependentFeaturesEnabled(engine, newProperties, metadata);
-                metadata = metadata.withNewConfiguration(newProperties);
+                getPropertiesWithDependentFeaturesEnabled(engine, changedProperties, metadata);
+                metadata = metadata
+                        .withNewConfiguration(changedProperties)
+                        .removeConfiguration(unsetProperties);
             }
 
             Set<String> newWriterFeatures =

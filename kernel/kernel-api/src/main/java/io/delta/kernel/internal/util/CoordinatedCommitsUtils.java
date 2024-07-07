@@ -15,18 +15,32 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
+import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.CommitCoordinatorClientHandler;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.JsonHandler;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractCommitInfo;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.fs.Path;
 import static io.delta.kernel.internal.TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF;
 import static io.delta.kernel.internal.TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME;
+import static io.delta.kernel.internal.util.FileNames.getUnbackfilledDeltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 public class CoordinatedCommitsUtils {
@@ -133,5 +147,71 @@ public class CoordinatedCommitsUtils {
 
     public static AbstractCommitInfo convertCommitInfoToAbstractCommitInfo(CommitInfo commitInfo) {
         return () -> commitInfo.getInCommitTimestamp().orElse(commitInfo.getTimestamp());
+    }
+
+    /**
+     * This method takes care of backfilling any unbackfilled delta files when coordinated commits
+     * is not enabled on the table (i.e., commit-coordinator is not present) but there are still
+     * unbackfilled delta files in the table. This can happen if an error occurred during the
+     * CC to FS commit where the commit-coordinator was able to register the downgrade commit but
+     * it failed to backfill it. This method must be invoked before doing the next commit as
+     * otherwise there will be a gap in the backfilled commit sequence.
+     */
+    public static void backfillWhenCoordinatedCommitsDisabled(
+            Engine engine, SnapshotImpl snapshot, Logger logger) throws IOException {
+        if (snapshot.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent()) {
+            // Coordinated commits is enabled on the table.
+            // Don't backfill as backfills are managed by commit-coordinators.
+            return;
+        }
+
+        List<FileNames.PathVersionUuid> unbackfilledPathVersionUuid = snapshot
+                .getLogSegment().deltas.stream()
+                .map(deltaFile -> getUnbackfilledDeltaFile(new Path(deltaFile.getPath())))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .collect(Collectors.toList());
+
+        if (unbackfilledPathVersionUuid.isEmpty()) return;
+
+        JsonHandler handler = engine.getJsonHandler();
+
+        for (FileNames.PathVersionUuid pathVersionUuid : unbackfilledPathVersionUuid) {
+            Path unbackfilledDeltaFile = pathVersionUuid.getPath();
+            long version = pathVersionUuid.getVersion();
+            String backfilledFilePath = FileNames.deltaFile(snapshot.getLogPath(), version);
+            try {
+                CloseableIterator<Row> rows = getRowsFromFile(handler, unbackfilledDeltaFile);
+                handler.writeJsonFileAtomically(backfilledFilePath, rows, false);
+                logger.info(
+                        "Delta file {} backfilled to path {}.",
+                        unbackfilledDeltaFile,
+                        backfilledFilePath);
+            } catch (FileAlreadyExistsException ignored) {
+                logger.info("Delta file {} already backfilled.", unbackfilledDeltaFile);
+            }
+        }
+    }
+
+    private static CloseableIterator<Row> getRowsFromFile(
+            JsonHandler handler, Path delta) throws IOException {
+        FileStatus file = FileStatus.of(delta.toString(), 0, 0);
+        CloseableIterator<ColumnarBatch> columnarBatches = handler.readJsonFiles(
+                Utils.singletonCloseableIterator(file),
+                SingleAction.FULL_SCHEMA,
+                Optional.empty());
+
+        List<Row> allRows = new ArrayList<>();
+
+        while (columnarBatches.hasNext()) {
+            ColumnarBatch batch = columnarBatches.next();
+            CloseableIterator<Row> rows = batch.getRows();
+            while (rows.hasNext()) {
+                Row row = rows.next();
+                allRows.add(row);
+            }
+        }
+
+        return Utils.toCloseableIterator(allRows.iterator());
     }
 }

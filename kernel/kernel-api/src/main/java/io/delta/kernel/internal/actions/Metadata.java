@@ -25,6 +25,7 @@ import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
@@ -145,7 +146,22 @@ public class Metadata {
                 schema,
                 this.partitionColumns,
                 this.createdTime,
-                this.configurationMapValue
+                this.configurationMapValue);
+    }
+
+    public Metadata removeConfiguration(Set<String> keys) {
+        Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
+        keys.forEach(newConfiguration::remove);
+        return new Metadata(
+            this.id,
+            this.name,
+            this.description,
+            this.format,
+            this.schemaString,
+            this.schema,
+            this.partitionColumns,
+            this.createdTime,
+            VectorUtils.stringStringMapValue(newConfiguration)
         );
     }
 
@@ -230,12 +246,21 @@ public class Metadata {
      *
      * @return the filtered properties
      */
-    public Map<String, String> filterOutUnchangedProperties(Map<String, String> newProperties) {
+    public Tuple2<Set<String>, Map<String, String>> filterOutUnchangedProperties(
+            Map<String, String> newProperties) {
         Map<String, String> oldProperties = getConfiguration();
-        return newProperties.entrySet().stream()
-                .filter(entry -> !oldProperties.containsKey(entry.getKey()) ||
-                        !oldProperties.get(entry.getKey()).equals(entry.getValue()))
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        Set<String> unsetProperties = new HashSet<>();
+        Map<String, String> changedProperties = new HashMap<>();
+        for (String key : newProperties.keySet()) {
+            if (newProperties.get(key) != null &&
+                    (!oldProperties.containsKey(key) ||
+                    !oldProperties.get(key).equals(newProperties.get(key)))) {
+                changedProperties.put(key, newProperties.get(key));
+            } else if (newProperties.get(key) == null && oldProperties.containsKey(key)) {
+                unsetProperties.add(key);
+            }
+        }
+        return new Tuple2<>(unsetProperties, changedProperties);
     }
 
     /**

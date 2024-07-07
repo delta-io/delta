@@ -652,6 +652,220 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
     })
   }
 
+  // This test has the following setup:
+  // Setup:
+  // 1. Make 2 commits on the table with CS1 as owner.
+  // 2. Make 2 new commits to change the owner back to FS and then from FS to CS2.
+  // 3. Do cold read from table and confirm we can construct snapshot v3 automatically. This will
+  //    need multiple snapshot update internally and both CS1 and CS2 will be contacted one
+  //    after the other.
+  // 4. Write commit 4/5 using new commit-coordinator.
+  // 5. Read the table again and make sure right APIs are called:
+  //    a) If read query is run in scala, we do listing 2 times. So CS2.getCommits will be called
+  //       twice. We should not be contacting CS1 anymore.
+  //    b) If read query is run on SQL, we do listing only once. So CS2.getCommits will be called
+  //       only once.
+  test("snapshot is updated properly when owner changes multiple times") {
+    val config = Map(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory-1") ->
+        classOf[TrackingInMemoryCommitCoordinatorBuilder1].getName,
+      CommitCoordinatorProvider.
+        getCommitCoordinatorNameConfKey("tracking-in-memory-2") ->
+        classOf[TrackingInMemoryCommitCoordinatorBuilder2].getName,
+      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10")
+
+    def verifyBackfilledList(
+      engine: Engine, logPath: Path, backfilledList: List[String]): Unit = {
+      assert(
+        engine
+          .getFileSystemClient
+          .listFrom(FileNames.listingPrefix(logPath, 0L))
+          .map(f => new Path(f.getPath).getName).toList ==
+          backfilledList ++ List("_commits"))
+    }
+
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val table = Table.forPath(engine, tablePath)
+        val logPath = new Path(table.getPath(engine), "_delta_log")
+        // Step-1: Make 2 commits on the table with CS1 as owner.
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1),
+          tableProperties = Map(
+            COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "tracking-in-memory-1",
+            COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}")
+        )
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches2)
+        )
+
+        var expectedAnswer =
+          dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
+        val ver1Snapshot = table.getLatestSnapshot(engine)
+        checkAnswer(
+          readSnapshot(ver1Snapshot, ver1Snapshot.getSchema(engine), null, null, engine),
+          expectedAnswer)
+        verifyBackfilledList(engine, logPath, (0 to 0).map(i => f"$i%020d.json").toList)
+
+        // Step-2: Add commit 2: change the table owner from "tracking-in-memory-1" to FS.
+        //         Add commit 3: change the table owner from FS to "tracking-in-memory-2".
+        // Both of these commits should be FS based as the spec mandates an atomic backfill when
+        // the commit-coordinator changes.
+        {
+          enableCoordinatedCommits(engine, tablePath, null)
+
+          // Commit 0/1/2 should already be backfilled -- which the spec mandates when the
+          // commit-coordinator changes
+          verifyBackfilledList(engine, logPath, (0 to 2).map(i => f"$i%020d.json").toList)
+
+          enableCoordinatedCommits(engine, tablePath, "tracking-in-memory-2")
+          verifyBackfilledList(engine, logPath, (0 to 3).map(i => f"$i%020d.json").toList)
+        }
+
+        // Step-3: Confirm we can construct snapshot v3 automatically.
+        TrackingInMemoryCommitCoordinatorBuilderX.resetMetrics()
+        val ver3Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        checkAnswer(
+          readSnapshot(ver3Snapshot, ver3Snapshot.getSchema(engine), null, null, engine),
+          expectedAnswer)
+        assert(TrackingInMemoryCommitCoordinatorBuilderX.numBuildCalled1 == 0)
+        assert(TrackingInMemoryCommitCoordinatorBuilderX.numBuildCalled2 == 1)
+
+        assert(
+          ver3Snapshot
+            .getTableCommitCoordinatorClientHandlerOpt(engine)
+            .get
+            .semanticEquals(engine.getCommitCoordinatorClientHandler(
+              "tracking-in-memory-2", Collections.emptyMap())))
+        assert(ver3Snapshot.getVersion(engine) === 3)
+
+        // Step-4: Write more commits using new owner
+        TrackingInMemoryCommitCoordinatorBuilderX.resetMetrics()
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1)
+        )
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches2)
+        )
+
+        assert(TrackingCommitCoordinatorClient.numCommitsCalled.get === 2)
+        assert(TrackingCommitCoordinatorClient.numGetCommitsCalled.get === 2)
+
+        // Step-5: Read the table again and assert that the right APIs are used
+        TrackingInMemoryCommitCoordinatorBuilderX.resetMetrics()
+        expectedAnswer = expectedAnswer ++ dataBatches1.flatMap(_.toTestRows) ++
+          dataBatches2.flatMap(_.toTestRows)
+        val ver5Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        checkAnswer(
+          readSnapshot(ver5Snapshot, ver5Snapshot.getSchema(engine), null, null, engine),
+          expectedAnswer)
+
+        assert(TrackingCommitCoordinatorClient.numGetCommitsCalled.get === 1)
+        assert((
+          TrackingInMemoryCommitCoordinatorBuilderX.numBuildCalled1,
+          TrackingInMemoryCommitCoordinatorBuilderX.numBuildCalled2) === (0, 1))
+    })
+  }
+
+  test("Incomplete backfills are handled properly by next commit after CC to FS conversion") {
+    val config = Map(
+      CommitCoordinatorProvider.
+        getCommitCoordinatorNameConfKey("never-backfilling-commit-coordinator") ->
+        classOf[NeverBackfillingCommitCoordinatorBuilder].getName)
+
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1),
+          tableProperties = Map(
+            COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "never-backfilling-commit-coordinator",
+            COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}")
+        ) // v0
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1)
+        ) // v1
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1)
+        ) // v2
+
+        val table = Table.forPath(engine, tablePath)
+        val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        assert(ver2Snapshot.getVersion(engine) === 2)
+        assert(ver2Snapshot.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
+        assert(
+          ver2Snapshot.getLogSegment.deltas.count(
+            f => new Path(f.getPath).getName.count(_ == '.') == 2) === 2)
+
+        enableCoordinatedCommits(engine, tablePath, null)
+
+        val snapshotAfterDowngrade = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        assert(snapshotAfterDowngrade.getVersion(engine) === 3)
+        assert(!snapshotAfterDowngrade.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
+        assert(
+          snapshotAfterDowngrade.getLogSegment.deltas.count(f =>
+            FileNames.getUnbackfilledDeltaFile(new Path(f.getPath)).isPresent) === 3)
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1)
+        ) // v4
+
+        val ver4Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        assert(ver4Snapshot.getVersion(engine) === 4)
+        assert(
+          ver4Snapshot.getLogSegment.deltas.count(f =>
+            FileNames.getUnbackfilledDeltaFile(new Path(f.getPath)).isPresent) === 0)
+
+        val expectedAnswer = (1 to 4).flatMap(_ => dataBatches1.flatMap(_.toTestRows))
+        checkAnswer(
+          readSnapshot(
+            ver4Snapshot, ver4Snapshot.getSchema(engine), null, null, engine), expectedAnswer)
+    })
+  }
+
   def getCommitVersions(dir: File): Array[Long] = {
     dir
       .listFiles()
@@ -769,4 +983,56 @@ class NoBackfillingCommitCoordinatorBuilder(
     InMemoryCommitCoordinatorBuilder.batchSizeMap.put(5L, coordinator)
     coordinator
   }
+}
+
+object TrackingInMemoryCommitCoordinatorBuilderX {
+  val batchSize = 10
+  val cc1 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize))
+  val cc2 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize))
+  var numBuildCalled1 = 0
+  var numBuildCalled2 = 0
+
+  def resetMetrics(): Unit = {
+    numBuildCalled1 = 0
+    numBuildCalled2 = 0
+    Seq(cc1, cc2).foreach(_.reset())
+  }
+}
+
+class TrackingInMemoryCommitCoordinatorBuilder1(
+  hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoopConf) {
+  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+    TrackingInMemoryCommitCoordinatorBuilderX.numBuildCalled1 += 1
+    TrackingInMemoryCommitCoordinatorBuilderX.cc1
+  }
+  override def getName: String = "tracking-in-memory-1"
+}
+
+class TrackingInMemoryCommitCoordinatorBuilder2(
+  hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoopConf) {
+  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+    TrackingInMemoryCommitCoordinatorBuilderX.numBuildCalled2 += 1
+    TrackingInMemoryCommitCoordinatorBuilderX.cc2
+  }
+  override def getName: String = "tracking-in-memory-2"
+}
+
+object NeverBackfillingCommitCoordinatorClient {
+  val cc = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(10) {
+    override def backfillToVersion(
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: HadoopPath,
+      coordinatedCommitsTableConf: util.Map[String, String],
+      version: Long,
+      lastKnownBackfilledVersion: lang.Long): Unit = { }
+  })
+}
+
+class NeverBackfillingCommitCoordinatorBuilder(
+  hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoopConf) {
+  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+    NeverBackfillingCommitCoordinatorClient.cc
+  }
+  override def getName: String = "never-backfilling-commit-coordinator"
 }
