@@ -74,7 +74,7 @@ public abstract class AbstractBatchBackfillingCommitCoordinatorClient
             long commitVersion,
             Iterator<String> actions,
             UpdatedActions updatedActions) throws CommitFailedException, IOException {
-        Path tablePath = CoordinatedCommitsUtils.getTablePath(logPath);
+        Path tablePath = CoordinatedCommitsDefaultUtils.getTablePath(logPath);
         if (commitVersion == 0) {
             throw new CommitFailedException(
                     false, false, "Commit version 0 must go via filesystem.");
@@ -95,7 +95,7 @@ public abstract class AbstractBatchBackfillingCommitCoordinatorClient
         }
 
         // Write new commit file in _commits directory
-        FileStatus fileStatus = CoordinatedCommitsUtils.writeCommitFile(
+        FileStatus fileStatus = CoordinatedCommitsDefaultUtils.writeCommitFile(
                 logStore, hadoopConf, logPath.toString(), commitVersion, actions, generateUUID());
 
         // Do the actual commit
@@ -116,7 +116,8 @@ public abstract class AbstractBatchBackfillingCommitCoordinatorClient
         if (batchSize <= 1) {
             // Always backfill when batch size is configured as 1
             backfill(logStore, hadoopConf, logPath, commitVersion, fileStatus);
-            Path targetFile = CoordinatedCommitsUtils.getHadoopDeltaFile(logPath, commitVersion);
+            Path targetFile = CoordinatedCommitsDefaultUtils.getHadoopDeltaFile(
+                    logPath, commitVersion);
             FileStatus targetFileStatus = fs.getFileStatus(targetFile);
             Commit newCommit = commitResponse.getCommit().withFileStatus(targetFileStatus);
             return new CommitResponse(newCommit);
@@ -148,7 +149,8 @@ public abstract class AbstractBatchBackfillingCommitCoordinatorClient
         if (lastKnownBackfilledVersion != null) {
             try {
                 FileSystem fs = logPath.getFileSystem(hadoopConf);
-                if (!fs.exists(CoordinatedCommitsUtils.getHadoopDeltaFile(logPath, version))) {
+                if (!fs.exists(
+                        CoordinatedCommitsDefaultUtils.getHadoopDeltaFile(logPath, version))) {
                     lastKnownBackfilledVersion = null;
                 }
             } catch (IOException e) {
@@ -177,7 +179,7 @@ public abstract class AbstractBatchBackfillingCommitCoordinatorClient
             Path logPath,
             long version,
             FileStatus fileStatus) throws IOException {
-        Path targetFile = CoordinatedCommitsUtils.getHadoopDeltaFile(logPath, version);
+        Path targetFile = CoordinatedCommitsDefaultUtils.getHadoopDeltaFile(logPath, version);
         logger.info("Backfilling commit " + fileStatus.getPath() + " to " + targetFile);
         CloseableIterator<String> commitContentIterator = logStore
                 .read(fileStatus.getPath(), hadoopConf);
@@ -204,10 +206,10 @@ public abstract class AbstractBatchBackfillingCommitCoordinatorClient
     private boolean isCoordinatedCommitsToFSConversion(
             long commitVersion, UpdatedActions updatedActions) {
         boolean oldMetadataHasCoordinatedCommits =
-                CoordinatedCommitsUtils
+                CoordinatedCommitsDefaultUtils
                         .getCommitCoordinatorName(updatedActions.getOldMetadata()).isPresent();
         boolean newMetadataHasCoordinatedCommits =
-                CoordinatedCommitsUtils
+                CoordinatedCommitsDefaultUtils
                         .getCommitCoordinatorName(updatedActions.getNewMetadata()).isPresent();
         return oldMetadataHasCoordinatedCommits
                 && !newMetadataHasCoordinatedCommits

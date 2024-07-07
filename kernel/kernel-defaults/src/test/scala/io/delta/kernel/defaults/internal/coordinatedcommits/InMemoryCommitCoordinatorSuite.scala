@@ -59,7 +59,7 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int) extends DeltaTable
     logPath: Path,
     timestampOpt: Option[Long] = None): Unit = {
     val logStore = LogStoreProvider.getLogStore(hadoopConf, logPath.toUri.getScheme)
-    val delta = CoordinatedCommitsUtils.getHadoopDeltaFile(logPath, version)
+    val delta = CoordinatedCommitsDefaultUtils.getHadoopDeltaFile(logPath, version)
     if (timestampOpt.isDefined) {
       assert(logStore.read(delta, hadoopConf).toSeq == Seq(s"$version", s"${timestampOpt.get}"))
     } else {
@@ -140,8 +140,8 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int) extends DeltaTable
       val tableConf = cc.registerTable(
         logPath,
         -1L,
-        CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(Metadata.empty()),
-        CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(new Protocol(1, 1)))
+        CoordinatedCommitsDefaultUtils.convertMetadataToAbstractMetadata(Metadata.empty()),
+        CoordinatedCommitsDefaultUtils.convertProtocolToAbstractProtocol(new Protocol(1, 1)))
 
       val e = intercept[CommitFailedException] {
         commit(

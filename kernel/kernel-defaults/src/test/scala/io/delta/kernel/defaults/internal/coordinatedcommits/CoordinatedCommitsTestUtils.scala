@@ -61,7 +61,7 @@ trait CoordinatedCommitsTestUtils {
     createLogPath(engine, logPath)
     val logStore = LogStoreProvider.getLogStore(hadoopConf, logPath.toUri.getScheme)
     logStore.write(
-      CoordinatedCommitsUtils.getHadoopDeltaFile(logPath, 0),
+      CoordinatedCommitsDefaultUtils.getHadoopDeltaFile(logPath, 0),
       commit.iterator(),
       true,
       hadoopConf)
@@ -82,11 +82,11 @@ trait CoordinatedCommitsTestUtils {
         TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}")
     val newMetadata = oldMetadata.withNewConfiguration(newMetadataConfiguration.asJava)
     new UpdatedActions(
-      CoordinatedCommitsUtils.convertCommitInfoToAbstractCommitInfo(commitInfo),
-      CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(newMetadata),
-      CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(Protocol.empty()),
-      CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(oldMetadata),
-      CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(Protocol.empty()))
+      CoordinatedCommitsDefaultUtils.convertCommitInfoToAbstractCommitInfo(commitInfo),
+      CoordinatedCommitsDefaultUtils.convertMetadataToAbstractMetadata(newMetadata),
+      CoordinatedCommitsDefaultUtils.convertProtocolToAbstractProtocol(Protocol.empty()),
+      CoordinatedCommitsDefaultUtils.convertMetadataToAbstractMetadata(oldMetadata),
+      CoordinatedCommitsDefaultUtils.convertProtocolToAbstractProtocol(Protocol.empty()))
   }
 
   def getUpdatedActionsForNonZerothCommit(commitInfo: CommitInfo): UpdatedActions = {

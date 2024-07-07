@@ -92,8 +92,8 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
         return commitCoordinatorClient.registerTable(
                 new Path(logPath),
                 currentVersion,
-                (io.delta.storage.commit.actions.AbstractMetadata) currentMetadata,
-                (io.delta.storage.commit.actions.AbstractProtocol) currentProtocol);
+                convertAbstractMetadata(currentMetadata),
+                convertAbstractProtocol(currentProtocol));
     }
 
     @Override

@@ -36,7 +36,7 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME;
 
-public class CoordinatedCommitsUtils {
+public class CoordinatedCommitsDefaultUtils {
 
     /**
      * Write a UUID-based commit file for the specified version to the table at logPath.
