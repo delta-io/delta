@@ -202,7 +202,7 @@ Here are a few examples.
   -- Update every even value by adding 100 to it
   UPDATE delta.`/tmp/delta-table` SET id = id + 100 WHERE id % 2 == 0;
 
-  -- Delete very even value
+  -- Delete every even value
   DELETE FROM delta.`/tmp/delta-table` WHERE id % 2 == 0;
 
   -- Upsert (merge) new data
