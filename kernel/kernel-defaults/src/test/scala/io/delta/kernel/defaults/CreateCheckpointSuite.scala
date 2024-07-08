@@ -149,8 +149,8 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
       spark.sql(
         s"""
            |ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES (
-           |  'delta.minReaderVersion' = '2',
-           |  'delta.minWriterVersion' = '5'
+           |  'delta.minReaderVersion' = '1',
+           |  'delta.minWriterVersion' = '2'
            |)
            |""".stripMargin) // makes the latest table version 16
 
@@ -170,7 +170,7 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
         .select("protocol.minReaderVersion", "protocol.minWriterVersion")
         .collect().toSeq.map(TestRow(_))
 
-      val expected = Seq(TestRow(2, 5))
+      val expected = Seq(TestRow(1, 2))
 
       checkAnswer(result, expected)
     }
