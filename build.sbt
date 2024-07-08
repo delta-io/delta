@@ -571,7 +571,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
