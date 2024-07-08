@@ -460,15 +460,21 @@ object Protocol {
       spark: SparkSession,
       metadata: Metadata,
       current: Protocol): Option[Protocol] = {
-    assertMetadataContainsNoProtocolProps(metadata)
+    // assertMetadataContainsNoProtocolProps(metadata)
 
     val (readerVersion, writerVersion, minRequiredFeatures) =
       minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata, current)
 
+    val setReaderVersion =
+      Protocol.getReaderVersionFromTableConf(metadata.configuration).getOrElse(readerVersion)
+    val setWriterVersion =
+      Protocol.getWriterVersionFromTableConf(metadata.configuration).getOrElse(writerVersion)
+
     // Increment the reader and writer version to accurately add enabled legacy table features
     // either to the implicitly enabled table features or the table feature lists
     val required = Protocol(
-      readerVersion.max(current.minReaderVersion), writerVersion.max(current.minWriterVersion))
+      Seq(readerVersion, setReaderVersion, current.minReaderVersion).max,
+      Seq(writerVersion, setWriterVersion, current.minWriterVersion).max)
       .withFeatures(minRequiredFeatures)
     if (!required.canUpgradeTo(current)) {
       // When the current protocol does not satisfy metadata requirement, some additional features

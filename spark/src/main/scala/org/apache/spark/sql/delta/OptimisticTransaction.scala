@@ -638,7 +638,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val configsWithoutProtocolProps = newMetadataTmp.configuration.filterNot {
       case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
     }
-    newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
 
     // Table features Part 3: add automatically-enabled features by looking at the new table
     // metadata.
@@ -649,6 +648,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
+    newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
     newMetadataTmp = MaterializedRowId.updateMaterializedColumnName(
       protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
     newMetadataTmp = MaterializedRowCommitVersion.updateMaterializedColumnName(

@@ -208,7 +208,7 @@ class DeltaTableFeatureSuite
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
 
     assert(tfProtocol1.merge(Protocol(1, 2)) === Protocol(1, 2))
-    assert(tfProtocol2.merge(Protocol(2, 6)) === tfProtocol2.merge(Protocol(2, 6)))
+    assert(tfProtocol2.merge(Protocol(2, 6)) === Protocol(2, 6))
   }
 
   test("protocol upgrade compatibility") {
