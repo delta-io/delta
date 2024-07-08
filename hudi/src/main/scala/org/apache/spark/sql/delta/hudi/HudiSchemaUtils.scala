@@ -16,12 +16,14 @@
 
 package org.apache.spark.sql.delta.hudi
 
-import org.apache.avro.{LogicalTypes, Schema}
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.types._
-
 import java.util
+
 import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.avro.{LogicalTypes, Schema}
+
+import org.apache.spark.sql.types._
 
 object HudiSchemaUtils extends DeltaLogging {
 
@@ -73,7 +75,8 @@ object HudiSchemaUtils extends DeltaLogging {
   private def convertAtomic[E <: DataType](elem: E, isNullable: Boolean) = elem match {
     case StringType => finalizeSchema(Schema.create(Schema.Type.STRING), isNullable)
     case LongType => finalizeSchema(Schema.create(Schema.Type.LONG), isNullable)
-    case IntegerType | ShortType => finalizeSchema(Schema.create(Schema.Type.INT), isNullable)
+    case IntegerType => finalizeSchema(
+      Schema.create(Schema.Type.INT), isNullable)
     case FloatType => finalizeSchema(Schema.create(Schema.Type.FLOAT), isNullable)
     case DoubleType => finalizeSchema(Schema.create(Schema.Type.DOUBLE), isNullable)
     case d: DecimalType => finalizeSchema(LogicalTypes.decimal(d.precision, d.scale)
@@ -84,8 +87,6 @@ object HudiSchemaUtils extends DeltaLogging {
       LogicalTypes.date.addToSchema(Schema.create(Schema.Type.INT)), isNullable)
     case TimestampType => finalizeSchema(
       LogicalTypes.timestampMicros.addToSchema(Schema.create(Schema.Type.LONG)), isNullable)
-    case TimestampNTZType => finalizeSchema(
-      LogicalTypes.localTimestampMicros.addToSchema(Schema.create(Schema.Type.LONG)), isNullable)
     case _ => throw new UnsupportedOperationException(s"Could not convert atomic type $elem")
   }
 }
