@@ -22,7 +22,10 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.kernel.*;
+import io.delta.kernel.Meta;
+import io.delta.kernel.Operation;
+import io.delta.kernel.Transaction;
+import io.delta.kernel.TransactionCommitResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -40,8 +43,14 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
@@ -488,6 +497,23 @@ public class TransactionImpl implements Transaction {
    */
   public static List<Column> getStatisticsColumns(Engine engine, Row transactionState) {
     // TODO: implement this once we start supporting collecting stats
-    return Collections.emptyList();
+    int numIndexedCols =
+        Integer.parseInt(
+            TransactionStateRow.getConfiguration(transactionState)
+                .getOrDefault(
+                    DataSkippingUtils.DATA_SKIPPING_NUM_INDEXED_COLS,
+                    String.valueOf(DataSkippingUtils.DEFAULT_DATA_SKIPPING_NUM_INDEXED_COLS)));
+
+    // Get the list of partition columns to exclude
+    Set<String> partitionColumns =
+        TransactionStateRow.getPartitionColumnsList(transactionState).stream()
+            .collect(Collectors.toSet());
+
+    // For now, only support the first numIndexedCols columns
+    return TransactionStateRow.getLogicalSchema(engine, transactionState).fields().stream()
+        .filter(p -> !partitionColumns.contains(p.getName()))
+        .limit(numIndexedCols)
+        .map(field -> new Column(field.getName()))
+        .collect(Collectors.toList());
   }
 }
