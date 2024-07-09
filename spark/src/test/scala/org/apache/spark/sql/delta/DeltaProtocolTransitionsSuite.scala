@@ -28,14 +28,6 @@ class DeltaProtocolTransitionsSuite
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
-  /*
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    // spark.conf.set(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED.key, "false")
-    SparkSession.setActiveSession(spark)
-  }
-  */
-
   protected def testProtocolTransition(
       createTableColumns: Seq[(String, String)] = Seq.empty,
       createTableGeneratedColumns: Seq[(String, String, String)] = Seq.empty,
@@ -98,6 +90,13 @@ class DeltaProtocolTransitionsSuite
   }
 
   test("CREATE TABLE normalization") {
+    // Table features protocols without features are normalized to (1, 1).
+    testProtocolTransition(
+      createTableProperties = Seq(
+        ("delta.minReaderVersion", 3.toString),
+        ("delta.minWriterVersion", 7.toString)),
+      expectedProtocol = Protocol(1, 1))
+
     // Default protocol is taken into account.
     testProtocolTransition(
       createTableProperties = Seq(
@@ -144,7 +143,6 @@ class DeltaProtocolTransitionsSuite
       expectedProtocol = Protocol(3, 7).withFeature(TestRemovableReaderWriterFeature))
   }
 
-  // , (1, 5)
   for ((readerVersion, writerVersion) <- Seq((2, 1), (2, 2), (2, 3), (2, 4)))
   test("Invalid legacy protocol normalization" +
     s" - invalidProtocol($readerVersion, $writerVersion)") {
@@ -237,26 +235,6 @@ class DeltaProtocolTransitionsSuite
         ("delta.minWriterVersion", 6.toString)),
       expectedProtocol = Protocol(2, 6))
 
-    /*
-    testLegacyProtocolTransition(
-      createTableProperties = Seq(
-        ("delta.minReaderVersion", 1.toString),
-        ("delta.minWriterVersion", 4.toString)),
-      alterTableProperties = Seq(
-        (s"delta.feature.${ColumnMappingTableFeature.name}", "supported")),
-      expectedProtocol = Protocol(2, 5))
-
-    testLegacyProtocolTransition(
-      createTableProperties = Seq(
-        ("delta.minReaderVersion", 1.toString),
-        ("delta.minWriterVersion", 4.toString)),
-      alterTableProperties = Seq(
-        ("delta.minReaderVersion", 1.toString),
-        ("delta.minWriterVersion", 7.toString),
-        (DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")),
-      expectedProtocol = Protocol(2, 5))
-    */
-
     // Adding a legacy protocol to a table features protocol adds the features
     // of the former to the later.
     testProtocolTransition(
@@ -336,18 +314,6 @@ class DeltaProtocolTransitionsSuite
         ("delta.minWriterVersion", 3.toString)),
       dropFeatures = Seq(CheckConstraintsTableFeature),
       expectedProtocol = Protocol(1, 2))
-
-    /*
-    testProtocolTransition(
-      createTableProtocol = Some(Protocol(2, 5)),
-      dropFeatures = Seq(ColumnMappingTableFeature),
-      expectedProtocol = Protocol(1, 4))
-
-    testProtocolTransition(
-      createTableProtocol = Some(Protocol(2, 6)),
-      dropFeatures = Seq(ColumnMappingTableFeature),
-      expectedProtocol = Protocol(1, 6))
-     */
 
     // If the removal result does not match a legacy version use the denormalized form.
     testProtocolTransition(

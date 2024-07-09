@@ -260,10 +260,12 @@ case class AlterTableUnsetPropertiesDeltaCommand(
  *     If transactions do run for longer than this period while this command is run, then this
  *     can lead to data corruption.
  *
- *  Note, legacy features can be removed as well, as long as the protocol supports Table Features.
- *  This will not downgrade protocol versions but only remove the feature from the
- *  supported features list. For example, removing legacyRWFeature from
- *  (3, 7, [legacyRWFeature], [legacyRWFeature]) will result in (3, 7, [], []) and not (1, 1).
+ *  Note, legacy features can be removed as well. When removing a legacy feature from a legacy
+ *  protocol, if the result cannot be represented with a legacy representation we use the
+ *  table features representation. For example, removing Invariants from (1, 3) results to
+ *  (1, 7, None, [AppendOnly, CheckConstraints]). Adding back Invariants to the protocol is
+ *  normalized back to (1, 3). This allows to easily transitions back and forth between legacy
+ *  protocols and table feature protocols.
  */
 case class AlterTableDropFeatureDeltaCommand(
     table: DeltaTableV2,
@@ -300,9 +302,10 @@ case class AlterTableDropFeatureDeltaCommand(
       }
 
       // Check whether the protocol contains the feature in either the writer features list or
-      // the reader+writer features list.
-      val denormilizedProtocol = table.initialSnapshot.protocol.denormalize
-      if (!denormilizedProtocol.readerAndWriterFeatureNames.contains(featureName)) {
+      // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
+      // features from legacy protocols.
+      val denormalizedProtocol = table.initialSnapshot.protocol.denormalize
+      if (!denormalizedProtocol.readerAndWriterFeatureNames.contains(featureName)) {
         throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
       }
 
@@ -312,7 +315,7 @@ case class AlterTableDropFeatureDeltaCommand(
 
       // Validate that the `removableFeature` is not a dependency of any other feature that is
       // enabled on the table.
-      dependentFeatureCheck(removableFeature, denormilizedProtocol)
+      dependentFeatureCheck(removableFeature, denormalizedProtocol)
 
       // The removableFeature.preDowngradeCommand needs to adhere to the following requirements:
       //

@@ -281,6 +281,10 @@ trait TableFeatureSupport { this: Protocol =>
       .withWriterFeatures(mergedWriterFeatures)
       .withFeatures(mergedImplicitFeatures)
 
+    // The merged protocol is always normalized in order to represent the protocol
+    // with the weakest possible form. This enables backward compatibility.
+    // This is preceded by a denormalization step. This allows to fix invalid legacy Protocols.
+    // For example, (2, 3) is normalized to (1, 3).
     mergedProtocol.denormalize.normalize
   }
 
@@ -312,8 +316,7 @@ trait TableFeatureSupport { this: Protocol =>
    * the feature exists in the protocol. There is a relevant validation at
    * [[AlterTableDropFeatureDeltaCommand]]. We also require targetFeature is removable.
    *
-   * When the feature to remove is the last explicit table feature of the table we also remove the
-   * TableFeatures feature and downgrade the protocol.
+   * After removing the feature we normalize the protocol.
    */
   def removeFeature(targetFeature: TableFeature): Protocol = {
     require(targetFeature.isRemovable)
@@ -329,22 +332,20 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
-   * If the current protocol does not contain any native table features and the remaining
-   * set of legacy table features exactly matches a legacy protocol version, it downgrades the
-   * protocol to the minimum reader/writer versions required to support the protocol's legacy
-   * features.
-   *
-   * Note, when a table is initialized with table features (3, 7), by default there are no legacy
-   * features. After we remove the last native feature we downgrade the protocol to (1, 1).
+   * Protocol normalization is the process of converting a table features protocol to the weakest
+   * possible form. This primarily refers to converting a table features protocol to a legacy
+   * protocol but it is also used for lowering the versions of a table features protocol.
+   * A Table Features protocol can be represented with the legacy representation only when the
+   * features set of the former exactly matches a legacy protocol.
    */
   def normalize: Protocol = {
+    // Normalization can only be applied to table feature protocols.
     if (!supportsWriterFeatures) return this
 
     val (minReaderVersion, minWriterVersion) =
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
     val newProtocol = Protocol(minReaderVersion, minWriterVersion)
 
-    // Ensure the legacy protocol supports features exactly as the current protocol.
     if (this.implicitlyAndExplicitlySupportedFeatures ==
       newProtocol.implicitlyAndExplicitlySupportedFeatures) {
       newProtocol
@@ -355,9 +356,13 @@ trait TableFeatureSupport { this: Protocol =>
   }
 
   /**
-   *
+   * Protocol denormalization is the process of converting a legacy protocol to the
+   * the equivalent table features protocol. This is the inverse of protocol normalization.
+   * It can be used to allow operations on legacy protocols that yield result which
+   * cannot be represented anymore by a legacy protocol.
    */
   def denormalize: Protocol = {
+    // Denormalization can only be applied to legacy protocols.
     if (supportsWriterFeatures) return this
 
     val (minReaderVersion, _) =

@@ -354,7 +354,6 @@ object TableFeature {
       RowTrackingFeature,
       InCommitTimestampTableFeature,
       VariantTypeTableFeature,
-      TestRemovableWriterFeature,
       CoordinatedCommitsTableFeature)
     if (DeltaUtils.isTesting) {
       features ++= Set(

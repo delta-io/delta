@@ -540,7 +540,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         Protocol(readerVersionAsTableProp, writerVersionAsTableProp)
 
       // When the protocol versions are explicitly set on table features protocol we may
-      // downgrade to legacy protocol versions. Legacy protocol versions can only be
+      // normalize to legacy protocol versions. Legacy protocol versions can only be
       // used if a table supports *exactly* the set of features in that legacy protocol
       // version, with no "gaps". By merging in the protocol features from a particular
       // protocol version, we may end up with such a "gap-free" protocol. E.g. if a table
@@ -634,11 +634,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           .merge(newProtocolBeforeAddingFeatures))
     }
 
-    // We are done with protocol versions and features, time to remove related table properties.
-    val configsWithoutProtocolProps = newMetadataTmp.configuration.filterNot {
-      case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
-    }
-
     // Table features Part 3: add automatically-enabled features by looking at the new table
     // metadata.
     //
@@ -648,7 +643,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
+    // We are done with protocol versions and features, time to remove related table properties.
+    val configsWithoutProtocolProps = newMetadataTmp.configuration.filterNot {
+      case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
+    }
     newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
+    Protocol.assertMetadataContainsNoProtocolProps(newMetadataTmp)
+
     newMetadataTmp = MaterializedRowId.updateMaterializedColumnName(
       protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
     newMetadataTmp = MaterializedRowCommitVersion.updateMaterializedColumnName(

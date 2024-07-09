@@ -959,23 +959,6 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
-  /*
-  test("can create table using the latest protocol with conf") {
-    val readerVersion = Action.supportedProtocolVersion().minReaderVersion
-    val writerVersion = Action.supportedProtocolVersion().minWriterVersion
-    withTempDir { dir =>
-      withSQLConf(
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> writerVersion.toString,
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> readerVersion.toString) {
-        sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
-        val deltaLog = DeltaLog.forTable(spark, dir)
-        assert(deltaLog.snapshot.protocol ===
-               Action.supportedProtocolVersion(withAllFeatures = false))
-      }
-    }
-  }
-  */
-
   test("can create table using features configured in session") {
     val readerVersion = Action.supportedProtocolVersion().minReaderVersion
     val writerVersion = Action.supportedProtocolVersion().minWriterVersion
