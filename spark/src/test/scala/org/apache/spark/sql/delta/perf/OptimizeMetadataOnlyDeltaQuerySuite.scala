@@ -764,6 +764,33 @@ class OptimizeMetadataOnlyDeltaQuerySuite
     }
   }
 
+  test("filter on partitioned column") {
+    val tableName = "TestPartitionedFilter"
+
+    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT)" +
+      " USING DELTA PARTITIONED BY (Column2)")
+
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (1, 2);")
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (2, 2);")
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (3, 3);")
+    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (4, 3);")
+
+    // Filter by partition column
+    checkResultsAndOptimizedPlan(
+      "SELECT COUNT(*)" +
+        ", MIN(Column1), MAX(Column1)" +
+        ", MIN(Column2), MAX(Column2)" +
+        s" FROM $tableName WHERE Column2 = 2",
+      "LocalRelation [none#0L, none#1, none#2, none#3, none#4]")
+
+    // Filter both partition and data columns
+    checkOptimizationIsNotTriggered(
+      "SELECT COUNT(*)" +
+        ", MIN(Column1), MAX(Column1)" +
+        ", MIN(Column2), MAX(Column2)" +
+        s" FROM $tableName WHERE Column1 = 2 AND Column2 = 2")
+  }
+
   // Tests to validate the optimizer won't incorrectly change queries it can't correctly handle
 
   Seq((s"SELECT COUNT(*) FROM $mixedStatsTableName", "missing stats"),
@@ -848,32 +875,6 @@ class OptimizeMetadataOnlyDeltaQuerySuite
       assert(!getFilesWithDeletionVectors(DeltaLog.forTable(spark, new Path(tempPath))).isEmpty)
       checkOptimizationIsNotTriggered(querySql)
     }
-  }
-
-  test("optimization not supported - filter on partitioned column") {
-    val tableName = "TestPartitionedFilter"
-
-    spark.sql(s"CREATE TABLE $tableName (Column1 INT, Column2 INT)" +
-      " USING DELTA PARTITIONED BY (Column2)")
-
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (1, 2);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (2, 2);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (3, 3);")
-    spark.sql(s"INSERT INTO $tableName (Column1, Column2) VALUES (4, 3);")
-
-    // Filter by partition column
-    checkOptimizationIsNotTriggered(
-      "SELECT COUNT(*)" +
-        ", MIN(Column1), MAX(Column1)" +
-        ", MIN(Column2), MAX(Column2)" +
-        s" FROM $tableName WHERE Column2 = 2")
-
-    // Filter both partition and data columns
-    checkOptimizationIsNotTriggered(
-      "SELECT COUNT(*)" +
-        ", MIN(Column1), MAX(Column1)" +
-        ", MIN(Column2), MAX(Column2)" +
-        s" FROM $tableName WHERE Column1 = 2 AND Column2 = 2")
   }
 
   test("optimization not supported - sub-query with column alias") {
