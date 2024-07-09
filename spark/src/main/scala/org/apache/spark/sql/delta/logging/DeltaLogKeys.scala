@@ -48,6 +48,7 @@ trait DeltaLogKeysBase {
   case object APP_ID extends LogKeyShims
   case object ATTEMPT extends LogKeyShims
   case object BATCH_ID extends LogKeyShims
+  case object BATCH_SIZE extends LogKeyShims
   case object CLASS_NAME extends LogKeyShims
   case object COLUMN_NAME extends LogKeyShims
   case object COMPACTION_INFO_NEW extends LogKeyShims
@@ -111,6 +112,7 @@ trait DeltaLogKeysBase {
   case object QUERY_ID extends LogKeyShims
   case object RDD_ID extends LogKeyShims
   case object SCHEMA extends LogKeyShims
+  case object SCHEMA_DIFF extends LogKeyShims
   case object SEGMENT extends LogKeyShims
   case object SIZE extends LogKeyShims
   case object SNAPSHOT extends LogKeyShims

@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.UniversalFormatConverter
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.hooks.HudiConverterHook
 import org.apache.spark.sql.delta.hudi.HudiTransactionUtils._
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -38,6 +39,7 @@ import org.apache.hudi.common.table.HoodieTableMetaClient
 import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieTimeline}
 import org.apache.hudi.storage.hadoop.HadoopStorageConfiguration
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
@@ -107,12 +109,14 @@ class HudiConverter(spark: SparkSession)
                     val snapshotVal = snapshotAndTxn._1
                     val prevTxn = snapshotAndTxn._2
                     try {
-                      logInfo(s"Converting Delta table [path=${log.logPath}, " +
-                        s"tableId=${log.tableId}, version=${snapshotVal.version}] into Hudi")
+                      logInfo(log"Converting Delta table [path=" +
+                        log"${MDC(DeltaLogKeys.PATH, log.logPath)}, " +
+                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}, " +
+                        log"version=${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] into Hudi")
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
-                        logWarning(s"Error when writing Hudi metadata asynchronously", e)
+                        logWarning("Error when writing Hudi metadata asynchronously", e)
                         recordDeltaEvent(
                           log,
                           "delta.hudi.conversion.async.error",
