@@ -22,10 +22,8 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
-import com.fasterxml.jackson.annotation.JsonIgnore
-
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
+import com.fasterxml.jackson.annotation.JsonIgnore
 
 /**
  * Trait to be mixed into the [[Protocol]] case class to enable Table Features.
