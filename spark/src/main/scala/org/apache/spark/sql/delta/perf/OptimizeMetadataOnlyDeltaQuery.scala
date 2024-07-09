@@ -134,9 +134,11 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     }
   }
 
-  private def extractPartitionFilters(plan: Aggregate): Option[Expression] = {
-    plan.child match {
+  private def extractPartitionFilters(plan: LogicalPlan): Option[Expression] = {
+    plan match {
       case Filter(cond, _) => Some(cond)
+      case Project(_, child) => extractPartitionFilters(child)
+      case Aggregate(_, _, child) => extractPartitionFilters(child)
       case _ => None
     }
   }
