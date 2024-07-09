@@ -60,6 +60,23 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
+  /**
+   * Runs the function `f` with coordinated commits default properties set to what is specified.
+   * Any table created in function `f` will have the `commitCoordinator` property set to the
+   * specified `commitCoordinatorName`.
+   */
+  def withCustomCoordinatedCommitsTableProperties(
+      commitCoordinatorName: String,
+      conf: Map[String, String] = Map("randomConf" -> "randomConfValue"))(f: => Unit): Unit = {
+    withSQLConf(
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
+        commitCoordinatorName,
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
+        JsonUtils.toJson(conf)) {
+      f
+    }
+  }
+
   /** Run the test with different backfill batch sizes: 1, 2, 10 */
   def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
     Seq(1, 2, 10).foreach { backfillBatchSize =>
@@ -164,7 +181,8 @@ object TrackingCommitCoordinatorClient {
   }
 }
 
-class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemoryCommitCoordinator)
+class TrackingCommitCoordinatorClient(
+    val delegatingCommitCoordinatorClient: InMemoryCommitCoordinator)
   extends CommitCoordinatorClient {
 
   val numCommitsCalled = new AtomicInteger(0)

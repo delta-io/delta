@@ -232,23 +232,21 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       abstractMetadata, DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF)
   }
 
+  val TABLE_PROPERTY_CONFS = Seq(
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME,
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF,
+    DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF)
+
   /**
    * The main table properties used to instantiate a TableCommitCoordinatorClient.
    */
-  val TABLE_PROPERTY_KEYS: Seq[String] = Seq(
-    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key,
-    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key,
-    DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key)
+  val TABLE_PROPERTY_KEYS: Seq[String] = TABLE_PROPERTY_CONFS.map(_.key)
 
   /**
    * Returns true if any CoordinatedCommits-related table properties is present in the metadata.
    */
   def tablePropertiesPresent(metadata: Metadata): Boolean = {
-    val coordinatedCommitsProperties = Seq(
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key,
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key,
-      DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key)
-    coordinatedCommitsProperties.exists(metadata.configuration.contains)
+    TABLE_PROPERTY_KEYS.exists(metadata.configuration.contains)
   }
 
   /**
