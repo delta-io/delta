@@ -266,8 +266,14 @@ case class DeltaTableV2(
   /** Creates a [[LogicalRelation]] that represents this table */
   lazy val toLogicalRelation: LogicalRelation = {
     val relation = this.toBaseRelation
+    // this.toBaseRelation calls initialSnapshot which forces its initialization.
+    val catalogTableOpt = if (timeTravelSpec.flatMap(_.version).contains(initialSnapshot.version)) {
+      catalogTable
+    } else {
+      ttSafeCatalogTable
+    }
     LogicalRelation(
-      relation, toAttributes(relation.schema), ttSafeCatalogTable, isStreaming = false)
+      relation, toAttributes(relation.schema), catalogTableOpt, isStreaming = false)
   }
 
   /** Creates a [[DataFrame]] that uses the requested spark session to read from this table */
