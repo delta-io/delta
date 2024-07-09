@@ -50,10 +50,10 @@ case class DeltaCommitFileProvider(
 
   def deltaFile(version: Long): Path = {
     if (version > maxVersionInclusive) {
-      throw new IllegalStateException("Cannot resolve Delta table at version $version as the " +
-        "state is currently at version $maxVersion. The requested version may be incorrect or " +
-        "the state may be outdated. Please verify the requested version, update the state if " +
-        "necessary, and try again")
+      throw new IllegalStateException(s"Cannot resolve Delta table at version $version as the " +
+        s"state is currently at version $maxVersionInclusive. The requested version may be " +
+        s"incorrect or the state may be outdated. Please verify the requested version, update " +
+        s"the state if necessary, and try again")
     }
     uuids.get(version) match {
       case Some(uuid) => FileNames.unbackfilledDeltaFile(resolvedPath, version, Some(uuid))
