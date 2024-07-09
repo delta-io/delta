@@ -16,8 +16,12 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -519,5 +523,123 @@ class DeltaProtocolTransitionsSuite
         InvariantsTableFeature,
         AppendOnlyTableFeature,
         ColumnMappingTableFeature)))
+  }
+
+  private def validVersions = Seq((1, 1), (1, 2), (1, 3), (1, 4), (2, 5), (1, 7), (3, 7))
+  private def invalidVersions = Seq((2, 2), (2, 3))
+  for ((readerVersion, writerVersion) <- validVersions ++ invalidVersions)
+    test("Legacy features are added when setting legacy versions: " +
+      s"readerVersionToSet = $readerVersion, writerVersionToSet = $writerVersion") {
+      withTempDir { dir =>
+        val deltaLog = DeltaLog.forTable(spark, dir)
+
+        // Creates a table with (1, 7) versions with the given table feature.
+        sql(
+          s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
+             |TBLPROPERTIES (
+             |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
+             |)""".stripMargin)
+
+        sql(
+          s"""
+             |ALTER TABLE delta.`${deltaLog.dataPath}` SET TBLPROPERTIES (
+             |  'delta.minReaderVersion' = $readerVersion,
+             |  'delta.minWriterVersion' = $writerVersion
+             |)""".stripMargin)
+
+        val expected = Protocol(readerVersion, writerVersion).implicitlySupportedFeatures ++
+          Set(InvariantsTableFeature, AppendOnlyTableFeature, TestRemovableWriterFeature)
+        assert(deltaLog.update().protocol.readerAndWriterFeatureNames === expected.map(_.name))
+      }
+    }
+
+  for {
+    tableFeatureToAdd <- Seq(TestRemovableWriterFeature, TestRemovableReaderWriterFeature)
+    downgradeVersionToSet <- Seq(1, 2, 3, 4, 5, 6)
+    preemptiveVersionDowngrade <- BOOLEAN_DOMAIN
+  } test("Protocol versions are always downgraded to the minimum required " +
+      s"tableFeatureToAdd: ${tableFeatureToAdd.name}, " +
+      s"downgradeVersionToSet: $downgradeVersionToSet, " +
+      s"preemptiveVersionDowngrade: $preemptiveVersionDowngrade") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+
+      sql(
+        s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.minReaderVersion = ${Math.max(tableFeatureToAdd.minReaderVersion, 1)},
+           |delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION,
+           |delta.feature.${tableFeatureToAdd.name} = 'supported',
+           |delta.feature.${ChangeDataFeedTableFeature.name} = 'supported'
+           |)""".stripMargin)
+
+      val downgradeProtocolVersionsSQL =
+        s"""
+           |ALTER TABLE delta.`${deltaLog.dataPath}` SET TBLPROPERTIES (
+           |  'delta.minReaderVersion' = 1,
+           |  'delta.minWriterVersion' = $downgradeVersionToSet
+           |)""".stripMargin
+
+      if (preemptiveVersionDowngrade) sql(downgradeProtocolVersionsSQL)
+
+      AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        tableFeatureToAdd.name,
+        truncateHistory = tableFeatureToAdd.isReaderWriterFeature).run(spark)
+
+      if (!preemptiveVersionDowngrade) sql(downgradeProtocolVersionsSQL)
+
+      val expectedProtocol = if (downgradeVersionToSet < 4) {
+        Protocol(tableFeatureToAdd.minReaderVersion, 7).withFeature(ChangeDataFeedTableFeature)
+          .merge(Protocol(1, downgradeVersionToSet))
+      } else {
+        Protocol(1, downgradeVersionToSet)
+      }
+      assert(deltaLog.update().protocol === expectedProtocol)
+    }
+  }
+
+  for {
+    tableFeatureToAdd <- Seq(TestRemovableWriterFeature, TestRemovableReaderWriterFeature)
+    setLegacyVersions <- BOOLEAN_DOMAIN
+    downgradeAfterDrop <- if (setLegacyVersions) BOOLEAN_DOMAIN else Seq(false)
+  } test("SOP for downgrading to legacy protocol versions for tables created with features. " +
+      s"tableFeatureToAdd: ${tableFeatureToAdd.name}, setLegacyVersions: $setLegacyVersions, " +
+      s"downgradeAfterDrop: ${downgradeAfterDrop}") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+
+      sql(
+        s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.minReaderVersion = $TABLE_FEATURES_MIN_READER_VERSION,
+           |delta.minWriterVersion = $TABLE_FEATURES_MIN_WRITER_VERSION,
+           |delta.feature.${tableFeatureToAdd.name} = 'supported',
+           |delta.feature.${ChangeDataFeedTableFeature.name} = 'supported'
+           |)""".stripMargin)
+
+      val downgradeProtocolVersionsSQL =
+        s"""
+           |ALTER TABLE delta.`${deltaLog.dataPath}` SET TBLPROPERTIES (
+           |  'delta.minReaderVersion' = 1,
+           |  'delta.minWriterVersion' = 4
+           |)""".stripMargin
+
+      if (setLegacyVersions && !downgradeAfterDrop) sql(downgradeProtocolVersionsSQL)
+
+      AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        tableFeatureToAdd.name,
+        truncateHistory = tableFeatureToAdd.isReaderWriterFeature).run(spark)
+
+      if (setLegacyVersions && downgradeAfterDrop) sql(downgradeProtocolVersionsSQL)
+
+      val expectedProtocol = if (setLegacyVersions) {
+        Protocol(1, 4)
+      } else {
+        Protocol(1, TABLE_FEATURES_MIN_WRITER_VERSION).withFeature(ChangeDataFeedTableFeature)
+      }
+      assert(deltaLog.update().protocol === expectedProtocol)
+    }
   }
 }
