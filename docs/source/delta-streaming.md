@@ -41,7 +41,7 @@ spark.readStream.delta("/tmp/delta/events")
 The following options are available to control micro-batches:
 
 - `maxFilesPerTrigger`: How many new files to be considered in every micro-batch. The default is 1000.
-- `maxBytesPerTrigger`: How much data gets processed in each micro-batch. This option sets a "soft max", meaning that a batch processes approximately this amount of data and may process more than the limit in order to make the streaming query move forward in cases when the smallest input unit is larger than this limit. If you use `Trigger.Once` for your streaming, this option is ignored. This is not set by default.
+- `maxBytesPerTrigger`: How much data gets processed in each micro-batch. This option sets a "soft max", meaning that a batch processes approximately this amount of data and may process more than the limit in order to make the streaming query move forward in cases when the smallest input unit is larger than this limit. If you use `Trigger.Once` or `Trigger.AvailableNow` for your streaming, this option is ignored. This is not set by default.
 
 If you use `maxBytesPerTrigger` in conjunction with `maxFilesPerTrigger`, the micro-batch processes data until either the `maxFilesPerTrigger` or `maxBytesPerTrigger` limit is reached.
 
