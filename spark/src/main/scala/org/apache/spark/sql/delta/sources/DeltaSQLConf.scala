@@ -1282,6 +1282,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX =
+    buildConf("alterTable.bypassCharVarcharToStringFix")
+      .internal()
+      .doc(
+        """Whether to bypass the fix for CHAR/VARCHAR to STRING type conversion in ALTER TABLE.
+          |This is a safety switch - we should only set this to true if the fix introduces some
+          |regression.
+          |The fix in question strips CHAR/VARCHAR metadata from columns and converts
+          |StringType to CHAR/VARCHAR Type temporarily during alter table column commands.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP = {
     buildConf("changeDataFeed.timestampOutOfRange.enabled")
       .doc(

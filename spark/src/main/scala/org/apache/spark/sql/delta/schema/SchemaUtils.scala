@@ -35,6 +35,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -155,6 +156,26 @@ object SchemaUtils extends DeltaLogging {
       if (f.dataType.isInstanceOf[NullType]) None else Some(generateSelectExpr(f, Nil))
     }
     df.select(selectExprs: _*)
+  }
+
+  /**
+   * Converts StringType to CHAR/VARCHAR if that is the true type as per the metadata
+   * and also strips this metadata from fields.
+   */
+  def getRawSchemaWithoutCharVarcharMetadata(schema: StructType): StructType = {
+    val fields = schema.map { field =>
+      val rawField = CharVarcharUtils.getRawType(field.metadata)
+        .map(dt => field.copy(dataType = dt))
+        .getOrElse(field)
+      val throwAwayAttrRef = AttributeReference(
+        rawField.name,
+        rawField.dataType,
+        nullable = rawField.nullable,
+        rawField.metadata)()
+      val cleanedMetadata = CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
+      rawField.copy(metadata = cleanedMetadata)
+    }
+    StructType(fields)
   }
 
   /**

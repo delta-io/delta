@@ -670,10 +670,17 @@ class DeltaCatalog extends DelegatingCatalogExtension
           ifExists = true).run(spark)
 
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
+        // TODO: Theoretically we should be able to fetch the snapshot from a txn.
+        val snapshotSchema = table.initialSnapshot.schema
+        val schema = if (!spark.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)) {
+          // Convert (StringType, metadata = 'VARCHAR(n)') into (VARCHAR(n), metadata = '')
+          // so that CHAR/VARCHAR to String conversion can be handled correctly.
+          SchemaUtils.getRawSchemaWithoutCharVarcharMetadata(snapshotSchema)
+        } else {
+          snapshotSchema
+        }
         def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
           columnUpdates.getOrElseUpdate(fieldNames, {
-            // TODO: Theoretically we should be able to fetch the snapshot from a txn.
-            val schema = table.initialSnapshot.schema
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
               spark.sessionState.conf.resolver)
