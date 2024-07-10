@@ -199,6 +199,12 @@ class InMemoryCommitCoordinator(val batchSize: Long)
     Map.empty
   }
 
+  def dropTable(logPath: Path): Unit = {
+    withWriteLock(logPath) {
+      perTableMap.remove(logPath)
+    }
+  }
+
   override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
 }
 
