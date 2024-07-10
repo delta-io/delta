@@ -19,13 +19,14 @@ package org.apache.spark.sql.delta.commands.convert
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.hadoop.fs.Path
 import org.apache.iceberg.{PartitionData, RowLevelOperationMode, StructLike, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types.StructType
@@ -34,7 +35,7 @@ import org.apache.spark.util.SerializableConfiguration
 class IcebergFileManifest(
     spark: SparkSession,
     table: Table,
-    partitionSchema: StructType) extends ConvertTargetFileManifest with Logging {
+    partitionSchema: StructType) extends ConvertTargetFileManifest with LoggingShims {
 
   // scalastyle:off sparkimplicits
   import spark.implicits._
@@ -109,8 +110,9 @@ class IcebergFileManifest(
 
     var numFiles = 0L
     val res = table.newScan().planFiles().iterator().asScala.grouped(schemaBatchSize).map { batch =>
-      logInfo(s"Getting file statuses for a batch of ${batch.size} of files; " +
-        s"finished $numFiles files so far")
+      logInfo(log"Getting file statuses for a batch of " +
+        log"${MDC(DeltaLogKeys.BATCH_SIZE, batch.size)} of files; " +
+        log"finished ${MDC(DeltaLogKeys.NUM_FILES, numFiles)} files so far")
       numFiles += batch.length
       val filePathWithPartValues = batch.map { fileScanTask =>
         val filePath = fileScanTask.file().path().toString

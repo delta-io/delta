@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.hudi.HudiSchemaUtils._
 import org.apache.spark.sql.delta.hudi.HudiTransactionUtils._
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.avro.Schema
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -62,6 +63,8 @@ import org.apache.hudi.exception.{HoodieException, HoodieRollbackException}
 import org.apache.hudi.index.HoodieIndex.IndexType.INMEMORY
 import org.apache.hudi.table.HoodieJavaTable
 import org.apache.hudi.table.action.clean.CleanPlanner
+
+import org.apache.spark.internal.MDC
 
 /**
  * Used to prepare (convert) and then commit a set of Delta actions into the Hudi table located
@@ -158,13 +161,15 @@ class HudiConversionTransaction(
       case e: HoodieException if e.getMessage == "Failed to update metadata"
         || e.getMessage == "Error getting all file groups in pending clustering"
         || e.getMessage == "Error fetching partition paths from metadata table" =>
-        logInfo(s"[Thread=${Thread.currentThread().getName}] " +
-          s"Failed to fully update Hudi metadata table for Delta snapshot version $version. " +
-          s"This is likely due to a concurrent commit and should not lead to data corruption.")
+        logInfo(log"[Thread=${MDC(DeltaLogKeys.THREAD_NAME, Thread.currentThread().getName)}] " +
+          log"Failed to fully update Hudi metadata table for Delta snapshot version " +
+          log"${MDC(DeltaLogKeys.VERSION, version)}. This is likely due to a concurrent " +
+          log"commit and should not lead to data corruption.")
       case e: HoodieRollbackException =>
-        logInfo(s"[Thread=${Thread.currentThread().getName}] " +
-          s"Failed to rollback Hudi metadata table for Delta snapshot version $version. " +
-          s"This is likely due to a concurrent commit and should not lead to data corruption.")
+        logInfo(log"[Thread=${MDC(DeltaLogKeys.THREAD_NAME, Thread.currentThread().getName)}] " +
+          log"Failed to rollback Hudi metadata table for Delta snapshot version " +
+          log"${MDC(DeltaLogKeys.VERSION, version)}. This is likely due to a concurrent " +
+          log"commit and should not lead to data corruption.")
       case NonFatal(e) =>
         recordHudiCommit(Some(e))
         throw e
