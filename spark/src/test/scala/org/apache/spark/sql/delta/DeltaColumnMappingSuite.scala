@@ -1895,9 +1895,7 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""CREATE TABLE $testTableName
            |USING DELTA
            |TBLPROPERTIES(
-           |'$minReaderKey' = '3',
-           |'$minWriterKey' = '7',
-           |'${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true'
+           |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true'
            |)
            |AS SELECT * FROM RANGE(1)
            |""".stripMargin)
@@ -1909,6 +1907,14 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""ALTER TABLE $testTableName SET TBLPROPERTIES(
            |'$columnMappingMode'='name'
            |)""".stripMargin)
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      assert(deltaLog.update().protocol === Protocol(2, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ColumnMappingTableFeature,
+        RowTrackingFeature
+      )))
     }
   }
 

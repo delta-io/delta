@@ -255,8 +255,10 @@ object Protocol {
     val (readerVersion, writerVersion, enabledFeatures) =
       minProtocolComponentsFromMetadata(spark, metadata)
     // New table protocols should always be denormalized and then normalized to convert the
-    // protocol to the weakest possible form. For example:
-    // 1) (3, 7, RowIDs) is normalized to (3, 7, RowIDs).
+    // protocol to the weakest possible form. This means either converting a table features
+    // protocol to a legacy protocol or reducing the versions of a table features protocol.
+    // For example:
+    // 1) (3, 7, RowTracking) is normalized to (1, 7, RowTracking).
     // 2) (3, 7, AppendOnly, Invariants) is normalized to (1, 2).
     // 3) (2, 3) is normalized to (1, 3).
     Protocol(readerVersion, writerVersion)

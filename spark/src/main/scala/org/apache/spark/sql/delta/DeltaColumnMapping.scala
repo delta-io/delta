@@ -131,29 +131,9 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
 
     val isChangingModeOnExistingTable = oldMappingMode != newMappingMode && !isCreatingNewTable
-    if (isChangingModeOnExistingTable) {
-      if (!allowMappingModeChange(oldMappingMode, newMappingMode)) {
-        throw DeltaErrors.changeColumnMappingModeNotSupported(
-          oldMappingMode.name, newMappingMode.name)
-      } else {
-        // legal mode change, now check if protocol is upgraded before or part of this txn
-        val caseInsensitiveMap = CaseInsensitiveMap(newMetadata.configuration)
-        val minReaderVersion = caseInsensitiveMap
-          .get(Protocol.MIN_READER_VERSION_PROP).map(_.toInt)
-          .getOrElse(oldProtocol.minReaderVersion)
-        val minWriterVersion = caseInsensitiveMap
-          .get(Protocol.MIN_WRITER_VERSION_PROP).map(_.toInt)
-          .getOrElse(oldProtocol.minWriterVersion)
-        var newProtocol = Protocol(minReaderVersion, minWriterVersion)
-        val satisfiesWriterVersion = minWriterVersion >= ColumnMappingTableFeature.minWriterVersion
-        val satisfiesReaderVersion = minReaderVersion >= ColumnMappingTableFeature.minReaderVersion
-        // This is an OR check because `readerFeatures` and `writerFeatures` can independently
-        // support table features.
-        if ((newProtocol.supportsReaderFeatures && satisfiesWriterVersion) ||
-            (newProtocol.supportsWriterFeatures && satisfiesReaderVersion)) {
-          newProtocol = newProtocol.withFeature(ColumnMappingTableFeature)
-        }
-      }
+    if (isChangingModeOnExistingTable && !allowMappingModeChange(oldMappingMode, newMappingMode)) {
+      throw DeltaErrors.changeColumnMappingModeNotSupported(
+        oldMappingMode.name, newMappingMode.name)
     }
 
     val updatedMetadata = updateColumnMappingMetadata(
