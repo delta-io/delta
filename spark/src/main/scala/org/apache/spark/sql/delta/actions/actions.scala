@@ -263,8 +263,7 @@ object Protocol {
     // 3) (2, 3) is normalized to (1, 3).
     Protocol(readerVersion, writerVersion)
       .withFeatures(enabledFeatures)
-      .denormalize
-      .normalize
+      .denormalizedNormalized
   }
 
   /**

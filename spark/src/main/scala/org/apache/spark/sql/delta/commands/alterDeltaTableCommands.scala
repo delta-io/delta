@@ -304,7 +304,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // Check whether the protocol contains the feature in either the writer features list or
       // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
       // features from legacy protocols.
-      val denormalizedProtocol = table.initialSnapshot.protocol.denormalize
+      val denormalizedProtocol = table.initialSnapshot.protocol.denormalized
       if (!denormalizedProtocol.readerAndWriterFeatureNames.contains(featureName)) {
         throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
       }
@@ -380,7 +380,7 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      txn.updateProtocol(txn.protocol.denormalize.removeFeature(removableFeature))
+      txn.updateProtocol(txn.protocol.denormalized.removeFeature(removableFeature))
       txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, truncateHistory))
       Nil
     }

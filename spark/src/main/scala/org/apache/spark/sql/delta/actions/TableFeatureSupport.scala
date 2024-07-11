@@ -282,8 +282,9 @@ trait TableFeatureSupport { this: Protocol =>
     // The merged protocol is always normalized in order to represent the protocol
     // with the weakest possible form. This enables backward compatibility.
     // This is preceded by a denormalization step. This allows to fix invalid legacy Protocols.
-    // For example, (2, 3) is normalized to (1, 3).
-    mergedProtocol.denormalize.normalize
+    // For example, (2, 3) is normalized to (1, 3). This is because there is no legacy feature
+    // in the set with reader version 2.
+    mergedProtocol.denormalizedNormalized
   }
 
   /**
@@ -326,7 +327,7 @@ trait TableFeatureSupport { this: Protocol =>
       case f =>
         throw DeltaErrors.dropTableFeatureNonRemovableFeature(f.name)
     }
-    newProtocol.normalize
+    newProtocol.normalized
   }
 
   /**
@@ -336,7 +337,7 @@ trait TableFeatureSupport { this: Protocol =>
    * A Table Features protocol can be represented with the legacy representation only when the
    * features set of the former exactly matches a legacy protocol.
    */
-  def normalize: Protocol = {
+  def normalized: Protocol = {
     // Normalization can only be applied to table feature protocols.
     if (!supportsWriterFeatures) return this
 
@@ -359,7 +360,7 @@ trait TableFeatureSupport { this: Protocol =>
    * It can be used to allow operations on legacy protocols that yield result which
    * cannot be represented anymore by a legacy protocol.
    */
-  def denormalize: Protocol = {
+  def denormalized: Protocol = {
     // Denormalization can only be applied to legacy protocols.
     if (supportsWriterFeatures) return this
 
@@ -369,6 +370,13 @@ trait TableFeatureSupport { this: Protocol =>
     Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
       .withFeatures(implicitlySupportedFeatures)
   }
+
+  /**
+   * Helper method that applies both denormalization and normalization. This can be used to
+   * normalize invalid legacy protocols such as (2, 3), (1, 5). A legacy protocol is invalid
+   * when the version numbers are higher than required to support the implied feature set.
+   */
+  def denormalizedNormalized: Protocol = denormalized.normalized
 
   /**
    * Check if a `feature` is supported by this protocol. This means either (a) the protocol does
