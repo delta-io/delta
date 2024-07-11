@@ -324,6 +324,9 @@ case class DeltaTableV2(
 
   /** A "clean" version of the catalog table, safe for use with or without time travel. */
   lazy val ttSafeCatalogTable: Option[CatalogTable] = catalogTable match {
+    case Some(ct)
+      if timeTravelSpec.flatMap(_.version).contains(deltaLog.unsafeVolatileSnapshot.version) =>
+      Some(ct)
     case Some(ct) if timeTravelSpec.isDefined => Some(ct.copy(stats = None))
     case other => other
   }

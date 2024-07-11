@@ -36,6 +36,8 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, Json
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{functions, AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogStatistics
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
@@ -774,6 +776,25 @@ class DeltaTimeTravelSuite extends QueryTest
         assert(ex2.getMessage contains
           "The provided timestamp: 2018-10-24 20:14:18.0 is after the " +
             "latest commit timestamp of\n2018-10-24 14:34:18.0")
+      }
+    }
+  }
+
+  test("Time travel of latest version is able to use stats") {
+    withSQLConf(SQLConf.PLAN_STATS_ENABLED.key -> "true") {
+      withTable("test") {
+        Seq(("1", 1), ("2", 1))
+          .toDF("part", "a")
+          .coalesce(1)
+          .write
+          .format("delta")
+          .saveAsTable("test")
+        spark.sessionState.catalog.alterTableStats(
+          TableIdentifier("test"),
+          Some(CatalogStatistics(sizeInBytes = 999, rowCount = Some(100)))
+        )
+        val plan = spark.sql("select * from test version as of 0").queryExecution.optimizedPlan
+        assert(plan.stats.rowCount.contains(100))
       }
     }
   }
