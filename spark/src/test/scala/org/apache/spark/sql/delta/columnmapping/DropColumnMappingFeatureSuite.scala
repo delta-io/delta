@@ -72,6 +72,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
          |""".stripMargin)
     val e = intercept[DeltaAnalysisException] {
+      // Try to drop column mapping.
       dropColumnMappingTableFeature()
     }
     checkError(e,

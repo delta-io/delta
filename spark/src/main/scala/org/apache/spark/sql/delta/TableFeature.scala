@@ -333,11 +333,16 @@ object TableFeature {
    * in lower cases. Use [[featureNameToFeature]] instead.
    */
   private[delta] def allSupportedFeaturesMap: Map[String, TableFeature] = {
-    val testingFeaturesEnabled = SparkSession
-      .getActiveSession
-      .map(_.conf.get(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED))
-      .getOrElse(true)
-    var features: Set[TableFeature] = Set(
+    val testingFeaturesEnabled =
+      try {
+        SparkSession
+        .getActiveSession
+        .map(_.conf.get(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED))
+        .getOrElse(true)
+      } catch {
+          case _ => true
+      }
+   var features: Set[TableFeature] = Set(
       AllowColumnDefaultsTableFeature,
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
