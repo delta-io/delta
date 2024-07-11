@@ -646,6 +646,16 @@ trait DeltaSQLConfBase {
       .stringConf
       .createWithDefault(".s3-optimization-")
 
+  val DELTA_MERGE_ANALYSIS_TRACK_PREVIOUSLY_RESOLVED =
+    buildConf("merge.analysis.trackPreviouslyResolved.enabled")
+      .internal()
+      .doc(
+        """
+          | Whether to track the previously resolved expressions during merge's analysis resolution.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
       .internal()
