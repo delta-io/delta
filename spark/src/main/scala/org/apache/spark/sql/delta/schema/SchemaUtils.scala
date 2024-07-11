@@ -95,7 +95,7 @@ object SchemaUtils extends DeltaLogging {
   def findAnyTypeRecursively(dt: DataType)(f: DataType => Boolean): Option[DataType] = dt match {
     case s: StructType =>
       Some(s).filter(f).orElse(s.fields
-          .find(field => findAnyTypeRecursively(field.dataType)(f).nonEmpty).map(_.dataType))
+          .flatMap(field => findAnyTypeRecursively(field.dataType)(f)).find(_ => true))
     case a: ArrayType =>
       Some(a).filter(f).orElse(findAnyTypeRecursively(a.elementType)(f))
     case m: MapType =>
