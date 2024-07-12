@@ -31,8 +31,12 @@ import org.apache.spark.util.SerializableConfiguration
 
 trait ReorgTableHelper extends Serializable {
   /**
-   * Determine whether `fileSchema` has any columns that has a type that differs from
+   * Determine whether `fileSchema` has any column that has a type that differs from
    * `tablePhysicalSchema`.
+   *
+   * @param fileSchema the current parquet schema to be checked.
+   * @param tablePhysicalSchema the current table schema.
+   * @return whether the file has any column that has a different type from table column.
    */
   protected def fileHasDifferentTypes(
       fileSchema: StructType,
@@ -41,6 +45,24 @@ trait ReorgTableHelper extends Serializable {
       case (_, StructField(_, fileType: AtomicType, _, _),
         Some(StructField(_, tableType: AtomicType, _, _)), _) if fileType != tableType =>
         return true
+      case (_, field, _, _) => field
+    }
+    false
+  }
+
+  /**
+   * Determine whether `fileSchema` has any column that has already been dropped from the
+   * `tablePhysicalSchema`, i.e., by ALTER TABLE DROP COLUMN.
+   *
+   * @param fileSchema the current parquet schema to be checked.
+   * @param tablePhysicalSchema the current table schema.
+   * @return whether the file has any dropped column.
+   */
+  protected def fileHasDroppedColumns(
+      fileSchema: StructType,
+      tablePhysicalSchema: StructType): Boolean = {
+    SchemaMergingUtils.transformColumns(fileSchema, tablePhysicalSchema) {
+      case (_, _, None, _) => return true
       case (_, field, _, _) => field
     }
     false

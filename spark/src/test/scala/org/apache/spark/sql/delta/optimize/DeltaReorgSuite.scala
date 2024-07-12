@@ -16,14 +16,20 @@
 
 package org.apache.spark.sql.delta.optimize
 
-import org.apache.spark.sql.delta.DeletionVectorsTestUtils
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTable
+import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.parquet.hadoop.Footer
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.util.SerializableConfiguration
 
 class DeltaReorgSuite extends QueryTest
   with SharedSparkSession
@@ -149,5 +155,73 @@ class DeltaReorgSuite extends QueryTest
     assert(opMetrics("numRemovedFiles").toLong === numFilesRemoved)
     // Because each deleted file has a DV associated it which gets rewritten as part of PURGE
     assert(opMetrics("numDeletionVectorsRemoved").toLong === numFilesRemoved)
+  }
+
+  private def getParquetFooters(
+      files: Seq[AddFile],
+      log: DeltaLog): Seq[Footer] = {
+    val serializedConf = new SerializableConfiguration(log.newDeltaHadoopConf())
+    val dataPath = new Path(log.dataPath.toString)
+    val nameToAddFileMap = generateCandidateFileMap(dataPath, files)
+    val fileStatuses = nameToAddFileMap.map { case (absPath, addFile) =>
+      new FileStatus(
+        /* length */ addFile.size,
+        /* isDir */ false,
+        /* blockReplication */ 0,
+        /* blockSize */ 1,
+        /* modificationTime */ addFile.modificationTime,
+        new Path(absPath)
+      )
+    }
+    DeltaFileOperations.readParquetFootersInParallel(
+      serializedConf.value,
+      fileStatuses.toList,
+      ignoreCorruptFiles = false
+    )
+  }
+
+  test("Purge dropped columns of a table without DV") {
+    val targetDf = spark.range(0, 100, 1, numPartitions = 5)
+      .withColumn("id_dropped", col("id") % 4)
+      .toDF()
+    withTempDeltaTable(targetDf) { (_, log) =>
+      val path = log.dataPath.toString
+
+      val (addFiles1, _) = getFileActionsInLastVersion(log)
+      assert(addFiles1.size === 5)
+      val footers1 = getParquetFooters(addFiles1, log)
+      footers1.foreach { footer =>
+        val fields = footer.getParquetMetadata.getFileMetaData.getSchema.getFields
+        assert(fields.size == 2)
+        assert(fields.toArray.map { _.toString }.contains("optional int64 id_dropped"))
+      }
+
+      // enable column-mapping first
+      sql(
+        s"""
+           | ALTER TABLE delta.`$path`
+           | SET TBLPROPERTIES (
+           |   'delta.columnMapping.mode' = 'name'
+           | )
+           |""".stripMargin
+      )
+      // drop the extra column by alter table and run REORG PURGE
+      sql(
+        s"""
+           | ALTER TABLE delta.`$path`
+           | DROP COLUMN id_dropped
+           |""".stripMargin
+      )
+      executePurge(path)
+
+      val (addFiles2, _) = getFileActionsInLastVersion(log)
+      assert(addFiles2.size === 1)
+      val footers2 = getParquetFooters(addFiles2, log)
+      footers2.foreach { footer =>
+        val fields = footer.getParquetMetadata.getFileMetaData.getSchema.getFields
+        assert(fields.size == 1)
+        assert(!fields.toArray.map { _.toString }.contains("optional int64 id_dropped"))
+      }
+    }
   }
 }
