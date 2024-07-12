@@ -936,6 +936,19 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_IS_DELTA_TABLE_THROW_ON_ERROR =
+    buildConf("isDeltaTable.throwOnError")
+      .internal()
+      .doc("""
+        | If checking the path provided to isDeltaTable (or findDeltaTableRoot) throws an exception,
+        | then propagate this exception unless a _delta_log directory is found in an
+        | accessible parent.
+        | When disabled, such any exception leads to a result indicating that this is not a
+        | Delta table.
+        |""".stripMargin)
+      .booleanConf
+      .createWithDefault(Utils.isTesting)
+
   val DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS =
     buildConf("legacy.storeOptionsAsProperties")
       .internal()
