@@ -112,7 +112,7 @@ trait TransactionExecutionTestMixin {
     }
   }
 
-    /** Unblocks all phases before the `commitPhase` for [[TransactionObserver]] */
+  /** Unblocks all phases before the `commitPhase` for [[TransactionObserver]] */
   def unblockUntilPreCommit(observer: TransactionObserver): Unit = {
     observer.phases.initialPhase.entryBarrier.unblock()
     observer.phases.preparePhase.entryBarrier.unblock()
