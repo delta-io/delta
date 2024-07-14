@@ -40,6 +40,7 @@ package org.apache.spark.sql.delta.util
 
 import java.lang.{Double => JDouble, Long => JLong}
 import java.math.{BigDecimal => JBigDecimal}
+import java.time.ZoneId
 import java.util.{Locale, TimeZone}
 
 import scala.collection.mutable
@@ -48,6 +49,7 @@ import scala.util.Try
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
 import org.apache.hadoop.fs.Path
+import org.apache.spark.unsafe.types.UTF8String
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.AnalysisException
@@ -117,7 +119,8 @@ object PartitionSpec {
 
 private[delta] object PartitionUtils {
 
-  val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+  lazy val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+  lazy val utcFormatter = TimestampFormatter("yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
 
   case class PartitionValues(columnNames: Seq[String], literals: Seq[Literal])
   {
@@ -279,7 +282,8 @@ private[delta] object PartitionUtils {
       validatePartitionColumns: Boolean,
       timeZone: TimeZone,
       dateFormatter: DateFormatter,
-      timestampFormatter: TimestampFormatter): (Option[PartitionValues], Option[Path]) = {
+      timestampFormatter: TimestampFormatter,
+      useUtcNormalizedTimestamp: Boolean = false): (Option[PartitionValues], Option[Path]) = {
     val columns = ArrayBuffer.empty[(String, Literal)]
     // Old Hadoop versions don't have `Path.isRoot`
     var finished = path.getParent == null
@@ -301,7 +305,8 @@ private[delta] object PartitionUtils {
         // Once we get the string, we try to parse it and find the partition column and value.
         val maybeColumn =
         parsePartitionColumn(currentPath.getName, typeInference, userSpecifiedDataTypes,
-          validatePartitionColumns, timeZone, dateFormatter, timestampFormatter)
+          validatePartitionColumns, timeZone, dateFormatter, timestampFormatter,
+          useUtcNormalizedTimestamp)
         maybeColumn.foreach(columns += _)
 
         // Now, we determine if we should stop.
@@ -338,7 +343,8 @@ private[delta] object PartitionUtils {
       validatePartitionColumns: Boolean,
       timeZone: TimeZone,
       dateFormatter: DateFormatter,
-      timestampFormatter: TimestampFormatter): Option[(String, Literal)] = {
+      timestampFormatter: TimestampFormatter,
+      useUtcNormalizedTimestamp: Boolean = false): Option[(String, Literal)] = {
     val equalSignIndex = columnSpec.indexOf('=')
     if (equalSignIndex == -1) {
       None
@@ -360,12 +366,25 @@ private[delta] object PartitionUtils {
           dateFormatter,
           timestampFormatter)
         val columnValue = columnValueLiteral.eval()
-        val castedValue = Cast(columnValueLiteral, dataType, Option(timeZone.getID)).eval()
-        if (validatePartitionColumns && columnValue != null && castedValue == null) {
-          throw DeltaErrors.partitionColumnCastFailed(
-            columnValue.toString, dataType.toString, columnName)
+        if (dataType == DataTypes.TimestampType) {
+          if (useUtcNormalizedTimestamp) {
+            Try {
+              Literal.create(
+                utcFormatter.format(
+                  timestampFormatter.parse(columnValue.asInstanceOf[UTF8String].toString)),
+                StringType)
+            }.getOrElse(columnValueLiteral)
+          } else {
+            columnValueLiteral
+          }
+        } else {
+          val castedValue = Cast(columnValueLiteral, dataType, Option(timeZone.getID)).eval()
+          if (validatePartitionColumns && columnValue != null && castedValue == null) {
+            throw DeltaErrors.partitionColumnCastFailed(
+              columnValue.toString, dataType.toString, columnName)
+          }
+          Literal.create(castedValue, dataType)
         }
-        Literal.create(castedValue, dataType)
       } else {
         inferPartitionColumnValue(
           rawColumnValue,
