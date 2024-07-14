@@ -478,7 +478,9 @@ class CheckConstraintsSuite extends QueryTest
         parameters = Map("constraints" -> "`c1`, `c2`")
       )
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("table"))
-      assert(deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
+      val featureNames1 =
+        deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+      assert(featureNames1.contains("checkConstraints"))
 
       sql("ALTER TABLE table DROP CONSTRAINT c1")
       val error2 = intercept[AnalysisException] {
@@ -489,11 +491,15 @@ class CheckConstraintsSuite extends QueryTest
         errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
         parameters = Map("constraints" -> "`c2`")
       )
-      assert(deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
+      val featureNames2 =
+        deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+      assert(featureNames2.contains("checkConstraints"))
 
       sql("ALTER TABLE table DROP CONSTRAINT c2")
       sql("ALTER TABLE table DROP FEATURE checkConstraints")
-      assert(!deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
+      val featureNames3 =
+        deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+      assert(!featureNames3.contains("checkConstraints"))
     }
   }
 }
