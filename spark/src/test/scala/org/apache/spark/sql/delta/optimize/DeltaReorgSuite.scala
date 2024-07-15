@@ -16,19 +16,19 @@
 
 package org.apache.spark.sql.delta.optimize
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.parquet.hadoop.Footer
-
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{LongType, StructField}
 import org.apache.spark.util.SerializableConfiguration
 
 class DeltaReorgSuite extends QueryTest
@@ -230,6 +230,72 @@ class DeltaReorgSuite extends QueryTest
         val fields = footer.getParquetMetadata.getFileMetaData.getSchema.getFields
         assert(fields.size == 1)
         assert(!fields.toArray.map { _.toString }.contains("optional int64 id_dropped"))
+      }
+    }
+  }
+
+  test("Columns being renamed should not be purged") {
+    val targetDf = spark.range(0, 100, 1, numPartitions = 5)
+      .withColumn("id_before_rename", col("id") % 4)
+      .withColumn("id_dropped", col("id") % 5)
+      .toDF()
+    withTempDeltaTable(targetDf) { (_, log) =>
+      val path = log.dataPath.toString
+
+      val (addFiles1, _) = getFileActionsInLastVersion(log)
+      assert(addFiles1.size === 5)
+      val footers1 = getParquetFooters(addFiles1, log)
+      footers1.foreach { footer =>
+        val fields = footer.getParquetMetadata.getFileMetaData.getSchema.getFields
+        assert(fields.size == 3)
+        assert(fields.toArray.map { _.toString }.contains("optional int64 id_dropped"))
+        assert(fields.toArray.map { _.toString }.contains("optional int64 id_before_rename"))
+      }
+
+      // enable column-mapping first
+      sql(
+        s"""
+           | ALTER TABLE delta.`$path`
+           | SET TBLPROPERTIES (
+           |   'delta.columnMapping.mode' = 'name'
+           | )
+           |""".stripMargin
+      )
+      // drop `id_dropped` and rename `id_before_rename` via alter table and run REORG PURGE,
+      // this should remove `id_dropped` but keep `id_after_rename` in the parquet files.
+      sql(
+        s"""
+           | ALTER TABLE delta.`$path`
+           | DROP COLUMN id_dropped
+           |""".stripMargin
+      )
+      sql(
+        s"""
+           | ALTER TABLE delta.`$path`
+           | RENAME COLUMN id_before_rename TO id_after_rename
+           |""".stripMargin
+      )
+      executePurge(path)
+
+      val tableSchema = log.update().schema
+      val tablePhysicalSchema = DeltaColumnMapping.renameColumns(tableSchema)
+      val beforeRenameColStr = "StructField(id_before_rename,LongType,true)"
+      val afterRenameColStr = "StructField(id_after_rename,LongType,true)"
+      assert(tableSchema.fields.length == 2 &&
+        tableSchema.map { _.toString }.contains(afterRenameColStr))
+      assert(tablePhysicalSchema.fields.length == 2 &&
+        tablePhysicalSchema.map { _.toString }.contains(beforeRenameColStr))
+
+      val (addFiles2, _) = getFileActionsInLastVersion(log)
+      assert(addFiles2.size === 1)
+      val footers2 = getParquetFooters(addFiles2, log)
+      footers2.foreach { footer =>
+        val fields = footer.getParquetMetadata.getFileMetaData.getSchema.getFields
+        assert(fields.size == 2)
+        assert(!fields.toArray.map { _.toString }.contains("optional int64 id_dropped = 3"))
+        // do note that the actual name for the column will not be
+        // changed in parquet file level
+        assert(fields.toArray.map { _.toString }.contains("optional int64 id_before_rename = 2"))
       }
     }
   }
