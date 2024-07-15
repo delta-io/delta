@@ -1106,7 +1106,7 @@
       },
       "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
         "message" : [
-          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table first. Then run REORG PURGE command to purge the Deletion Vectors on the table."
         ]
       },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
@@ -1152,7 +1152,7 @@
       },
       "VERSION_MUTUAL_EXCLUSIVE" : {
         "message" : [
-          "Only one IcebergCompat version can be enabled."
+          "Only one IcebergCompat version can be enabled, please explicitly disable all other IcebergCompat versions that are not needed."
         ]
       },
       "WRONG_REQUIRED_TABLE_PROPERTY" : {

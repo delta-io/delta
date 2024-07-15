@@ -55,6 +55,35 @@ object UniversalFormat extends DeltaLogging {
   val HUDI_FORMAT = "hudi"
   val SUPPORTED_FORMATS = Set(HUDI_FORMAT, ICEBERG_FORMAT)
 
+  /**
+   * Check if the operation is CREATE/REPLACE TABLE or REORG UPGRADE UNIFORM commands.
+   *
+   * @param op the delta operation to be checked.
+   * @return whether the operation is create or reorg.
+   */
+  def isCreatingOrReorgTable(op: Option[DeltaOperations.Operation]): Boolean = op match {
+    case Some(_: DeltaOperations.CreateTable) |
+         Some(_: DeltaOperations.UpgradeUniformProperties) |
+         // REPLACE TABLE is also considered creating table to preserve the
+         // the semantics for `isCreatingNewTable` in `OptimisticTransaction`.
+         Some(_: DeltaOperations.ReplaceTable) =>
+      true
+    // this is to conform with the semantics in `enforceDependenciesInConfiguration`
+    case None => true
+    case _ => false
+  }
+
+  /**
+   * Check if the operation is REORG UPGRADE UNIFORM command.
+   *
+   * @param op the delta operation to be checked.
+   * @return whether the operation is REORG UPGRADE UNIFORM.
+   */
+  def isReorgUpgradeUniform(op: Option[DeltaOperations.Operation]): Boolean = op match {
+    case Some(_: DeltaOperations.UpgradeUniformProperties) => true
+    case _ => false
+  }
+
   def icebergEnabled(metadata: Metadata): Boolean = {
     DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(ICEBERG_FORMAT)
   }
@@ -83,11 +112,11 @@ object UniversalFormat extends DeltaLogging {
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
-      isCreatingOrReorgTable: Boolean,
+      operation: Option[DeltaOperations.Operation],
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
     enforceHudiDependencies(newestMetadata, snapshot)
     enforceIcebergInvariantsAndDependencies(
-      snapshot, newestProtocol, newestMetadata, isCreatingOrReorgTable, actions)
+      snapshot, newestProtocol, newestMetadata, operation, actions)
   }
 
   /**
@@ -125,7 +154,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
-      isCreatingOrReorg: Boolean,
+      operation: Option[DeltaOperations.Operation],
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
 
     val prevMetadata = snapshot.metadata
@@ -174,7 +203,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot,
       newestProtocol = protocolToCheck,
       newestMetadata = metadataToCheck,
-      isCreatingOrReorg,
+      operation,
       actions
     )
     protocolToCheck = v1protocolUpdate.getOrElse(protocolToCheck)
@@ -185,7 +214,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot,
       newestProtocol = protocolToCheck,
       newestMetadata = metadataToCheck,
-      isCreatingOrReorg,
+      operation,
       actions
     )
     changed ||= v2protocolUpdate.nonEmpty || v2metadataUpdate.nonEmpty
@@ -218,8 +247,8 @@ object UniversalFormat extends DeltaLogging {
       snapshot,
       newestProtocol = snapshot.protocol,
       newestMetadata = metadata,
-      isCreatingOrReorgTable = true,
-      actions = Seq()
+      operation = None,
+      actions = Seq(),
     )
 
     universalMetadata match {
@@ -257,6 +286,7 @@ object UniversalFormat extends DeltaLogging {
     }
   }
 }
+
 /** Class to facilitate the conversion of Delta into other table formats. */
 abstract class UniversalFormatConverter(spark: SparkSession) {
   /**
