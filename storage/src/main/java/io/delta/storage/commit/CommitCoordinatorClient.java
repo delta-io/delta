@@ -16,6 +16,7 @@
 
 package io.delta.storage.commit;
 
+import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
 
@@ -86,6 +87,7 @@ public interface CommitCoordinatorClient {
    * @return CommitResponse which contains the file status of the committed commit file. If the
    *         commit is already backfilled, then the file status could be omitted from the response
    *         and the client could retrieve the information by itself.
+   * @throws CommitFailedException if the commit operation fails.
    */
   CommitResponse commit(
     LogStore logStore,
@@ -94,7 +96,7 @@ public interface CommitCoordinatorClient {
     Map<String, String> tableConf,
     long commitVersion,
     Iterator<String> actions,
-    UpdatedActions updatedActions);
+    UpdatedActions updatedActions) throws CommitFailedException;
 
   /**
    * API to get the unbackfilled commits for the table represented by the given logPath.
@@ -141,6 +143,7 @@ public interface CommitCoordinatorClient {
    *                                   was called. If it is None or invalid, then the commit
    *                                   coordinator client should backfill from the beginning of
    *                                   the table. Can be null.
+   * @throws IOException if there is an IO error while backfilling the commits.
    */
   void backfillToVersion(
     LogStore logStore,
@@ -148,7 +151,7 @@ public interface CommitCoordinatorClient {
     Path logPath,
     Map<String, String> tableConf,
     long version,
-    Long lastKnownBackfilledVersion);
+    Long lastKnownBackfilledVersion) throws IOException;
 
   /**
    * Determines whether this CommitCoordinatorClient is semantically equal to another

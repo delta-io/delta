@@ -15,11 +15,13 @@
  */
 package io.delta.kernel.defaults.engine;
 
+import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
 
 import io.delta.storage.LogStore;
 import io.delta.storage.commit.CommitCoordinatorClient;
+import io.delta.storage.commit.CommitFailedException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
@@ -106,10 +108,12 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
             Map<String, String> tableConf,
             long commitVersion,
             CloseableIterator<Row> actions,
-            UpdatedActions updatedActions) {
+            UpdatedActions updatedActions)
+            throws io.delta.kernel.engine.coordinatedcommits.CommitFailedException {
         Path path = new Path(logPath);
         LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
-        return StorageKernelAPIAdapter.toKernelAPICommitResponse(commitCoordinatorClient.commit(
+        try {
+            return StorageKernelAPIAdapter.toKernelAPICommitResponse(commitCoordinatorClient.commit(
                 logStore,
                 hadoopConf,
                 path,
@@ -127,6 +131,10 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
                     }
                 },
                 StorageKernelAPIAdapter.toStorageUpdatedActions(updatedActions)));
+        } catch (CommitFailedException e) {
+            throw new io.delta.kernel.engine.coordinatedcommits.CommitFailedException(
+                    e.getRetryable(), e.getConflict(), e.getMessage());
+        }
     }
 
     @Override
@@ -148,7 +156,7 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
             String logPath,
             Map<String, String> tableConf,
             long version,
-            Long lastKnownBackfilledVersion) {
+            Long lastKnownBackfilledVersion) throws IOException {
         Path path = new Path(logPath);
         LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
         commitCoordinatorClient.backfillToVersion(
