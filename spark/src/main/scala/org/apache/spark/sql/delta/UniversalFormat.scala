@@ -248,7 +248,7 @@ object UniversalFormat extends DeltaLogging {
       newestProtocol = snapshot.protocol,
       newestMetadata = metadata,
       operation = None,
-      actions = Seq(),
+      actions = Seq()
     )
 
     universalMetadata match {

@@ -47,7 +47,7 @@ object IcebergCompatV1 extends IcebergCompat(
     CheckAddFileHasStats,
     CheckNoPartitionEvolution,
     CheckNoListMapNullType,
-    CheckDeletionVectorDisabled,
+    CheckDeletionVectorDisabled
   )
 )
 
@@ -61,7 +61,7 @@ object IcebergCompatV2 extends IcebergCompat(
     CheckAddFileHasStats,
     CheckTypeInV2AllowList,
     CheckNoPartitionEvolution,
-    CheckDeletionVectorDisabled,
+    CheckDeletionVectorDisabled
   )
 )
 
@@ -415,9 +415,9 @@ object CheckDeletionVectorDisabled extends IcebergCompatCheck {
       // DV and rewrite all the parquet files with DV removed as for now.
       if (isReorgUpgradeUniform) {
         if (DeletionVectorUtils.deletionVectorsWritable(
-            protocol = context.newestProtocol,
-            metadata = context.newestMetadata
-          )) {
+              protocol = context.newestProtocol,
+              metadata = context.newestMetadata
+        )) {
           throw DeltaErrors.icebergCompatDeletionVectorsShouldBeDisabledException(context.version)
         }
       } else {
@@ -436,4 +436,3 @@ object CheckDeletionVectorDisabled extends IcebergCompatCheck {
     }
   }
 }
-
