@@ -414,8 +414,8 @@ object TableFeature {
   protected def getDroppedExplicitFeatureNames(
       newProtocol: Protocol,
       oldProtocol: Protocol): Option[Set[String]] = {
-    val newFeatureNames = newProtocol.readerAndWriterFeatureNames
-    val oldFeatureNames = oldProtocol.readerAndWriterFeatureNames
+    val newFeatureNames = newProtocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+    val oldFeatureNames = oldProtocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
     Option(oldFeatureNames -- newFeatureNames).filter(_.nonEmpty)
   }
 

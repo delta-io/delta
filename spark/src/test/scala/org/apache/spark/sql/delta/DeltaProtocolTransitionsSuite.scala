@@ -33,6 +33,11 @@ class DeltaProtocolTransitionsSuite
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
+  }
+
   protected def testProtocolTransition(
       createTableColumns: Seq[(String, String)] = Seq.empty,
       createTableGeneratedColumns: Seq[(String, String, String)] = Seq.empty,
