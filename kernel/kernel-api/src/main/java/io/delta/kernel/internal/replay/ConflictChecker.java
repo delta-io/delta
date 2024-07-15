@@ -31,7 +31,7 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
-import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
+import static io.delta.kernel.internal.TableConfig.isICTEnabled;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -110,9 +110,9 @@ public class ConflictChecker {
                 checkArgument(!actionBatch.isFromCheckpoint());  // no checkpoints should be read
                 ColumnarBatch batch = actionBatch.getColumnarBatch();
                 if (actionBatch.getVersion() == lastWinningVersion) {
-                    CommitInfo commitInfo =
+                    Optional<CommitInfo> commitInfo =
                             getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
-                    winningCommitInfoOpt.set(Optional.ofNullable(commitInfo));
+                    winningCommitInfoOpt.set(commitInfo);
                 }
 
                 handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
@@ -207,13 +207,13 @@ public class ConflictChecker {
      * @param commitInfoVector commit info rows from the winning transactions
      * @return the commit info
      */
-    private CommitInfo getCommitInfo(ColumnVector commitInfoVector) {
+    private Optional<CommitInfo> getCommitInfo(ColumnVector commitInfoVector) {
         for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
             if (!commitInfoVector.isNullAt(rowId)) {
-                return CommitInfo.fromColumnVector(commitInfoVector, rowId);
+                return Optional.of(CommitInfo.fromColumnVector(commitInfoVector, rowId));
             }
         }
-        return null;
+        return Optional.empty();
     }
 
     private void handleTxn(ColumnVector txnVector) {
@@ -280,7 +280,7 @@ public class ConflictChecker {
         FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
         long winningCommitTimestamp = -1L;
         if (snapshot.getVersion(engine) == -1 ||
-                !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
+                !isICTEnabled(snapshot.getMetadata())) {
             winningCommitTimestamp = lastWinningTxn.getModificationTime();
         } else {
             winningCommitTimestamp = CommitInfo.getRequiredInCommitTimestamp(

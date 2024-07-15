@@ -130,7 +130,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val ver1Timestamp = ver1Snapshot.getTimestamp(engine)
-      assert(IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver1Snapshot.getMetadata))
+      assert(isICTEnabled(ver1Snapshot.getMetadata))
 
       clock.setTime(startTime - 10000)
       appendData(

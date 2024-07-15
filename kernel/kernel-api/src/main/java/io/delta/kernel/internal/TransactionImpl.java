@@ -41,8 +41,7 @@ import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
-import static io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL;
-import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
+import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -152,13 +151,13 @@ public class TransactionImpl
                                     rebaseState.getLatestCommitTimestamp(),
                                     attemptCommitInfo.getInCommitTimestamp());
                     if (updatedInCommitTimestamp.isPresent()) {
-                        Optional<Metadata> metadataWithICTInfo =
-                                getMetadataWithUpdatedICTEnablementInfo(
+                        Optional<Metadata> metadataWithICTInfo = InCommitTimestampUtils
+                                .getUpdatedMetadataWithICTEnablementInfo(
                                         engine,
                                         updatedInCommitTimestamp.get(),
+                                        readSnapshot,
                                         metadata,
-                                        rebaseState.getLatestVersion()
-                                );
+                                        rebaseState.getLatestVersion() + 1L);
                         metadataWithICTInfo.ifPresent(this::updateMetadata);
                     }
                     attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
@@ -207,20 +206,6 @@ public class TransactionImpl
             return Optional.of(updatedInCommitTimestamp);
         }
         return attemptInCommitTimestamp;
-    }
-
-    private Optional<Metadata> getMetadataWithUpdatedICTEnablementInfo(
-            Engine engine,
-            Long updatedInCommitTimestamp,
-            Metadata attemptMetadata,
-            Long lastWinningVersion) {
-        long nextAvailableVersion = lastWinningVersion + 1L;
-        return InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-                engine,
-                updatedInCommitTimestamp,
-                readSnapshot,
-                attemptMetadata,
-                nextAvailableVersion);
     }
 
     private TransactionCommitResult doCommit(
@@ -286,7 +271,7 @@ public class TransactionImpl
      */
     private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
             Engine engine, long currentTimestamp) {
-        if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+        if (isICTEnabled(metadata)) {
             long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
             return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
         } else {
