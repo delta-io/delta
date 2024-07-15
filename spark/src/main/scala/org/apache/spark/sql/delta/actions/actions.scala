@@ -207,13 +207,22 @@ object Protocol {
       writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
+  /** Returns the required protocol for a given feature. Takes into account dependent features. */
   def forTableFeature(tf: TableFeature): Protocol = {
-    val writerFeatures = Some(Set(tf.name)) // every table feature is a writer feature
-    val readerFeatures = if (tf.isReaderWriterFeature) writerFeatures else None
-    val minReaderVersion = if (readerFeatures.isDefined) TABLE_FEATURES_MIN_READER_VERSION else 1
-    val minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION
+    // Every table feature is a writer feature.
+    val writerFeatures = tf.requiredFeatures + tf
+    val readerFeatures = writerFeatures.filter(f => f.isReaderWriterFeature && !f.isLegacyFeature)
+    val writerFeaturesNames = writerFeatures.map(_.name)
+    val readerFeaturesNames = readerFeatures.map(_.name)
 
-    new Protocol(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures)
+    val minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION
+    val minReaderVersion = (readerFeatures.map(_.minReaderVersion) + 1).max
+
+    new Protocol(
+      minReaderVersion,
+      minWriterVersion,
+      readerFeatures = Option(readerFeaturesNames).filter(_.nonEmpty),
+      writerFeatures = Some(writerFeaturesNames))
   }
 
   /**
