@@ -157,6 +157,15 @@ class DeltaReorgSuite extends QueryTest
     assert(opMetrics("numDeletionVectorsRemoved").toLong === numFilesRemoved)
   }
 
+  /**
+   * Get all parquet footers for the input `files`, used only for testing.
+   *
+   * @param files the sequence of `AddFile` used to read the parquet footers
+   *              by the data file path in each `AddFile`.
+   * @param log the delta log used to get the configuration and data path.
+   * @return the sequence of the corresponding parquet footers, corresponds to
+   *         the sequence of `AddFile`.
+   */
   private def getParquetFooters(
       files: Seq[AddFile],
       log: DeltaLog): Seq[Footer] = {

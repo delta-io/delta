@@ -16,11 +16,13 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.Snapshot
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.{MaterializedRowCommitVersion, MaterializedRowId, Snapshot}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.util.DeltaFileOperations
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -51,19 +53,43 @@ trait ReorgTableHelper extends Serializable {
   }
 
   /**
-   * Determine whether `fileSchema` has any column that has already been dropped from the
-   * `tablePhysicalSchema`, i.e., by ALTER TABLE DROP COLUMN.
+   * Determine whether `fileSchema` has any column that does not exist in the
+   * `tablePhysicalSchema`, this is possible by running ALTER TABLE commands,
+   * e.g., ALTER TABLE DROP COLUMN.
    *
    * @param fileSchema the current parquet schema to be checked.
    * @param tablePhysicalSchema the current table schema.
+   * @param protocol the protocol used to check `row_id` and `row_commit_version`.
+   * @param metadata the metadata used to check `row_id` and `row_commit_version`.
    * @return whether the file has any dropped column.
    */
-  protected def fileHasDroppedColumns(
+  protected def fileHasExtraColumns(
       fileSchema: StructType,
-      tablePhysicalSchema: StructType): Boolean = {
-    SchemaMergingUtils.transformColumns(fileSchema, tablePhysicalSchema) {
-      case (_, _, None, _) => return true
-      case (_, field, _, _) => field
+      tablePhysicalSchema: StructType,
+      protocol: Protocol,
+      metadata: Metadata): Boolean = {
+    // 0. get the materialized names for `row_id` and `row_commit_version`.
+    val materializedRowIdColumnNameOpt =
+      MaterializedRowId.getMaterializedColumnName(protocol, metadata)
+    val materializedRowCommitVersionColumnNameOpt =
+      MaterializedRowCommitVersion.getMaterializedColumnName(protocol, metadata)
+
+    SchemaMergingUtils.transformColumns(fileSchema) { (path, field, _) =>
+      // 1. check whether the field exists in the `tablePhysicalSchema`.
+      val fullName = path :+ field.name
+      val inTableFieldOpt = SchemaUtils.findNestedFieldIgnoreCase(
+        tablePhysicalSchema, fullName, includeCollections = true)
+
+      // 2. check whether the current `field` is `row_id` or `row_commit_version`
+      //    column; if so, we need to explicitly keep these columns since they are
+      //    not part of the table schema but exist in the parquet file.
+      val isRowIdOrRowCommitVersion = materializedRowIdColumnNameOpt.contains(field.name) ||
+        materializedRowCommitVersionColumnNameOpt.contains(field.name)
+
+      if (inTableFieldOpt.isEmpty && !isRowIdOrRowCommitVersion) {
+        return true
+      }
+      field
     }
     false
   }

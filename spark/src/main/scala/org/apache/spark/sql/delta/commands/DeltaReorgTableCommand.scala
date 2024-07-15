@@ -109,15 +109,17 @@ class DeltaPurgeOperation extends DeltaReorgOperation with ReorgTableHelper {
   override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
     : Seq[AddFile] = {
     val physicalSchema = DeltaColumnMapping.renameColumns(snapshot.schema)
-    val filesWithDroppedColumns =
+    val protocol = snapshot.protocol
+    val metadata = snapshot.metadata
+    val filesWithDroppedColumns: Seq[AddFile] =
       filterParquetFilesOnExecutors(spark, files, snapshot, ignoreCorruptFiles = false) {
-        schema => fileHasDroppedColumns(schema, physicalSchema)
+        schema => fileHasExtraColumns(schema, physicalSchema, protocol, metadata)
       }
-    filesWithDroppedColumns ++ files.filter { file =>
-      !filesWithDroppedColumns.contains(file) &&
+    val filesWithDV: Seq[AddFile] = files.filter { file =>
         (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
         file.numDeletedRecords > 0L
     }
+    (filesWithDroppedColumns ++ filesWithDV).distinct
   }
 }
 
