@@ -385,8 +385,15 @@ object Protocol {
     // relevant implicit features.
     val implicitFeaturesFromTableConf =
       (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt) match {
-        case (Some(r), Some(w)) if !supportsReaderFeatures(r) =>
-          Protocol(r, w).implicitlySupportedFeatures
+        case (Some(readerVersion), Some(writerVersion)) =>
+          // We cannot have a table features reader version if the protocol does not
+          // support writer features.
+          val sanitizedReaderVersion = if (supportsWriterFeatures(writerVersion)) {
+            readerVersion
+          } else {
+            Math.min(2, readerVersion)
+          }
+          Protocol(sanitizedReaderVersion, writerVersion).implicitlySupportedFeatures
         case _ => Set.empty
       }
 

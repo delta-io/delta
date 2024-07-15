@@ -321,9 +321,9 @@ trait TableFeatureSupport { this: Protocol =>
     require(targetFeature.isRemovable)
     val newProtocol = targetFeature match {
       case f@(_: ReaderWriterFeature | _: LegacyReaderWriterFeature) =>
-        removeReaderWriterFeature(f)
+        denormalized.removeReaderWriterFeature(f)
       case f@(_: WriterFeature | _: LegacyWriterFeature) =>
-        removeWriterFeature(f)
+        denormalized.removeWriterFeature(f)
       case f =>
         throw DeltaErrors.dropTableFeatureNonRemovableFeature(f.name)
     }
