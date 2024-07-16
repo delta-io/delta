@@ -23,7 +23,9 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.annotation.JsonIgnore
+
 
 /**
  * Trait to be mixed into the [[Protocol]] case class to enable Table Features.
@@ -319,16 +321,19 @@ trait TableFeatureSupport { this: Protocol =>
    */
   def removeFeature(targetFeature: TableFeature): Protocol = {
     require(targetFeature.isRemovable)
+    val currentProtocol = this.denormalized
     val newProtocol = targetFeature match {
       case f@(_: ReaderWriterFeature | _: LegacyReaderWriterFeature) =>
-        denormalized.removeReaderWriterFeature(f)
+        currentProtocol.removeReaderWriterFeature(f)
       case f@(_: WriterFeature | _: LegacyWriterFeature) =>
-        denormalized.removeWriterFeature(f)
+        currentProtocol.removeWriterFeature(f)
       case f =>
         throw DeltaErrors.dropTableFeatureNonRemovableFeature(f.name)
     }
+
     newProtocol.normalized
   }
+
 
   /**
    * Protocol normalization is the process of converting a table features protocol to the weakest

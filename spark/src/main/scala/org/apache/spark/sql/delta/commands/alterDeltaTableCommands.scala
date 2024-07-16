@@ -305,7 +305,9 @@ case class AlterTableDropFeatureDeltaCommand(
       // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
       // features from legacy protocols.
       val protocol = table.initialSnapshot.protocol
-      if (!protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)) {
+      val protocolContainsFeatureName =
+        protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
+      if (!protocolContainsFeatureName) {
         throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
       }
 

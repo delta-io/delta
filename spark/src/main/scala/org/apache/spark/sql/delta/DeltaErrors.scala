@@ -2043,7 +2043,7 @@ trait DeltaErrorsBase
         mode.name))
   }
 
-  private def columnMappingAdviceMessage(
+  protected def columnMappingAdviceMessage(
       requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
     val readerVersion = requiredProtocol.minReaderVersion
     val writerVersion = requiredProtocol.minWriterVersion

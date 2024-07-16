@@ -640,6 +640,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           .merge(newProtocolBeforeAddingFeatures))
     }
 
+    // We are done with protocol versions and features, time to remove related table properties.
+    val configsWithoutProtocolProps = newMetadataTmp.configuration.filterNot {
+      case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
+    }
     // Table features Part 3: add automatically-enabled features by looking at the new table
     // metadata.
     //
@@ -649,10 +653,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
 
-    // We are done with protocol versions and features, time to remove related table properties.
-    val configsWithoutProtocolProps = newMetadataTmp.configuration.filterNot {
-      case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
-    }
     newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
     Protocol.assertMetadataContainsNoProtocolProps(newMetadataTmp)
 

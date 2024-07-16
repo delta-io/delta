@@ -503,12 +503,14 @@ object Protocol {
     val writerVersionFromConf =
       Protocol.getWriterVersionFromTableConf(metadata.configuration).getOrElse(writerVersion)
 
+    val finalReaderVersion =
+      Seq(readerVersion, readerVersionFromConf, current.minReaderVersion).max
+    val finalWriterVersion =
+      Seq(writerVersion, writerVersionFromConf, current.minWriterVersion).max
+
     // Increment the reader and writer version to accurately add enabled legacy table features
     // either to the implicitly enabled table features or the table feature lists.
-    val required = Protocol(
-      Seq(readerVersion, readerVersionFromConf, current.minReaderVersion).max,
-      Seq(writerVersion, writerVersionFromConf, current.minWriterVersion).max)
-      .withFeatures(minRequiredFeatures)
+    val required = Protocol(finalReaderVersion, finalWriterVersion).withFeatures(minRequiredFeatures)
     if (!required.canUpgradeTo(current)) {
       // When the current protocol does not satisfy metadata requirement, some additional features
       // must be supported by the protocol. We assert those features can actually perform the
