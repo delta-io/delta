@@ -646,12 +646,13 @@ trait DeltaSQLConfBase {
       .stringConf
       .createWithDefault(".s3-optimization-")
 
-  val DELTA_MERGE_ANALYSIS_TRACK_PREVIOUSLY_RESOLVED =
-    buildConf("merge.analysis.trackPreviouslyResolved.enabled")
+  val DELTA_MERGE_ANALYSIS_BATCH_RESOLUTION =
+    buildConf("merge.analysis.batchActionResolution.enabled")
       .internal()
       .doc(
         """
-          | Whether to track the previously resolved expressions during merge's analysis resolution.
+          | Whether to batch the analysis of all DeltaMergeActions within a clause
+          | during merge's analysis resolution.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
