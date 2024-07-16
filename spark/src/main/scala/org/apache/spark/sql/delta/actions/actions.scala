@@ -510,7 +510,8 @@ object Protocol {
 
     // Increment the reader and writer version to accurately add enabled legacy table features
     // either to the implicitly enabled table features or the table feature lists.
-    val required = Protocol(finalReaderVersion, finalWriterVersion).withFeatures(minRequiredFeatures)
+    val required =
+      Protocol(finalReaderVersion, finalWriterVersion).withFeatures(minRequiredFeatures)
     if (!required.canUpgradeTo(current)) {
       // When the current protocol does not satisfy metadata requirement, some additional features
       // must be supported by the protocol. We assert those features can actually perform the

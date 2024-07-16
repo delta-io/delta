@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATUR
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.annotation.JsonIgnore
 
-
 /**
  * Trait to be mixed into the [[Protocol]] case class to enable Table Features.
  *
@@ -330,7 +329,6 @@ trait TableFeatureSupport { this: Protocol =>
       case f =>
         throw DeltaErrors.dropTableFeatureNonRemovableFeature(f.name)
     }
-
     newProtocol.normalized
   }
 
