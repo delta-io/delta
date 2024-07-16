@@ -16,19 +16,19 @@
 
 package org.apache.spark.sql.delta.optimize
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog}
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.parquet.hadoop.Footer
+
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
-import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{LongType, StructField}
 import org.apache.spark.util.SerializableConfiguration
 
 class DeltaReorgSuite extends QueryTest
