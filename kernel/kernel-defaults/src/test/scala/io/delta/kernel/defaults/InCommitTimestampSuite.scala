@@ -38,7 +38,7 @@ import io.delta.kernel.internal.TableConfig._
 import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.internal.actions.SingleAction.createCommitInfoSingleAction
 
-abstract class InCommitTimestampSuite(winningCommitsNum: Int) extends DeltaTableWriteSuiteBase {
+class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
@@ -444,52 +444,54 @@ abstract class InCommitTimestampSuite(winningCommitsNum: Int) extends DeltaTable
     }
   }
 
-  test("Conflict resolution of enablement version") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+  Seq(10, 2).foreach { winningCommitCount =>
+    test(s"Conflict resolution of enablement version(Winning Commit Count=$winningCommitCount)") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+        val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+        val txn = txnBuilder
+          .withSchema(engine, testSchema)
+          .build(engine)
 
-      txn.commit(engine, emptyIterable())
+        txn.commit(engine, emptyIterable())
 
-      val startTime = System.currentTimeMillis()
-      val clock = new ManualClock(startTime)
+        val startTime = System.currentTimeMillis()
+        val clock = new ManualClock(startTime)
 
-      val txn1 = createTxn(
-        engine,
-        tablePath,
-        schema = testSchema,
-        partCols = Seq.empty,
-        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
-        clock = clock)
-
-      clock.setTime(startTime)
-      for (_ <- 0 until winningCommitsNum) {
-        appendData(
+        val txn1 = createTxn(
           engine,
           tablePath,
-          data = Seq(Map.empty[String, Literal] -> dataBatches2),
-          clock = clock
-        )
+          schema = testSchema,
+          partCols = Seq.empty,
+          tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
+          clock = clock)
+
+        clock.setTime(startTime)
+        for (_ <- 0 until winningCommitCount) {
+          appendData(
+            engine,
+            tablePath,
+            data = Seq(Map.empty[String, Literal] -> dataBatches2),
+            clock = clock
+          )
+        }
+
+        commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
+
+        val lastSnapshot = table.getSnapshotAsOfVersion(
+          engine, winningCommitCount).asInstanceOf[SnapshotImpl]
+        val curSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        val observedEnablementTimestamp =
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(curSnapshot.getMetadata)
+        val observedEnablementVersion =
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(curSnapshot.getMetadata)
+        assert(observedEnablementTimestamp.get === lastSnapshot.getTimestamp(engine) + 1)
+        assert(
+          observedEnablementTimestamp.get ===
+            getInCommitTimestamp(engine, table, version = winningCommitCount + 1).get)
+        assert(observedEnablementVersion.get === winningCommitCount + 1)
       }
-
-      commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
-
-      val lastSnapshot = table.getSnapshotAsOfVersion(
-        engine, winningCommitsNum).asInstanceOf[SnapshotImpl]
-      val curSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      val observedEnablementTimestamp =
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(curSnapshot.getMetadata)
-      val observedEnablementVersion =
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(curSnapshot.getMetadata)
-      assert(observedEnablementTimestamp.get === lastSnapshot.getTimestamp(engine) + 1)
-      assert(
-        observedEnablementTimestamp.get ===
-          getInCommitTimestamp(engine, table, version = winningCommitsNum + 1).get)
-      assert(observedEnablementVersion.get === winningCommitsNum + 1)
     }
   }
 
@@ -578,6 +580,3 @@ abstract class InCommitTimestampSuite(winningCommitsNum: Int) extends DeltaTable
     }
   }
 }
-
-class InCommitTimestamp1Suite extends InCommitTimestampSuite(1)
-class InCommitTimestamp5Suite extends InCommitTimestampSuite(5)
