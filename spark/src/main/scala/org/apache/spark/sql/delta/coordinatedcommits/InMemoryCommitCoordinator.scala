@@ -207,7 +207,7 @@ class InMemoryCommitCoordinator(val batchSize: Long)
 
   override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
 
-  def removeCommitTestOnly(
+  private[delta] def removeCommitTestOnly(
       logPath: Path,
       commitVersion: Long
   ): Unit = {
