@@ -165,6 +165,16 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
   }
 }
 
+case class TrackingGenericInMemoryCommitCoordinatorBuilder(
+    builderName: String, realBuilder: CommitCoordinatorBuilder)
+  extends CommitCoordinatorBuilder {
+  override def getName: String = builderName
+
+  override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+    new TrackingCommitCoordinatorClient(realBuilder.build(spark, conf))
+  }
+}
+
 class PredictableUuidInMemoryCommitCoordinatorClient(batchSize: Long)
   extends InMemoryCommitCoordinator(batchSize) {
 
@@ -182,7 +192,7 @@ object TrackingCommitCoordinatorClient {
 }
 
 class TrackingCommitCoordinatorClient(
-    val delegatingCommitCoordinatorClient: InMemoryCommitCoordinator)
+    val delegatingCommitCoordinatorClient: CommitCoordinatorClient)
   extends CommitCoordinatorClient {
 
   val numCommitsCalled = new AtomicInteger(0)
@@ -236,17 +246,6 @@ class TrackingCommitCoordinatorClient(
       logPath, coordinatedCommitsTableConf, startVersion, endVersion)
   }
 
-  def removeCommitTestOnly(
-      logPath: Path,
-      commitVersion: Long
-  ): Unit = {
-    val tableData = delegatingCommitCoordinatorClient.perTableMap.get(logPath)
-    tableData.commitsMap.remove(commitVersion)
-    if (commitVersion == tableData.maxCommitVersion) {
-      tableData.maxCommitVersion -= 1
-    }
-  }
-
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
@@ -263,7 +262,15 @@ class TrackingCommitCoordinatorClient(
       lastKnownBackfilledVersion)
   }
 
-  override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
+  override def semanticEquals(other: CommitCoordinatorClient): Boolean = {
+    other match {
+      case otherTracking: TrackingCommitCoordinatorClient =>
+        delegatingCommitCoordinatorClient.semanticEquals(
+          otherTracking.delegatingCommitCoordinatorClient)
+      case _ =>
+        delegatingCommitCoordinatorClient.semanticEquals(other)
+    }
+  }
 
   def reset(): Unit = {
     numCommitsCalled.set(0)
