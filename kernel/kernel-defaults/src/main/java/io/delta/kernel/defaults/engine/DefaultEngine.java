@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.defaults.engine;
 
+import java.util.Map;
+
 import org.apache.hadoop.conf.Configuration;
 
 import io.delta.kernel.engine.*;
@@ -50,6 +52,12 @@ public class DefaultEngine
         return new DefaultParquetHandler(hadoopConf);
     }
 
+    @Override
+    public CommitCoordinatorClientHandler getCommitCoordinatorClientHandler(
+            String name, Map<String, String> conf) {
+        return new DefaultCommitCoordinatorClientHandler(hadoopConf, name, conf);
+    }
+
     /**
      * Create an instance of {@link DefaultEngine}.
      *
@@ -59,4 +67,5 @@ public class DefaultEngine
     public static DefaultEngine create(Configuration hadoopConf) {
         return new DefaultEngine(hadoopConf);
     }
+
 }

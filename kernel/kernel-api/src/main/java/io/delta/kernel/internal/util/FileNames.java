@@ -18,6 +18,8 @@ package io.delta.kernel.internal.util;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 import io.delta.kernel.internal.fs.Path;
@@ -28,6 +30,9 @@ public final class FileNames {
 
     private static final Pattern DELTA_FILE_PATTERN =
         Pattern.compile("\\d+\\.json");
+
+    public static final Pattern UUID_DELTA_FILE_REGEX =
+            Pattern.compile("(\\d+)\\.([^\\.]+)\\.json");
 
     private static final Pattern CHECKPOINT_FILE_PATTERN =
         Pattern.compile(
@@ -43,12 +48,27 @@ public final class FileNames {
         Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
 
     public static final String SIDECAR_DIRECTORY = "_sidecars";
+    public static final String COMMIT_SUBDIR = "_commits";
 
     /**
      * Returns the delta (json format) path for a given delta file.
      */
     public static String deltaFile(Path path, long version) {
         return String.format("%s/%020d.json", path, version);
+    }
+
+    /**
+     * Returns the un-backfilled uuid formatted delta (json format) path for a given version.
+     *
+     * @param logPath The root path of the delta log.
+     * @param version The version of the delta file.
+     * @return The path to the un-backfilled delta file: logPath/_commits/version.uuid.json
+     */
+    public static Path unbackfilledDeltaFile(
+            Path logPath, long version, Optional<String> uuidString) {
+        Path basePath = commitDirPath(logPath);
+        String uuid = uuidString.orElse(UUID.randomUUID().toString());
+        return new Path(basePath, String.format("%020d.%s.json", version, uuid));
     }
 
     /**
@@ -161,7 +181,9 @@ public final class FileNames {
 
 
     public static boolean isCommitFile(String fileName) {
-        return DELTA_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
+        String filename = new Path(fileName).getName();
+        return DELTA_FILE_PATTERN.matcher(filename).matches() ||
+            UUID_DELTA_FILE_REGEX.matcher(filename).matches();
     }
 
     /**
@@ -182,5 +204,10 @@ public final class FileNames {
                 String.format("Unexpected file type found in transaction log: %s", path)
             );
         }
+    }
+
+    /** Returns path to the sidecar directory */
+    public static Path commitDirPath(Path logPath) {
+        return new Path(logPath, COMMIT_SUBDIR);
     }
 }

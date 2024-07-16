@@ -39,6 +39,24 @@ import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.internal.actions.SingleAction.createCommitInfoSingleAction
 
 class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
+
+  private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
+    val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
+    val columnarBatches =
+      engine.getJsonHandler.readJsonFiles(
+        singletonCloseableIterator(file),
+        SingleAction.FULL_SCHEMA,
+        Optional.empty())
+    assert(columnarBatches.hasNext)
+    val rows = columnarBatches.next().getRows
+    val rowsWithoutCommitInfo =
+      rows.filter(row => row.isNullAt(row.getSchema.indexOf("commitInfo")))
+    engine
+      .getJsonHandler
+      .writeJsonFileAtomically(
+        FileNames.deltaFile(logPath, version), rowsWithoutCommitInfo, true /* overwrite */)
+  }
+
   test("Enable ICT on commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
       val beforeCommitAttemptStartTime = System.currentTimeMillis
@@ -140,20 +158,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         expectedValue = true)
       // Remove CommitInfo from the commit.
       val logPath = new Path(table.getPath(engine), "_delta_log")
-      val file = FileStatus.of(FileNames.deltaFile(logPath, 0), 0, 0)
-      val columnarBatches =
-        engine.getJsonHandler.readJsonFiles(
-          singletonCloseableIterator(file),
-          SingleAction.FULL_SCHEMA,
-          Optional.empty())
-      assert(columnarBatches.hasNext)
-      val rows = columnarBatches.next().getRows
-      val rowsWithoutCommitInfo =
-        rows.filter(row => row.isNullAt(row.getSchema.indexOf("commitInfo")))
-      engine
-        .getJsonHandler
-        .writeJsonFileAtomically(
-          FileNames.deltaFile(logPath, 0), rowsWithoutCommitInfo, true /* overwrite */)
+      removeCommitInfoFromCommit(engine, 0, logPath)
 
       val ex = intercept[InvalidTableException] {
         table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl].getTimestamp(engine)
@@ -404,6 +409,126 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       Some(commitInfoOpt.get.getInCommitTimestamp.get)
     } else {
       Option.empty
+    }
+  }
+
+  test("Conflict resolution of timestamps") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+      val txn1 = createTxn(
+        engine,
+        tablePath,
+        schema = testSchema,
+        partCols = Seq.empty,
+        clock = clock
+      )
+      clock.setTime(startTime)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        clock = clock
+      )
+      clock.setTime(startTime - 1000)
+      commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
+      assert(
+        getInCommitTimestamp(
+          engine, table, 2).get == getInCommitTimestamp(engine, table, 1).get + 1)
+    }
+  }
+
+  test("Conflict resolution of enablement version") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn = txnBuilder
+        .withSchema(engine, testSchema)
+        .build(engine)
+
+      txn.commit(engine, emptyIterable())
+
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+
+      val txn1 = createTxn(
+        engine,
+        tablePath,
+        schema = testSchema,
+        partCols = Seq.empty,
+        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
+        clock = clock)
+
+      clock.setTime(startTime)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        clock = clock
+      )
+
+      commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
+
+      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
+      val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val observedEnablementTimestamp =
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(ver2Snapshot.getMetadata)
+      val observedEnablementVersion =
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(ver2Snapshot.getMetadata)
+      assert(observedEnablementTimestamp.get == ver1Snapshot.getTimestamp(engine) + 1)
+      assert(
+        observedEnablementTimestamp.get == getInCommitTimestamp(engine, table, version = 2).get)
+      assert(observedEnablementVersion.get == 2)
+    }
+  }
+
+  test("Missing CommitInfo in last winning commit in conflict resolution should result in a " +
+    "DELTA_MISSING_COMMIT_INFO exception") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+      setTablePropAndVerify(
+        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+      val txn1 = createTxn(
+        engine,
+        tablePath,
+        schema = testSchema,
+        partCols = Seq.empty,
+        clock = clock
+      )
+      clock.setTime(startTime)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        clock = clock
+      )
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        clock = clock
+      )
+
+      // Remove CommitInfo from the commit.
+      val logPath = new Path(table.getPath(engine), "_delta_log")
+      removeCommitInfoFromCommit(engine, 2, logPath)
+
+      clock.setTime(startTime - 1000)
+      val ex = intercept[InvalidTableException] {
+        commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
+      }
+      assert(ex.getMessage.contains(String.format(
+        "This table has the feature %s enabled which requires the presence of the " +
+          "CommitInfo action in every commit. However, the CommitInfo action is " +
+          "missing from commit version %s.", "inCommitTimestamp-preview", "2")))
     }
   }
 }

@@ -17,18 +17,24 @@ package io.delta.kernel.internal.replay;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import static java.lang.String.format;
 
+import io.delta.kernel.commit.Commit;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.engine.CommitCoordinatorClientHandler;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.*;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
+import static io.delta.kernel.internal.TableConfig.COORDINATED_COMMITS_TABLE_CONF;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -44,6 +50,7 @@ public class ConflictChecker {
     private static final int PROTOCOL_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("protocol");
     private static final int METADATA_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("metaData");
     private static final int TXN_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("txn");
+    private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
 
     // Snapshot of the table read by the transaction that encountered the conflict
     // (a.k.a the losing transaction)
@@ -88,10 +95,13 @@ public class ConflictChecker {
 
     public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
         List<FileStatus> winningCommits = getWinningCommitFiles(engine);
+        AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt =
+                new AtomicReference<>(Optional.empty());
 
         // no winning commits. why did we get the transaction conflict?
         checkState(!winningCommits.isEmpty(), "No winning commits found.");
 
+        long lastWinningVersion = getLastWinningTxnVersion(winningCommits);
         // Read the actions from the winning commits
         try (ActionsIterator actionsIterator = new ActionsIterator(
                 engine,
@@ -102,6 +112,11 @@ public class ConflictChecker {
             actionsIterator.forEachRemaining(actionBatch -> {
                 checkArgument(!actionBatch.isFromCheckpoint());  // no checkpoints should be read
                 ColumnarBatch batch = actionBatch.getColumnarBatch();
+                if (actionBatch.getVersion() == lastWinningVersion) {
+                    CommitInfo commitInfo =
+                            getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
+                    winningCommitInfoOpt.set(Optional.ofNullable(commitInfo));
+                }
 
                 handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
                 handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
@@ -113,7 +128,10 @@ public class ConflictChecker {
 
         // if we get here, we have successfully rebased (i.e no logical conflicts)
         // against the winning transactions
-        return new TransactionRebaseState(getLastWinningTxnVersion(winningCommits));
+        return new TransactionRebaseState(
+                lastWinningVersion,
+                getLastCommitTimestamp(
+                        engine, lastWinningVersion, winningCommits, winningCommitInfoOpt.get()));
     }
 
     /**
@@ -128,9 +146,11 @@ public class ConflictChecker {
      */
     public static class TransactionRebaseState {
         private final long latestVersion;
+        private final long latestCommitTimestamp;
 
-        public TransactionRebaseState(long latestVersion) {
+        public TransactionRebaseState(long latestVersion, long latestCommitTimestamp) {
             this.latestVersion = latestVersion;
+            this.latestCommitTimestamp = latestCommitTimestamp;
         }
 
         /**
@@ -140,6 +160,17 @@ public class ConflictChecker {
          */
         public long getLatestVersion() {
             return latestVersion;
+        }
+
+        /**
+         * Return the latest commit timestamp of the table. For ICT enabled tables, this is the
+         * ICT of the latest winning transaction commit file. For non-ICT enabled tables, this
+         * is the modification time of the latest winning transaction commit file.
+         *
+         * @return latest commit timestamp of the table.
+         */
+        public long getLatestCommitTimestamp() {
+            return latestCommitTimestamp;
         }
     }
 
@@ -173,6 +204,21 @@ public class ConflictChecker {
         }
     }
 
+    /**
+     * Get the commit info from the winning transactions.
+     *
+     * @param commitInfoVector commit info rows from the winning transactions
+     * @return the commit info
+     */
+    private CommitInfo getCommitInfo(ColumnVector commitInfoVector) {
+        for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
+            if (!commitInfoVector.isNullAt(rowId)) {
+                return CommitInfo.fromColumnVector(commitInfoVector, rowId);
+            }
+        }
+        return null;
+    }
+
     private void handleTxn(ColumnVector txnVector) {
         // Check if the losing transaction has any txn identifier. If it does, go through the
         // winning transactions and make sure that the losing transaction is valid from a
@@ -194,20 +240,45 @@ public class ConflictChecker {
     }
 
     private List<FileStatus> getWinningCommitFiles(Engine engine) {
+        long startVersion = snapshot.getVersion(engine) + 1;
+        Optional<CommitCoordinatorClientHandler> commitCoordinatorClientHandlerOpt =
+                snapshot.getCommitCoordinatorClientHandlerOpt(engine);
+        List<Commit> unbackfilledCommits = commitCoordinatorClientHandlerOpt
+                .map(commitCoordinatorClientHandler -> commitCoordinatorClientHandler
+                        .getCommits(
+                                snapshot.getLogPath().toString(),
+                                COORDINATED_COMMITS_TABLE_CONF.fromMetadata(snapshot.getMetadata()),
+                                startVersion,
+                                null)
+                        .getCommits())
+                .orElse(Collections.emptyList());
+
         String firstWinningCommitFile =
-                deltaFile(snapshot.getLogPath(), snapshot.getVersion(engine) + 1);
+                deltaFile(snapshot.getLogPath(), startVersion);
 
         try (CloseableIterator<FileStatus> files = engine.getFileSystemClient()
                 .listFrom(firstWinningCommitFile)) {
+            long maxDeltaVersionSeen = startVersion - 1;
             // Select all winning transaction commit files.
             List<FileStatus> winningCommitFiles = new ArrayList<>();
             while (files.hasNext()) {
                 FileStatus file = files.next();
                 if (FileNames.isCommitFile(file.getPath())) {
                     winningCommitFiles.add(file);
+                    maxDeltaVersionSeen = Math.max(
+                            maxDeltaVersionSeen,
+                            FileNames.deltaVersion(file.getPath()));
                 }
             }
 
+            List<FileStatus> unbackfilledCommitsFiltered = new ArrayList<>();
+            for (Commit commit : unbackfilledCommits) {
+                if (commit.getVersion() > maxDeltaVersionSeen) {
+                    unbackfilledCommitsFiltered.add(commit.getFileStatus());
+                }
+            }
+
+            winningCommitFiles.addAll(unbackfilledCommitsFiltered);
             return ensureNoGapsInWinningCommits(winningCommitFiles);
         } catch (FileNotFoundException nfe) {
             // no winning commits. why did we get here?
@@ -216,6 +287,36 @@ public class ConflictChecker {
             throw new UncheckedIOException(
                     "Error listing files from " + firstWinningCommitFile, ioe);
         }
+    }
+
+    /**
+     * Get the last commit timestamp of the table. For ICT enabled tables, this is the ICT of the
+     * latest winning transaction commit file. For non-ICT enabled tables, this is the modification
+     * time of the latest winning transaction commit file.
+     *
+     * @param engine                {@link Engine} instance to use
+     * @param lastWinningVersion    last winning version of the table
+     * @param winningCommits        list of winning transaction commit files
+     * @param winningCommitInfoOpt  winning commit info
+     * @return last commit timestamp of the table
+     */
+    private long getLastCommitTimestamp(
+            Engine engine,
+            long lastWinningVersion,
+            List<FileStatus> winningCommits,
+            Optional<CommitInfo> winningCommitInfoOpt) {
+        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
+        long winningCommitTimestamp = -1L;
+        if (snapshot.getVersion(engine) == -1 ||
+                !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
+            winningCommitTimestamp = lastWinningTxn.getModificationTime();
+        } else {
+            winningCommitTimestamp = CommitInfo.getRequiredInCommitTimestamp(
+                    winningCommitInfoOpt,
+                    String.valueOf(lastWinningVersion),
+                    snapshot.getDataPath());
+        }
+        return winningCommitTimestamp;
     }
 
     private long getLastWinningTxnVersion(List<FileStatus> winningCommits) {

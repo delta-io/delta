@@ -220,7 +220,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           new MockSidecarParquetHandler(expectedSidecars),
           new MockSidecarJsonHandler(expectedSidecars)),
         Optional.empty(),
-        versionToLoad
+        versionToLoad,
+        Optional.empty(),
+        null
       )
       assert(logSegmentOpt.isPresent())
 
@@ -316,7 +318,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(files),
         startCheckpoint,
-        versionToLoad
+        versionToLoad,
+        Optional.empty(),
+        null
       )
     }
     assert(e.getMessage.contains(expectedErrorMessageContains))
@@ -440,7 +444,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
       createMockFSListFromEngine(Seq.empty),
       Optional.empty(),
-      Optional.empty()
+      Optional.empty(),
+      Optional.empty(),
+      null
     )
     assert(!logSegmentOpt.isPresent())
   }
@@ -491,7 +497,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(listFrom(checkpointV)(_)),
         Optional.of(checkpointV),
-        Optional.empty()
+        Optional.empty(),
+        Optional.empty(),
+        null
       )
       assert(logSegmentOpt.isPresent())
       checkLogSegment(
@@ -831,7 +839,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(deltas ++ corruptedCheckpoint ++ checkpoints),
         Optional.empty(),
-        Optional.empty()
+        Optional.empty(),
+        Optional.empty(),
+        null
       )
       val checkpointVersion = validVersions.sorted.lastOption
       assert(logSegmentOpt.isPresent())
@@ -852,7 +862,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
       createMockFSListFromEngine(Seq.empty),
       Optional.of(1),
-      Optional.empty()
+      Optional.empty(),
+      Optional.empty(),
+      null
     )
     assert(!logSegmentOpt.isPresent())
   }
