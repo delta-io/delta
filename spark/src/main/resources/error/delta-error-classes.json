@@ -2496,20 +2496,6 @@
     ],
     "sqlState" : "0AKDC"
   },
-  "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL" : {
-    "message" : [
-      "",
-      "Your current table protocol version does not support changing column mapping modes",
-      "using <config>.",
-      "",
-      "Required Delta protocol version for column mapping:",
-      "<requiredVersion>",
-      "Your table's current Delta protocol version:",
-      "<currentVersion>",
-      "<advice>"
-    ],
-    "sqlState" : "KD004"
-  },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_SCHEMA_CHANGE" : {
     "message" : [
       "",

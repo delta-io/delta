@@ -283,7 +283,7 @@ trait TableFeatureSupport { this: Protocol =>
     // with the weakest possible form. This enables backward compatibility.
     // This is preceded by a denormalization step. This allows to fix invalid legacy Protocols.
     // For example, (2, 3) is normalized to (1, 3). This is because there is no legacy feature
-    // in the set with reader version 2.
+    // in the set with reader version 2 unless the writer version is at least 5.
     mergedProtocol.denormalizedNormalized
   }
 
@@ -333,9 +333,15 @@ trait TableFeatureSupport { this: Protocol =>
   /**
    * Protocol normalization is the process of converting a table features protocol to the weakest
    * possible form. This primarily refers to converting a table features protocol to a legacy
-   * protocol but it is also used for lowering the versions of a table features protocol.
-   * A Table Features protocol can be represented with the legacy representation only when the
-   * features set of the former exactly matches a legacy protocol.
+   * protocol. A Table Features protocol can be represented with the legacy representation only
+   * when the features set of the former exactly matches a legacy protocol.
+   *
+   * Normalization can also decrease the reader version of a table features protocol when it is
+   * higher than necessary.
+   *
+   * For example:
+   * (1, 7, AppendOnly, Invariants, CheckConstraints) -> (1, 3)
+   * (3, 7, RowTracking) -> (1, 7, RowTracking)
    */
   def normalized: Protocol = {
     // Normalization can only be applied to table feature protocols.

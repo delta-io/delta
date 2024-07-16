@@ -539,6 +539,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val newProtocolForLatestMetadata =
         Protocol(readerVersionAsTableProp, writerVersionAsTableProp)
 
+      // The user-supplied protocol version numbers are treated as a group of features
+      // that must all be enabled. This ensures that the feature-enabling behavior is the
+      // same on Table Features-enabled protocols as on legacy protocols, i.e., exactly
+      // the same set of features are enabled.
+      //
+      // This is useful for supporting protocol downgrades to legacy protocol versions.
       // When the protocol versions are explicitly set on table features protocol we may
       // normalize to legacy protocol versions. Legacy protocol versions can only be
       // used if a table supports *exactly* the set of features in that legacy protocol
