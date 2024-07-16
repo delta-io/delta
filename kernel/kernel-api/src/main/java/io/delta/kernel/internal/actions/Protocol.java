@@ -25,6 +25,7 @@ import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
@@ -56,6 +57,29 @@ public class Protocol {
     private final int minWriterVersion;
     private final List<String> readerFeatures;
     private final List<String> writerFeatures;
+    private final Lazy<Set<String>> readerAndWriterFeatureNames;
+
+    public static Protocol empty() {
+        return new Protocol(3, 7);
+    }
+
+    private static boolean supportsReaderFeatures(int minReaderVersion) {
+        return minReaderVersion >= 3;
+    }
+
+    private static boolean supportsWriterFeatures(int minWriterVersion) {
+        return minWriterVersion >= 7;
+    }
+
+    public Protocol(int minReaderVersion, int minWriterVersion) {
+        this.minReaderVersion = minReaderVersion;
+        this.minWriterVersion = minWriterVersion;
+        this.readerFeatures =
+                supportsReaderFeatures(minReaderVersion) ? Collections.emptyList() : null;
+        this.writerFeatures =
+                supportsWriterFeatures(minWriterVersion) ? Collections.emptyList() : null;
+        this.readerAndWriterFeatureNames = getLazyReaderAndWriterFeatureNames();
+    }
 
     public Protocol(
         int minReaderVersion,
@@ -66,6 +90,7 @@ public class Protocol {
         this.minWriterVersion = minWriterVersion;
         this.readerFeatures = readerFeatures;
         this.writerFeatures = writerFeatures;
+        this.readerAndWriterFeatureNames = getLazyReaderAndWriterFeatureNames();
     }
 
     public int getMinReaderVersion() {
@@ -124,5 +149,26 @@ public class Protocol {
                 newProtocolVersions._2,
                 this.readerFeatures == null ? null : new ArrayList<>(this.readerFeatures),
                 newWriterFeatures);
+    }
+
+    /**
+     * Check if a `feature` is supported by this protocol. This means the protocol supports
+     * table features and references the feature.
+     */
+    public boolean isFeatureSupported(String feature) {
+        return readerAndWriterFeatureNames.get().contains(feature);
+    }
+
+    private Lazy<Set<String>> getLazyReaderAndWriterFeatureNames() {
+        return new Lazy<>(() -> {
+            Set<String> names = new HashSet<>();
+            if (readerFeatures != null) {
+                names.addAll(readerFeatures);
+            }
+            if (writerFeatures != null) {
+                names.addAll(writerFeatures);
+            }
+            return names;
+        });
     }
 }

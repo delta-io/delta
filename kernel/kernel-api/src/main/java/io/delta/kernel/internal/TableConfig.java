@@ -19,6 +19,10 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
@@ -29,6 +33,8 @@ import io.delta.kernel.internal.util.IntervalParserUtils;
  * from the table metadata.
  */
 public class TableConfig<T> {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     /**
      * The shortest duration we have to keep logically deleted data files around before deleting
      * them physically.
@@ -105,6 +111,65 @@ public class TableConfig<T> {
                     "needs to be a long."
             );
 
+
+    /*
+     * This table property is used to track the commit-coordinator name for this table. If this
+     * property is not set, the table will be considered as file system table and commits will be
+     * done via atomically publishing the commit file.
+     */
+    public static final TableConfig<Optional<String>> COORDINATED_COMMITS_COORDINATOR_NAME =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.commitCoordinator-preview",
+                    null, /* default values */
+                    Optional::ofNullable,
+                    value -> true,
+                    "The commit-coordinator name for this table. This is used to determine\n" +
+                            "which implementation of commit-coordinator to use when committing\n" +
+                            "to this table. If this property is not set, the table will be\n" +
+                            "considered as file system table and commits will be done via\n" +
+                            "atomically publishing the commit file.\n"
+            );
+
+    public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_COORDINATOR_CONF =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.commitCoordinatorConf-preview",
+                    null, /* default values */
+                    v -> {
+                        if (v == null) {
+                            return Collections.emptyMap();
+                        }
+                        try {
+                            return OBJECT_MAPPER.readValue(
+                                    v, new TypeReference<Map<String, String>>() {});
+                        } catch (JsonProcessingException e) {
+                            throw new RuntimeException(e);
+                        }
+                    },
+                    value -> true,
+                    "A string-to-string map of configuration properties for the" +
+                            " coordinated commits-coordinator."
+            );
+
+    public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_TABLE_CONF =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.tableConf-preview",
+                    null, /* default values */
+                    v -> {
+                        if (v == null) {
+                            return Collections.emptyMap();
+                        }
+                        try {
+                            return OBJECT_MAPPER.readValue(
+                                    v, new TypeReference<Map<String, String>>() {});
+                        } catch (JsonProcessingException e) {
+                            throw new RuntimeException(e);
+                        }
+                    },
+                    value -> true,
+                    "A string-to-string map of configuration properties for" +
+                            "  describing the table to commit-coordinator."
+            );
+
     /**
      * All the valid properties that can be set on the table.
      */
@@ -115,6 +180,9 @@ public class TableConfig<T> {
                 addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
                 addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
                 addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
+                addConfig(this, COORDINATED_COMMITS_COORDINATOR_NAME);
+                addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
+                addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
             }}
     );
 
@@ -156,6 +224,24 @@ public class TableConfig<T> {
      */
     public String getKey() {
         return key;
+    }
+
+    /**
+     * Returns the default value of the table property.
+     *
+     * @return the default value of the table property
+     */
+    public String getDefaultValue() {
+        return defaultValue;
+    }
+
+    /**
+     * Returns the fromString function of the table property.
+     *
+     * @return the fromString function of the table property
+     */
+    public Function<String, T> getFromString() {
+        return fromString;
     }
 
     /**

@@ -105,6 +105,17 @@ public class CommitInfo {
     private final String txnId;
     private Optional<Long> inCommitTimestamp;
 
+    public static CommitInfo empty() {
+        return new CommitInfo(
+                Optional.empty(),
+                -1,
+                null,
+                null,
+                Collections.emptyMap(),
+                true,
+                null);
+    }
+
     public CommitInfo(
             Optional<Long> inCommitTimestamp,
             long timestamp,
@@ -120,6 +131,18 @@ public class CommitInfo {
         this.operationParameters = Collections.unmodifiableMap(operationParameters);
         this.isBlindAppend = isBlindAppend;
         this.txnId = txnId;
+    }
+
+    public CommitInfo withTimestamp(long newTimestamp) {
+        return new CommitInfo(
+                Optional.of(newTimestamp),
+                newTimestamp,
+                this.engineInfo,
+                this.operation,
+                this.operationParameters,
+                this.isBlindAppend,
+                this.txnId
+        );
     }
 
     public Optional<Long> getInCommitTimestamp() {

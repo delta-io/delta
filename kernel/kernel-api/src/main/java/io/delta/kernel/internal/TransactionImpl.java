@@ -136,8 +136,6 @@ public class TransactionImpl
             do {
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
                 try {
-                    // TODO Update the attemptCommitInfo and metadata based on the conflict
-                    // resolution.
                     return doCommit(engine, commitAsVersion, attemptCommitInfo, dataActions);
                 } catch (FileAlreadyExistsException fnfe) {
                     logger.info("Concurrent write detected when committing as version = {}. " +
@@ -149,6 +147,21 @@ public class TransactionImpl
                             "New commit version %d should be greater than the previous commit " +
                                     "attempt version %d.", newCommitAsVersion, commitAsVersion);
                     commitAsVersion = newCommitAsVersion;
+                    Optional<Long> updatedInCommitTimestamp =
+                            getUpdatedInCommitTimestampAfterConflict(
+                                    rebaseState.getLatestCommitTimestamp(),
+                                    attemptCommitInfo.getInCommitTimestamp());
+                    if (updatedInCommitTimestamp.isPresent()) {
+                        Optional<Metadata> metadataWithICTInfo =
+                                getMetadataWithUpdatedICTEnablementInfo(
+                                        engine,
+                                        updatedInCommitTimestamp.get(),
+                                        metadata,
+                                        rebaseState.getLatestVersion()
+                                );
+                        metadataWithICTInfo.ifPresent(this::updateMetadata);
+                    }
+                    attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
                 }
                 numRetries++;
             } while (numRetries < NUM_TXN_RETRIES);
@@ -184,6 +197,30 @@ public class TransactionImpl
                     metadataWithICTInfo.ifPresent(this::updateMetadata);
                 }
         );
+    }
+
+    private Optional<Long> getUpdatedInCommitTimestampAfterConflict(
+            long winningCommitTimestamp, Optional<Long> attemptInCommitTimestamp) {
+        if (attemptInCommitTimestamp.isPresent()) {
+            long updatedInCommitTimestamp = Math.max(
+                    attemptInCommitTimestamp.get(), winningCommitTimestamp + 1);
+            return Optional.of(updatedInCommitTimestamp);
+        }
+        return attemptInCommitTimestamp;
+    }
+
+    private Optional<Metadata> getMetadataWithUpdatedICTEnablementInfo(
+            Engine engine,
+            Long updatedInCommitTimestamp,
+            Metadata attemptMetadata,
+            Long lastWinningVersion) {
+        long nextAvailableVersion = lastWinningVersion + 1L;
+        return InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+                engine,
+                updatedInCommitTimestamp,
+                readSnapshot,
+                attemptMetadata,
+                nextAvailableVersion);
     }
 
     private TransactionCommitResult doCommit(
