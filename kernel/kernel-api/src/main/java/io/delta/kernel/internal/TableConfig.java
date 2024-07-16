@@ -187,6 +187,10 @@ public class TableConfig<T> {
         return validatedConfigurations;
     }
 
+    public static Boolean isICTEnabled(Metadata metadata) {
+        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+    }
+
     private void validate(String value) {
         T parsedValue = fromString.apply(value);
         if (!validator.test(parsedValue)) {
