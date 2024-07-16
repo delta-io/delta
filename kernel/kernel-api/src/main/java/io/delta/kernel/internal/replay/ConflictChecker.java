@@ -98,7 +98,8 @@ public class ConflictChecker {
         // no winning commits. why did we get the transaction conflict?
         checkState(!winningCommits.isEmpty(), "No winning commits found.");
 
-        long lastWinningVersion = getLastWinningTxnVersion(winningCommits);
+        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
+        long lastWinningVersion = FileNames.deltaVersion(lastWinningTxn.getPath());
         // Read the actions from the winning commits
         try (ActionsIterator actionsIterator = new ActionsIterator(
                 engine,
@@ -128,7 +129,7 @@ public class ConflictChecker {
         return new TransactionRebaseState(
                 lastWinningVersion,
                 getLastCommitTimestamp(
-                        engine, lastWinningVersion, winningCommits, winningCommitInfoOpt.get()));
+                        engine, lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()));
     }
 
     /**
@@ -268,16 +269,15 @@ public class ConflictChecker {
      *
      * @param engine                {@link Engine} instance to use
      * @param lastWinningVersion    last winning version of the table
-     * @param winningCommits        list of winning transaction commit files
+     * @param lastWinningTxn        the last winning transaction commit file
      * @param winningCommitInfoOpt  winning commit info
      * @return last commit timestamp of the table
      */
     private long getLastCommitTimestamp(
             Engine engine,
             long lastWinningVersion,
-            List<FileStatus> winningCommits,
+            FileStatus lastWinningTxn,
             Optional<CommitInfo> winningCommitInfoOpt) {
-        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
         long winningCommitTimestamp = -1L;
         if (snapshot.getVersion(engine) == -1 ||
                 !isICTEnabled(snapshot.getMetadata())) {
@@ -289,11 +289,6 @@ public class ConflictChecker {
                     snapshot.getDataPath());
         }
         return winningCommitTimestamp;
-    }
-
-    private long getLastWinningTxnVersion(List<FileStatus> winningCommits) {
-        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
-        return FileNames.deltaVersion(lastWinningTxn.getPath());
     }
 
     private static List<FileStatus> ensureNoGapsInWinningCommits(List<FileStatus> winningCommits) {

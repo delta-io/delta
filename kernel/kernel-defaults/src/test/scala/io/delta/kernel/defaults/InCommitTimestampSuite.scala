@@ -18,7 +18,7 @@ package io.delta.kernel.defaults
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.InvalidTableException
+import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.actions.{CommitInfo, SingleAction}
 import io.delta.kernel.internal.fs.Path
@@ -38,7 +38,7 @@ import io.delta.kernel.internal.TableConfig._
 import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.internal.actions.SingleAction.createCommitInfoSingleAction
 
-class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
+abstract class InCommitTimestampSuite(winningCommitsNum: Int) extends DeltaTableWriteSuiteBase {
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
@@ -74,8 +74,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
 
-      assert(ver0Snapshot.getTimestamp(engine) == beforeCommitAttemptStartTime + 1)
-      assert(getInCommitTimestamp(engine, table, 0).get == ver0Snapshot.getTimestamp(engine))
+      assert(ver0Snapshot.getTimestamp(engine) === beforeCommitAttemptStartTime + 1)
+      assert(
+        getInCommitTimestamp(engine, table, version = 0).get === ver0Snapshot.getTimestamp(engine))
       assertHasWriterFeature(ver0Snapshot, "inCommitTimestamp-preview")
     }
   }
@@ -94,7 +95,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
       assertHasNoWriterFeature(ver0Snapshot, "inCommitTimestamp-preview")
-      assert(getInCommitTimestamp(engine, table, 0).isEmpty)
+      assert(getInCommitTimestamp(engine, table, version = 0).isEmpty)
 
       setTablePropAndVerify(
         engine = engine,
@@ -107,7 +108,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertHasWriterFeature(ver1Snapshot, "inCommitTimestamp-preview")
       assert(ver1Snapshot.getTimestamp(engine) > ver0Snapshot.getTimestamp(engine))
-      assert(getInCommitTimestamp(engine, table, 1).get == ver1Snapshot.getTimestamp(engine))
+      assert(
+        getInCommitTimestamp(engine, table, version = 1).get === ver1Snapshot.getTimestamp(engine))
     }
   }
 
@@ -142,7 +144,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val ver2Timestamp = ver2Snapshot.getTimestamp(engine)
-      assert(ver2Timestamp == ver1Timestamp + 1)
+      assert(ver2Timestamp === ver1Timestamp + 1)
     }
   }
 
@@ -437,8 +439,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       clock.setTime(startTime - 1000)
       commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
       assert(
-        getInCommitTimestamp(
-          engine, table, 2).get == getInCommitTimestamp(engine, table, 1).get + 1)
+        getInCommitTimestamp(engine, table, version = 2).get ===
+          getInCommitTimestamp(engine, table, version = 1).get + 1)
     }
   }
 
@@ -465,25 +467,29 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         clock = clock)
 
       clock.setTime(startTime)
-      appendData(
-        engine,
-        tablePath,
-        data = Seq(Map.empty[String, Literal] -> dataBatches2),
-        clock = clock
-      )
+      for (_ <- 0 until winningCommitsNum) {
+        appendData(
+          engine,
+          tablePath,
+          data = Seq(Map.empty[String, Literal] -> dataBatches2),
+          clock = clock
+        )
+      }
 
       commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
 
-      val ver1Snapshot = table.getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
-      val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val lastSnapshot = table.getSnapshotAsOfVersion(
+        engine, winningCommitsNum).asInstanceOf[SnapshotImpl]
+      val curSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val observedEnablementTimestamp =
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(ver2Snapshot.getMetadata)
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(curSnapshot.getMetadata)
       val observedEnablementVersion =
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(ver2Snapshot.getMetadata)
-      assert(observedEnablementTimestamp.get == ver1Snapshot.getTimestamp(engine) + 1)
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(curSnapshot.getMetadata)
+      assert(observedEnablementTimestamp.get === lastSnapshot.getTimestamp(engine) + 1)
       assert(
-        observedEnablementTimestamp.get == getInCommitTimestamp(engine, table, version = 2).get)
-      assert(observedEnablementVersion.get == 2)
+        observedEnablementTimestamp.get ===
+          getInCommitTimestamp(engine, table, version = winningCommitsNum + 1).get)
+      assert(observedEnablementVersion.get === winningCommitsNum + 1)
     }
   }
 
@@ -531,4 +537,47 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
           "missing from commit version %s.", "inCommitTimestamp-preview", "2")))
     }
   }
+
+  test("Throw an error where the winning txn enables the ICT and losing txn prepares txn with " +
+    "ICT enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn = txnBuilder
+        .withSchema(engine, testSchema)
+        .build(engine)
+
+      txn.commit(engine, emptyIterable())
+
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+      val txn1 = createTxn(
+        engine,
+        tablePath,
+        schema = testSchema,
+        partCols = Seq.empty,
+        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
+        clock = clock
+      )
+      clock.setTime(startTime)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
+        clock = clock
+      )
+      clock.setTime(startTime - 1000)
+      val ex = intercept[ProtocolChangedException] {
+        commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
+      }
+      assert(ex.getMessage.contains(String.format("Transaction has encountered a conflict and " +
+        "can not be committed. Query needs to be re-executed using the latest version of the " +
+        "table.")))
+    }
+  }
 }
+
+class InCommitTimestamp1Suite extends InCommitTimestampSuite(1)
+class InCommitTimestamp5Suite extends InCommitTimestampSuite(5)

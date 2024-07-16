@@ -130,7 +130,10 @@ public class TransactionImpl
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
             // Generate the commit action with the inCommitTimestamp if ICT is enabled.
             CommitInfo attemptCommitInfo = generateCommitAction(engine);
-            updateMetadataWithICTIfRequired(engine, attemptCommitInfo);
+            updateMetadataWithICTIfRequired(
+                    engine,
+                    attemptCommitInfo.getInCommitTimestamp(),
+                    readSnapshot.getVersion(engine));
             int numRetries = 0;
             do {
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
@@ -150,16 +153,10 @@ public class TransactionImpl
                             getUpdatedInCommitTimestampAfterConflict(
                                     rebaseState.getLatestCommitTimestamp(),
                                     attemptCommitInfo.getInCommitTimestamp());
-                    if (updatedInCommitTimestamp.isPresent()) {
-                        Optional<Metadata> metadataWithICTInfo = InCommitTimestampUtils
-                                .getUpdatedMetadataWithICTEnablementInfo(
-                                        engine,
-                                        updatedInCommitTimestamp.get(),
-                                        readSnapshot,
-                                        metadata,
-                                        rebaseState.getLatestVersion() + 1L);
-                        metadataWithICTInfo.ifPresent(this::updateMetadata);
-                    }
+                    updateMetadataWithICTIfRequired(
+                            engine,
+                            updatedInCommitTimestamp,
+                            rebaseState.getLatestVersion());
                     attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
                 }
                 numRetries++;
@@ -181,10 +178,11 @@ public class TransactionImpl
         this.shouldUpdateMetadata = true;
     }
 
-    private void updateMetadataWithICTIfRequired(Engine engine, CommitInfo attemptCommitInfo) {
+    private void updateMetadataWithICTIfRequired(
+            Engine engine, Optional<Long> inCommitTimestampOpt, long lastCommitVersion) {
         // If ICT is enabled for the current transaction, update the metadata with the ICT
         // enablement info.
-        attemptCommitInfo.getInCommitTimestamp().ifPresent(
+        inCommitTimestampOpt.ifPresent(
                 inCommitTimestamp -> {
                     Optional<Metadata> metadataWithICTInfo =
                             InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
@@ -192,7 +190,7 @@ public class TransactionImpl
                                     inCommitTimestamp,
                                     readSnapshot,
                                     metadata,
-                                    readSnapshot.getVersion(engine) + 1L);
+                                    lastCommitVersion + 1L);
                     metadataWithICTInfo.ifPresent(this::updateMetadata);
                 }
         );
