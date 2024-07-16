@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter
@@ -43,7 +43,10 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 // scalastyle:on import.ordering.noEmptyLine
 
-trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLCommandTest {
+trait DeltaColumnMappingSuiteUtils
+  extends SharedSparkSession
+  with DeltaSQLTestUtils
+  with DeltaSQLCommandTest {
 
 
   protected def supportedModes: Seq[String] = Seq("id", "name")
