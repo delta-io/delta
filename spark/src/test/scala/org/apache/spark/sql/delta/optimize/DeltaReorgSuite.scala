@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.optimize
 
-import org.apache.spark.sql.delta.DeletionVectorsTestUtils
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaConfigs}
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.tables.DeltaTable
@@ -130,6 +131,25 @@ class DeltaReorgSuite extends QueryTest
         expOpParams = Map("applyPurge" -> "true", "predicate" -> "[\"'part IN (0,2)\"]"),
         numFilesRemoved = 2,
         numFilesAdded = 2)
+    }
+  }
+
+  test("REORG TABLE UPGRADE UNIFORM from v1 to v2") {
+    val targetDf = spark.range(0, 100, 1, numPartitions = 5).toDF()
+    withTempDeltaTable(targetDf, enableDVs = false, conf = Seq(
+      DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.defaultTablePropertyKey -> "iceberg",
+      DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED.defaultTablePropertyKey -> "true"
+    )) { (_, log) =>
+      val path = log.dataPath
+      sql(
+        s"""
+           | INSERT INTO TABLE delta.`$path` (ID)
+           | VALUES (1),(2),(3),(4),(5),(6),(7)""".stripMargin)
+      sql(s"REORG TABLE delta.`$path` APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = 2'))")
+      val snapshot = log.update()
+      snapshot.allFiles.collect().forall {
+        _.tags.get(AddFile.Tags.ICEBERG_COMPAT_VERSION.name).contains("2")
+      }
     }
   }
 
