@@ -60,6 +60,20 @@ case class DeltaCommitFileProvider(
       case _ => FileNames.unsafeDeltaFile(resolvedPath, version)
     }
   }
+
+  /**
+   * Lists unbackfilled delta files in a sorted order without incurring additional IO operations.
+   */
+  def listSortedUnbackfilledDeltaFiles(startVersionOpt: Option[Long] = None): Seq[(Long, Path)] = {
+    val minVersion = startVersionOpt.getOrElse(minUnbackfilledVersion)
+    uuids
+      .toSeq
+      .sortBy(_._1)
+      .collect {
+        case (version, uuid) if version >= minVersion =>
+          (version, FileNames.unbackfilledDeltaFile(resolvedPath, version, Some(uuid)))
+      }
+  }
 }
 
 object DeltaCommitFileProvider {
