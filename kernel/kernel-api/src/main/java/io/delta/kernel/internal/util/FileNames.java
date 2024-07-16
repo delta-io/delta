@@ -29,6 +29,9 @@ public final class FileNames {
     private static final Pattern DELTA_FILE_PATTERN =
         Pattern.compile("\\d+\\.json");
 
+    private static final Pattern UUID_DELTA_FILE_REGEX =
+            Pattern.compile("(\\d+)\\.([^\\.]+)\\.json");
+
     private static final Pattern CHECKPOINT_FILE_PATTERN =
         Pattern.compile(
             "(\\d+)\\.checkpoint((\\.\\d+\\.\\d+)?\\.parquet|\\.[^.]+\\.(json|parquet))");
@@ -161,7 +164,9 @@ public final class FileNames {
 
 
     public static boolean isCommitFile(String fileName) {
-        return DELTA_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
+        String filename = new Path(fileName).getName();
+        return DELTA_FILE_PATTERN.matcher(filename).matches() ||
+                UUID_DELTA_FILE_REGEX.matcher(filename).matches();
     }
 
     /**
