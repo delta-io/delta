@@ -353,7 +353,8 @@ object ResolveDeltaMergeInto {
             // cannot resolve the expression such as:
             //   - during schema evolution
             //   - dealing with nested field
-            val resolvedExpr = resolveExprsFn(Seq(expr), plansToResolveAction).head
+            val resolvedExpr =
+              resolveExprsFn(Seq(expr), plansToResolveAction).head
             throwIfNotResolved(resolvedExpr, plansToResolveAction, s"$typ clause")
             Seq(DeltaMergeAction(resolvedNameParts, resolvedExpr, targetColNameResolved = true))
 
