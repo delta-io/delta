@@ -29,9 +29,8 @@ import org.apache.parquet.hadoop.metadata.BlockMetaData
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.execution.datasources.FileFormat
-import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 
-trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest with ParquetTest {
+trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
   val QUALIFIED_BASE_ROW_ID_COLUMN_NAME = s"${FileFormat.METADATA_NAME}.${RowId.BASE_ROW_ID}"
 
   protected def getRowIdRangeInclusive(f: AddFile): (Long, Long) = {
