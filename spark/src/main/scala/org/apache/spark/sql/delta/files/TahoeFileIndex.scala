@@ -348,7 +348,8 @@ class TahoeBatchFileIndex(
     path: Path,
     val snapshot: SnapshotDescriptor,
     val partitionFiltersGenerated: Boolean = false)
-  extends TahoeFileIndexWithSnapshotDescriptor(spark, deltaLog, path, snapshot) {
+  extends TahoeFileIndexWithSnapshotDescriptor(spark, deltaLog, path, snapshot)
+{
 
   override def matchingFiles(
       partitionFilters: Seq[Expression],
