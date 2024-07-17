@@ -23,7 +23,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
-import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
+import static io.delta.kernel.internal.TableConfig.isICTEnabled;
 
 public class InCommitTimestampUtils {
 
@@ -72,10 +72,9 @@ public class InCommitTimestampUtils {
         //
         // WARNING: To ensure that this function returns true if ICT is enabled during the first
         // commit, we explicitly handle the case where the readSnapshot.version is -1.
-        boolean isICTCurrentlyEnabled =
-                IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
+        boolean isICTCurrentlyEnabled = isICTEnabled(currentTransactionMetadata);
         boolean wasICTEnabledInReadSnapshot = readSnapshot.getVersion(engine) != -1 &&
-                IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
+                isICTEnabled(readSnapshot.getMetadata());
         return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
     }
 }

@@ -41,8 +41,7 @@ import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
-import static io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL;
-import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
+import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -131,13 +130,14 @@ public class TransactionImpl
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
             // Generate the commit action with the inCommitTimestamp if ICT is enabled.
             CommitInfo attemptCommitInfo = generateCommitAction(engine);
-            updateMetadataWithICTIfRequired(engine, attemptCommitInfo);
+            updateMetadataWithICTIfRequired(
+                    engine,
+                    attemptCommitInfo.getInCommitTimestamp(),
+                    readSnapshot.getVersion(engine));
             int numRetries = 0;
             do {
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
                 try {
-                    // TODO Update the attemptCommitInfo and metadata based on the conflict
-                    // resolution.
                     return doCommit(engine, commitAsVersion, attemptCommitInfo, dataActions);
                 } catch (FileAlreadyExistsException fnfe) {
                     logger.info("Concurrent write detected when committing as version = {}. " +
@@ -149,6 +149,15 @@ public class TransactionImpl
                             "New commit version %d should be greater than the previous commit " +
                                     "attempt version %d.", newCommitAsVersion, commitAsVersion);
                     commitAsVersion = newCommitAsVersion;
+                    Optional<Long> updatedInCommitTimestamp =
+                            getUpdatedInCommitTimestampAfterConflict(
+                                    rebaseState.getLatestCommitTimestamp(),
+                                    attemptCommitInfo.getInCommitTimestamp());
+                    updateMetadataWithICTIfRequired(
+                            engine,
+                            updatedInCommitTimestamp,
+                            rebaseState.getLatestVersion());
+                    attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
                 }
                 numRetries++;
             } while (numRetries < NUM_TXN_RETRIES);
@@ -169,10 +178,11 @@ public class TransactionImpl
         this.shouldUpdateMetadata = true;
     }
 
-    private void updateMetadataWithICTIfRequired(Engine engine, CommitInfo attemptCommitInfo) {
+    private void updateMetadataWithICTIfRequired(
+            Engine engine, Optional<Long> inCommitTimestampOpt, long lastCommitVersion) {
         // If ICT is enabled for the current transaction, update the metadata with the ICT
         // enablement info.
-        attemptCommitInfo.getInCommitTimestamp().ifPresent(
+        inCommitTimestampOpt.ifPresent(
                 inCommitTimestamp -> {
                     Optional<Metadata> metadataWithICTInfo =
                             InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
@@ -180,10 +190,20 @@ public class TransactionImpl
                                     inCommitTimestamp,
                                     readSnapshot,
                                     metadata,
-                                    readSnapshot.getVersion(engine) + 1L);
+                                    lastCommitVersion + 1L);
                     metadataWithICTInfo.ifPresent(this::updateMetadata);
                 }
         );
+    }
+
+    private Optional<Long> getUpdatedInCommitTimestampAfterConflict(
+            long winningCommitTimestamp, Optional<Long> attemptInCommitTimestamp) {
+        if (attemptInCommitTimestamp.isPresent()) {
+            long updatedInCommitTimestamp = Math.max(
+                    attemptInCommitTimestamp.get(), winningCommitTimestamp + 1);
+            return Optional.of(updatedInCommitTimestamp);
+        }
+        return attemptInCommitTimestamp;
     }
 
     private TransactionCommitResult doCommit(
@@ -249,7 +269,7 @@ public class TransactionImpl
      */
     private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
             Engine engine, long currentTimestamp) {
-        if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+        if (isICTEnabled(metadata)) {
             long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
             return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
         } else {

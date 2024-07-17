@@ -48,7 +48,8 @@ class DeltaTimestampNTZSuite extends QueryTest
         new Timestamp(2022 - 1900, 0, 2, 3, 4, 5, 123456000),
         LocalDateTime.of(2022, 1, 2, 3, 4, 5, 123456000)))
       assert(getProtocolForTable("tbl") ==
-        TimestampNTZTableFeature.minProtocolVersion.withFeature(TimestampNTZTableFeature)
+        TimestampNTZTableFeature.minProtocolVersion.withFeatures(Seq(
+          AppendOnlyTableFeature, InvariantsTableFeature, TimestampNTZTableFeature))
       )
     }
   }
@@ -114,7 +115,8 @@ class DeltaTimestampNTZSuite extends QueryTest
         new Timestamp(2022 - 1900, 0, 2, 3, 4, 5, 123456000),
         LocalDateTime.of(2022, 1, 2, 3, 4, 5, 123456000)))
       assert(getProtocolForTable("delta_test") ==
-        TimestampNTZTableFeature.minProtocolVersion.withFeature(TimestampNTZTableFeature)
+        TimestampNTZTableFeature.minProtocolVersion.withFeatures(Seq(
+          AppendOnlyTableFeature, InvariantsTableFeature, TimestampNTZTableFeature))
       )
     }
   }

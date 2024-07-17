@@ -1355,18 +1355,6 @@ class DeltaColumnMappingSuite extends QueryTest
     }
   }
 
-  test("legal mode change without explicit upgrade") {
-    val e = intercept[UnsupportedOperationException] {
-      withTable("t1") {
-        createTableWithSQLAPI("t1")
-        alterTableWithProps("t1", props = Map(
-          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
-      }
-    }
-    assert(e.getMessage.contains("Your current table protocol version does not" +
-      " support changing column mapping modes"))
-  }
-
   test("getPhysicalNameFieldMap") {
     // To keep things simple, we use schema `schemaWithPhysicalNamesNested` such that the
     // physical name is just the logical name repeated three times.
@@ -1907,8 +1895,7 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""CREATE TABLE $testTableName
            |USING DELTA
            |TBLPROPERTIES(
-           |'$minReaderKey' = '2',
-           |'$minWriterKey' = '7'
+           |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true'
            |)
            |AS SELECT * FROM RANGE(1)
            |""".stripMargin)
@@ -1920,6 +1907,14 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""ALTER TABLE $testTableName SET TBLPROPERTIES(
            |'$columnMappingMode'='name'
            |)""".stripMargin)
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      assert(deltaLog.update().protocol === Protocol(2, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ColumnMappingTableFeature,
+        RowTrackingFeature
+      )))
     }
   }
 

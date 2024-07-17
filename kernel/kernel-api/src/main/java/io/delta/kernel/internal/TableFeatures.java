@@ -215,7 +215,7 @@ public class TableFeatures {
             Metadata metadata, String feature) {
         switch (feature) {
             case "inCommitTimestamp-preview":
-                return TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+                return TableConfig.isICTEnabled(metadata);
             default:
                 return false;
         }

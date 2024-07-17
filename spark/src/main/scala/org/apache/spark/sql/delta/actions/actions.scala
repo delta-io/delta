@@ -207,13 +207,22 @@ object Protocol {
       writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
+  /** Returns the required protocol for a given feature. Takes into account dependent features. */
   def forTableFeature(tf: TableFeature): Protocol = {
-    val writerFeatures = Some(Set(tf.name)) // every table feature is a writer feature
-    val readerFeatures = if (tf.isReaderWriterFeature) writerFeatures else None
-    val minReaderVersion = if (readerFeatures.isDefined) TABLE_FEATURES_MIN_READER_VERSION else 1
-    val minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION
+    // Every table feature is a writer feature.
+    val writerFeatures = tf.requiredFeatures + tf
+    val readerFeatures = writerFeatures.filter(f => f.isReaderWriterFeature && !f.isLegacyFeature)
+    val writerFeaturesNames = writerFeatures.map(_.name)
+    val readerFeaturesNames = readerFeatures.map(_.name)
 
-    new Protocol(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures)
+    val minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION
+    val minReaderVersion = (readerFeatures.map(_.minReaderVersion) + 1).max
+
+    new Protocol(
+      minReaderVersion,
+      minWriterVersion,
+      readerFeatures = Option(readerFeaturesNames).filter(_.nonEmpty),
+      writerFeatures = Some(writerFeaturesNames))
   }
 
   /**
@@ -254,7 +263,16 @@ object Protocol {
 
     val (readerVersion, writerVersion, enabledFeatures) =
       minProtocolComponentsFromMetadata(spark, metadata)
-    Protocol(readerVersion, writerVersion).withFeatures(enabledFeatures)
+    // New table protocols should always be denormalized and then normalized to convert the
+    // protocol to the weakest possible form. This means either converting a table features
+    // protocol to a legacy protocol or reducing the versions of a table features protocol.
+    // For example:
+    // 1) (3, 7, RowTracking) is normalized to (1, 7, RowTracking).
+    // 2) (3, 7, AppendOnly, Invariants) is normalized to (1, 2).
+    // 3) (2, 3) is normalized to (1, 3).
+    Protocol(readerVersion, writerVersion)
+      .withFeatures(enabledFeatures)
+      .denormalizedNormalized
   }
 
   /**
@@ -363,7 +381,23 @@ object Protocol {
     val finalWriterVersion =
       Seq(1, writerVersionFromFeatures, writerVersionFromTableConfOpt.getOrElse(0)).max
 
-    (finalReaderVersion, finalWriterVersion, allEnabledFeatures)
+    // If the user explicitly sets the table versions, we need to take into account the
+    // relevant implicit features.
+    val implicitFeaturesFromTableConf =
+      (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt) match {
+        case (Some(readerVersion), Some(writerVersion)) =>
+          // We cannot have a table features reader version if the protocol does not
+          // support writer features.
+          val sanitizedReaderVersion = if (supportsWriterFeatures(writerVersion)) {
+            readerVersion
+          } else {
+            Math.min(2, readerVersion)
+          }
+          Protocol(sanitizedReaderVersion, writerVersion).implicitlySupportedFeatures
+        case _ => Set.empty
+      }
+
+    (finalReaderVersion, finalWriterVersion, allEnabledFeatures ++ implicitFeaturesFromTableConf)
   }
 
   /**
@@ -415,7 +449,7 @@ object Protocol {
   }
 
   /** Assert a table metadata contains no protocol-related table properties. */
-  private def assertMetadataContainsNoProtocolProps(metadata: Metadata): Unit = {
+  def assertMetadataContainsNoProtocolProps(metadata: Metadata): Unit = {
     assert(
       !metadata.configuration.contains(MIN_READER_VERSION_PROP),
       "Should not have the " +
@@ -452,16 +486,32 @@ object Protocol {
       spark: SparkSession,
       metadata: Metadata,
       current: Protocol): Option[Protocol] = {
-    assertMetadataContainsNoProtocolProps(metadata)
-
     val (readerVersion, writerVersion, minRequiredFeatures) =
       minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata, current)
 
+    // If the user sets the protocol versions we need to take it account. In general,
+    // enabling legacy features on legacy protocols results to pumping up the protocol
+    // versions. However, setting table feature protocol versions while enabling
+    // legacy features results to only enabling the requested features. For example:
+    // 1) Create table with (1, 2), then ALTER TABLE with DeltaConfigs.CHANGE_DATA_FEED.key = true
+    //    results to (1, 4).
+    // 2) Alternatively, Create table with (1, 2), then
+    //    ALTER TABLE set versions (1, 7) and DeltaConfigs.CHANGE_DATA_FEED.key = true results
+    //    to (1, 7, AppendOnly, Invariants, CDF).
+    val readerVersionFromConf =
+      Protocol.getReaderVersionFromTableConf(metadata.configuration).getOrElse(readerVersion)
+    val writerVersionFromConf =
+      Protocol.getWriterVersionFromTableConf(metadata.configuration).getOrElse(writerVersion)
+
+    val finalReaderVersion =
+      Seq(readerVersion, readerVersionFromConf, current.minReaderVersion).max
+    val finalWriterVersion =
+      Seq(writerVersion, writerVersionFromConf, current.minWriterVersion).max
+
     // Increment the reader and writer version to accurately add enabled legacy table features
-    // either to the implicitly enabled table features or the table feature lists
-    val required = Protocol(
-      readerVersion.max(current.minReaderVersion), writerVersion.max(current.minWriterVersion))
-      .withFeatures(minRequiredFeatures)
+    // either to the implicitly enabled table features or the table feature lists.
+    val required =
+      Protocol(finalReaderVersion, finalWriterVersion).withFeatures(minRequiredFeatures)
     if (!required.canUpgradeTo(current)) {
       // When the current protocol does not satisfy metadata requirement, some additional features
       // must be supported by the protocol. We assert those features can actually perform the
@@ -493,7 +543,7 @@ object Protocol {
         .collect { case f: FeatureAutomaticallyEnabledByMetadata => f }
         .partition(_.automaticallyUpdateProtocolOfExistingTables)
     if (nonAutoUpdateCapableFeatures.nonEmpty) {
-      // The "current features" we give the user are which from the original protocol, plus
+      // The "current features" we give to the user are from the original protocol, plus
       // features newly supported by table properties in the current transaction, plus
       // metadata-enabled features that are auto-update capable. The first two are provided by
       // `currentFeatures`.

@@ -538,6 +538,22 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
       val newProtocolForLatestMetadata =
         Protocol(readerVersionAsTableProp, writerVersionAsTableProp)
+
+      // The user-supplied protocol version numbers are treated as a group of features
+      // that must all be enabled. This ensures that the feature-enabling behavior is the
+      // same on Table Features-enabled protocols as on legacy protocols, i.e., exactly
+      // the same set of features are enabled.
+      //
+      // This is useful for supporting protocol downgrades to legacy protocol versions.
+      // When the protocol versions are explicitly set on table features protocol we may
+      // normalize to legacy protocol versions. Legacy protocol versions can only be
+      // used if a table supports *exactly* the set of features in that legacy protocol
+      // version, with no "gaps". By merging in the protocol features from a particular
+      // protocol version, we may end up with such a "gap-free" protocol. E.g. if a table
+      // has only table feature "checkConstraints" (added by writer protocol version 3)
+      // but not "invariants" and "appendOnly", then setting the minWriterVersion to
+      // 2 or 3 will add "invariants" and "appendOnly", filling in the gaps for writer
+      // protocol version 3, and then we can downgrade to version 3.
       val proposedNewProtocol = protocolBeforeUpdate.merge(newProtocolForLatestMetadata)
 
       if (proposedNewProtocol != protocolBeforeUpdate) {
@@ -620,16 +636,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         Protocol(
           readerVersionForNewProtocol,
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-          .merge(newProtocolBeforeAddingFeatures)
-          .withFeatures(newFeaturesFromTableConf))
+          .withFeatures(newFeaturesFromTableConf)
+          .merge(newProtocolBeforeAddingFeatures))
     }
 
     // We are done with protocol versions and features, time to remove related table properties.
     val configsWithoutProtocolProps = newMetadataTmp.configuration.filterNot {
       case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
     }
-    newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
-
     // Table features Part 3: add automatically-enabled features by looking at the new table
     // metadata.
     //
@@ -638,6 +652,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     if (!canAssignAnyNewProtocol) {
       setNewProtocolWithFeaturesEnabledByMetadata(newMetadataTmp)
     }
+
+    newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
+    Protocol.assertMetadataContainsNoProtocolProps(newMetadataTmp)
 
     newMetadataTmp = MaterializedRowId.updateMaterializedColumnName(
       protocol, oldMetadata = snapshot.metadata, newMetadataTmp)
@@ -1717,7 +1734,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
         newestMetadata = metadata, // Note: this will try to use `newMetadata`
-        isCreatingNewTable || op.isInstanceOf[DeltaOperations.UpgradeUniformProperties],
+        Some(op),
         otherActions
       )
     newProtocol = protocolUpdate1.orElse(newProtocol)

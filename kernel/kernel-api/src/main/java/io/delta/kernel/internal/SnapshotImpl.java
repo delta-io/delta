@@ -141,7 +141,7 @@ public class SnapshotImpl implements Snapshot {
      * @return the timestamp of the latest commit
      */
     public long getTimestamp(Engine engine) {
-        if (TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+        if (TableConfig.isICTEnabled(metadata)) {
             if (!inCommitTimestampOpt.isPresent()) {
                 try {
                     Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(
