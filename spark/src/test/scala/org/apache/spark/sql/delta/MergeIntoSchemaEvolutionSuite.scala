@@ -499,7 +499,17 @@ trait MergeIntoSchemaEvolutionBaseTests {
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
   )
 
-  testEvolution(s"case-sensitive insert")(
+  testEvolution(s"case-sensitive insert, column not in target")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
+    clauses = insert("(key, VALUE) VALUES (s.key, s.VALUE)") :: Nil,
+    expected = ((0, 0) +: (1, 10) +: (3, 30) +: (2, null) +: Nil)
+      .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    expectErrorWithoutEvolutionContains = "Cannot resolve VALUE in INSERT clause",
+    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
+  )
+
+  testEvolution(s"case-sensitive insert, column not in source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
     clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
