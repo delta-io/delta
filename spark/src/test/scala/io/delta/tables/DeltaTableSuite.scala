@@ -22,7 +22,7 @@ import java.util.Locale
 import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, TestReaderWriterFeature, TestWriterFeature}
+import org.apache.spark.sql.delta.{AppendOnlyTableFeature, DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, InvariantsTableFeature, TestReaderWriterFeature, TestWriterFeature}
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -574,13 +574,17 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // update the protocol to support a writer feature.
       val table = DeltaTable.forPath(spark, path, fsOptions)
       table.addFeatureSupport(TestWriterFeature.name)
-      assert(log.update().protocol === Protocol(1, 7)
-        .merge(Protocol(1, 2)).withFeature(TestWriterFeature))
+      assert(log.update().protocol === Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        TestWriterFeature)))
       table.addFeatureSupport(TestReaderWriterFeature.name)
       assert(
-        log.update().protocol === Protocol(3, 7)
-          .merge(Protocol(1, 2))
-          .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature)))
+        log.update().protocol === Protocol(3, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          TestWriterFeature,
+          TestReaderWriterFeature)))
 
       // update the protocol again with invalid feature name.
       assert(intercept[DeltaTableFeatureException] {

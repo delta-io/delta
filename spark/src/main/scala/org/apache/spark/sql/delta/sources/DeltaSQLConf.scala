@@ -423,6 +423,14 @@ trait DeltaSQLConfBase {
       .checkValues(Set(1, 2, 3))
       .createWithDefault(1)
 
+  val TABLE_FEATURES_TEST_FEATURES_ENABLED =
+    buildConf("tableFeatures.testFeatures.enabled")
+      .internal()
+      .doc("Controls whether test features are enabled in testing mode. " +
+        "This config is only used for testing purposes. ")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
       .internal()
