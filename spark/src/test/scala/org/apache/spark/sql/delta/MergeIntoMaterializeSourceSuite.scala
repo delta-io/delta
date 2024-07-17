@@ -919,6 +919,49 @@ trait MergeIntoMaterializeSourceTests
     }
   }
 
+  test("don't unpersist locally checkpointed RDDs") {
+    val tblName = "mergeTarget"
+
+    withTable(tblName) {
+      val targetDF = Seq(
+        ("2023-01-01", "trade1", 100.0, "buy", "user1", "2023-01-01 10:00:00"),
+        ("2023-01-02", "trade2", 200.0, "sell", "user2", "2023-01-02 11:00:00")
+      ).toDF("block_date", "unique_trade_id", "transaction_amount", "transaction_type",
+        "user_id", "timestamp")
+      targetDF.write.format("delta").saveAsTable(tblName)
+
+      Seq(
+        ("2023-01-01", "trade1", 150.0, "buy", "user1_updated", "2023-01-01 12:00:00"),
+        ("2023-01-03", "trade3", 300.0, "buy", "user3", "2023-01-03 10:00:00")
+      ).toDF("block_date", "unique_trade_id", "transaction_amount", "transaction_type",
+        "user_id", "timestamp").createOrReplaceTempView("s")
+
+      val mergeQuery =
+        s"""MERGE INTO $tblName t USING s
+           |ON t.block_date = s.block_date AND t.unique_trade_id = s.unique_trade_id
+           |WHEN MATCHED THEN UPDATE SET *
+           |WHEN NOT MATCHED THEN INSERT *""".stripMargin
+
+      Log4jUsageLogger.track {
+        withSQLConf(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> "auto") {
+          sql(mergeQuery)
+        }
+      }
+
+      // Check if the source RDDs have been locally checkpointed and not unpersisted
+      assert(sparkContext.getPersistentRDDs.values.nonEmpty, "Source RDDs" +
+        " should be locally checkpointed")
+
+      checkAnswer(
+        spark.read.format("delta").table(tblName),
+        Seq(
+          Row("2023-01-01", "trade1", 150.0, "buy", "user1_updated", "2023-01-01 12:00:00"),
+          Row("2023-01-02", "trade2", 200.0, "sell", "user2", "2023-01-02 11:00:00"),
+          Row("2023-01-03", "trade3", 300.0, "buy", "user3", "2023-01-03 10:00:00"))
+      )
+    }
+  }
+
   private def mergeStats(events: Seq[UsageRecord]): MergeStats = {
     val mergeStats = events.filter { e =>
       e.metric == MetricDefinitions.EVENT_TAHOE.name &&
