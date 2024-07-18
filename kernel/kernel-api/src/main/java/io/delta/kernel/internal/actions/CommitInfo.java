@@ -34,7 +34,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
@@ -188,12 +187,9 @@ public class CommitInfo {
     }
 
     /** Get the persisted commit info (if available) for the given delta file. */
-    public static Optional<CommitInfo> getCommitInfoOpt(
-            Engine engine,
-            Path logPath,
-            long version) {
+    public static Optional<CommitInfo> getCommitInfoOpt(Engine engine, String delta, long version) {
         final FileStatus file = FileStatus.of(
-                FileNames.deltaFile(logPath, version), /* path */
+                delta, /* path */
                 0, /* size */
                 0 /* modification time */);
         final StructType COMMITINFO_READ_SCHEMA = new StructType()

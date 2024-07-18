@@ -40,6 +40,7 @@ public class TableFeatures {
             Collections.unmodifiableSet(new HashSet<String>() {{
                     add("appendOnly");
                     add("inCommitTimestamp-preview");
+                    add("coordinatedCommits-preview");
                 }});
 
     ////////////////////
@@ -83,8 +84,8 @@ public class TableFeatures {
      * <ul>
      *     <li>protocol writer version 1.</li>
      *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
-     *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview}
-     *     feature enabled.</li>
+     *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview},
+     *     {@code coordinatedCommits-preview} feature enabled.</li>
      * </ul>
      *
      * @param protocol    Table protocol
@@ -124,6 +125,8 @@ public class TableFeatures {
                         case "appendOnly":
                             break;
                         case "inCommitTimestamp-preview":
+                            break;
+                        case "coordinatedCommits-preview":
                             break;
                         default:
                             throw unsupportedWriterFeature(tablePath, writerFeature);
@@ -185,6 +188,7 @@ public class TableFeatures {
     private static int getMinReaderVersion(String feature) {
         switch (feature) {
             case "inCommitTimestamp-preview":
+            case "coordinatedCommits-preview":
                 return 3;
             default:
                 return 1;
@@ -200,6 +204,7 @@ public class TableFeatures {
     private static int getMinWriterVersion(String feature) {
         switch (feature) {
             case "inCommitTimestamp-preview":
+            case "coordinatedCommits-preview":
                 return 7;
             default:
                 return 2;
@@ -220,6 +225,10 @@ public class TableFeatures {
         switch (feature) {
             case "inCommitTimestamp-preview":
                 return TableConfig.isICTEnabled(engine, metadata);
+            case "coordinatedCommits-preview":
+                return TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME
+                        .fromMetadata(engine, metadata)
+                        .isPresent();
             default:
                 return false;
         }

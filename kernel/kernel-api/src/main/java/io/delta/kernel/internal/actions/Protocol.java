@@ -25,6 +25,7 @@ import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
@@ -56,6 +57,11 @@ public class Protocol {
     private final int minWriterVersion;
     private final List<String> readerFeatures;
     private final List<String> writerFeatures;
+    /**
+     * A set of all feature names in this protocol's `readerFeatures` and `writerFeatures`
+     * field. Returns an empty set when this protocol supports none of reader and writer features.
+     */
+    private final Lazy<Set<String>> readerAndWriterFeatureNames;
 
     public Protocol(
         int minReaderVersion,
@@ -66,6 +72,7 @@ public class Protocol {
         this.minWriterVersion = minWriterVersion;
         this.readerFeatures = readerFeatures;
         this.writerFeatures = writerFeatures;
+        this.readerAndWriterFeatureNames = new Lazy<>(this::getReaderAndWriterFeatureNames);
     }
 
     public int getMinReaderVersion() {
@@ -124,5 +131,25 @@ public class Protocol {
                 newProtocolVersions._2,
                 this.readerFeatures == null ? null : new ArrayList<>(this.readerFeatures),
                 newWriterFeatures);
+    }
+
+    /**
+     * Check if a `feature` is supported by this protocol. This means either (a) the protocol does
+     * not support table features and implicitly supports the feature, or (b) the protocol supports
+     * table features and references the feature.
+     */
+    public boolean isFeatureSupported(String feature) {
+        return this.readerAndWriterFeatureNames.get().contains(feature);
+    }
+
+    private Set<String> getReaderAndWriterFeatureNames() {
+        Set<String> combinedFeatures = new HashSet<>();
+        if (readerFeatures != null) {
+            combinedFeatures.addAll(readerFeatures);
+        }
+        if (writerFeatures != null) {
+            combinedFeatures.addAll(writerFeatures);
+        }
+        return combinedFeatures;
     }
 }
