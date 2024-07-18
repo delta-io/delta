@@ -31,6 +31,7 @@ import org.slf4j.LoggerFactory;
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -187,8 +188,12 @@ public class SnapshotManager {
 
             // Get the metadata of the checkpoint file
             numberOfAddFiles = checkpointDataIter.getNumberOfAddActions();
-        } catch (FileAlreadyExistsException faee) {
-            throw new CheckpointAlreadyExistsException(version);
+        } catch (KernelEngineException e) {
+            if (e.getCause() instanceof FileAlreadyExistsException) {
+                throw new CheckpointAlreadyExistsException(version);
+            } else {
+                throw e;
+            }
         }
 
         CheckpointMetaData checkpointMetaData =
@@ -267,8 +272,12 @@ public class SnapshotManager {
             } else {
                 return Optional.empty();
             }
-        } catch (FileNotFoundException e) {
-            return Optional.empty();
+        } catch (KernelEngineException e) {
+            if (e.getCause() instanceof FileNotFoundException) {
+                return Optional.empty();
+            } else {
+                throw e;
+            }
         } catch (IOException io) {
             throw new UncheckedIOException("Failed to list the files in delta log", io);
         }

@@ -227,6 +227,11 @@ public final class DeltaErrors {
             Callable<T> f, String msgString, Object... args) {
         try {
             return f.call();
+        } catch (KernelException e) {
+            // Let any KernelExceptions fall through (even though these generally shouldn't
+            // originate from the engine implementation there are some edge cases such as
+            // deserializeStructType)
+            throw e;
         } catch (Exception e) {
             throw new KernelEngineException(String.format(msgString, args), e);
         }
