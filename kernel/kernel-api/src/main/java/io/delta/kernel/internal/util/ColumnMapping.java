@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
-import java.util.Map;
+import java.util.*;
 
 import io.delta.kernel.types.*;
 
@@ -36,6 +36,9 @@ public class ColumnMapping {
     public static final String COLUMN_MAPPING_ID_KEY = "delta.columnMapping.id";
 
     public static final String PARQUET_FIELD_ID_KEY = "parquet.field.id";
+    private static final Set<String> NAME_OR_ID = new HashSet<>(
+            Arrays.asList(COLUMN_MAPPING_MODE_NAME, COLUMN_MAPPING_MODE_ID));
+
 
     /**
      * Returns the column mapping mode from the given configuration.
@@ -175,5 +178,97 @@ public class ColumnMapping {
         } else {
             return field.getName();
         }
+    }
+
+    public static void verifyColumnMappingChange(Map<String, String> oldConfig,
+                                                 Map<String, String> newConfig) {
+        verifyColumnMappingChange(oldConfig, newConfig, true);
+    }
+
+    public static void verifyColumnMappingChange(Map<String, String> oldConfig,
+                                                 Map<String, String> newConfig,
+                                                 boolean isNewTable) {
+        String oldMappingMode = getColumnMappingMode(oldConfig);
+        String newMappingMode = getColumnMappingMode(newConfig);
+
+        Preconditions.checkArgument(isNewTable ||
+                        allowMappingModeChange(oldMappingMode, newMappingMode),
+                "Changing column mapping mode from '%s' to '%s' is not supported",
+                oldMappingMode, newMappingMode);
+    }
+
+    private static boolean allowMappingModeChange(String oldMode, String newMode) {
+        // only upgrade from none to name mapping is allowed
+        return oldMode.equals(newMode) ||
+                (COLUMN_MAPPING_MODE_NONE.equals(oldMode) &&
+                        COLUMN_MAPPING_MODE_NAME.equals(newMode));
+    }
+
+    public static boolean isColumnMappingModeEnabled(String columnMappingMode) {
+        return NAME_OR_ID.contains(columnMappingMode);
+    }
+
+    public static Metadata updateColumnMappingMetadata(Metadata metadata,
+                                                       String columnMappingMode,
+                                                       boolean isNewTable) {
+        switch (columnMappingMode) {
+            case COLUMN_MAPPING_MODE_NONE:
+                return metadata;
+            case COLUMN_MAPPING_MODE_ID: // fall through
+            case COLUMN_MAPPING_MODE_NAME:
+                return assignColumnIdAndPhysicalName(metadata, isNewTable);
+            default:
+                throw new UnsupportedOperationException(
+                        "Unsupported column mapping mode: " + columnMappingMode);
+        }
+    }
+
+    private static Metadata assignColumnIdAndPhysicalName(Metadata metadata, boolean isNewTable) {
+        StructType schema = metadata.getSchema();
+        // TODO: read max col id from delta.columnMapping.maxColumnId
+        int maxColumnId = findMaxColumnId(schema);
+        StructType newSchema = new StructType();
+        for (StructField field : schema.fields()) {
+            StructField updatedField = field;
+
+            if (!hasColumnId(field)) {
+                maxColumnId++;
+                updatedField = field.withNewMetadata(FieldMetadata.builder()
+                        .fromMetadata(field.getMetadata())
+                        .putLong(COLUMN_MAPPING_ID_KEY, maxColumnId)
+                        .build());
+            }
+            if (!hasPhysicalName(field)) {
+                // re-use old display names as physical names when a table is updated
+                String physicalName = isNewTable ? "col-" + UUID.randomUUID() : field.getName();
+                updatedField = updatedField.withNewMetadata(FieldMetadata.builder()
+                        .fromMetadata(updatedField.getMetadata())
+                        .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+                        .build());
+            }
+            newSchema = newSchema.add(updatedField);
+        }
+
+        return metadata.withNewSchema(newSchema);
+    }
+
+    static int findMaxColumnId(StructType schema) {
+        return schema.fields().stream()
+                .filter(ColumnMapping::hasColumnId)
+                .map(ColumnMapping::getColumnId)
+                .max(Integer::compareTo).orElse(0);
+    }
+
+    private static boolean hasColumnId(StructField field) {
+        return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
+    }
+
+    private static boolean hasPhysicalName(StructField field) {
+        return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+    }
+
+    private static int getColumnId(StructField field) {
+        // TODO: is there a better way to read this as an int?
+        return Integer.parseInt(field.getMetadata().get(COLUMN_MAPPING_ID_KEY).toString());
     }
 }

@@ -135,6 +135,20 @@ public class Metadata {
         );
     }
 
+    public Metadata withNewSchema(StructType schema) {
+        return new Metadata(
+                this.id,
+                this.name,
+                this.description,
+                this.format,
+                schema.toJson(),
+                schema,
+                this.partitionColumns,
+                this.createdTime,
+                this.configurationMapValue
+        );
+    }
+
     @Override
     public String toString() {
         List<String> partitionColumnsStr = VectorUtils.toJavaList(partitionColumns);

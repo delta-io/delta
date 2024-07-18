@@ -198,6 +198,11 @@ public final class FieldMetadata {
             return this;
         }
 
+        public Builder fromMetadata(FieldMetadata meta) {
+            metadata.putAll(meta.metadata);
+            return this;
+        }
+
         /**
          * @return a new {@link FieldMetadata} with the mappings added to the builder
          */
