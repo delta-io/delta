@@ -45,5 +45,5 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
       table.clone(target, isCreate, isReplace, false, tableProperties)
     }
   }
-  // scalastyle:on argcount  
+  // scalastyle:on argcount
 }
