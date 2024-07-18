@@ -30,6 +30,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.annotation._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -561,6 +562,70 @@ class DeltaTable private[tables](
         TableFeatureProtocolUtils.propertyKey(featureName) ->
           TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
     toDataset(sparkSession, alterTableCmd)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable to a new location.
+   *
+   * @param target The path or table name to create the clone
+   * @param create Whether to create the clone if no table exists
+   * @param replace Whether to replace anything at the destination with the clone
+   * @param ifNotExists Whether to ignore the operation if a table already exists at the path
+   * @param tableProperties Any table properties to override in the clone
+   * @since 4.0.0
+   */
+  def clone(
+      target: String,
+      create: Boolean = true,
+      replace: Boolean = false,
+      ifNotExists: Boolean = false,
+      tableProperties: Map[String, String] = Map.empty): DataFrame = {
+    executeClone(table, target, create, replace, ifNotExists, tableProperties)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable at a specific version to a new location.
+   *
+   * @param version The version of this table to clone from
+   * @param target The path or table name to create the clone
+   * @param create Whether to create the clone if no table exists
+   * @param replace Whether to replace anything at the destination with the clone
+   * @param ifNotExists Whether to ignore the operation if a table already exists at the path
+   * @param tableProperties Any table properties to override in the clone
+   * @since 4.0.0
+   */
+  def cloneAtVersion(
+      version: Long,
+      target: String,
+      create: Boolean = true,
+      replace: Boolean = false,
+      ifNotExists: Boolean = false,
+      tableProperties: Map[String, String] = Map.empty): DataFrame = {
+    val options = Map(DeltaDataSource.TIME_TRAVEL_VERSION_KEY -> version.toString)
+    executeClone(table, target, create, replace, ifNotExists, tableProperties,
+      versionAsOf = Some(version))
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable at a specific timestamp to a new location.
+   *
+   * @param timestamp The timestamp of this table to clone from
+   * @param target The path or table name to create the clone
+   * @param create Whether to create the clone if no table exists
+   * @param replace Whether to replace anything at the destination with the clone
+   * @param ifNotExists Whether to ignore the operation if a table already exists at the path
+   * @param tableProperties Any table properties to override in the clone
+   * @since 4.0.0
+   */
+  def cloneAtTimestamp(
+      timestamp: String,
+      target: String,
+      create: Boolean = true,
+      replace: Boolean = false,
+      ifNotExists: Boolean = false,
+      tableProperties: Map[String, String] = Map.empty): DataFrame = {
+    executeClone(table, target, create, replace, ifNotExists, tableProperties,
+      timestampAsOf = Some(timestamp))
   }
 }
 

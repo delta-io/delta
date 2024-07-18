@@ -26,9 +26,10 @@ import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaD
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
 
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connector.catalog.Identifier
@@ -110,6 +111,43 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
         Some("deltaTable"))
       )
     toDataset(sparkSession, restore)
+  }
+
+  protected def executeClone(
+    table: DeltaTableV2,
+    target: String,
+    create: Boolean,
+    replace: Boolean,
+    ifNotExists: Boolean,
+    tableProperties: Map[String, String],
+    versionAsOf: Option[Long] = None,
+    timestampAsOf: Option[String] = None
+  ): DataFrame = withActiveSession(sparkSession) {
+    val (targetRelation, targetPath, targetIdentifier) = if (new Path(target).isAbsolute()) {
+      (UnresolvedRelation(TableIdentifier(target, Some("delta"))), Some(target), None)
+    } else {
+      val tableIdentifier = sparkSession
+        .sessionState
+        .sqlParser
+        .parseTableIdentifier(target)
+      (UnresolvedRelation(tableIdentifier), None, Some(tableIdentifier))
+    }
+    val source = DataSourceV2Relation.create(table, None, targetIdentifier.map(
+      id => Identifier.of(id.database.toArray, id.table)))
+
+    val maybeTimeTravel = if (timestampAsOf.isDefined || versionAsOf.isDefined) {
+      TimeTravel(
+        source,
+        timestampAsOf.map(Literal(_)),
+        versionAsOf,
+        None
+      )
+    } else {
+      source
+    }
+
+    toDataset(sparkSession, CloneTableStatement(maybeTimeTravel,
+      targetRelation, ifNotExists, replace, create, tableProperties.toMap, targetPath))
   }
 
   protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
