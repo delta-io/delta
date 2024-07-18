@@ -205,6 +205,9 @@ trait MergeIntoMaterializeSourceTests
                   val expectedStorageLevel = StorageLevel.fromString(
                     if (seenSources.size == 1) {
                       spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL)
+                    } else if (seenSources.size == 2) {
+                      spark.conf.get(
+                        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_FIRST_RETRY)
                     } else {
                       spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY)
                     }

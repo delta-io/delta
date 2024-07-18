@@ -763,10 +763,29 @@ trait DeltaSQLConfBase {
           "must be a valid StorageLevel")
       .createWithDefault("DISK_ONLY")
 
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_FIRST_RETRY =
+    buildConf("merge.materializeSource.rddStorageLevelFirstRetry")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried the first" +
+        "time. Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelFirstRetry" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY_2")
+
   val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY =
     buildConf("merge.materializeSource.rddStorageLevelRetry")
       .internal()
-      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried. " +
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried after the " +
+        "first retry. The storage level to use for the first retry can be configured using" +
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelFirstRetry" """ +
         "Note: will always use disk.")
       .stringConf
       .transform(_.toUpperCase(Locale.ROOT))
@@ -778,7 +797,7 @@ trait DeltaSQLConfBase {
         },
         """"spark.databricks.delta.merge.materializeSource.rddStorageLevelRetry" """ +
           "must be a valid StorageLevel")
-      .createWithDefault("DISK_ONLY_2")
+      .createWithDefault("DISK_ONLY_3")
 
   val MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS =
     buildStaticConf("merge.materializeSource.maxAttempts")
