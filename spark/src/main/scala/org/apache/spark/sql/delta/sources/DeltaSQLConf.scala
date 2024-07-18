@@ -554,6 +554,21 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
 
+  val PARQUET_OUTPUT_TIMESTAMP_TYPE =
+    buildConf("parquet.outputTimestampType")
+      .doc(
+        """
+          |Sets which Parquet timestamp type to use when Spark writes data to Parquet files:
+          |INT96 is a non-standard but commonly used timestamp type in Parquet.
+          |TIMESTAMP_MICROS is a standard timestamp type in Parquet,
+          |which stores number of microseconds from the Unix epoch.
+          |TIMESTAMP_MILLIS is also standard, but with millisecond precision,
+          |which means Spark has to truncate the microsecond portion of its timestamp value.
+          |""".stripMargin)
+      .stringConf
+      .checkValues(Set("INT96", "TIMESTAMP_MICROS", "TIMESTAMP_MILLIS"))
+      .createWithDefaultString("TIMESTAMP_MICROS")
+
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////

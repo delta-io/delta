@@ -265,11 +265,8 @@ case class DeltaParquetFileFormat(
        dataSchema: StructType): OutputWriterFactory = {
     val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
     val conf = ContextUtil.getConfiguration(job)
-    // If the key is not set explicitly, default to INT64 for Iceberg compatability
-    if (!sparkSession.conf.contains(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key)) {
-      conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
-        SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
-    }
+    conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+      sparkSession.conf.get(DeltaSQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE))
     if (IcebergCompatV2.isEnabled(metadata)) {
       // For Uniform with IcebergCompatV2, we need to write nested field IDs for list and map
       // types to the parquet schema. Spark currently does not support it so we hook in our
