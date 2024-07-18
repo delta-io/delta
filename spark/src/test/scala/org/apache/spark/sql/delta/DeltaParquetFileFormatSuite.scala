@@ -360,7 +360,7 @@ class DeltaParquetTimestampFormatSuite extends DeltaParquetFileFormatSuiteBase {
 
   test("Write Parquet timestamp with explicit INT96") {
     withTempDir { tempDir =>
-      spark.conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+      spark.conf.set(DeltaSQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
         SQLConf.ParquetOutputTimestampType.INT96.toString)
       writeDatesDataframe(tempDir)
       val parquetSchema = getSchemaFromFirstFileInDirectory(tempDir)
