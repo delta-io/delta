@@ -30,7 +30,6 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.annotation._
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -601,7 +600,6 @@ class DeltaTable private[tables](
       replace: Boolean = false,
       ifNotExists: Boolean = false,
       tableProperties: Map[String, String] = Map.empty): DataFrame = {
-    val options = Map(DeltaDataSource.TIME_TRAVEL_VERSION_KEY -> version.toString)
     executeClone(table, target, create, replace, ifNotExists, tableProperties,
       versionAsOf = Some(version))
   }
