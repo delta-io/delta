@@ -280,7 +280,7 @@ public class ConflictChecker {
             Optional<CommitInfo> winningCommitInfoOpt) {
         long winningCommitTimestamp = -1L;
         if (snapshot.getVersion(engine) == -1 ||
-                !isICTEnabled(snapshot.getMetadata())) {
+                !isICTEnabled(engine, snapshot.getMetadata())) {
             winningCommitTimestamp = lastWinningTxn.getModificationTime();
         } else {
             winningCommitTimestamp = CommitInfo.getRequiredInCommitTimestamp(

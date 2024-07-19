@@ -15,14 +15,24 @@
  */
 package io.delta.kernel.internal;
 
+import java.io.IOException;
 import java.util.*;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
+import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.IntervalParserUtils;
+import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.util.InternalUtils.getSingularElement;
+import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 
 /**
  * Represents the table properties. Also provides methods to access the property values
@@ -45,7 +55,7 @@ public class TableConfig<T> {
     public static final TableConfig<Long> TOMBSTONE_RETENTION = new TableConfig<>(
             "delta.deletedFileRetentionDuration",
             "interval 1 week",
-            IntervalParserUtils::safeParseIntervalAsMillis,
+            (engineOpt, v) -> IntervalParserUtils.safeParseIntervalAsMillis(v),
             value -> value >= 0,
             "needs to be provided as a calendar interval such as '2 weeks'. Months" +
                     " and years are not accepted. You may specify '365 days' for a year instead."
@@ -58,7 +68,7 @@ public class TableConfig<T> {
     public static final TableConfig<Integer> CHECKPOINT_INTERVAL = new TableConfig<>(
             "delta.checkpointInterval",
             "10",
-            Integer::valueOf,
+            (engineOpt, v) -> Integer.valueOf(v),
             value -> value > 0,
             "needs to be a positive integer."
     );
@@ -73,7 +83,7 @@ public class TableConfig<T> {
     public static final TableConfig<Boolean> IN_COMMIT_TIMESTAMPS_ENABLED = new TableConfig<>(
             "delta.enableInCommitTimestamps-preview",
             "false", /* default values */
-            Boolean::valueOf,
+            (engineOpt, v) -> Boolean.valueOf(v),
             value -> true,
             "needs to be a boolean."
     );
@@ -86,7 +96,7 @@ public class TableConfig<T> {
             new TableConfig<>(
                     "delta.inCommitTimestampEnablementVersion-preview",
                     null, /* default values */
-                    v -> Optional.ofNullable(v).map(Long::valueOf),
+                    (engineOpt, v) -> Optional.ofNullable(v).map(Long::valueOf),
                     value -> true,
                     "needs to be a long."
             );
@@ -100,7 +110,7 @@ public class TableConfig<T> {
             new TableConfig<>(
                     "delta.inCommitTimestampEnablementTimestamp-preview",
                     null, /* default values */
-                    v -> Optional.ofNullable(v).map(Long::valueOf),
+                    (engineOpt, v) -> Optional.ofNullable(v).map(Long::valueOf),
                     value -> true,
                     "needs to be a long."
             );
@@ -114,7 +124,7 @@ public class TableConfig<T> {
             new TableConfig<>(
                     "delta.coordinatedCommits.commitCoordinator-preview",
                     null, /* default values */
-                    Optional::ofNullable,
+                    (engineOpt, v) -> Optional.ofNullable(v),
                     value -> true,
                     "The commit-coordinator name for this table. This is used to determine " +
                             "which implementation of commit-coordinator to use when committing " +
@@ -131,8 +141,10 @@ public class TableConfig<T> {
             new TableConfig<>(
                     "delta.coordinatedCommits.commitCoordinatorConf-preview",
                     null, /* default values */
-                    v -> {
-                        throw new UnsupportedOperationException("Not implemented yet");
+                    (engineOpt, v) -> {
+                        Engine engine = engineOpt.orElseThrow(
+                                () -> new IllegalStateException("Engine is not provided"));
+                        return parseJSONKeyValueMap(engine, v);
                     },
                     value -> true,
                     "A string-to-string map of configuration properties for the" +
@@ -147,8 +159,10 @@ public class TableConfig<T> {
             new TableConfig<>(
                     "delta.coordinatedCommits.tableConf-preview",
                     null, /* default values */
-                    v -> {
-                        throw new UnsupportedOperationException("Not implemented yet");
+                    (engineOpt, v) -> {
+                        Engine engine = engineOpt.orElseThrow(
+                                () -> new IllegalStateException("Engine is not provided"));
+                        return parseJSONKeyValueMap(engine, v);
                     },
                     value -> true,
                     "A string-to-string map of configuration properties for" +
@@ -173,14 +187,14 @@ public class TableConfig<T> {
 
     private final String key;
     private final String defaultValue;
-    private final Function<String, T> fromString;
+    private final BiFunction<Optional<Engine>, String, T> fromString;
     private final Predicate<T> validator;
     private final String helpMessage;
 
     private TableConfig(
             String key,
             String defaultValue,
-            Function<String, T> fromString,
+            BiFunction<Optional<Engine>, String, T> fromString,
             Predicate<T> validator,
             String helpMessage) {
         this.key = key;
@@ -193,13 +207,14 @@ public class TableConfig<T> {
     /**
      * Returns the value of the table property from the given metadata.
      *
+     * @param engine {@link Engine} instance.
      * @param metadata the table metadata
      * @return the value of the table property
      */
-    public T fromMetadata(Metadata metadata) {
+    public T fromMetadata(Engine engine, Metadata metadata) {
         String value = metadata.getConfiguration().getOrDefault(key, defaultValue);
-        validate(value);
-        return fromString.apply(value);
+        validate(Optional.of(engine), value);
+        return fromString.apply(Optional.of(engine), value);
     }
 
     /**
@@ -220,7 +235,8 @@ public class TableConfig<T> {
      * @throws InvalidConfigurationValueException if any of the properties are invalid
      * @throws UnknownConfigurationException if any of the properties are unknown
      */
-    public static Map<String, String> validateProperties(Map<String, String> configurations) {
+    public static Map<String, String> validateProperties(
+            Engine engine, Map<String, String> configurations) {
         Map<String, String> validatedConfigurations = new HashMap<>();
         for (Map.Entry<String, String> kv : configurations.entrySet()) {
             String key = kv.getKey().toLowerCase(Locale.ROOT);
@@ -228,7 +244,7 @@ public class TableConfig<T> {
             if (key.startsWith("delta.")) {
                 TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
                 if (tableConfig != null) {
-                    tableConfig.validate(value);
+                    tableConfig.validate(Optional.of(engine), value);
                     validatedConfigurations.put(tableConfig.getKey(), value);
                 } else {
                     throw DeltaErrors.unknownConfigurationException(key);
@@ -240,12 +256,12 @@ public class TableConfig<T> {
         return validatedConfigurations;
     }
 
-    public static Boolean isICTEnabled(Metadata metadata) {
-        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+    public static Boolean isICTEnabled(Engine engine, Metadata metadata) {
+        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(engine, metadata);
     }
 
-    private void validate(String value) {
-        T parsedValue = fromString.apply(value);
+    private void validate(Optional<Engine> engineOpt, String value) {
+        T parsedValue = fromString.apply(engineOpt, value);
         if (!validator.test(parsedValue)) {
             throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
         }
@@ -253,5 +269,37 @@ public class TableConfig<T> {
 
     private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
         configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
+    }
+
+    /**
+     * Parse the given JSON string into a map of key-value pairs. The JSON string should be in the
+     * format of """{"key1": "value1", "key2": "value2", ...}""" whose keys and values are strings.
+     *
+     * @param engine the engine instance
+     * @param jsonString the JSON string to parse
+     * @return the map of key-value pairs
+     */
+    private static Map<String, String> parseJSONKeyValueMap(Engine engine, String jsonString) {
+        if (jsonString == null) {
+            return Collections.emptyMap();
+        }
+        // By adding the top-level key "config", the schema is fixed with a single column "config"
+        // of type MapType(StringType, StringType). In this way, we can parse the JSON string into
+        // MapType(StringType, StringType) using existing engine.getJsonHandler().parseJson API.
+        StructType schema = new StructType()
+                .add("config", new MapType(StringType.STRING, StringType.STRING, true));
+        CloseableIterator<Row> batchRows = engine.getJsonHandler().parseJson(
+                singletonStringColumnVector(String.format("{\"config\": %s}", jsonString)),
+                schema,
+                Optional.empty()
+        ).getRows();
+        try {
+            Row row = getSingularElement(batchRows).orElseThrow(
+                    () -> new IllegalStateException("Iterator should not be empty"));
+            assert !row.isNullAt(0);
+            return VectorUtils.toJavaMap(row.getMap(0));
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

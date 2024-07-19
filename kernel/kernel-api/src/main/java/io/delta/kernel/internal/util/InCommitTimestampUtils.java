@@ -72,9 +72,9 @@ public class InCommitTimestampUtils {
         //
         // WARNING: To ensure that this function returns true if ICT is enabled during the first
         // commit, we explicitly handle the case where the readSnapshot.version is -1.
-        boolean isICTCurrentlyEnabled = isICTEnabled(currentTransactionMetadata);
+        boolean isICTCurrentlyEnabled = isICTEnabled(engine, currentTransactionMetadata);
         boolean wasICTEnabledInReadSnapshot = readSnapshot.getVersion(engine) != -1 &&
-                isICTEnabled(readSnapshot.getMetadata());
+                isICTEnabled(engine, readSnapshot.getMetadata());
         return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
     }
 }

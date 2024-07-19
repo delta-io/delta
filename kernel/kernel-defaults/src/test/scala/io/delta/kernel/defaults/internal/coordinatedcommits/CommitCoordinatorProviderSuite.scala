@@ -29,7 +29,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.{lang, util}
-import java.util.Collections
+import java.util.{Collections, Optional}
 import scala.collection.convert.ImplicitConversions.`map AsScala`
 import scala.collection.JavaConverters._
 
