@@ -669,6 +669,17 @@ trait DeltaSQLConfBase {
       .stringConf
       .createWithDefault(".s3-optimization-")
 
+  val DELTA_MERGE_ANALYSIS_BATCH_RESOLUTION =
+    buildConf("merge.analysis.batchActionResolution.enabled")
+      .internal()
+      .doc(
+        """
+          | Whether to batch the analysis of all DeltaMergeActions within a clause
+          | during merge's analysis resolution.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
       .internal()
