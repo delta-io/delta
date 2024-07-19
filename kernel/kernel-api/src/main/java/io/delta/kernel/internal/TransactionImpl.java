@@ -218,7 +218,8 @@ public class TransactionImpl
         List<Row> metadataActions = new ArrayList<>();
         metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
         if (shouldUpdateMetadata || isNewTable) {
-            this.metadata = ColumnMapping.updateColumnMappingMetadata(metadata,
+            this.metadata = ColumnMapping.updateColumnMappingMetadata(
+                    metadata,
                     ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
                     isNewTable);
             metadataActions.add(createMetadataSingleAction(metadata.toRow()));

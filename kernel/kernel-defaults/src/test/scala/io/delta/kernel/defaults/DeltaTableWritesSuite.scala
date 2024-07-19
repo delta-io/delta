@@ -1028,7 +1028,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("update table with unsupported column mapping mode") {
+  test("cannot update table with unsupported column mapping mode") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
@@ -1046,7 +1046,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("update table with unsupported column mapping mode change") {
+  test("cannot update table with unsupported column mapping mode change") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
@@ -1065,7 +1065,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("update column mapping mode from id to name on existing table") {
+  test("cannot update column mapping mode from id to name on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1077,8 +1077,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMappingMetadata(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMappingMetadata(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
+      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
 
       val ex = intercept[IllegalArgumentException] {
         table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
@@ -1093,7 +1093,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("update column mapping mode from name to id on existing table") {
+  test("cannot update column mapping mode from name to id on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1105,8 +1105,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMappingMetadata(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMappingMetadata(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
+      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
 
       val ex = intercept[IllegalArgumentException] {
         table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
@@ -1121,7 +1121,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("update column mapping mode from none to id not allowed on existing table") {
+  test("cannot update column mapping mode from none to id on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1168,8 +1168,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMappingMetadata(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMappingMetadata(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
+      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
     }
   }
 
@@ -1185,12 +1185,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMappingMetadata(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMappingMetadata(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
+      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
     }
   }
 
-  test("update existing table to column mapping mode = name") {
+  test("can update existing table to column mapping mode = name") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1211,14 +1211,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val updatedSchema = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMappingMetadata(updatedSchema.get("a").getMetadata, 1, "a")
-      assertColumnMappingMetadata(updatedSchema.get("b").getMetadata, 2, "b")
+      assertColumnMapping(updatedSchema.get("a").getMetadata, 1, "a")
+      assertColumnMapping(updatedSchema.get("b").getMetadata, 2, "b")
     }
   }
 
-  private def assertColumnMappingMetadata(meta: FieldMetadata,
-                                           expId: Long,
-                                           expPhyName: String): Unit = {
+  private def assertColumnMapping(meta: FieldMetadata, expId: Long, expPhyName: String): Unit = {
     assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
     // For new tables the physical column name is a UUID. For existing tables, we
     // try to keep the physical column name same as the one in the schema

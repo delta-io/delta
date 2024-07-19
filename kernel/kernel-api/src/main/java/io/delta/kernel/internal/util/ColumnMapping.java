@@ -36,9 +36,13 @@ public class ColumnMapping {
     public static final String COLUMN_MAPPING_ID_KEY = "delta.columnMapping.id";
 
     public static final String PARQUET_FIELD_ID_KEY = "parquet.field.id";
+    public static final String COLUMN_MAPPING_MAX_COLUMN_ID_KEY = "delta.columnMapping.maxColumnId";
     private static final Set<String> NAME_OR_ID = new HashSet<>(
             Arrays.asList(COLUMN_MAPPING_MODE_NAME, COLUMN_MAPPING_MODE_ID));
 
+    /////////////////
+    // Public APIs //
+    /////////////////
 
     /**
      * Returns the column mapping mode from the given configuration.
@@ -94,6 +98,64 @@ public class ColumnMapping {
                 throw new UnsupportedOperationException(
                     "Unsupported column mapping mode: " + columnMappingMode);
         }
+    }
+
+    /** Returns the physical name for a given {@link StructField} */
+    public static String getPhysicalName(StructField field) {
+        if (hasPhysicalName(field)) {
+            // TODO: add method to FieldMetadata to extract this as String
+            // instead of casting here
+            return (String) field
+                    .getMetadata()
+                    .get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+        } else {
+            return field.getName();
+        }
+    }
+
+    public static void verifyColumnMappingChange(
+            Map<String, String> oldConfig,
+            Map<String, String> newConfig,
+            boolean isNewTable) {
+        String oldMappingMode = getColumnMappingMode(oldConfig);
+        String newMappingMode = getColumnMappingMode(newConfig);
+
+        Preconditions.checkArgument(isNewTable ||
+                        allowMappingModeChange(oldMappingMode, newMappingMode),
+                "Changing column mapping mode from '%s' to '%s' is not supported",
+                oldMappingMode, newMappingMode);
+    }
+
+    public static boolean isColumnMappingModeEnabled(String columnMappingMode) {
+        return NAME_OR_ID.contains(columnMappingMode);
+    }
+
+    public static Metadata updateColumnMappingMetadata(
+            Metadata metadata,
+            String columnMappingMode,
+            boolean isNewTable) {
+        switch (columnMappingMode) {
+            case COLUMN_MAPPING_MODE_NONE:
+                return metadata;
+            case COLUMN_MAPPING_MODE_ID: // fall through
+            case COLUMN_MAPPING_MODE_NAME:
+                return assignColumnIdAndPhysicalName(metadata, isNewTable);
+            default:
+                throw new UnsupportedOperationException(
+                        "Unsupported column mapping mode: " + columnMappingMode);
+        }
+    }
+
+    ////////////////////////////
+    // Private Helper Methods //
+    ////////////////////////////
+
+    /** Visible for testing */
+    static int findMaxColumnId(StructType schema) {
+        return schema.fields().stream()
+                .filter(ColumnMapping::hasColumnId)
+                .map(ColumnMapping::getColumnId)
+                .max(Integer::compareTo).orElse(0);
     }
 
     /**
@@ -169,34 +231,6 @@ public class ColumnMapping {
         return logicalType;
     }
 
-    /** Returns the physical name for a given {@link StructField} */
-    public static String getPhysicalName(StructField field) {
-        if (field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY)) {
-            return (String) field
-                .getMetadata()
-                .get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-        } else {
-            return field.getName();
-        }
-    }
-
-    public static void verifyColumnMappingChange(Map<String, String> oldConfig,
-                                                 Map<String, String> newConfig) {
-        verifyColumnMappingChange(oldConfig, newConfig, true);
-    }
-
-    public static void verifyColumnMappingChange(Map<String, String> oldConfig,
-                                                 Map<String, String> newConfig,
-                                                 boolean isNewTable) {
-        String oldMappingMode = getColumnMappingMode(oldConfig);
-        String newMappingMode = getColumnMappingMode(newConfig);
-
-        Preconditions.checkArgument(isNewTable ||
-                        allowMappingModeChange(oldMappingMode, newMappingMode),
-                "Changing column mapping mode from '%s' to '%s' is not supported",
-                oldMappingMode, newMappingMode);
-    }
-
     private static boolean allowMappingModeChange(String oldMode, String newMode) {
         // only upgrade from none to name mapping is allowed
         return oldMode.equals(newMode) ||
@@ -204,29 +238,21 @@ public class ColumnMapping {
                         COLUMN_MAPPING_MODE_NAME.equals(newMode));
     }
 
-    public static boolean isColumnMappingModeEnabled(String columnMappingMode) {
-        return NAME_OR_ID.contains(columnMappingMode);
-    }
-
-    public static Metadata updateColumnMappingMetadata(Metadata metadata,
-                                                       String columnMappingMode,
-                                                       boolean isNewTable) {
-        switch (columnMappingMode) {
-            case COLUMN_MAPPING_MODE_NONE:
-                return metadata;
-            case COLUMN_MAPPING_MODE_ID: // fall through
-            case COLUMN_MAPPING_MODE_NAME:
-                return assignColumnIdAndPhysicalName(metadata, isNewTable);
-            default:
-                throw new UnsupportedOperationException(
-                        "Unsupported column mapping mode: " + columnMappingMode);
-        }
-    }
-
+    /**
+     * For each column/field in a {@link Metadata}'s schema, assign an id using the current
+     * maximum id as the basis and increment from there. Additionally, assign a physical name based
+     * on a random UUID or re-use the old display name if the mapping mode is updated on an
+     * existing table.
+     * @param metadata The new metadata to assign ids and physical names to
+     * @param isNewTable whether this is part of a commit that sets the mapping mode on a new table
+     * @return {@link Metadata} with a new schema where ids and physical names have been assigned
+     */
     private static Metadata assignColumnIdAndPhysicalName(Metadata metadata, boolean isNewTable) {
         StructType schema = metadata.getSchema();
-        // TODO: read max col id from delta.columnMapping.maxColumnId
-        int maxColumnId = findMaxColumnId(schema);
+        int maxColumnId = Math.max(
+                Integer.parseInt(metadata.getConfiguration()
+                        .getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0")),
+                findMaxColumnId(schema));
         StructType newSchema = new StructType();
         for (StructField field : schema.fields()) {
             StructField updatedField = field;
@@ -249,14 +275,10 @@ public class ColumnMapping {
             newSchema = newSchema.add(updatedField);
         }
 
-        return metadata.withNewSchema(newSchema);
-    }
+        Map<String, String> config = new HashMap<>();
+        config.put(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, Integer.toString(maxColumnId));
 
-    static int findMaxColumnId(StructType schema) {
-        return schema.fields().stream()
-                .filter(ColumnMapping::hasColumnId)
-                .map(ColumnMapping::getColumnId)
-                .max(Integer::compareTo).orElse(0);
+        return metadata.withNewSchema(newSchema).withNewConfiguration(config);
     }
 
     private static boolean hasColumnId(StructField field) {
@@ -268,7 +290,8 @@ public class ColumnMapping {
     }
 
     private static int getColumnId(StructField field) {
-        // TODO: is there a better way to read this as an int?
+        // TODO: add a method to FieldMetadata to extract this as an int
+        // instead of having to parse it here
         return Integer.parseInt(field.getMetadata().get(COLUMN_MAPPING_ID_KEY).toString());
     }
 }

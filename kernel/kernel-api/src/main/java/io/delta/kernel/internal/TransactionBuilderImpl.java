@@ -195,8 +195,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             String mappingMode = tableProperties
                     .map(ColumnMapping::getColumnMappingMode)
                     .orElse("none");
-            SchemaUtils.validateSchema(schema.get(), ColumnMapping
-                    .isColumnMappingModeEnabled(mappingMode));
+            SchemaUtils.validateSchema(
+                    schema.get(),
+                    ColumnMapping.isColumnMappingModeEnabled(mappingMode));
             SchemaUtils.validatePartitionColumns(
                     schema.get(), partitionColumns.orElse(Collections.emptyList()));
         }

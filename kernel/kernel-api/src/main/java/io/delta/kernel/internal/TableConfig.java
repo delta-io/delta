@@ -170,7 +170,7 @@ public class TableConfig<T> {
             new TableConfig<>(
                     "delta.columnMapping.mode",
                     "none", /* default values */
-                    String::valueOf,
+                    (engineOpt, v) -> String.valueOf(v),
                     value -> "none".equals(value) || "id".equals(value) || "name".equals(value),
                     "Needs to be one of none, id, name."
             );
