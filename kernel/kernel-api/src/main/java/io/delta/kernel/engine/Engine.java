@@ -16,6 +16,8 @@
 
 package io.delta.kernel.engine;
 
+import java.util.Map;
+
 import io.delta.kernel.annotation.Evolving;
 
 /**
@@ -55,4 +57,24 @@ public interface Engine {
      * @return An implementation of {@link ParquetHandler}.
      */
     ParquetHandler getParquetHandler();
+
+    /**
+     * Retrieves a {@link CommitCoordinatorClientHandler} for the specified commit coordinator
+     * client. <p>{@link CommitCoordinatorClientHandler} helps Kernel perform commits to a table
+     * which is owned by a commit coordinator.
+     * @see <a href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/managed-commits.md#sample-commit-owner-api">Coordinated commit protocol table feature</a>.
+     *
+     * <p>This method creates and returns an implementation of
+     * {@link CommitCoordinatorClientHandler} based on the provided name and configuration of the
+     * underlying commit coordinator client.</p>
+     *
+     * @param name The identifier or name of the underlying commit coordinator client
+     * @param conf The configuration settings for the underlying commit coordinator client
+     * @return An implementation of {@link CommitCoordinatorClientHandler} configured for the
+     *         specified client
+     *
+     * @since 3.3.0
+     */
+    CommitCoordinatorClientHandler getCommitCoordinatorClientHandler(
+            String name, Map<String, String> conf);
 }
