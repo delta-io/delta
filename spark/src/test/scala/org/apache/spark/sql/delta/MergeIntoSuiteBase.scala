@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.lang.{Integer => JInt}
-import java.util.Locale
 
 import scala.language.implicitConversions
 
@@ -30,6 +29,7 @@ import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.QueryContext
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
@@ -587,11 +587,6 @@ abstract class MergeIntoSuiteBase
       }
     }
   }
-
-  def errorNotContains(errMsg: String, str: String): Unit = {
-    assert(!errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
-  }
-
 
   test("Negative case - basic syntax analysis") {
     withTable("source") {
@@ -1608,96 +1603,143 @@ abstract class MergeIntoSuiteBase
     result = """{ "key": "A", "value": { "a": { "x": 20, "y": 10 }, "b": 2 } }""",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
-  protected def testAnalysisErrorsInExtendedMerge(
-      name: String,
-      namePrefix: String = "extended syntax")(
+
+  /**
+   * Test runner to cover analysis exception in MERGE INTO.
+   */
+  protected def testMergeAnalysisException(
+      name: String)(
       mergeOn: String,
       mergeClauses: MergeClause*)(
-      errorStrs: Seq[String],
-      notErrorStrs: Seq[String] = Nil): Unit = {
-    test(s"$namePrefix - analysis errors - $name") {
+      expectedErrorClass: String,
+      expectedMessageParameters: Map[String, String]): Unit = {
+    test(s"analysis errors - $name") {
       withKeyValueData(
         source = Seq.empty,
         target = Seq.empty,
         sourceKeyValueNames = ("key", "srcValue"),
-        targetKeyValueNames = ("key", "tgtValue")
-      ) { case (sourceName, targetName) =>
-        val errMsg = intercept[AnalysisException] {
+        targetKeyValueNames = ("key", "tgtValue")) { case (sourceName, targetName) =>
+        val ex = intercept[AnalysisException] {
           executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-        }.getMessage
-        errorStrs.foreach { s => errorContains(errMsg, s) }
-        notErrorStrs.foreach { s => errorNotContains(errMsg, s) }
+        }
+
+        // Spark 3.5 and below uses QueryContext, Spark 4.0 and above uses ExpectedContext.
+        // Implicitly convert to ExpectedContext when needed for compatibility.
+        implicit def toExpectedContext(ctxs: Array[QueryContext]): Array[ExpectedContext] =
+          ctxs.map { ctx =>
+            ExpectedContext(ctx.fragment(), ctx.startIndex(), ctx.stopIndex())
+          }
+
+        checkError(
+          exception = ex,
+          errorClass = expectedErrorClass,
+          parameters = expectedMessageParameters,
+          queryContext = ex.getQueryContext
+        )
       }
     }
   }
 
-  testAnalysisErrorsInExtendedMerge("update condition - ambiguous reference")(
+  testMergeAnalysisException("update condition - ambiguous reference")(
     mergeOn = "s.key = t.key",
     update(condition = "key > 1", set = "tgtValue = srcValue"))(
-    errorStrs = "reference" :: "key" :: "is ambiguous" :: Nil)
+    expectedErrorClass = "AMBIGUOUS_REFERENCE",
+    expectedMessageParameters = Map(
+      "name" -> "`key`",
+      "referenceNames" -> "[`s`.`key`, `t`.`key`]"))
 
-  testAnalysisErrorsInExtendedMerge("update condition - unknown reference")(
+  testMergeAnalysisException("update condition - unknown reference")(
     mergeOn = "s.key = t.key",
     update(condition = "unknownAttrib > 1", set = "tgtValue = srcValue"))(
     // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
-    errorStrs = "UPDATE condition" :: "unknownAttrib" :: "key" :: "tgtValue" :: "srcValue" :: Nil)
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "unknownAttrib",
+      "clause" -> "UPDATE condition",
+      "cols" -> "t.key, t.tgtValue, s.key, s.srcValue"))
 
-  testAnalysisErrorsInExtendedMerge("update condition - aggregation function")(
+  testMergeAnalysisException("update condition - aggregation function")(
     mergeOn = "s.key = t.key",
     update(condition = "max(0) > 0", set = "tgtValue = srcValue"))(
-    errorStrs = "UPDATE condition" :: "aggregate functions are not supported" :: Nil)
+    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+    expectedMessageParameters = Map(
+      "operation" -> "UPDATE condition of MERGE operation",
+      "predicate" -> "(condition = (max(0) > 0))."))
 
-  testAnalysisErrorsInExtendedMerge("update condition - subquery")(
+  testMergeAnalysisException("update condition - subquery")(
     mergeOn = "s.key = t.key",
-    update(condition = "s.value in (select value from t)", set = "tgtValue = srcValue"))(
-    errorStrs = Nil) // subqueries fail for unresolved reference to `t`
+    update(condition = "s.srcValue in (select value from t)", set = "tgtValue = srcValue"))(
+    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
+    expectedMessageParameters = Map("relationName" -> "`t`"))
 
-  testAnalysisErrorsInExtendedMerge("delete condition - ambiguous reference")(
+  testMergeAnalysisException("delete condition - ambiguous reference")(
     mergeOn = "s.key = t.key",
     delete(condition = "key > 1"))(
-    errorStrs = "reference" :: "key" :: "is ambiguous" :: Nil)
+    expectedErrorClass = "AMBIGUOUS_REFERENCE",
+    expectedMessageParameters = Map(
+      "name" -> "`key`",
+      "referenceNames" -> "[`s`.`key`, `t`.`key`]"))
 
-  testAnalysisErrorsInExtendedMerge("delete condition - unknown reference")(
+  testMergeAnalysisException("delete condition - unknown reference")(
     mergeOn = "s.key = t.key",
     delete(condition = "unknownAttrib > 1"))(
     // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
-    errorStrs = "DELETE condition" :: "unknownAttrib" :: "key" :: "tgtValue" :: "srcValue" :: Nil)
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "unknownAttrib",
+      "clause" -> "DELETE condition",
+      "cols" -> "t.key, t.tgtValue, s.key, s.srcValue"))
 
-  testAnalysisErrorsInExtendedMerge("delete condition - aggregation function")(
+  testMergeAnalysisException("delete condition - aggregation function")(
     mergeOn = "s.key = t.key",
     delete(condition = "max(0) > 0"))(
-    errorStrs = "DELETE condition" :: "aggregate functions are not supported" :: Nil)
+    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+    expectedMessageParameters = Map(
+      "operation" -> "DELETE condition of MERGE operation",
+      "predicate" -> "(condition = (max(0) > 0))."))
 
-  testAnalysisErrorsInExtendedMerge("delete condition - subquery")(
+  testMergeAnalysisException("delete condition - subquery")(
     mergeOn = "s.key = t.key",
     delete(condition = "s.srcValue in (select tgtValue from t)"))(
-    errorStrs = Nil)  // subqueries fail for unresolved reference to `t`
+    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
+    expectedMessageParameters = Map("relationName" -> "`t`"))
 
-  testAnalysisErrorsInExtendedMerge("insert condition - unknown reference")(
+  testMergeAnalysisException("insert condition - unknown reference")(
     mergeOn = "s.key = t.key",
     insert(condition = "unknownAttrib > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
     // Should show unknownAttrib as invalid ref and (key, srcValue) as valid column names,
     // but not show tgtValue as a valid name as target columns cannot be present in insert clause.
-    errorStrs = "INSERT condition" :: "unknownAttrib" :: "key" :: "srcValue" :: Nil,
-    notErrorStrs = "tgtValue")
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "unknownAttrib",
+      "clause" -> "INSERT condition",
+      "cols" -> "s.key, s.srcValue"))
 
-  testAnalysisErrorsInExtendedMerge("insert condition - reference to target table column")(
+  testMergeAnalysisException("insert condition - reference to target table column")(
     mergeOn = "s.key = t.key",
     insert(condition = "tgtValue > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
     // Should show tgtValue as invalid ref and (key, srcValue) as valid column names
-    errorStrs = "INSERT condition" :: "tgtValue" :: "key" :: "srcValue" :: Nil)
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "tgtValue",
+      "clause" -> "INSERT condition",
+      "cols" -> "s.key, s.srcValue"))
 
-  testAnalysisErrorsInExtendedMerge("insert condition - aggregation function")(
+  testMergeAnalysisException("insert condition - aggregation function")(
     mergeOn = "s.key = t.key",
     insert(condition = "max(0) > 0", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
-    errorStrs = "INSERT condition" :: "aggregate functions are not supported" :: Nil)
+    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+    expectedMessageParameters = Map(
+      "operation" -> "INSERT condition of MERGE operation",
+      "predicate" -> "(condition = (max(0) > 0))."))
 
-  testAnalysisErrorsInExtendedMerge("insert condition - subquery")(
+  testMergeAnalysisException("insert condition - subquery")(
     mergeOn = "s.key = t.key",
     insert(
       condition = "s.srcValue in (select srcValue from s)",
       values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
-    errorStrs = Nil)  // subqueries fail for unresolved reference to `s`
+    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
+    expectedMessageParameters = Map("relationName" -> "`s`"))
 
 
   protected def testExtendedMerge(
@@ -1725,18 +1767,28 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  protected def testExtendedMergeErrorOnMultipleMatches(
-      name: String)(
+  protected def testMergeErrorOnMultipleMatches(
+      name: String,
+      confs: Seq[(String, String)] = Seq())(
       source: Seq[(Int, Int)],
       target: Seq[(Int, Int)],
       mergeOn: String,
       mergeClauses: MergeClause*): Unit = {
     test(s"extended syntax - $name") {
-      withKeyValueData(source, target) { case (sourceName, targetName) =>
-        val errMsg = intercept[UnsupportedOperationException] {
-          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-        }.getMessage.toLowerCase(Locale.ROOT)
-        assert(errMsg.contains("cannot perform merge as multiple source rows matched"))
+      withSQLConf(confs: _*) {
+        withKeyValueData(source, target) { case (sourceName, targetName) =>
+          val docURL = "/delta-update.html#upsert-into-a-table-using-merge"
+
+          checkError(
+            exception = intercept[DeltaUnsupportedOperationException] {
+              executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+            },
+            errorClass = "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
+            parameters = Map(
+              "usageReference" -> DeltaErrors.generateDocsLink(
+                spark.sparkContext.getConf, docURL, skipValidation = true))
+          )
+        }
       }
     }
   }
@@ -1751,7 +1803,7 @@ abstract class MergeIntoSuiteBase
       (2, 2)
     ))
 
-  testExtendedMergeErrorOnMultipleMatches("only update with multiple matches")(
+  testMergeErrorOnMultipleMatches("only update with multiple matches")(
     source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
     mergeOn = "s.key = t.key",
@@ -1768,7 +1820,7 @@ abstract class MergeIntoSuiteBase
       (3, 3)    // not updated due to target-only condition `t.value <> 3`
     ))
 
-  testExtendedMergeErrorOnMultipleMatches("only conditional update with multiple matches")(
+  testMergeErrorOnMultipleMatches("only conditional update with multiple matches")(
     source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
     mergeOn = "s.key = t.key",
@@ -1804,7 +1856,7 @@ abstract class MergeIntoSuiteBase
       (3, 3)    // not deleted due to target-only condition `t.value <> 3`
     ))          // (1, 1) deleted
 
-  testExtendedMergeErrorOnMultipleMatches("only conditional delete with multiple matches")(
+  testMergeErrorOnMultipleMatches("only conditional delete with multiple matches")(
     source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
     mergeOn = "s.key = t.key",
@@ -1821,7 +1873,7 @@ abstract class MergeIntoSuiteBase
       (3, 3)
     ))
 
-  testExtendedMergeErrorOnMultipleMatches("conditional update + delete with multiple matches")(
+  testMergeErrorOnMultipleMatches("conditional update + delete with multiple matches")(
     source = (0, 0) :: (1, 10) :: (2, 20) :: (2, 200) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
     mergeOn = "s.key = t.key",
@@ -1840,7 +1892,7 @@ abstract class MergeIntoSuiteBase
       (4, 4)
     ))          // (1, 1) deleted as it matched delete condition
 
-  testExtendedMergeErrorOnMultipleMatches(
+  testMergeErrorOnMultipleMatches(
     "conditional update + conditional delete with multiple matches")(
     source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
@@ -1946,7 +1998,7 @@ abstract class MergeIntoSuiteBase
       (4, 40)   // (4, 40) inserted by condition, but not (0, 0)
     ))          // (2, 2) deleted by condition but not (1, 1) or (3, 3)
 
-  testExtendedMergeErrorOnMultipleMatches(
+  testMergeErrorOnMultipleMatches(
     "conditional update + conditional delete + conditional insert with multiple matches")(
     source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
     target = (1, 1) :: (2, 2) :: Nil,
@@ -2272,41 +2324,21 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("insert only merge - multiple matches when feature flag off") {
-    withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false") {
-      // Verify that in case of multiple matches, it throws error rather than producing
-      // incorrect results.
-      withKeyValueData(
-        source = (1, 10) :: (1, 100) :: (2, 20) :: Nil,
-        target = (1, 1) :: Nil
-      ) { case (sourceName, targetName) =>
-        val errMsg = intercept[UnsupportedOperationException] {
-          executeMerge(
-            s"$targetName t",
-            s"$sourceName s",
-            "s.key = t.key",
-            insert(values = "(key, value) VALUES (s.key, s.value)"))
-        }.getMessage.toLowerCase(Locale.ROOT)
-        assert(errMsg.contains("cannot perform merge as multiple source rows matched"))
-      }
+  testMergeErrorOnMultipleMatches(
+    "unconditional insert only merge - multiple matches when feature flag off",
+    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
+    source = (1, 10) :: (1, 100) :: (2, 20) :: Nil,
+    target = (1, 1) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(key, value) VALUES (s.key, s.value)"))
 
-      // Verify that in case of multiple matches, it throws error rather than producing
-      // incorrect results.
-      withKeyValueData(
-        source = (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
-        target = (1, 1) :: Nil
-      ) { case (sourceName, targetName) =>
-        val errMsg = intercept[UnsupportedOperationException] {
-          executeMerge(
-            s"$targetName t",
-            s"$sourceName s",
-            "s.key = t.key",
-            insert(condition = "s.value = 20", values = "(key, value) VALUES (s.key, s.value)"))
-        }.getMessage.toLowerCase(Locale.ROOT)
-        assert(errMsg.contains("cannot perform merge as multiple source rows matched"))
-      }
-    }
-  }
+  testMergeErrorOnMultipleMatches(
+    "conditional insert only merge - multiple matches when feature flag off",
+    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
+    source = (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
+    target = (1, 1) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.value = 20", values = "(key, value) VALUES (s.key, s.value)"))
 
   def testMergeWithRepartition(
       name: String,
@@ -2712,28 +2744,6 @@ abstract class MergeIntoSuiteBase
       result: Seq[(Int, Int)]): Unit =
     testExtendedMerge(name, "unlimited clauses")(source, target, mergeOn, mergeClauses : _*)(result)
 
-  protected def testErrorsInUnlimitedClauses(
-      name: String)(
-      mergeOn: String,
-      mergeClauses: MergeClause*)(
-      errorStrs: Seq[String],
-      notErrorStrs: Seq[String] = Nil): Unit = {
-    test(s"unlimited clauses - analysis errors - $name") {
-      withKeyValueData(
-        source = Seq.empty,
-        target = Seq.empty,
-        sourceKeyValueNames = ("key", "srcValue"),
-        targetKeyValueNames = ("key", "tgtValue")
-      ) { case (sourceName, targetName) =>
-        val errMsg = intercept[Exception] {
-          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-        }.getMessage
-        errorStrs.foreach { s => errorContains(errMsg, s) }
-        notErrorStrs.foreach { s => errorNotContains(errMsg, s) }
-      }
-    }
-  }
-
   testUnlimitedClauses("two conditional update + two conditional delete + insert")(
     source = (0, 0) :: (1, 100) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
     target = (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
@@ -2894,51 +2904,49 @@ abstract class MergeIntoSuiteBase
       (9, 903)   // (9, 900) inserted by notMatched_3
     ))
 
-  testErrorsInUnlimitedClauses("error on multiple insert clauses without condition")(
+  testMergeAnalysisException("error on multiple insert clauses without condition")(
     mergeOn = "s.key = t.key",
     update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
     insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
     insert(condition = null, values = "(key, value) VALUES (s.key, 1 + srcValue)"))(
-    errorStrs = "when there are more than one not matched" ::
-      "clauses in a merge statement, only the last not matched" ::
-      "clause can omit the condition" :: Nil)
+    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
 
-  testErrorsInUnlimitedClauses("error on multiple update clauses without condition")(
+  testMergeAnalysisException("error on multiple update clauses without condition")(
     mergeOn = "s.key = t.key",
     update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
     update(condition = null, set = "key = s.key, value = 3 * srcValue"),
     update(condition = null, set = "key = s.key, value = 4 * srcValue"),
     insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
-    errorStrs = "when there are more than one matched clauses in a merge statement, " +
-      "only the last matched clause can omit the condition" :: Nil)
+    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
 
-  testErrorsInUnlimitedClauses("error on multiple update/delete clauses without condition")(
+  testMergeAnalysisException("error on multiple update/delete clauses without condition")(
     mergeOn = "s.key = t.key",
     update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
     delete(condition = null),
     update(condition = null, set = "key = s.key, value = 4 * srcValue"),
     insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
-    errorStrs = "when there are more than one matched clauses in a merge statement, " +
-      "only the last matched clause can omit the condition" :: Nil)
+    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
 
-  testErrorsInUnlimitedClauses(
+  testMergeAnalysisException(
     "error on non-empty condition following empty condition for update clauses")(
     mergeOn = "s.key = t.key",
     update(condition = null, set = "key = s.key, value = 2 * srcValue"),
     update(condition = "s.key < 3", set = "key = s.key, value = srcValue"),
     insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
-    errorStrs = "when there are more than one matched clauses in a merge statement, " +
-      "only the last matched clause can omit the condition" :: Nil)
+    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
 
-  testErrorsInUnlimitedClauses(
+  testMergeAnalysisException(
     "error on non-empty condition following empty condition for insert clauses")(
     mergeOn = "s.key = t.key",
     update(condition = null, set = "key = s.key, value = srcValue"),
     insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
-    insert(condition = "s.key < 3", values = "(key, value) VALUES (s.key, 1 + srcValue)"))(
-    errorStrs = "when there are more than one not matched" ::
-      "clauses in a merge statement, only the last not matched" ::
-      "clause can omit the condition" :: Nil)
+    insert(condition = "s.key < 3", values = "(key, value) VALUES (s.key, srcValue)"))(
+    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
 
   /* end unlimited number of merge clauses tests */
 

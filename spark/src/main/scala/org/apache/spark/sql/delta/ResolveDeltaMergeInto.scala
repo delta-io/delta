@@ -74,7 +74,7 @@ object ResolveDeltaMergeInto {
       expr.flatMap(_.references).filter(!_.resolved).foreach { a =>
         // Note: This will throw error only on unresolved attribute issues,
         // not other resolution errors like mismatched data types.
-        val cols = "columns " + plans.flatMap(_.output).map(_.sql).mkString(", ")
+        val cols = plans.flatMap(_.output).map(_.sql).mkString(", ")
         throw new DeltaAnalysisException(
           errorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
           messageParameters = Array(a.sql, mergeClauseType, cols),

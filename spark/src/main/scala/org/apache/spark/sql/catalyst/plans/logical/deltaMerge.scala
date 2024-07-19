@@ -356,14 +356,14 @@ object DeltaMergeInto {
     // Check that only the last MATCHED clause omits the condition.
     if (matchedClauses.length > 1 && !matchedClauses.init.forall(_.condition.nonEmpty)) {
       throw new DeltaAnalysisException(
-        errorClass = "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+        errorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
         messageParameters = Array.empty)
     }
 
     // Check that only the last NOT MATCHED clause omits the condition.
     if (notMatchedClauses.length > 1 && !notMatchedClauses.init.forall(_.condition.nonEmpty)) {
       throw new DeltaAnalysisException(
-        errorClass = "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
+        errorClass = "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION",
         messageParameters = Array.empty)
     }
 
@@ -371,7 +371,7 @@ object DeltaMergeInto {
     if (notMatchedBySourceClauses.length > 1 &&
       !notMatchedBySourceClauses.init.forall(_.condition.nonEmpty)) {
       throw new DeltaAnalysisException(
-        errorClass = "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
+        errorClass = "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION",
         messageParameters = Array.empty)
     }
 
