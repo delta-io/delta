@@ -199,7 +199,24 @@ class InMemoryCommitCoordinator(val batchSize: Long)
     Map.empty
   }
 
+  def dropTable(logPath: Path): Unit = {
+    withWriteLock(logPath) {
+      perTableMap.remove(logPath)
+    }
+  }
+
   override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
+
+  private[delta] def removeCommitTestOnly(
+      logPath: Path,
+      commitVersion: Long
+  ): Unit = {
+    val tableData = perTableMap.get(logPath)
+    tableData.commitsMap.remove(commitVersion)
+    if (commitVersion == tableData.maxCommitVersion) {
+      tableData.maxCommitVersion -= 1
+    }
+  }
 }
 
 /**

@@ -72,7 +72,7 @@ trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils {
       path: Seq[String] = Seq.empty): Metadata =
     new MetadataBuilder()
       .putMetadataArray(
-        "delta.typeChanges", Array(TypeChange(version, from, to, path).toMetadata))
+        "delta.typeChanges", Array(TypeChange(Some(version), from, to, path).toMetadata))
       .build()
 
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =

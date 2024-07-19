@@ -16,19 +16,30 @@
 
 package org.apache.spark.sql.delta.hudi
 
-import org.apache.avro.Schema
+import java.io.{IOException, UncheckedIOException}
+import java.time.{Instant, LocalDateTime, ZoneId}
+import java.time.format.{DateTimeFormatterBuilder, DateTimeParseException}
+import java.time.temporal.{ChronoField, ChronoUnit}
+import java.util
+import java.util.{Collections, Properties}
+import java.util.stream.Collectors
 
+import scala.collection.JavaConverters._
+import scala.collection.mutable._
 import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.hudi.HudiSchemaUtils._
 import org.apache.spark.sql.delta.hudi.HudiTransactionUtils._
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.avro.Schema
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hudi.avro.model.HoodieActionInstant
-import org.apache.hudi.avro.model.HoodieCleanFileInfo
 import org.apache.hudi.avro.model.HoodieCleanerPlan
+import org.apache.hudi.avro.model.HoodieCleanFileInfo
 import org.apache.hudi.client.HoodieJavaWriteClient
 import org.apache.hudi.client.HoodieTimelineArchiver
 import org.apache.hudi.client.WriteStatus
@@ -40,9 +51,9 @@ import org.apache.hudi.common.model.{HoodieAvroPayload, HoodieBaseFile, HoodieCl
 import org.apache.hudi.common.table.HoodieTableMetaClient
 import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieInstantTimeGenerator, HoodieTimeline, TimelineMetadataUtils}
 import org.apache.hudi.common.table.timeline.HoodieInstantTimeGenerator.{MILLIS_INSTANT_TIMESTAMP_FORMAT_LENGTH, SECS_INSTANT_ID_LENGTH, SECS_INSTANT_TIMESTAMP_FORMAT}
+import org.apache.hudi.common.util.{Option => HudiOption}
 import org.apache.hudi.common.util.CleanerUtils
 import org.apache.hudi.common.util.ExternalFilePathUtil
-import org.apache.hudi.common.util.{Option => HudiOption}
 import org.apache.hudi.common.util.collection.Pair
 import org.apache.hudi.config.HoodieArchivalConfig
 import org.apache.hudi.config.HoodieCleanConfig
@@ -53,15 +64,7 @@ import org.apache.hudi.index.HoodieIndex.IndexType.INMEMORY
 import org.apache.hudi.table.HoodieJavaTable
 import org.apache.hudi.table.action.clean.CleanPlanner
 
-import java.io.{IOException, UncheckedIOException}
-import java.time.{Instant, LocalDateTime, ZoneId}
-import java.time.format.{DateTimeFormatterBuilder, DateTimeParseException}
-import java.time.temporal.{ChronoField, ChronoUnit}
-import java.util
-import java.util.stream.Collectors
-import java.util.{Collections, Properties}
-import collection.mutable._
-import scala.collection.JavaConverters._
+import org.apache.spark.internal.MDC
 
 /**
  * Used to prepare (convert) and then commit a set of Delta actions into the Hudi table located
@@ -158,13 +161,15 @@ class HudiConversionTransaction(
       case e: HoodieException if e.getMessage == "Failed to update metadata"
         || e.getMessage == "Error getting all file groups in pending clustering"
         || e.getMessage == "Error fetching partition paths from metadata table" =>
-        logInfo(s"[Thread=${Thread.currentThread().getName}] " +
-          s"Failed to fully update Hudi metadata table for Delta snapshot version $version. " +
-          s"This is likely due to a concurrent commit and should not lead to data corruption.")
+        logInfo(log"[Thread=${MDC(DeltaLogKeys.THREAD_NAME, Thread.currentThread().getName)}] " +
+          log"Failed to fully update Hudi metadata table for Delta snapshot version " +
+          log"${MDC(DeltaLogKeys.VERSION, version)}. This is likely due to a concurrent " +
+          log"commit and should not lead to data corruption.")
       case e: HoodieRollbackException =>
-        logInfo(s"[Thread=${Thread.currentThread().getName}] " +
-          s"Failed to rollback Hudi metadata table for Delta snapshot version $version. " +
-          s"This is likely due to a concurrent commit and should not lead to data corruption.")
+        logInfo(log"[Thread=${MDC(DeltaLogKeys.THREAD_NAME, Thread.currentThread().getName)}] " +
+          log"Failed to rollback Hudi metadata table for Delta snapshot version " +
+          log"${MDC(DeltaLogKeys.VERSION, version)}. This is likely due to a concurrent " +
+          log"commit and should not lead to data corruption.")
       case NonFatal(e) =>
         recordHudiCommit(Some(e))
         throw e

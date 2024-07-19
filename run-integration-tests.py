@@ -239,7 +239,7 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
             print("Failed Iceberg tests in %s" % (test_file))
             raise
 
-def run_uniform_hudi_integration_tests(root_dir, version, extra_maven_repo, use_local):
+def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_version, extra_maven_repo, use_local):
     print("\n\n##### Running Uniform hudi tests on version %s #####" % str(version))
     # clear_artifact_cache()
     if use_local:
@@ -256,7 +256,9 @@ def run_uniform_hudi_integration_tests(root_dir, version, extra_maven_repo, use_
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = ','.join([
-        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)])
+        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version),
+        "org.apache.hudi:hudi-spark%s-bundle_2.12:%s" % (spark_version, hudi_version)
+    ])
     jars = path.join(root_dir, "hudi/target/scala-2.12/delta-hudi-assembly_2.12-%s.jar" % (version))
 
     repo = extra_maven_repo if extra_maven_repo else ""
@@ -483,6 +485,17 @@ if __name__ == "__main__":
         required=False,
         default="1.4.0",
         help="Iceberg Spark Runtime library version")
+    parser.add_argument(
+        "--hudi-spark-version",
+        required=False,
+        default="3.5",
+        help="Spark version for the Hudi library")
+    parser.add_argument(
+        "--hudi-version",
+        required=False,
+        default="0.15.0",
+        help="Hudi library version"
+    )
 
     args = parser.parse_args()
 
@@ -508,7 +521,7 @@ if __name__ == "__main__":
 
     if args.run_uniform_hudi_integration_tests:
         run_uniform_hudi_integration_tests(
-            root_dir, args.version, args.maven_repo, args.use_local)
+            root_dir, args.version, args.hudi_spark_version, args.hudi_version, args.maven_repo, args.use_local)
         quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:

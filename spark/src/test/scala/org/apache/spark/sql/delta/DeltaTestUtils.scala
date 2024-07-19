@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.FileStatus
@@ -483,7 +483,8 @@ trait DeltaTestUtilsForTempViews
  * cleaning it up after each test.
  */
 trait DeltaDMLTestUtils
-  extends DeltaTestUtilsBase
+  extends DeltaSQLTestUtils
+  with DeltaTestUtilsBase
   with BeforeAndAfterEach {
   self: SharedSparkSession =>
 

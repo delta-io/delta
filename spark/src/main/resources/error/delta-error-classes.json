@@ -366,6 +366,24 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_CLONE_CANNOT_OVERRIDE_COORDINATED_COMMITS" : {
+    "message" : [
+      "Cannot override coordinated commits configurations for an existing target table that already has coordinated commits enabled during CLONE."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_CLONE_CONF_OVERRIDE_NOT_SUPPORTED" : {
+    "message" : [
+      "Configuration \"<configuration>\" cannot be overridden with CLONE command."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_CLONE_MUST_OVERRIDE_ALL_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "During CLONE, either all coordinated commits configurations i.e.\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\" must be overridden or none of them."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
     "message" : [
       "Unsupported clone source '<name>', whose format is <format>.",
@@ -1088,7 +1106,7 @@
       },
       "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
         "message" : [
-          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table first. Then run REORG PURGE command to purge the Deletion Vectors on the table."
         ]
       },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
@@ -1134,7 +1152,7 @@
       },
       "VERSION_MUTUAL_EXCLUSIVE" : {
         "message" : [
-          "Only one IcebergCompat version can be enabled."
+          "Only one IcebergCompat version can be enabled, please explicitly disable all other IcebergCompat versions that are not needed."
         ]
       },
       "WRONG_REQUIRED_TABLE_PROPERTY" : {
@@ -2495,20 +2513,6 @@
       "Changing column mapping mode from '<oldMode>' to '<newMode>' is not supported."
     ],
     "sqlState" : "0AKDC"
-  },
-  "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL" : {
-    "message" : [
-      "",
-      "Your current table protocol version does not support changing column mapping modes",
-      "using <config>.",
-      "",
-      "Required Delta protocol version for column mapping:",
-      "<requiredVersion>",
-      "Your table's current Delta protocol version:",
-      "<currentVersion>",
-      "<advice>"
-    ],
-    "sqlState" : "KD004"
   },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_SCHEMA_CHANGE" : {
     "message" : [

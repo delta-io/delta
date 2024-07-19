@@ -21,6 +21,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DeltaConfigs.CHECKPOINT_INTERVAL
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -1413,6 +1414,46 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  ddlTest("CHANGE COLUMN - set comment on a varchar column") {
+    withDeltaTable(schema = "v varchar(1)") { tableName =>
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN v COMMENT 'test comment'")
+      val expectedResult = Row("v", "string", "test comment") :: Nil
+      checkAnswer(
+        sql(s"DESCRIBE $tableName").filter("col_name = 'v'"),
+        expectedResult)
+      checkColType(spark.table(tableName).schema.head, VarcharType(1))
+      val e = intercept[DeltaInvariantViolationException] {
+        sql(s"INSERT into $tableName values ('12')")
+      }
+      assert(e.getMessage.contains("Value \"12\" exceeds char/varchar type length limitation. " +
+        "Failed check: ((v IS NULL) OR (length(v) <= 1))"))
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - set comment on a char column") {
+    withDeltaTable(schema = "v char(1)") { tableName =>
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN v COMMENT 'test comment'")
+      val expectedResult = Row("v", "string", "test comment") :: Nil
+      checkAnswer(
+        sql(s"DESCRIBE $tableName").filter("col_name = 'v'"),
+        expectedResult)
+      checkColType(spark.table(tableName).schema.head, CharType(1))
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - set a default value for a varchar column") {
+    withDeltaTable(schema = "v varchar(1)") { tableName =>
+      sql(s"ALTER TABLE $tableName " +
+        s"SET TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')")
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN v set default cast('a' as varchar(1))")
+      val expectedResult = Row("v", "string", null) :: Nil
+      checkAnswer(
+        sql(s"DESCRIBE $tableName").filter("col_name = 'v'"),
+        expectedResult)
+      checkColType(spark.table(tableName).schema.head, VarcharType(1))
+    }
+  }
+
   ddlTest("CHANGE COLUMN - change name (nested)") {
     val df = Seq((1, "a"), (2, "b")).toDF("v1", "v2")
       .withColumn("struct", struct("v1", "v2"))
@@ -1629,14 +1670,22 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
-  test("CHANGE COLUMN: allow change from char(x) to string type") {
-    withTable("t") {
-      sql("CREATE TABLE t(i VARCHAR(4)) USING delta")
-      sql("ALTER TABLE t CHANGE COLUMN i TYPE STRING")
-      val col = spark.table("t").schema.head
-      assert(col.dataType == StringType)
-      assert(CharVarcharUtils.getRawType(col.metadata).isEmpty)
-      sql("INSERT INTO t VALUES ('123456789')")
+  for (charVarcharMitigationDisabled <- BOOLEAN_DOMAIN)
+  test(s"CHANGE COLUMN: allow change from char(x) to string type " +
+    s"[charVarcharMitigationDisabled: $charVarcharMitigationDisabled]") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX.key ->
+        charVarcharMitigationDisabled.toString) {
+      withTable("t") {
+        sql("CREATE TABLE t(i VARCHAR(4)) USING delta")
+        sql("ALTER TABLE t CHANGE COLUMN i TYPE STRING")
+        val col = spark.table("t").schema.head
+        assert(col.dataType == StringType)
+        assert(CharVarcharUtils.getRawType(col.metadata).isDefined == charVarcharMitigationDisabled)
+        if (!charVarcharMitigationDisabled) {
+          sql("INSERT INTO t VALUES ('123456789')")
+        }
+      }
     }
   }
 }

@@ -704,4 +704,61 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     )
     assertFeatureSupported(preview = false, stable = false)
   }
+
+  test("tableVersion metadata is correctly set and preserved when using the preview feature") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
+      s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
+
+    addTableFeature(tempPath, TypeWideningPreviewTableFeature)
+    enableTypeWidening(tempPath)
+    addSingleFile(Seq(1), ByteType)
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
+
+    assert(readDeltaTable(tempPath).schema === new StructType()
+      .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
+        .putMetadataArray("delta.typeChanges", Array(
+          new MetadataBuilder()
+            .putLong("tableVersion", 4)
+            .putString("fromType", "byte")
+            .putString("toType", "short")
+            .build()
+        )).build()))
+
+    // It's allowed to manually add both the preview and stable feature to the same table - the
+    // specs are compatible. In that case, we still populate the `tableVersion` field.
+    addTableFeature(tempPath, TypeWideningTableFeature)
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
+    assert(readDeltaTable(tempPath).schema === new StructType()
+      .add("a", IntegerType, nullable = true, metadata = new MetadataBuilder()
+        .putMetadataArray("delta.typeChanges", Array(
+          new MetadataBuilder()
+            .putLong("tableVersion", 4)
+            .putString("fromType", "byte")
+            .putString("toType", "short")
+            .build(),
+          new MetadataBuilder()
+            .putLong("tableVersion", 6)
+            .putString("fromType", "short")
+            .putString("toType", "integer")
+            .build()
+        )).build()))
+  }
+
+  test("tableVersion isn't set when using the stable feature") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
+      s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
+
+    addTableFeature(tempPath, TypeWideningTableFeature)
+    enableTypeWidening(tempPath)
+    addSingleFile(Seq(1), ByteType)
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
+    assert(readDeltaTable(tempPath).schema === new StructType()
+      .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
+        .putMetadataArray("delta.typeChanges", Array(
+          new MetadataBuilder()
+            .putString("fromType", "byte")
+            .putString("toType", "short")
+            .build()
+        )).build()))
+  }
 }

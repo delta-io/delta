@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, Delt
 import org.apache.spark.sql.delta.DeltaOperations.OPTIMIZE_OPERATION_NAME
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -34,6 +35,7 @@ import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{Table => IcebergTable}
 import shadedForDelta.org.apache.iceberg.hive.{HiveCatalog, HiveTableOperations}
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
@@ -110,12 +112,14 @@ class IcebergConverter(spark: SparkSession)
                     val snapshotVal = snapshotAndTxn._1
                     val prevTxn = snapshotAndTxn._2
                     try {
-                      logInfo(s"Converting Delta table [path=${log.logPath}, " +
-                        s"tableId=${log.tableId}, version=${snapshotVal.version}] into Iceberg")
+                      logInfo(log"Converting Delta table [path=" +
+                        log"${MDC(DeltaLogKeys.PATH, log.logPath)}, " +
+                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}, version=" +
+                        log"${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] into Iceberg")
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
-                        logWarning(s"Error when writing Iceberg metadata asynchronously", e)
+                        logWarning("Error when writing Iceberg metadata asynchronously", e)
                         recordDeltaEvent(
                           log,
                           "delta.iceberg.conversion.async.error",
@@ -178,7 +182,7 @@ class IcebergConverter(spark: SparkSession)
       convertSnapshot(snapshotToConvert, None, catalogTable)
     } catch {
       case NonFatal(e) =>
-        logError(s"Error when converting to Iceberg metadata", e)
+        logError("Error when converting to Iceberg metadata", e)
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
           "delta.iceberg.conversion.error",
@@ -212,7 +216,7 @@ class IcebergConverter(spark: SparkSession)
       }
     } catch {
       case NonFatal(e) =>
-        logError(s"Error when converting to Iceberg metadata", e)
+        logError("Error when converting to Iceberg metadata", e)
         recordDeltaEvent(
           txn.deltaLog,
           "delta.iceberg.conversion.error",
@@ -360,8 +364,9 @@ class IcebergConverter(spark: SparkSession)
         }
     }
     if (needsExpireSnapshot) {
-      logInfo(s"Committing iceberg snapshot expiration for uniform table " +
-        s"[path = ${log.logPath}] tableId=${log.tableId}]")
+      logInfo(log"Committing iceberg snapshot expiration for uniform table " +
+        log"[path = ${MDC(DeltaLogKeys.PATH, log.logPath)}] tableId=" +
+        log"${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}]")
       val expireSnapshotHelper = icebergTxn.getExpireSnapshotHelper()
       expireSnapshotHelper.commit()
     }
