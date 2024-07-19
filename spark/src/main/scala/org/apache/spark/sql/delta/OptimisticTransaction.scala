@@ -701,6 +701,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     if (isCreatingNewTable) {
       IdentityColumn.logTableCreation(deltaLog, newMetadataTmp.schema)
     }
+
     newMetadataTmp = newMetadataTmp.copy(configuration = configsWithoutProtocolProps)
     Protocol.assertMetadataContainsNoProtocolProps(newMetadataTmp)
 
