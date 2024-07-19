@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -33,6 +33,7 @@ import org.apache.spark.sql.types._
 
 /** Base suite containing the restore tests. */
 trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
