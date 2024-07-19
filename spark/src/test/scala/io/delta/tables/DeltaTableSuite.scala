@@ -240,7 +240,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
   private val ignoreMethods = Seq(
     "clone",
     "cloneAtTimestamp",
-    "cloneAtVersion",
+    "cloneAtVersion"
   )
 
   private val testedMethods = Seq(
