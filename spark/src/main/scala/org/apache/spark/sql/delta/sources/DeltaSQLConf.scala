@@ -423,6 +423,14 @@ trait DeltaSQLConfBase {
       .checkValues(Set(1, 2, 3))
       .createWithDefault(1)
 
+  val TABLE_FEATURES_TEST_FEATURES_ENABLED =
+    buildConf("tableFeatures.testFeatures.enabled")
+      .internal()
+      .doc("Controls whether test features are enabled in testing mode. " +
+        "This config is only used for testing purposes. ")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
       .internal()
@@ -546,6 +554,21 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
 
+  val PARQUET_OUTPUT_TIMESTAMP_TYPE =
+    buildConf("parquet.outputTimestampType")
+      .doc(
+        """
+          |Sets which Parquet timestamp type to use when Spark writes data to Parquet files:
+          |INT96 is a non-standard but commonly used timestamp type in Parquet.
+          |TIMESTAMP_MICROS is a standard timestamp type in Parquet,
+          |which stores number of microseconds from the Unix epoch.
+          |TIMESTAMP_MILLIS is also standard, but with millisecond precision,
+          |which means Spark has to truncate the microsecond portion of its timestamp value.
+          |""".stripMargin)
+      .stringConf
+      .checkValues(Set("INT96", "TIMESTAMP_MICROS", "TIMESTAMP_MILLIS"))
+      .createWithDefaultString("TIMESTAMP_MICROS")
+
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
@@ -645,6 +668,17 @@ trait DeltaSQLConfBase {
       .doc("The file prefix to use in DummyFileManager")
       .stringConf
       .createWithDefault(".s3-optimization-")
+
+  val DELTA_MERGE_ANALYSIS_BATCH_RESOLUTION =
+    buildConf("merge.analysis.batchActionResolution.enabled")
+      .internal()
+      .doc(
+        """
+          | Whether to batch the analysis of all DeltaMergeActions within a clause
+          | during merge's analysis resolution.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
@@ -755,10 +789,29 @@ trait DeltaSQLConfBase {
           "must be a valid StorageLevel")
       .createWithDefault("DISK_ONLY")
 
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_FIRST_RETRY =
+    buildConf("merge.materializeSource.rddStorageLevelFirstRetry")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried the first" +
+        "time. Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelFirstRetry" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY_2")
+
   val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY =
     buildConf("merge.materializeSource.rddStorageLevelRetry")
       .internal()
-      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried. " +
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried after the " +
+        "first retry. The storage level to use for the first retry can be configured using" +
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelFirstRetry" """ +
         "Note: will always use disk.")
       .stringConf
       .transform(_.toUpperCase(Locale.ROOT))
@@ -770,7 +823,7 @@ trait DeltaSQLConfBase {
         },
         """"spark.databricks.delta.merge.materializeSource.rddStorageLevelRetry" """ +
           "must be a valid StorageLevel")
-      .createWithDefault("DISK_ONLY_2")
+      .createWithDefault("DISK_ONLY_3")
 
   val MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS =
     buildStaticConf("merge.materializeSource.maxAttempts")

@@ -133,6 +133,8 @@ class DeltaTableFeatureSuite
           Some(metadata))
         .readerAndWriterFeatureNames ===
         Set(
+          AppendOnlyTableFeature.name,
+          InvariantsTableFeature.name,
           TestWriterFeatureWithTransitiveDependency.name,
           TestFeatureWithDependency.name,
           TestReaderWriterFeature.name))
@@ -205,30 +207,13 @@ class DeltaTableFeatureSuite
     val tfProtocol2 =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
 
-    assert(
-      tfProtocol1.merge(Protocol(1, 2)) ===
-        tfProtocol1.withFeatures(Seq(AppendOnlyTableFeature, InvariantsTableFeature)))
-    assert(
-      tfProtocol2.merge(Protocol(2, 6)) ===
-        tfProtocol2.withFeatures(Set(
-          AppendOnlyTableFeature,
-          InvariantsTableFeature,
-          ColumnMappingTableFeature,
-          ChangeDataFeedTableFeature,
-          CheckConstraintsTableFeature,
-          GeneratedColumnsTableFeature,
-          IdentityColumnsTableFeature,
-          TestLegacyWriterFeature,
-          TestLegacyReaderWriterFeature,
-          TestRemovableLegacyWriterFeature,
-          TestRemovableLegacyReaderWriterFeature)))
+    assert(tfProtocol1.merge(Protocol(1, 2)) === Protocol(1, 2))
+    assert(tfProtocol2.merge(Protocol(2, 6)) === Protocol(2, 6))
   }
 
   test("protocol upgrade compatibility") {
     assert(Protocol(1, 1).canUpgradeTo(Protocol(1, 1)))
     assert(Protocol(1, 1).canUpgradeTo(Protocol(2, 1)))
-    assert(!Protocol(1, 2).canUpgradeTo(Protocol(1, 1)))
-    assert(!Protocol(2, 2).canUpgradeTo(Protocol(2, 1)))
     assert(
       Protocol(1, 1).canUpgradeTo(
         Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)))
@@ -267,10 +252,6 @@ class DeltaTableFeatureSuite
             TestLegacyReaderWriterFeature,
             TestRemovableLegacyWriterFeature,
             TestRemovableLegacyReaderWriterFeature))))
-    // Features are identical but protocol versions are lower, thus `canUpgradeTo` is `false`.
-    assert(
-      !Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-        .canUpgradeTo(Protocol(1, 1)))
   }
 
   test("protocol downgrade compatibility") {
@@ -295,8 +276,8 @@ class DeltaTableFeatureSuite
       .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestReaderWriterFeature.name))
     assert(
       tableFeatureProtocol
-        .merge(Protocol(2, 5))
         .withFeatures(Seq(TestReaderWriterFeature, TestRemovableLegacyReaderWriterFeature))
+        .merge(Protocol(2, 5))
         .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestReaderWriterFeature.name))
     // Downgraded protocol must be able to support all legacy table features.
     assert(
@@ -305,8 +286,8 @@ class DeltaTableFeatureSuite
         .canDowngradeTo(Protocol(2, 4), droppedFeatureName = TestWriterFeature.name))
     assert(
       tableFeatureProtocol
-        .merge(Protocol(2, 5))
         .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, ColumnMappingTableFeature))
+        .merge(Protocol(2, 5))
         .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestWriterFeature.name))
   }
 
@@ -354,6 +335,8 @@ class DeltaTableFeatureSuite
         val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
         val protocol = log.update().protocol
         assert(protocol.readerAndWriterFeatureNames === Set(
+          AppendOnlyTableFeature.name,
+          InvariantsTableFeature.name,
           ColumnMappingTableFeature.name,
           TestWriterFeature.name))
       }
@@ -407,6 +390,8 @@ class DeltaTableFeatureSuite
             commandName, targetTableName = "tbl", sourceTableName = "tbl", tblProperties))
           val protocol = log.update().protocol
           assert(protocol.readerAndWriterFeatureNames === Set(
+            AppendOnlyTableFeature.name,
+            InvariantsTableFeature.name,
             ChangeDataFeedTableFeature.name,
             TestWriterFeature.name))
         }

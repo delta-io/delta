@@ -332,8 +332,17 @@ object TableFeature {
    * Warning: Do not call `get` on this Map to get a specific feature because keys in this map are
    * in lower cases. Use [[featureNameToFeature]] instead.
    */
-  private[delta] val allSupportedFeaturesMap: Map[String, TableFeature] = {
-    var features: Set[TableFeature] = Set(
+  private[delta] def allSupportedFeaturesMap: Map[String, TableFeature] = {
+    val testingFeaturesEnabled =
+      try {
+        SparkSession
+        .getActiveSession
+        .map(_.conf.get(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED))
+        .getOrElse(true)
+      } catch {
+          case _ => true
+      }
+   var features: Set[TableFeature] = Set(
       AllowColumnDefaultsTableFeature,
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
@@ -355,7 +364,7 @@ object TableFeature {
       InCommitTimestampTableFeature,
       VariantTypeTableFeature,
       CoordinatedCommitsTableFeature)
-    if (DeltaUtils.isTesting) {
+    if (DeltaUtils.isTesting && testingFeaturesEnabled) {
       features ++= Set(
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature,
@@ -405,8 +414,8 @@ object TableFeature {
   protected def getDroppedExplicitFeatureNames(
       newProtocol: Protocol,
       oldProtocol: Protocol): Option[Set[String]] = {
-    val newFeatureNames = newProtocol.readerAndWriterFeatureNames
-    val oldFeatureNames = oldProtocol.readerAndWriterFeatureNames
+    val newFeatureNames = newProtocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+    val oldFeatureNames = oldProtocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
     Option(oldFeatureNames -- newFeatureNames).filter(_.nonEmpty)
   }
 
