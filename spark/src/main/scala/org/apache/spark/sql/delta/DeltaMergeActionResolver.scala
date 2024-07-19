@@ -45,29 +45,29 @@ trait DeltaMergeActionResolverBase {
 
   /** Try to resolve a single target column in the Merge action. */
   protected def resolveSingleTargetColumn(
-       unresolvedAttribute: UnresolvedAttribute,
-       mergeClauseTypeStr: String,
-       shouldTryUnresolvedTargetExprOnSource: Boolean): Expression = {
+      unresolvedAttribute: UnresolvedAttribute,
+      mergeClauseTypeStr: String,
+      shouldTryUnresolvedTargetExprOnSource: Boolean): Expression = {
     // Resolve the target column name without database/table/view qualifiers
     // If clause allows nested field to be target, then this will return all the
     // parts of the name (e.g., "a.b" -> Seq("a", "b")). Otherwise, this will
     // return only one string.
     try {
       ResolveDeltaMergeInto.resolveSingleExprOrFail(
-        resolveExprsFn,
-        unresolvedAttribute,
-        Seq(target),
-        mergeClauseTypeStr
+        resolveExprsFn = resolveExprsFn,
+        expr = unresolvedAttribute,
+        plansToResolveExpr = Seq(target),
+        mergeClauseTypeStr = mergeClauseTypeStr
       )
     } catch {
       // Allow schema evolution for update and insert non-star when the column is not in
       // the target.
       case _: AnalysisException if shouldTryUnresolvedTargetExprOnSource =>
         ResolveDeltaMergeInto.resolveSingleExprOrFail(
-          resolveExprsFn,
-          unresolvedAttribute,
-          Seq(source),
-          mergeClauseTypeStr
+          resolveExprsFn = resolveExprsFn,
+          expr = unresolvedAttribute,
+          plansToResolveExpr = Seq(source),
+          mergeClauseTypeStr = mergeClauseTypeStr
         )
     }
   }
@@ -81,7 +81,7 @@ trait DeltaMergeActionResolverBase {
       resolvedKey: Expression,
       resolvedRHSExpr: Expression,
       mergeClauseTypeStr: String): DeltaMergeAction = {
-    val sqlText = resolvedKey.sql
+    lazy val sqlText = resolvedKey.sql
     lazy val resolutionErrorMsg =
       s"Cannot resolve $sqlText in target columns in $mergeClauseTypeStr given " +
         s"columns $colsAsSQLText"
@@ -121,6 +121,11 @@ class IndividualDeltaMergeActionResolver(
           unresolvedAttrib, mergeClauseTypeStr, shouldTryUnresolvedTargetExprOnSource)
         val resolvedExpr =
           resolveExprsFn(Seq(expr), plansToResolveAction).head
+        ResolveDeltaMergeInto.throwIfNotResolved(
+          resolvedExpr,
+          plansToResolveAction,
+          mergeClauseTypeStr)
+
         buildDeltaMergeAction(resolvedKey, resolvedExpr, mergeClauseTypeStr)
       // Already resolved
       case d => d
@@ -139,13 +144,17 @@ class BatchedDeltaMergeActionResolver(
    * Attempt to batch resolve the target columns reference all at once. If we are
    * unable to resolve against the target plan, we retry against the source plan
    * if schema evolution is enabled and it's appropriate for the clause type.
+   *
+   * @return The resolved expressions for the target columns. The sequence of
+   *         expressions is ordered the same as the unresolved attributes
+   *         sequence passed in.
    */
   private def batchResolveTargetColumns(
       unresolvedAttrSeq: Seq[UnresolvedAttribute],
       shouldTryUnresolvedTargetExprOnSource: Boolean,
       mergeClauseTypeStr: String): Seq[Expression] = {
     val resolvedExprs = try {
-      // Note: unlike [[resolveSingleTargetColumn]], this is not a resolveOrFail.
+      // Unlike [[resolveSingleTargetColumn]], this is not a [[resolveOrFail]].
       // We will not throw an exception if something was not resolved, because we
       // want to resolve as much as possible and only retry to resolve against the
       // source the few columns that failed to resolve. But we must wrap this in a
@@ -164,39 +173,49 @@ class BatchedDeltaMergeActionResolver(
       "resolved expressions should match the number of unresolved expressions")
 
     val targetTableResolutionResult: Seq[TargetTableResolutionResult] =
-      resolvedExprs.zip(unresolvedAttrSeq).map { case (expr, unresolvedAttr) =>
+      unresolvedAttrSeq.zip(resolvedExprs).map { case (unresolvedAttr, expr) =>
         TargetTableResolutionResult(unresolvedAttr, expr)
       }
-    val exprNeedsResolution: Seq[Expression] =
+    val remainingUnresolvedExprs: Seq[Expression] =
       targetTableResolutionResult.filterNot(_.expr.resolved).map(_.unresolvedAttribute)
 
-    // If we are not supposed to resolve the target column against the source and
-    // we were not able to resolve the column, then we should throw an exception
-    // at this point.
-    if (!shouldTryUnresolvedTargetExprOnSource && exprNeedsResolution.nonEmpty) {
-      ResolveDeltaMergeInto.throwIfNotResolved(
-        // Use the first of the unresolved attributes to throw the exception.
-        targetTableResolutionResult.find(!_.expr.resolved).map(_.expr).get,
-        Seq(target),
-        mergeClauseTypeStr
-      )
-    }
+    val orderedResolvedTargetExprs = if (remainingUnresolvedExprs.isEmpty) {
+      // Everything was resolved, we can return the resolved expressions.
+      resolvedExprs
+    } else {
+      // We were not able to resolve all the target columns against the target plan.
+      // If we are not supposed to resolve the target column against the source and
+      // we were not able to resolve the column, then we should throw an exception
+      // at this point.
+      if (!shouldTryUnresolvedTargetExprOnSource) {
+        ResolveDeltaMergeInto.throwIfNotResolved(
+          // Use the first of the unresolved attributes to throw the exception.
+          targetTableResolutionResult.find(!_.expr.resolved).map(_.expr).get,
+          Seq(target),
+          mergeClauseTypeStr
+        )
+      }
 
-    val resolvedExprAgainstSource: Seq[Expression] = ResolveDeltaMergeInto.resolveOrFail(
-      resolveExprsFn,
-      exprNeedsResolution,
-      Seq(source),
-      mergeClauseTypeStr
-    )
-    var index = -1
-    val orderedResolvedTargetExprs = targetTableResolutionResult.map {
-      case TargetTableResolutionResult(_, expr) =>
+      // Try to resolve against the source, will throw an exception if it can't.
+      val resolvedExprAgainstSource: Seq[Expression] = ResolveDeltaMergeInto.resolveOrFail(
+        resolveExprsFn = resolveExprsFn,
+        exprs = remainingUnresolvedExprs,
+        plansToResolveExprs = Seq(source),
+        mergeClauseTypeStr = mergeClauseTypeStr
+      )
+
+      // Put the expressions that we resolved using the source back into the resolution result
+      // in the correct locations. The order needs to be preserved so that we can match it with
+      // the corresponding resolved assignment expressions.
+      var index = -1
+      targetTableResolutionResult.map { case TargetTableResolutionResult(_, expr) =>
         if (expr.resolved) {
           expr
         } else {
           index += 1
           resolvedExprAgainstSource(index)
         }
+      }
     }
 
     orderedResolvedTargetExprs
@@ -206,8 +225,8 @@ class BatchedDeltaMergeActionResolver(
    * Batch the resolution of the target column name parts against the target relation
    * and the resolution of assignment expression together.
    *
-   * Fundamental assumption: The result of any relational ordering must be preserved
-   * with [[resolveExprsFn]]. This is true in SQL in general because of operations like UNION.
+   * Fundamental requirement: Column/expression ordering must be preserved
+   * by [[resolveExprsFn]].
    */
   override def resolve(
       mergeClauseTypeStr: String,

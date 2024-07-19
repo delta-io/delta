@@ -76,8 +76,9 @@ object ResolveDeltaMergeInto {
     resolveOrFail(resolveExprsFn, Seq(expr), plansToResolveExpr, mergeClauseTypeStr).head
   }
 
-  def resolveReferencesAndSchema(merge: DeltaMergeInto, conf: SQLConf)
-                                (resolveExprsFn: ResolveExpressionsFn): DeltaMergeInto = {
+  def resolveReferencesAndSchema(
+      merge: DeltaMergeInto,
+      conf: SQLConf)(resolveExprsFn: ResolveExpressionsFn): DeltaMergeInto = {
     val DeltaMergeInto(
       target,
       source,
@@ -136,8 +137,6 @@ object ResolveDeltaMergeInto {
 
       // We split the actions of a clause (expressions) into two mutually exclusive groups:
       // 1) DeltaMergeActions and 2) everything else (UnresolvedStar).
-      // Within a MERGE clause, we cannot get both DeltaMergeAction(s)
-      // and UnresolvedStar.
       // The DeltaMergeActions can be resolved already or unresolved at this point.
       // Unresolved DeltaMergeActions correspond to actions like
       // `UPDATE SET x = a, y = b` or `INSERT (x, y) VALUES (a, b)`
@@ -177,10 +176,10 @@ object ResolveDeltaMergeInto {
               UnresolvedAttribute.quotedString(s"`${attr.name}`")
             }
             val resolvedExprs = resolveOrFail(
-              resolveExprsFn,
-              unresolvedExprs,
-              Seq(source),
-              mergeClauseTypeStr)
+              resolveExprsFn = resolveExprsFn,
+              exprs = unresolvedExprs,
+              plansToResolveExprs = Seq(source),
+              mergeClauseTypeStr = mergeClauseTypeStr)
             (resolvedExprs, target.output.map(_.name))
               .zipped
               .map { (resolvedExpr, targetColName) =>
