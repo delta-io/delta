@@ -39,10 +39,6 @@ import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 /**
  * Default implementation of {@link CommitCoordinatorClientHandler} based on Hadoop APIs which uses
  * commit coordinator defined in delta-storage modules.
- * To get the commit coordinator client, it uses the {@link CommitCoordinatorProvider} to
- * dynamically load the
- * {@link io.delta.kernel.defaults.internal.coordinatedcommits.CommitCoordinatorBuilder} which can
- * build the commit coordinator client.
  * It takes a Hadoop {@link Configuration} object to interact with the commit coordinator client.
  * The following optional configurations can be set to customize the behavior of the client:
  * <ul>
@@ -60,6 +56,10 @@ import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
  *     </li>
  *     <li>{@code delta.enableFastS3AListFrom} - Set to {@code true} to enable fast listing
  *     functionality when using a {@link LogStore} created for S3 storage objects.
+ *     </li>
+ *     <li>{@code io.delta.kernel.commitCoordinatorBuilder.<name>.impl} - The class name of the
+ *     custom {@link io.delta.kernel.defaults.internal.coordinatedcommits.CommitCoordinatorBuilder}
+ *     implementation to use for building the commit coordinator client.
  *     </li>
  * </ul>
  */
