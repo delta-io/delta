@@ -28,8 +28,8 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
-class DeltaProtocolTransitionsSuite
-    extends QueryTest
+trait DeltaProtocolTransitionsBaseSuite
+  extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
@@ -86,6 +86,10 @@ class DeltaProtocolTransitionsSuite
       assert(deltaLog.update().protocol === expectedProtocol)
     }
   }
+
+}
+
+class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
 
   test("CREATE TABLE default protocol versions") {
     testProtocolTransition(
@@ -681,3 +685,4 @@ class DeltaProtocolTransitionsSuite
     }
   }
 }
+
