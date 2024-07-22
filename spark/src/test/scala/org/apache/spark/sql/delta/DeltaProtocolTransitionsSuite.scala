@@ -86,7 +86,6 @@ trait DeltaProtocolTransitionsBaseSuite
       assert(deltaLog.update().protocol === expectedProtocol)
     }
   }
-
 }
 
 class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
@@ -685,4 +684,3 @@ class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
     }
   }
 }
-
