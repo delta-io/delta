@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal;
 
-import java.io.IOException;
 import java.util.Optional;
 
 import io.delta.kernel.ScanBuilder;
@@ -143,16 +142,12 @@ public class SnapshotImpl implements Snapshot {
     public long getTimestamp(Engine engine) {
         if (TableConfig.isICTEnabled(metadata)) {
             if (!inCommitTimestampOpt.isPresent()) {
-                try {
-                    Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(
-                            engine, logPath, logSegment.version);
-                    inCommitTimestampOpt = Optional.of(CommitInfo.getRequiredInCommitTimestamp(
-                            commitInfoOpt,
-                            String.valueOf(logSegment.version),
-                            dataPath));
-                } catch (IOException e) {
-                    throw new RuntimeException("Failed to get inCommitTimestamp with IO", e);
-                }
+                Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(
+                        engine, logPath, logSegment.version);
+                inCommitTimestampOpt = Optional.of(CommitInfo.getRequiredInCommitTimestamp(
+                        commitInfoOpt,
+                        String.valueOf(logSegment.version),
+                        dataPath));
             }
             return inCommitTimestampOpt.get();
         } else {
