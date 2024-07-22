@@ -15,48 +15,81 @@
  */
 package io.delta.kernel.defaults.internal.coordinatedcommits;
 
-import java.util.HashMap;
 import java.util.Map;
 
 import io.delta.storage.commit.CommitCoordinatorClient;
+import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-/** Factory to get the correct {@link CommitCoordinatorClient} for a table */
+import io.delta.kernel.defaults.engine.DefaultCommitCoordinatorClientHandler;
+import static io.delta.kernel.defaults.internal.DefaultEngineErrors.canNotInstantiateCommitCoordinatorBuilder;
+
+/**
+ * Factory to get the correct {@link CommitCoordinatorClient} for a table which
+ * is used by {@link DefaultCommitCoordinatorClientHandler} to get the commit coordinator client
+ * using the {@code getCommitCoordinatorClient} method.
+ */
 public class CommitCoordinatorProvider {
-    // mapping from different commit-coordinator names to the corresponding
-    // {@link CommitCoordinatorBuilder}s.
-    private static final Map<String, CommitCoordinatorBuilder> nameToBuilderMapping =
-            new HashMap<>();
+    private static final Logger logger = LoggerFactory.getLogger(CommitCoordinatorProvider.class);
 
     /**
-     * Registers a new {@link CommitCoordinatorBuilder} with the {@link CommitCoordinatorProvider}.
+     * Returns a {@link CommitCoordinatorClient} for the given `hadoopConf`, `name` and
+     * `commitCoordinatorConf`. Caller can set
+     * `io.delta.kernel.commitCoordinatorBuilder.{@code name}.impl` to specify the
+     * {@link CommitCoordinatorBuilder} implementation to use for {@code name}.
+     *
+     * @param hadoopConf {@link Configuration} to use for creating the
+     *                   {@link CommitCoordinatorBuilder}.
+     * @param name Name of the commit-coordinator.
+     * @param commitCoordinatorConf Configuration for building the commit coordinator used by the
+     *                              {@link CommitCoordinatorBuilder}.
+     * @return {@link CommitCoordinatorClient} instance.
      */
-    public static synchronized void registerBuilder(
-            CommitCoordinatorBuilder commitCoordinatorBuilder) {
-        String name = commitCoordinatorBuilder.getName();
-        if (nameToBuilderMapping.containsKey(name)) {
-            throw new IllegalArgumentException(
-                    "commit-coordinator: " +
-                            name +
-                            " already registered with builder " +
-                            commitCoordinatorBuilder.getClass().getName());
+    public static CommitCoordinatorClient getCommitCoordinatorClient(
+            Configuration hadoopConf, String name, Map<String, String> commitCoordinatorConf) {
+        // Check if the CommitCoordinatorBuilder implementation is set in the configuration.
+        String classNameFromConfig = hadoopConf.get(getCommitCoordinatorNameConfKey(name));
+        if (classNameFromConfig != null) {
+            CommitCoordinatorBuilder builder =
+                    createCommitCoordinatorBuilder(classNameFromConfig, hadoopConf, "from config");
+            return builder.build(commitCoordinatorConf);
         } else {
-            nameToBuilderMapping.put(name, commitCoordinatorBuilder);
-        }
-    }
-
-    /** Returns a {@link CommitCoordinatorClient} for the given `name` and `conf` */
-    public static synchronized CommitCoordinatorClient getCommitCoordinatorClient(
-            String name, Map<String, String> conf) {
-        CommitCoordinatorBuilder builder = nameToBuilderMapping.get(name);
-        if (builder == null) {
             throw new IllegalArgumentException("Unknown commit-coordinator: " + name);
-        } else {
-            return builder.build(conf);
         }
     }
 
-    // Visible only for UTs
-    protected static synchronized void clearBuilders() {
-        nameToBuilderMapping.clear();
+    /**
+     * Configuration key for setting the CommitCoordinatorBuilder implementation for a name.
+     * ex: `io.delta.kernel.commitCoordinatorBuilder.in-memory.impl` ->
+     * `io.delta.storage.InMemoryCommitCoordinatorBuilder`
+     */
+    static String getCommitCoordinatorNameConfKey(String name) {
+        return "io.delta.kernel.commitCoordinatorBuilder." + name + ".impl";
+    }
+
+    /**
+     * Utility method to get the CommitCoordinatorBuilder class from the class name.
+     */
+    private static Class<? extends CommitCoordinatorBuilder> getCommitCoordinatorBuilderClass(
+            String commitCoordinatorBuilderClassName)
+            throws ClassNotFoundException {
+        return Class.forName(
+                commitCoordinatorBuilderClassName).asSubclass(CommitCoordinatorBuilder.class);
+    }
+
+    private static CommitCoordinatorBuilder createCommitCoordinatorBuilder(
+            String className,
+            Configuration hadoopConf,
+            String context) {
+        try {
+            return getCommitCoordinatorBuilderClass(className)
+                    .getConstructor(Configuration.class)
+                    .newInstance(hadoopConf);
+        } catch (Exception e) {
+            String msgTemplate = "Failed to instantiate CommitCoordinatorBuilder class ({}): {}";
+            logger.error(msgTemplate, context, className, e);
+            throw canNotInstantiateCommitCoordinatorBuilder(className, context, e);
+        }
     }
 }

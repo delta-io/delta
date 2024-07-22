@@ -31,135 +31,47 @@ import scala.collection.convert.ImplicitConversions.`map AsScala`
 import scala.collection.JavaConverters._
 
 class CommitCoordinatorClientSuite extends DeltaTableWriteSuiteBase {
-
-  protected trait TestCommitCoordinatorClientBase extends CommitCoordinatorClient {
-    override def registerTable(
-      logPath: Path,
-      currentVersion: Long,
-      currentMetadata: AbstractMetadata,
-      currentProtocol: AbstractProtocol): util.Map[String, String] = {
-      throw new UnsupportedOperationException("Not implemented")
-    }
-
-    override def commit(
-      logStore: LogStore,
-      hadoopConf: Configuration,
-      logPath: Path,
-      coordinatedCommitsTableConf: util.Map[String, String],
-      commitVersion: Long,
-      actions: util.Iterator[String],
-      updatedActions: UpdatedActions): CommitResponse = {
-      throw new UnsupportedOperationException("Not implemented")
-    }
-
-    override def getCommits(
-      logPath: Path,
-      coordinatedCommitsTableConf: util.Map[String, String],
-      startVersion: lang.Long,
-      endVersion: lang.Long = null): GetCommitsResponse =
-      new GetCommitsResponse(Collections.emptyList(), -1)
-
-    override def backfillToVersion(
-      logStore: LogStore,
-      hadoopConf: Configuration,
-      logPath: Path,
-      coordinatedCommitsTableConf: util.Map[String, String],
-      version: Long,
-      lastKnownBackfilledVersion: lang.Long): Unit = {}
-
-    override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean = this == other
-  }
-
-  private class TestCommitCoordinatorClient1 extends TestCommitCoordinatorClientBase
-  private class TestCommitCoordinatorClient2 extends TestCommitCoordinatorClientBase
-
-  test("registering multiple commit-coordinator builders with same name") {
-    CommitCoordinatorProvider.clearBuilders()
-    object Builder1 extends CommitCoordinatorBuilder {
-      override def build(conf: util.Map[String, String]): CommitCoordinatorClient = null
-      override def getName: String = "builder-1"
-    }
-    object BuilderWithSameName extends CommitCoordinatorBuilder {
-      override def build(conf: util.Map[String, String]): CommitCoordinatorClient = null
-      override def getName: String = "builder-1"
-    }
-    object Builder3 extends CommitCoordinatorBuilder {
-      override def build(conf: util.Map[String, String]): CommitCoordinatorClient = null
-      override def getName: String = "builder-3"
-    }
-    CommitCoordinatorProvider.registerBuilder(Builder1)
-    intercept[Exception] {
-      CommitCoordinatorProvider.registerBuilder(BuilderWithSameName)
-    }
-    CommitCoordinatorProvider.registerBuilder(Builder3)
-  }
-
   test("getCommitCoordinator - builder returns same object") {
-    CommitCoordinatorProvider.clearBuilders()
-    object Builder1 extends CommitCoordinatorBuilder {
-      val cs1 = new TestCommitCoordinatorClient1()
-      val cs2 = new TestCommitCoordinatorClient2()
-      override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
-        conf.getOrElse("url", "") match {
-          case "url1" => cs1
-          case "url2" => cs2
-          case _ => throw new IllegalArgumentException("Invalid url")
-        }
-      }
-      override def getName: String = "cs-x"
-    }
-    CommitCoordinatorProvider.registerBuilder(Builder1)
+    val hadoopConf = new Configuration()
+    hadoopConf.set(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("cs-x"),
+      classOf[Builder1].getName)
     val cs1 =
-      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-x", Map("url" -> "url1").asJava)
+      CommitCoordinatorProvider
+        .getCommitCoordinatorClient(hadoopConf, "cs-x", Map("url" -> "url1").asJava)
     assert(cs1.isInstanceOf[TestCommitCoordinatorClient1])
     val cs1_again =
-      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-x", Map("url" -> "url1").asJava)
+      CommitCoordinatorProvider
+        .getCommitCoordinatorClient(hadoopConf, "cs-x", Map("url" -> "url1").asJava)
     assert(cs1 eq cs1_again)
     val cs2 = CommitCoordinatorProvider
-      .getCommitCoordinatorClient("cs-x", Map("url" -> "url2", "a" -> "b").asJava)
+      .getCommitCoordinatorClient(hadoopConf, "cs-x", Map("url" -> "url2", "a" -> "b").asJava)
     assert(cs2.isInstanceOf[TestCommitCoordinatorClient2])
     // If builder receives a config which doesn't have expected params, then it can throw exception.
     intercept[IllegalArgumentException] {
-      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-x", Map("url" -> "url3").asJava)
+      CommitCoordinatorProvider
+        .getCommitCoordinatorClient(hadoopConf, "cs-x", Map("url" -> "url3").asJava)
     }
   }
 
   test("getCommitCoordinatorClient - builder returns new object each time") {
-    CommitCoordinatorProvider.clearBuilders()
-    object Builder1 extends CommitCoordinatorBuilder {
-      override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
-        conf.getOrElse("url", "") match {
-          case "url1" => new TestCommitCoordinatorClient1()
-          case _ => throw new IllegalArgumentException("Invalid url")
-        }
-      }
-      override def getName: String = "cs-name"
-    }
-    CommitCoordinatorProvider.registerBuilder(Builder1)
+    val hadoopConf = new Configuration()
+    hadoopConf.set(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("cs-name"),
+      classOf[Builder2].getName)
     val cs1 =
-      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("url" -> "url1").asJava)
+      CommitCoordinatorProvider
+        .getCommitCoordinatorClient(hadoopConf, "cs-name", Map("url" -> "url1").asJava)
     assert(cs1.isInstanceOf[TestCommitCoordinatorClient1])
     val cs1_again =
-      CommitCoordinatorProvider.getCommitCoordinatorClient("cs-name", Map("url" -> "url1").asJava)
+      CommitCoordinatorProvider
+        .getCommitCoordinatorClient(hadoopConf, "cs-name", Map("url" -> "url1").asJava)
     assert(cs1 ne cs1_again)
   }
 
   test("Semantic Equality works as expected on CommitCoordinatorClientHandler") {
-    CommitCoordinatorProvider.clearBuilders()
-    class TestCommitCoordinatorClient(val key: String) extends TestCommitCoordinatorClientBase {
-      override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean =
-        other.isInstanceOf[TestCommitCoordinatorClient] &&
-          other.asInstanceOf[TestCommitCoordinatorClient].key == key
-    }
-    object Builder extends CommitCoordinatorBuilder {
-      override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
-        new TestCommitCoordinatorClient(conf("key"))
-      }
-      override def getName: String = "cs-name"
-    }
-    CommitCoordinatorProvider.registerBuilder(Builder)
 
-    withTempDirAndEngine { (tablePath, engine) =>
+    withTempDirAndEngine( { (tablePath, engine) =>
       // Different CommitCoordinatorHandler with same keys should be semantically equal.
       val obj1 = engine.getCommitCoordinatorClientHandler("cs-name", Map("key" -> "url1").asJava)
       val obj2 = engine.getCommitCoordinatorClientHandler("cs-name", Map("key" -> "url1").asJava)
@@ -170,67 +82,21 @@ class CommitCoordinatorClientSuite extends DeltaTableWriteSuiteBase {
       val obj3 = engine.getCommitCoordinatorClientHandler("cs-name", Map("key" -> "url2").asJava)
       assert(obj1 != obj3)
       assert(!obj1.semanticEquals(obj3))
-    }
+    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("cs-name") ->
+      classOf[Builder3].getName))
   }
 
   test("CommitCoordinatorClientHandler works as expected") {
-    CommitCoordinatorProvider.clearBuilders()
-    val fileStatus = new FileStatus()
-    fileStatus.setPath(new Path("logPath"))
-    class TestCommitCoordinatorClient extends TestCommitCoordinatorClientBase {
-      override def registerTable(
-        logPath: Path,
-        currentVersion: Long,
-        currentMetadata: AbstractMetadata,
-        currentProtocol: AbstractProtocol): util.Map[String, String] = {
-        Map("tableKey" -> "tableValue").asJava
-      }
+    withTempDirAndEngine( { (tablePath, engine) =>
+      val hadoopConf = new Configuration()
+      hadoopConf.set(
+        CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("cs-name"),
+        classOf[Builder4].getName)
 
-      override def getCommits(
-        logPath: Path,
-        coordinatedCommitsTableConf: util.Map[String, String],
-        startVersion: lang.Long,
-        endVersion: lang.Long = null): GetCommitsResponse = {
-        new GetCommitsResponse(
-          List(new Commit(-1, fileStatus, -1)).asJava, -1)
-      }
-
-      override def commit(
-        logStore: LogStore,
-        hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: util.Map[String, String],
-        commitVersion: Long,
-        actions: util.Iterator[String],
-        updatedActions: UpdatedActions): CommitResponse = {
-        new CommitResponse(new Commit(-1, fileStatus, -1))
-      }
-
-      override def backfillToVersion(
-        logStore: LogStore,
-        hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: util.Map[String, String],
-        version: Long,
-        lastKnownBackfilledVersion: lang.Long): Unit = {
-        throw new UnsupportedOperationException(
-          "BackfillToVersion not implemented in TestCommitCoordinatorClient for %s".format(logPath))
-      }
-    }
-    object Builder extends CommitCoordinatorBuilder {
-      lazy val coordinator = new TestCommitCoordinatorClient()
-      override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
-        coordinator
-      }
-      override def getName: String = "cs-name"
-    }
-    CommitCoordinatorProvider.registerBuilder(Builder)
-
-    withTempDirAndEngine { (tablePath, engine) =>
       // Different CommitCoordinatorHandler with same keys should be semantically equal.
       val obj1 = engine.getCommitCoordinatorClientHandler("cs-name", Map("key" -> "url1").asJava)
       val obj2 = CommitCoordinatorProvider.getCommitCoordinatorClient(
-        "cs-name", Map("key" -> "url1").asJava)
+        hadoopConf, "cs-name", Map("key" -> "url1").asJava)
 
       assert(
         obj1.registerTable("logPath", 1, null, null) ===
@@ -255,6 +121,156 @@ class CommitCoordinatorClientSuite extends DeltaTableWriteSuiteBase {
       assert(
         ex.getMessage.contains(
           "BackfillToVersion not implemented in TestCommitCoordinatorClient for logPath"))
+    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("cs-name") ->
+      classOf[Builder4].getName))
+  }
+
+  test("set CommitCoordinator config to a class that doesn't extend CommitCoordinator") {
+    val hadoopConf = new Configuration()
+    hadoopConf.set(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("fake"),
+      "java.lang.String")
+    val e = intercept[IllegalArgumentException](
+      CommitCoordinatorProvider.getCommitCoordinatorClient(
+        hadoopConf, "fake", Collections.emptyMap())
+    )
+    assert(e.getMessage.contains(
+      "Can not instantiate `CommitCoordinatorBuilder` class (from config): %s"
+        .format("java.lang.String")))
+  }
+}
+
+protected trait TestCommitCoordinatorClientBase extends CommitCoordinatorClient {
+  override def registerTable(
+    logPath: Path,
+    currentVersion: Long,
+    currentMetadata: AbstractMetadata,
+    currentProtocol: AbstractProtocol): util.Map[String, String] = {
+    throw new UnsupportedOperationException("Not implemented")
+  }
+
+  override def commit(
+    logStore: LogStore,
+    hadoopConf: Configuration,
+    logPath: Path,
+    coordinatedCommitsTableConf: util.Map[String, String],
+    commitVersion: Long,
+    actions: util.Iterator[String],
+    updatedActions: UpdatedActions): CommitResponse = {
+    throw new UnsupportedOperationException("Not implemented")
+  }
+
+  override def getCommits(
+    logPath: Path,
+    coordinatedCommitsTableConf: util.Map[String, String],
+    startVersion: lang.Long,
+    endVersion: lang.Long = null): GetCommitsResponse =
+    new GetCommitsResponse(Collections.emptyList(), -1)
+
+  override def backfillToVersion(
+    logStore: LogStore,
+    hadoopConf: Configuration,
+    logPath: Path,
+    coordinatedCommitsTableConf: util.Map[String, String],
+    version: Long,
+    lastKnownBackfilledVersion: lang.Long): Unit = {}
+
+  override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean = this == other
+}
+
+// Test 1
+private[coordinatedcommits] class TestCommitCoordinatorClient1
+  extends TestCommitCoordinatorClientBase
+private[coordinatedcommits] class TestCommitCoordinatorClient2
+  extends TestCommitCoordinatorClientBase
+
+object TestCommitCoordinatorClientInstances {
+  val cs1 = new TestCommitCoordinatorClient1()
+  val cs2 = new TestCommitCoordinatorClient2()
+}
+
+class Builder1(hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoopConf) {
+  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+    conf.getOrElse("url", "") match {
+      case "url1" => TestCommitCoordinatorClientInstances.cs1
+      case "url2" => TestCommitCoordinatorClientInstances.cs2
+      case _ => throw new IllegalArgumentException("Invalid url")
     }
   }
+  override def getName: String = "cs-x"
+}
+
+// Test 2
+class Builder2(hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoopConf) {
+  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+    conf.getOrElse("url", "") match {
+      case "url1" => new TestCommitCoordinatorClient1()
+      case _ => throw new IllegalArgumentException("Invalid url")
+    }
+  }
+  override def getName: String = "cs-name"
+}
+
+// Test 3
+class TestCommitCoordinatorClient3(val key: String) extends TestCommitCoordinatorClientBase {
+  override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean =
+    other.isInstanceOf[TestCommitCoordinatorClient3] &&
+      other.asInstanceOf[TestCommitCoordinatorClient3].key == key
+}
+class Builder3(hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoopConf) {
+  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+    new TestCommitCoordinatorClient3(conf("key"))
+  }
+  override def getName: String = "cs-name"
+}
+
+// Test 4
+class TestCommitCoordinatorClient4 extends TestCommitCoordinatorClientBase {
+  val fileStatus = new FileStatus()
+  fileStatus.setPath(new Path("logPath"))
+  override def registerTable(
+    logPath: Path,
+    currentVersion: Long,
+    currentMetadata: AbstractMetadata,
+    currentProtocol: AbstractProtocol): util.Map[String, String] = {
+    Map("tableKey" -> "tableValue").asJava
+  }
+
+  override def getCommits(
+    logPath: Path,
+    coordinatedCommitsTableConf: util.Map[String, String],
+    startVersion: lang.Long,
+    endVersion: lang.Long = null): GetCommitsResponse = {
+    new GetCommitsResponse(
+      List(new Commit(-1, fileStatus, -1)).asJava, -1)
+  }
+
+  override def commit(
+    logStore: LogStore,
+    hadoopConf: Configuration,
+    logPath: Path,
+    coordinatedCommitsTableConf: util.Map[String, String],
+    commitVersion: Long,
+    actions: util.Iterator[String],
+    updatedActions: UpdatedActions): CommitResponse = {
+    new CommitResponse(new Commit(-1, fileStatus, -1))
+  }
+
+  override def backfillToVersion(
+    logStore: LogStore,
+    hadoopConf: Configuration,
+    logPath: Path,
+    coordinatedCommitsTableConf: util.Map[String, String],
+    version: Long,
+    lastKnownBackfilledVersion: lang.Long): Unit = {
+    throw new UnsupportedOperationException(
+      "BackfillToVersion not implemented in TestCommitCoordinatorClient for %s".format(logPath))
+  }
+}
+class Builder4(hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoopConf) {
+  lazy val coordinator = new TestCommitCoordinatorClient4()
+  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+    coordinator
+  }
+  override def getName: String = "cs-name"
 }

@@ -29,6 +29,10 @@ import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
 import io.delta.kernel.utils.FileStatus;
 
+/**
+ * Adaptor to convert between Kernel's commit coordinator classes and the equivalent classes in
+ * delta-storage.
+ */
 public class StorageKernelAPIAdapter {
     public static io.delta.storage.commit.UpdatedActions toStorageUpdatedActions(
             UpdatedActions updatedActions) {

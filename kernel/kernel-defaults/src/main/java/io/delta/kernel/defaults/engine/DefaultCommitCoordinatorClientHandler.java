@@ -37,7 +37,8 @@ import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 
 /**
- * Default implementation of {@link CommitCoordinatorClientHandler} based on Hadoop APIs.
+ * Default implementation of {@link CommitCoordinatorClientHandler} based on Hadoop APIs which uses
+ * commit coordinator defined in delta-storage modules.
  * It takes a Hadoop {@link Configuration} object to interact with the commit coordinator client.
  * The following optional configurations can be set to customize the behavior of the client:
  * <ul>
@@ -69,13 +70,17 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
      * @param hadoopConf Configuration to use. List of options to customize the behavior of
      *                   the client can be found in the class documentation.
      * @param name The identifier or name of the underlying commit coordinator client
-     * @param conf The configuration settings for the underlying commit coordinator client
+     * @param commitCoordinatorConf The configuration settings for the underlying commit coordinator
+     *                              client which contains the necessary information to create the
+     *                              client such as the endpoint etc.
      */
     public DefaultCommitCoordinatorClientHandler(
-            Configuration hadoopConf, String name, Map<String, String> conf) {
+            Configuration hadoopConf,
+            String name,
+            Map<String, String> commitCoordinatorConf) {
         this.hadoopConf = hadoopConf;
         this.commitCoordinatorClient = CommitCoordinatorProvider
-                .getCommitCoordinatorClient(name, conf);
+                .getCommitCoordinatorClient(hadoopConf, name, commitCoordinatorConf);
     }
 
     @Override
@@ -158,7 +163,7 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
                 ((DefaultCommitCoordinatorClientHandler) other).getCommitCoordinatorClient());
     }
 
-    public CommitCoordinatorClient getCommitCoordinatorClient() {
+    private CommitCoordinatorClient getCommitCoordinatorClient() {
         return commitCoordinatorClient;
     }
 }

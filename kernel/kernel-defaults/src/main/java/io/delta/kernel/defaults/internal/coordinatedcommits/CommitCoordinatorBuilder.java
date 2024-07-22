@@ -18,12 +18,18 @@ package io.delta.kernel.defaults.internal.coordinatedcommits;
 import java.util.*;
 
 import io.delta.storage.commit.CommitCoordinatorClient;
+import org.apache.hadoop.conf.Configuration;
 
-/** A builder interface for {@link CommitCoordinatorClient} */
-public interface CommitCoordinatorBuilder {
+/** A builder interface for {@link CommitCoordinatorClient}. */
+public abstract class CommitCoordinatorBuilder {
+    private Configuration initHadoopConf;
+
+    public CommitCoordinatorBuilder(Configuration initHadoopConf) {
+        this.initHadoopConf = initHadoopConf;
+    }
     /** Name of the commit-coordinator */
-    String getName();
+    public abstract String getName();
 
     /** Returns a commit-coordinator client based on the given conf */
-    CommitCoordinatorClient build(Map<String, String> conf);
+    public abstract CommitCoordinatorClient build(Map<String, String> conf);
 }

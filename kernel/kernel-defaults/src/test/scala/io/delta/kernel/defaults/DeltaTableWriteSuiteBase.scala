@@ -83,9 +83,13 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     batchSize = 876,
     numBatches = 7)
 
-  def withTempDirAndEngine(f: (String, Engine) => Unit): Unit = {
+  def withTempDirAndEngine(
+    f: (String, Engine) => Unit, hadoopConf: Map[String, String] = Map.empty): Unit = {
     val engine = DefaultEngine.create(new Configuration() {
       {
+        for ((key, value) <- hadoopConf) {
+          set(key, value)
+        }
         // Set the batch sizes to small so that we get to test the multiple batch/file scenarios.
         set("delta.kernel.default.parquet.reader.batch-size", "20");
         set("delta.kernel.default.json.reader.batch-size", "20");
