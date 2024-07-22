@@ -31,7 +31,7 @@ import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 /**
@@ -112,7 +112,7 @@ public class Checkpointer {
         while (currentVersion >= 0) {
             try {
                 long searchLowerBound = Math.max(0, currentVersion - 1000);
-                CloseableIterator<FileStatus> deltaLogFileIter = wrapWithEngineException(
+                CloseableIterator<FileStatus> deltaLogFileIter = wrapEngineExceptionThrowsIO(
                     () -> engine.getFileSystemClient()
                         .listFrom(FileNames.listingPrefix(tableLogPath, searchLowerBound)),
                     "Listing from %s",
@@ -158,16 +158,12 @@ public class Checkpointer {
                     return new Tuple2<>(latestCheckpoint, numberOfFilesSearched);
                 }
                 currentVersion -= 1000; // search for checkpoint in previous 1000 entries
-            } catch (KernelEngineException e) {
-                if (e.getCause() instanceof IOException) {
-                    String msg = String.format(
-                        "Failed to list checkpoint files for version %s in %s.",
-                        version, tableLogPath);
-                    logger.warn(msg, e);
-                    return new Tuple2<>(Optional.empty(), numberOfFilesSearched);
-                } else {
-                    throw e;
-                }
+            } catch (IOException e) {
+                String msg = String.format(
+                    "Failed to list checkpoint files for version %s in %s.",
+                    version, tableLogPath);
+                logger.warn(msg, e);
+                return new Tuple2<>(Optional.empty(), numberOfFilesSearched);
             }
         }
         logger.info("No complete checkpoint found before version {} in {}", version, tableLogPath);
@@ -204,7 +200,7 @@ public class Checkpointer {
     public void writeLastCheckpointFile(
             Engine engine,
             CheckpointMetaData checkpointMetaData) throws IOException {
-        wrapWithEngineException(
+        wrapEngineExceptionThrowsIO(
             () -> {
                 engine.getJsonHandler()
                     .writeJsonFileAtomically(
@@ -239,7 +235,7 @@ public class Checkpointer {
                     lastCheckpointFilePath.toString(), 0 /* size */, 0 /* modTime */);
 
             try (CloseableIterator<ColumnarBatch> jsonIter =
-                wrapWithEngineException(
+                wrapEngineExceptionThrowsIO(
                     () -> engine.getJsonHandler().readJsonFiles(
                         singletonCloseableIterator(lastCheckpointFile),
                         CheckpointMetaData.READ_SCHEMA,
@@ -267,31 +263,21 @@ public class Checkpointer {
                 }
                 return loadMetadataFromFile(engine, tries + 1);
             }
-        } catch (IOException ex) {
-            // TODO: this exception is thrown when `readJsonFiles` is called and not before
-            // the file is actually read. In current implementation this never happens as the file
-            // is actually read when the data is fetched from the returned `CloseableIterator`
-            // from `readJsonFiles`. Once we wrap all calls to engine and throw
-            // {@link KernelEngineException} instead of {@link IOException}, we can remove this
-            // catch block.
-            return Optional.empty();
-        } catch (KernelEngineException ex) {
-            Throwable cause = ex.getCause();
-            if (cause instanceof FileNotFoundException) {
-                return Optional.empty(); // there is no point retrying
-            } else if (cause instanceof Exception) {
-                String msg = String.format(
-                        "Failed to load checkpoint metadata from file %s. " +
-                                "It must be in the process of being written. " +
-                                "Retrying after 1sec. (current attempt of %s (max 3)",
-                        lastCheckpointFilePath, tries);
-                logger.warn(msg, cause);
-                // we can retry until max tries are exhausted. It saves latency as the alternative
-                // is to list files and find the last checkpoint file. And the `_last_checkpoint`
-                // file is possibly being written to.
-                return loadMetadataFromFile(engine, tries + 1);
+        } catch (Exception e) {
+            if (e instanceof FileNotFoundException || (e instanceof KernelEngineException &&
+                e.getCause() instanceof FileNotFoundException)) {
+                return Optional.empty(); // there's no point in retrying
             }
-            throw ex;
+            String msg = String.format(
+                "Failed to load checkpoint metadata from file %s. " +
+                    "It must be in the process of being written. " +
+                    "Retrying after 1sec. (current attempt of %s (max 3)",
+                lastCheckpointFilePath, tries);
+            logger.warn(msg, e);
+            // we can retry until max tries are exhausted. It saves latency as the alternative
+            // is to list files and find the last checkpoint file. And the `_last_checkpoint`
+            // file is possibly being written to.
+            return loadMetadataFromFile(engine, tries + 1);
         }
     }
 }

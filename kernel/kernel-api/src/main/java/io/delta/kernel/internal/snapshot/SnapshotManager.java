@@ -31,7 +31,6 @@ import org.slf4j.LoggerFactory;
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
-import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -44,7 +43,7 @@ import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
 import static io.delta.kernel.internal.fs.Path.getName;
@@ -174,7 +173,7 @@ public class SnapshotManager {
         try (CreateCheckpointIterator checkpointDataIter =
                      snapshot.getCreateCheckpointIterator(engine)) {
             // Write the iterator actions to the checkpoint using the Parquet handler
-            wrapWithEngineException(
+            wrapEngineExceptionThrowsIO(
                 () -> {
                     engine.getParquetHandler()
                         .writeParquetFileAtomically(checkpointPath.toString(), checkpointDataIter);
@@ -188,12 +187,8 @@ public class SnapshotManager {
 
             // Get the metadata of the checkpoint file
             numberOfAddFiles = checkpointDataIter.getNumberOfAddActions();
-        } catch (KernelEngineException e) {
-            if (e.getCause() instanceof FileAlreadyExistsException) {
-                throw new CheckpointAlreadyExistsException(version);
-            } else {
-                throw e;
-            }
+        } catch (FileAlreadyExistsException faee) {
+            throw new CheckpointAlreadyExistsException(version);
         }
 
         CheckpointMetaData checkpointMetaData =
@@ -234,7 +229,7 @@ public class SnapshotManager {
             long startVersion)
             throws IOException {
         logger.debug("{}: startVersion: {}", tablePath, startVersion);
-        return wrapWithEngineException(
+        return wrapEngineExceptionThrowsIO(
             () -> engine
                 .getFileSystemClient()
                 .listFrom(FileNames.listingPrefix(logPath, startVersion)),
@@ -272,12 +267,8 @@ public class SnapshotManager {
             } else {
                 return Optional.empty();
             }
-        } catch (KernelEngineException e) {
-            if (e.getCause() instanceof FileNotFoundException) {
-                return Optional.empty();
-            } else {
-                throw e;
-            }
+        } catch (FileNotFoundException e) {
+            return Optional.empty();
         } catch (IOException io) {
             throw new UncheckedIOException("Failed to list the files in delta log", io);
         }

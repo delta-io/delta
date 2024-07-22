@@ -32,7 +32,7 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.MULTIPART_CHECKPOINT;
 import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.SIDECAR;
 import static io.delta.kernel.internal.util.FileNames.*;
@@ -190,7 +190,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
         final CloseableIterator<ColumnarBatch> topLevelIter;
         StructType finalModifiedReadSchema = modifiedReadSchema;
         if (fileName.endsWith(".parquet")) {
-            topLevelIter = wrapWithEngineException(
+            topLevelIter = wrapEngineExceptionThrowsIO(
                 () -> engine.getParquetHandler().readParquetFiles(
                     singletonCloseableIterator(file),
                     finalModifiedReadSchema,
@@ -201,7 +201,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                 checkpointPredicate
             );
         } else if (fileName.endsWith(".json")) {
-            topLevelIter = wrapWithEngineException(
+            topLevelIter = wrapEngineExceptionThrowsIO(
                 () -> engine.getJsonHandler().readJsonFiles(
                     singletonCloseableIterator(file), finalModifiedReadSchema,
                     checkpointPredicate),
@@ -291,7 +291,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     // version with actions read from the JSON file for further optimizations later
                     // on (faster metadata & protocol loading in subsequent runs by remembering
                     // the version of the last version where the metadata and protocol are found).
-                    final CloseableIterator<ColumnarBatch> dataIter = wrapWithEngineException(
+                    final CloseableIterator<ColumnarBatch> dataIter = wrapEngineExceptionThrowsIO(
                         () -> engine.getJsonHandler().readJsonFiles(
                             singletonCloseableIterator(nextFile),
                             readSchema,
@@ -320,7 +320,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     // optimizations like reading multiple files in parallel.
                     CloseableIterator<FileStatus> checkpointFiles =
                             retrieveRemainingCheckpointFiles(nextLogFile);
-                    CloseableIterator<ColumnarBatch> dataIter = wrapWithEngineException(
+                    CloseableIterator<ColumnarBatch> dataIter = wrapEngineExceptionThrowsIO(
                         () -> engine.getParquetHandler()
                             .readParquetFiles(checkpointFiles, readSchema, checkpointPredicate),
                         "Reading checkpoint sidecars [%s] with readSchema=%s and predicate=%s",

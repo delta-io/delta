@@ -36,7 +36,7 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplayUtils.UniqueFileActionTuple;
 import io.delta.kernel.internal.util.Utils;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_DV_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.replay.LogReplay.ADD_FILE_PATH_ORDINAL;
@@ -244,7 +244,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         //         in `add` is converted to absolute path.
         final ColumnarBatch finalScanAddFiles = scanAddFiles;
         if (tableRootVectorGenerator == null) {
-            tableRootVectorGenerator = wrapWithEngineException(
+            tableRootVectorGenerator = wrapEngineException(
                 () -> engine.getExpressionHandler()
                     .getEvaluator(
                         finalScanAddFiles.getSchema(),
@@ -254,7 +254,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
             );
 
         }
-        ColumnVector tableRootVector = wrapWithEngineException(
+        ColumnVector tableRootVector = wrapEngineException(
             () -> tableRootVectorGenerator.eval(finalScanAddFiles),
             "Evaluating the table root expression"
         );
@@ -266,7 +266,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         Optional<ColumnVector> selectionColumnVector = Optional.empty();
         if (atLeastOneUnselected) {
             selectionColumnVector = Optional.of(
-                wrapWithEngineException(
+                wrapEngineException(
                     () -> engine.getExpressionHandler()
                         .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize()),
                     "Create selection vector for selected scan files")

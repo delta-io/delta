@@ -26,7 +26,7 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.util.VectorUtils;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
@@ -40,7 +40,7 @@ public class Metadata {
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = wrapWithEngineException(
+        StructType schema = wrapEngineException(
             () -> engine.getJsonHandler().deserializeStructType(schemaJson),
             "Parsing the schema from the metadata. Schema JSON:\n%s",
             schemaJson

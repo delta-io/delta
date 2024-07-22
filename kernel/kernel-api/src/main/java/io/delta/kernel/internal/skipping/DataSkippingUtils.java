@@ -23,7 +23,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_STATS_ORDINAL;
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
@@ -39,7 +39,7 @@ public class DataSkippingUtils {
         ColumnVector statsVector = scanFileBatch.getData()
             .getColumnVector(ADD_FILE_ORDINAL)
             .getChild(ADD_FILE_STATS_ORDINAL);
-        return wrapWithEngineException(
+        return wrapEngineException(
             () -> engine.getJsonHandler()
                 .parseJson(statsVector, statsSchema, scanFileBatch.getSelectionVector()),
             "Parsing the JSON statistics with statsSchema=%s",

@@ -16,6 +16,7 @@
 package io.delta.kernel.internal;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -27,7 +28,6 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
-import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -40,7 +40,7 @@ import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -127,21 +127,16 @@ public class TransactionImpl
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
                 try {
                     return doCommit(engine, commitAsVersion, dataActions);
-                } catch (KernelEngineException e) {
-                    if (e.getCause() instanceof FileAlreadyExistsException) {
-                        // Consider how we want to do this again?
-                        logger.info("Concurrent write detected when committing as version = {}. " +
-                            "Trying to resolve conflicts and retry commit.", commitAsVersion);
-                        TransactionRebaseState rebaseState = ConflictChecker
-                            .resolveConflicts(engine, readSnapshot, commitAsVersion, this);
-                        long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
-                        checkArgument(commitAsVersion < newCommitAsVersion,
-                            "New commit version %d should be greater than the previous commit " +
-                                "attempt version %d.", newCommitAsVersion, commitAsVersion);
-                        commitAsVersion = newCommitAsVersion;
-                    } else {
-                        throw e;
-                    }
+                } catch (FileAlreadyExistsException fnfe) {
+                    logger.info("Concurrent write detected when committing as version = {}. " +
+                        "Trying to resolve conflicts and retry commit.", commitAsVersion);
+                    TransactionRebaseState rebaseState = ConflictChecker
+                        .resolveConflicts(engine, readSnapshot, commitAsVersion, this);
+                    long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
+                    checkArgument(commitAsVersion < newCommitAsVersion,
+                        "New commit version %d should be greater than the previous commit " +
+                            "attempt version %d.", newCommitAsVersion, commitAsVersion);
+                    commitAsVersion = newCommitAsVersion;
                 }
                 numRetries++;
             } while (numRetries < NUM_TXN_RETRIES);
@@ -157,7 +152,8 @@ public class TransactionImpl
     private TransactionCommitResult doCommit(
             Engine engine,
             long commitAsVersion,
-            CloseableIterable<Row> dataActions) {
+            CloseableIterable<Row> dataActions)
+            throws FileAlreadyExistsException {
         List<Row> metadataActions = new ArrayList<>();
         metadataActions.add(createCommitInfoSingleAction(generateCommitAction()));
         if (shouldUpdateMetadata || isNewTable) {
@@ -177,18 +173,17 @@ public class TransactionImpl
 
             if (commitAsVersion == 0) {
                 // New table, create a delta log directory
-                if (!wrapWithEngineException(
+                if (!wrapEngineExceptionThrowsIO(
                     () -> engine.getFileSystemClient().mkdirs(logPath.toString()),
                     "Creating directories for path %s",
                     logPath
                 )) {
-                    throw new RuntimeException(
-                            "Failed to create delta log directory: " + logPath);
+                    throw new RuntimeException("Failed to create delta log directory: " + logPath);
                 }
             }
 
             // Write the staged data to a delta file
-            wrapWithEngineException(
+            wrapEngineExceptionThrowsIO(
                 () -> {
                     engine.getJsonHandler().writeJsonFileAtomically(
                         FileNames.deltaFile(logPath, commitAsVersion),
@@ -203,8 +198,10 @@ public class TransactionImpl
             return new TransactionCommitResult(
                     commitAsVersion,
                     isReadyForCheckpoint(commitAsVersion));
+        } catch (FileAlreadyExistsException e) {
+            throw e;
         } catch (IOException ioe) {
-            throw new RuntimeException(ioe);
+            throw new UncheckedIOException(ioe);
         }
     }
 

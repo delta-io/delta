@@ -29,7 +29,7 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -198,7 +198,7 @@ public class ConflictChecker {
         String firstWinningCommitFile =
                 deltaFile(snapshot.getLogPath(), snapshot.getVersion(engine) + 1);
 
-        try (CloseableIterator<FileStatus> files = wrapWithEngineException(
+        try (CloseableIterator<FileStatus> files = wrapEngineExceptionThrowsIO(
             () -> engine.getFileSystemClient()
                 .listFrom(firstWinningCommitFile),
             "Listing from %s",

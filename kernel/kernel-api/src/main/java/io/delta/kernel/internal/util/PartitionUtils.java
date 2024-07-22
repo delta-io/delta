@@ -38,7 +38,7 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
-import static io.delta.kernel.internal.DeltaErrors.wrapWithEngineException;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -99,7 +99,7 @@ public class PartitionUtils {
                 // Create a partition vector
 
                 ColumnarBatch finalDataBatch = dataBatch;
-                ExpressionEvaluator evaluator = wrapWithEngineException(
+                ExpressionEvaluator evaluator = wrapEngineException(
                     () -> expressionHandler.getEvaluator(
                         finalDataBatch.getSchema(),
                         literalForPartitionValue(
@@ -114,7 +114,7 @@ public class PartitionUtils {
                     partitionValues.get(structField.getName())
                 );
 
-                ColumnVector partitionVector = wrapWithEngineException(
+                ColumnVector partitionVector = wrapEngineException(
                     () -> evaluator.eval(finalDataBatch),
                     "Evaluating the partition value expression %s",
                     literalForPartitionValue(
