@@ -38,10 +38,12 @@ import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL;
+import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -69,10 +71,12 @@ public class TransactionImpl
     private final Path dataPath;
     private final Path logPath;
     private final Protocol protocol;
-    private final Metadata metadata;
-    private final boolean shouldUpdateMetadata;
     private final SnapshotImpl readSnapshot;
     private final Optional<SetTransaction> setTxnOpt;
+    private final boolean shouldUpdateProtocol;
+    private final Clock clock;
+    private Metadata metadata;
+    private boolean shouldUpdateMetadata;
 
     private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -86,7 +90,9 @@ public class TransactionImpl
             Protocol protocol,
             Metadata metadata,
             Optional<SetTransaction> setTxnOpt,
-            boolean shouldUpdateMetadata) {
+            boolean shouldUpdateMetadata,
+            boolean shouldUpdateProtocol,
+            Clock clock) {
         this.isNewTable = isNewTable;
         this.dataPath = dataPath;
         this.logPath = logPath;
@@ -97,6 +103,8 @@ public class TransactionImpl
         this.metadata = metadata;
         this.setTxnOpt = setTxnOpt;
         this.shouldUpdateMetadata = shouldUpdateMetadata;
+        this.shouldUpdateProtocol = shouldUpdateProtocol;
+        this.clock = clock;
     }
 
     @Override
@@ -122,11 +130,17 @@ public class TransactionImpl
                     "Transaction is already attempted to commit. Create a new transaction.");
 
             long commitAsVersion = readSnapshot.getVersion(engine) + 1;
+            // Generate the commit action with the inCommitTimestamp if ICT is enabled.
+            CommitInfo attemptCommitInfo = generateCommitAction(engine);
+            updateMetadataWithICTIfRequired(
+                    engine,
+                    attemptCommitInfo.getInCommitTimestamp(),
+                    readSnapshot.getVersion(engine));
             int numRetries = 0;
             do {
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
                 try {
-                    return doCommit(engine, commitAsVersion, dataActions);
+                    return doCommit(engine, commitAsVersion, attemptCommitInfo, dataActions);
                 } catch (FileAlreadyExistsException fnfe) {
                     logger.info("Concurrent write detected when committing as version = {}. " +
                             "Trying to resolve conflicts and retry commit.", commitAsVersion);
@@ -137,6 +151,15 @@ public class TransactionImpl
                             "New commit version %d should be greater than the previous commit " +
                                     "attempt version %d.", newCommitAsVersion, commitAsVersion);
                     commitAsVersion = newCommitAsVersion;
+                    Optional<Long> updatedInCommitTimestamp =
+                            getUpdatedInCommitTimestampAfterConflict(
+                                    rebaseState.getLatestCommitTimestamp(),
+                                    attemptCommitInfo.getInCommitTimestamp());
+                    updateMetadataWithICTIfRequired(
+                            engine,
+                            updatedInCommitTimestamp,
+                            rebaseState.getLatestVersion());
+                    attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
                 }
                 numRetries++;
             } while (numRetries < NUM_TXN_RETRIES);
@@ -149,17 +172,54 @@ public class TransactionImpl
         throw new ConcurrentWriteException();
     }
 
+    private void updateMetadata(Metadata metadata) {
+        logger.info(
+                "Updated metadata from {} to {}",
+                shouldUpdateMetadata ? this.metadata : "-", metadata);
+        this.metadata = metadata;
+        this.shouldUpdateMetadata = true;
+    }
+
+    private void updateMetadataWithICTIfRequired(
+            Engine engine, Optional<Long> inCommitTimestampOpt, long lastCommitVersion) {
+        // If ICT is enabled for the current transaction, update the metadata with the ICT
+        // enablement info.
+        inCommitTimestampOpt.ifPresent(
+                inCommitTimestamp -> {
+                    Optional<Metadata> metadataWithICTInfo =
+                            InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+                                    engine,
+                                    inCommitTimestamp,
+                                    readSnapshot,
+                                    metadata,
+                                    lastCommitVersion + 1L);
+                    metadataWithICTInfo.ifPresent(this::updateMetadata);
+                }
+        );
+    }
+
+    private Optional<Long> getUpdatedInCommitTimestampAfterConflict(
+            long winningCommitTimestamp, Optional<Long> attemptInCommitTimestamp) {
+        if (attemptInCommitTimestamp.isPresent()) {
+            long updatedInCommitTimestamp = Math.max(
+                    attemptInCommitTimestamp.get(), winningCommitTimestamp + 1);
+            return Optional.of(updatedInCommitTimestamp);
+        }
+        return attemptInCommitTimestamp;
+    }
+
     private TransactionCommitResult doCommit(
             Engine engine,
             long commitAsVersion,
+            CommitInfo attemptCommitInfo,
             CloseableIterable<Row> dataActions)
             throws FileAlreadyExistsException {
         List<Row> metadataActions = new ArrayList<>();
-        metadataActions.add(createCommitInfoSingleAction(generateCommitAction()));
+        metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
         if (shouldUpdateMetadata || isNewTable) {
             metadataActions.add(createMetadataSingleAction(metadata.toRow()));
         }
-        if (isNewTable) {
+        if (shouldUpdateProtocol || isNewTable) {
             // In the future, we need to add metadata and action when there are any changes to them.
             metadataActions.add(createProtocolSingleAction(protocol.toRow()));
         }
@@ -215,15 +275,32 @@ public class TransactionImpl
         return setTxnOpt;
     }
 
-    private Row generateCommitAction() {
+    /**
+     * Generates a timestamp which is greater than the commit timestamp of the readSnapshot. This
+     * can result in an additional file read and that this will only happen if ICT is enabled.
+     */
+    private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
+            Engine engine, long currentTimestamp) {
+        if (isICTEnabled(metadata)) {
+            long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
+            return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    private CommitInfo generateCommitAction(Engine engine) {
+        long commitAttemptStartTime = clock.getTimeMillis();
         return new CommitInfo(
-                System.currentTimeMillis(), /* timestamp */
+                generateInCommitTimestampForFirstCommitAttempt(
+                        engine, commitAttemptStartTime),
+                commitAttemptStartTime, /* timestamp */
                 "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
                 operation.getDescription(), /* description */
                 getOperationParameters(), /* operationParameters */
                 isBlindAppend(), /* isBlindAppend */
                 txnId.toString() /* txnId */
-        ).toRow();
+        );
     }
 
     private boolean isReadyForCheckpoint(long newVersion) {

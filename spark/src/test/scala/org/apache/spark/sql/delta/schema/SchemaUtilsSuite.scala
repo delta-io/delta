@@ -2585,6 +2585,48 @@ class SchemaUtilsSuite extends QueryTest
   }
 
   ////////////////////////////
+  // pruneEmptyStructs
+  ////////////////////////////
+  test("prune empty structs") {
+    val emptySchema = new StructType()
+    var schema = emptySchema
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    val elementType = new StructType()
+      .add("a", emptySchema)
+      .add("b", new StructType().add("1", emptySchema).add("2", StringType))
+    val filteredElementType = new StructType().add("b", new StructType().add("2", StringType))
+
+    assert(SchemaMergingUtils.pruneEmptyStructs(elementType).get == filteredElementType)
+
+    // filter out array element type with empty schema
+    schema = new StructType().add("a", new ArrayType(emptySchema, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    // nested empty schema
+    schema = new StructType().add("a", new ArrayType(new StructType().add("a", emptySchema), false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new ArrayType(elementType, false))
+    assert(
+      SchemaMergingUtils.pruneEmptyStructs(schema).get ==
+        new StructType().add("a", new ArrayType(filteredElementType, false))
+    )
+
+    schema = new StructType().add("a", new MapType(emptySchema, StringType, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new MapType(StringType, emptySchema, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new MapType(StringType, elementType, false))
+    assert(
+      SchemaMergingUtils.pruneEmptyStructs(schema).get ==
+        new StructType().add("a", new MapType(StringType, filteredElementType, false))
+    )
+  }
+
+  ////////////////////////////
   // checkFieldNames
   ////////////////////////////
 

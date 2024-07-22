@@ -15,9 +15,7 @@
  */
 package io.delta.kernel.internal;
 
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
@@ -66,21 +64,118 @@ public class TableConfig<T> {
     );
 
     /**
+     * This table property is used to track the enablement of the {@code inCommitTimestamps}.
+     * <p>
+     * When enabled, commit metadata includes a monotonically increasing timestamp that allows for
+     * reliable TIMESTAMP AS OF time travel even if filesystem operations change a commit file's
+     * modification timestamp.
+     */
+    public static final TableConfig<Boolean> IN_COMMIT_TIMESTAMPS_ENABLED = new TableConfig<>(
+            "delta.enableInCommitTimestamps-preview",
+            "false", /* default values */
+            Boolean::valueOf,
+            value -> true,
+            "needs to be a boolean."
+    );
+
+    /**
+     * This table property is used to track the version of the table at which
+     * {@code inCommitTimestamps} were enabled.
+     */
+    public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION =
+            new TableConfig<>(
+                    "delta.inCommitTimestampEnablementVersion-preview",
+                    null, /* default values */
+                    v -> Optional.ofNullable(v).map(Long::valueOf),
+                    value -> true,
+                    "needs to be a long."
+            );
+
+    /**
+     * This table property is used to track the timestamp at which {@code inCommitTimestamps} were
+     * enabled. More specifically, it is the {@code inCommitTimestamps} of the commit with the
+     * version specified in {@link #IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION}.
+     */
+    public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP =
+            new TableConfig<>(
+                    "delta.inCommitTimestampEnablementTimestamp-preview",
+                    null, /* default values */
+                    v -> Optional.ofNullable(v).map(Long::valueOf),
+                    value -> true,
+                    "needs to be a long."
+            );
+
+    /*
+     * This table property is used to track the commit-coordinator name for this table. If this
+     * property is not set, the table will be considered as file system table and commits will be
+     * done via atomically publishing the commit file.
+     */
+    public static final TableConfig<Optional<String>> COORDINATED_COMMITS_COORDINATOR_NAME =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.commitCoordinator-preview",
+                    null, /* default values */
+                    Optional::ofNullable,
+                    value -> true,
+                    "The commit-coordinator name for this table. This is used to determine " +
+                            "which implementation of commit-coordinator to use when committing " +
+                            "to this table. If this property is not set, the table will be " +
+                            "considered as file system table and commits will be done via " +
+                            "atomically publishing the commit file."
+            );
+
+    /*
+     * This table property is used to track the configuration properties for the commit coordinator
+     * which is needed to build the commit coordinator client.
+     */
+    public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_COORDINATOR_CONF =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.commitCoordinatorConf-preview",
+                    null, /* default values */
+                    v -> {
+                        throw new UnsupportedOperationException("Not implemented yet");
+                    },
+                    value -> true,
+                    "A string-to-string map of configuration properties for the" +
+                            " coordinated commits-coordinator."
+            );
+
+    /*
+     * This property is used by the commit coordinator to uniquely identify and manage the table
+     * internally.
+     */
+    public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_TABLE_CONF =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.tableConf-preview",
+                    null, /* default values */
+                    v -> {
+                        throw new UnsupportedOperationException("Not implemented yet");
+                    },
+                    value -> true,
+                    "A string-to-string map of configuration properties for" +
+                            "  describing the table to commit-coordinator."
+            );
+
+    /**
      * All the valid properties that can be set on the table.
      */
-    private static final HashMap<String, TableConfig> validProperties = new HashMap<>();
+    private static final Map<String, TableConfig<?>> VALID_PROPERTIES = Collections.unmodifiableMap(
+            new HashMap<String, TableConfig<?>>() {{
+                addConfig(this, TOMBSTONE_RETENTION);
+                addConfig(this, CHECKPOINT_INTERVAL);
+                addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
+                addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
+                addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
+                addConfig(this, COORDINATED_COMMITS_COORDINATOR_NAME);
+                addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
+                addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
+            }}
+    );
+
     private final String key;
     private final String defaultValue;
     private final Function<String, T> fromString;
     private final Predicate<T> validator;
     private final String helpMessage;
-
-    static {
-        validProperties.put(
-                TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
-        validProperties.put(
-                CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
-    }
 
     private TableConfig(
             String key,
@@ -131,7 +226,7 @@ public class TableConfig<T> {
             String key = kv.getKey().toLowerCase(Locale.ROOT);
             String value = kv.getValue();
             if (key.startsWith("delta.")) {
-                TableConfig tableConfig = validProperties.get(key);
+                TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
                 if (tableConfig != null) {
                     tableConfig.validate(value);
                     validatedConfigurations.put(tableConfig.getKey(), value);
@@ -145,10 +240,18 @@ public class TableConfig<T> {
         return validatedConfigurations;
     }
 
+    public static Boolean isICTEnabled(Metadata metadata) {
+        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+    }
+
     private void validate(String value) {
         T parsedValue = fromString.apply(value);
         if (!validator.test(parsedValue)) {
             throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
         }
+    }
+
+    private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
+        configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
     }
 }

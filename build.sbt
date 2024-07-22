@@ -429,7 +429,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.0.5",
+      "io.delta" %% "delta-sharing-client" % "1.1.0",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -722,7 +722,7 @@ lazy val hudi = (project in file("hudi"))
     scalaStyleSettings,
     releaseSettings,
     libraryDependencies ++= Seq(
-      "org.apache.hudi" % "hudi-java-client" % "0.14.0" % "compile" excludeAll(
+      "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
         ExclusionRule(organization = "org.apache.hadoop"),
         ExclusionRule(organization = "org.apache.zookeeper"),
       ),

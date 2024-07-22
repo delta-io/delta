@@ -52,10 +52,7 @@ class DeltaVariantSuite
       sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
-      assert(
-        getProtocolForTable("tbl") ==
-        VariantTypeTableFeature.minProtocolVersion.withFeature(VariantTypeTableFeature)
-      )
+      assert(getProtocolForTable("tbl").readerAndWriterFeatures.contains(VariantTypeTableFeature))
     }
   }
 

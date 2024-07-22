@@ -25,7 +25,7 @@ import scala.language.postfixOps
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, TrackingCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -511,7 +511,10 @@ class DeltaLogSuite extends QueryTest
           fs.delete(path, true)
         }
         // Also deletes it from in-memory commit coordinator.
-        oc.asInstanceOf[TrackingCommitCoordinatorClient].removeCommitTestOnly(deltaLog.logPath, 2)
+        oc.asInstanceOf[TrackingCommitCoordinatorClient]
+          .delegatingCommitCoordinatorClient
+          .asInstanceOf[InMemoryCommitCoordinator]
+          .removeCommitTestOnly(deltaLog.logPath, 2)
       }
 
       // Should show up to 20
@@ -528,7 +531,16 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-
+      if (coordinatedCommitsEnabledInTests) {
+        val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
+          "tracking-in-memory",
+          Map.empty[String, String],
+          spark)
+        oc.asInstanceOf[TrackingCommitCoordinatorClient]
+          .delegatingCommitCoordinatorClient
+          .asInstanceOf[InMemoryCommitCoordinator]
+          .removeCommitTestOnly(deltaLog.logPath, 1)
+      }
       checkAnswer(
         spark.read.format("delta").load(path),
         spark.range(10).toDF()

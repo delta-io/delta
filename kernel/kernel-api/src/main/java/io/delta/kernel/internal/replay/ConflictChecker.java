@@ -17,6 +17,7 @@ package io.delta.kernel.internal.replay;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
@@ -27,9 +28,11 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.*;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.TableConfig.isICTEnabled;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -45,6 +48,7 @@ public class ConflictChecker {
     private static final int PROTOCOL_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("protocol");
     private static final int METADATA_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("metaData");
     private static final int TXN_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("txn");
+    private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
 
     // Snapshot of the table read by the transaction that encountered the conflict
     // (a.k.a the losing transaction)
@@ -89,10 +93,14 @@ public class ConflictChecker {
 
     public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
         List<FileStatus> winningCommits = getWinningCommitFiles(engine);
+        AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt =
+                new AtomicReference<>(Optional.empty());
 
         // no winning commits. why did we get the transaction conflict?
         checkState(!winningCommits.isEmpty(), "No winning commits found.");
 
+        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
+        long lastWinningVersion = FileNames.deltaVersion(lastWinningTxn.getPath());
         // Read the actions from the winning commits
         try (ActionsIterator actionsIterator = new ActionsIterator(
                 engine,
@@ -103,6 +111,11 @@ public class ConflictChecker {
             actionsIterator.forEachRemaining(actionBatch -> {
                 checkArgument(!actionBatch.isFromCheckpoint());  // no checkpoints should be read
                 ColumnarBatch batch = actionBatch.getColumnarBatch();
+                if (actionBatch.getVersion() == lastWinningVersion) {
+                    Optional<CommitInfo> commitInfo =
+                            getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
+                    winningCommitInfoOpt.set(commitInfo);
+                }
 
                 handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
                 handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
@@ -114,7 +127,10 @@ public class ConflictChecker {
 
         // if we get here, we have successfully rebased (i.e no logical conflicts)
         // against the winning transactions
-        return new TransactionRebaseState(getLastWinningTxnVersion(winningCommits));
+        return new TransactionRebaseState(
+                lastWinningVersion,
+                getLastCommitTimestamp(
+                        engine, lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()));
     }
 
     /**
@@ -129,9 +145,11 @@ public class ConflictChecker {
      */
     public static class TransactionRebaseState {
         private final long latestVersion;
+        private final long latestCommitTimestamp;
 
-        public TransactionRebaseState(long latestVersion) {
+        public TransactionRebaseState(long latestVersion, long latestCommitTimestamp) {
             this.latestVersion = latestVersion;
+            this.latestCommitTimestamp = latestCommitTimestamp;
         }
 
         /**
@@ -141,6 +159,17 @@ public class ConflictChecker {
          */
         public long getLatestVersion() {
             return latestVersion;
+        }
+
+        /**
+         * Return the latest commit timestamp of the table. For ICT enabled tables, this is the
+         * ICT of the latest winning transaction commit file. For non-ICT enabled tables, this
+         * is the modification time of the latest winning transaction commit file.
+         *
+         * @return latest commit timestamp of the table.
+         */
+        public long getLatestCommitTimestamp() {
+            return latestCommitTimestamp;
         }
     }
 
@@ -172,6 +201,21 @@ public class ConflictChecker {
                 throw DeltaErrors.metadataChangedException();
             }
         }
+    }
+
+    /**
+     * Get the commit info from the winning transactions.
+     *
+     * @param commitInfoVector commit info rows from the winning transactions
+     * @return the commit info
+     */
+    private Optional<CommitInfo> getCommitInfo(ColumnVector commitInfoVector) {
+        for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
+            if (!commitInfoVector.isNullAt(rowId)) {
+                return Optional.of(CommitInfo.fromColumnVector(commitInfoVector, rowId));
+            }
+        }
+        return Optional.empty();
     }
 
     private void handleTxn(ColumnVector txnVector) {
@@ -223,9 +267,33 @@ public class ConflictChecker {
         }
     }
 
-    private long getLastWinningTxnVersion(List<FileStatus> winningCommits) {
-        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
-        return FileNames.deltaVersion(lastWinningTxn.getPath());
+    /**
+     * Get the last commit timestamp of the table. For ICT enabled tables, this is the ICT of the
+     * latest winning transaction commit file. For non-ICT enabled tables, this is the modification
+     * time of the latest winning transaction commit file.
+     *
+     * @param engine                {@link Engine} instance to use
+     * @param lastWinningVersion    last winning version of the table
+     * @param lastWinningTxn        the last winning transaction commit file
+     * @param winningCommitInfoOpt  winning commit info
+     * @return last commit timestamp of the table
+     */
+    private long getLastCommitTimestamp(
+            Engine engine,
+            long lastWinningVersion,
+            FileStatus lastWinningTxn,
+            Optional<CommitInfo> winningCommitInfoOpt) {
+        long winningCommitTimestamp = -1L;
+        if (snapshot.getVersion(engine) == -1 ||
+                !isICTEnabled(snapshot.getMetadata())) {
+            winningCommitTimestamp = lastWinningTxn.getModificationTime();
+        } else {
+            winningCommitTimestamp = CommitInfo.getRequiredInCommitTimestamp(
+                    winningCommitInfoOpt,
+                    String.valueOf(lastWinningVersion),
+                    snapshot.getDataPath());
+        }
+        return winningCommitTimestamp;
     }
 
     private static List<FileStatus> ensureNoGapsInWinningCommits(List<FileStatus> winningCommits) {

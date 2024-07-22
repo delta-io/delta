@@ -22,10 +22,12 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 
 class InMemoryCommitCoordinator(val batchSize: Long)
@@ -133,7 +135,8 @@ class InMemoryCommitCoordinator(val batchSize: Long)
       tableData.commitsMap(commitVersion) = commit
       tableData.updateLastRatifiedCommit(commitVersion)
 
-      logInfo(s"Added commit file ${commitFile.getPath} to commit-coordinator.")
+      logInfo(log"Added commit file ${MDC(DeltaLogKeys.PATH, commitFile.getPath)} " +
+        log"to commit-coordinator.")
       CommitResponse(commit)
     }
   }
@@ -196,7 +199,24 @@ class InMemoryCommitCoordinator(val batchSize: Long)
     Map.empty
   }
 
+  def dropTable(logPath: Path): Unit = {
+    withWriteLock(logPath) {
+      perTableMap.remove(logPath)
+    }
+  }
+
   override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
+
+  private[delta] def removeCommitTestOnly(
+      logPath: Path,
+      commitVersion: Long
+  ): Unit = {
+    val tableData = perTableMap.get(logPath)
+    tableData.commitsMap.remove(commitVersion)
+    if (commitVersion == tableData.maxCommitVersion) {
+      tableData.maxCommitVersion -= 1
+    }
+  }
 }
 
 /**

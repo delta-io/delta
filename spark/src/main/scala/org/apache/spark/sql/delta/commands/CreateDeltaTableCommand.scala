@@ -26,18 +26,23 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.SparkContext
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 
@@ -66,6 +71,27 @@ case class CreateDeltaTableCommand(
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging {
+
+  @transient
+  private lazy val sc: SparkContext = SparkContext.getOrCreate()
+
+  override lazy val metrics = Map[String, SQLMetric](
+    "numCopiedFiles" -> createMetric(sc, "number of files copied"),
+    "copiedFilesSize" -> createMetric(sc, "size of files copied"),
+    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
+    "numRemovedBytes" -> createMetric(sc, "number of bytes removed"),
+    "removedFilesSize" -> createMetric(sc, "size of files removed"),
+    "sourceTableSize" -> createMetric(sc, "size of source table"),
+    "numOutputRows" -> createMetric(sc, "number of output rows"),
+    "numParts" -> createMetric(sc, "number of partitions"),
+    "numFiles" -> createMetric(sc, "number of written files"),
+    "sourceNumOfFiles" -> createMetric(sc, "number of files in source table"),
+    "numRemovedFiles" -> createMetric(sc, "number of files removed."),
+    "numOutputBytes" -> createMetric(sc, "number of output bytes"),
+    "taskCommitTime" -> createMetric(sc, "task commit time"),
+    "jobCommitTime" -> createMetric(sc, "job commit time"),
+    "numOfSyncedTransactions" -> createMetric(sc, "number of synced transactions")
+  )
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
 
@@ -107,7 +133,9 @@ case class CreateDeltaTableCommand(
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
-      handleCommit(sparkSession, deltaLog, tableWithLocation)
+      val result = handleCommit(sparkSession, deltaLog, tableWithLocation)
+      sendDriverMetrics(sparkSession, metrics)
+      result
     }
   }
 
@@ -145,7 +173,11 @@ case class CreateDeltaTableCommand(
         // CLONE handled separately from other CREATE TABLE syntax
         case Some(cmd: CloneTableCommand) =>
           checkPathEmpty(txn)
-          cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
+          cmd.handleClone(
+            sparkSession,
+            txn,
+            targetDeltaLog = deltaLog,
+            commandMetrics = Some(metrics))
         case Some(deltaWriter: WriteIntoDeltaLike) =>
           checkPathEmpty(txn)
           handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
@@ -189,7 +221,8 @@ case class CreateDeltaTableCommand(
       tableWithLocation: CatalogTable): Unit = {
     // Note that someone may have dropped and recreated the table in a separate location in the
     // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
-    logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
+    logInfo(log"Table is path-based table: ${MDC(DeltaLogKeys.IS_PATH_TABLE, tableByPath)}. " +
+      log"Update catalog with mode: ${MDC(DeltaLogKeys.OPERATION, operation)}")
     val opStartTs = TimeUnit.NANOSECONDS.toMillis(txnUsedForCommit.txnStartTimeNs)
     val postCommitSnapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
     val didNotChangeMetadata = txnUsedForCommit.metadata == txnUsedForCommit.snapshot.metadata
@@ -600,7 +633,7 @@ case class CreateDeltaTableCommand(
       case TableCreationModes.Create =>
         spark.sessionState.catalog.createTable(
           cleaned,
-          ignoreIfExists = existingTableOpt.isDefined,
+          ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
           validateLocation = false)
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
           if existingTableOpt.isDefined =>

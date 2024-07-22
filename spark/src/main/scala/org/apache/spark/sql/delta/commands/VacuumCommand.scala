@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
@@ -30,6 +31,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -199,6 +201,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       dryRun: Boolean = true,
       retentionHours: Option[Double] = None,
       inventory: Option[DataFrame] = None,
+      commandMetrics: Map[String, SQLMetric] = Map.empty,
       clock: Clock = new SystemClock): DataFrame = {
     recordDeltaOperation(deltaLog, "delta.gc") {
 
@@ -218,8 +221,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         case Some(millis) => clock.getTimeMillis() - millis
         case _ => snapshot.minFileRetentionTimestamp
       }
-      logInfo(s"Starting garbage collection (dryRun = $dryRun) of untracked files older than " +
-        s"${new Date(deleteBeforeTimestamp).toGMTString} in $path")
+      logInfo(log"Starting garbage collection (dryRun = " +
+        log"${MDC(DeltaLogKeys.DRY_RUN, dryRun)}) of untracked " +
+        log"files older than ${MDC(DeltaLogKeys.DATE,
+          new Date(deleteBeforeTimestamp).toGMTString)} in " +
+        log"${MDC(DeltaLogKeys.PATH, path)}")
       val hadoopConf = spark.sparkContext.broadcast(
         new SerializableConfiguration(deltaHadoopConf))
       val basePath = fs.makeQualified(path).toString
@@ -343,8 +349,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             )
 
             recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-            logInfo(s"Found $numFiles files ($sizeOfDataToDelete bytes) and directories in " +
-              s"a total of $dirCounts directories that are safe to delete. Vacuum stats: $stats")
+            logInfo(log"Found ${MDC(DeltaLogKeys.NUM_FILES, numFiles)} files " +
+              log"(${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} bytes) and directories in " +
+              log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories " +
+              log"that are safe to delete. Vacuum stats: ${MDC(DeltaLogKeys.STATS, stats)}")
 
             return diffFiles.map(f => stringToPath(f).toString).toDF("path")
           }
@@ -363,7 +371,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               hadoopConf, parallelDeleteEnabled, parallelDeletePartitions)
           } catch {
             case t: Throwable =>
-              logVacuumEnd(deltaLog, spark, path)
+              logVacuumEnd(deltaLog, spark, path, commandMetrics = commandMetrics)
               throw t
           }
           val timeTakenForDelete = System.currentTimeMillis() - deleteStartTime
@@ -382,9 +390,17 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             vacuumEndTime = System.currentTimeMillis,
             numPartitionColumns = partitionColumns.size)
           recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-          logVacuumEnd(deltaLog, spark, path, Some(filesDeleted), Some(dirCounts))
-          logInfo(s"Deleted $filesDeleted files ($sizeOfDataToDelete bytes) and directories in " +
-            s"a total of $dirCounts directories. Vacuum stats: $stats")
+          logVacuumEnd(
+            deltaLog,
+            spark,
+            path,
+            commandMetrics = commandMetrics,
+            Some(filesDeleted),
+            Some(dirCounts))
+          logInfo(log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, filesDeleted)} files " +
+            log"(${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} bytes) and directories in " +
+            log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories. " +
+            log"Vacuum stats: ${MDC(DeltaLogKeys.VACUUM_STATS, stats)}")
 
 
           spark.createDataset(Seq(basePath)).toDF("path")
@@ -450,8 +466,11 @@ trait VacuumCommandImpl extends DeltaCommand {
       sizeOfDataToDelete: Long,
       specifiedRetentionMillis: Option[Long],
       defaultRetentionMillis: Long): Unit = {
-    logInfo(s"Deleting untracked files and empty directories in $path. The amount of data to be " +
-      s"deleted is $sizeOfDataToDelete (in bytes)")
+    logInfo(
+      log"Deleting untracked files and empty directories in " +
+      log"${MDC(DeltaLogKeys.PATH, path)}. The amount " +
+      log"of data to be deleted is ${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} (in bytes)"
+      )
 
     // We perform an empty commit in order to record information about the Vacuum
     if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), path)) {
@@ -489,12 +508,17 @@ trait VacuumCommandImpl extends DeltaCommand {
       deltaLog: DeltaLog,
       spark: SparkSession,
       path: Path,
+      commandMetrics: Map[String, SQLMetric],
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
     if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), path)) {
       val txn = deltaLog.startTransaction()
       val status = if (filesDeleted.isEmpty && dirCounts.isEmpty) { "FAILED" } else { "COMPLETED" }
       if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
+        // Populate top level metrics.
+        commandMetrics.get("numDeletedFiles").foreach(_.set(filesDeleted.get))
+        commandMetrics.get("numVacuumedDirectories").foreach(_.set(dirCounts.get))
+        // Additionally, create a separate metrics map in case the commandMetrics is empty.
         val metrics = Map[String, SQLMetric](
           "numDeletedFiles" -> createMetric(spark.sparkContext, "number of files deleted."),
           "numVacuumedDirectories" ->

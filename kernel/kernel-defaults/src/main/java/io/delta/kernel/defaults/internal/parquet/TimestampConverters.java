@@ -26,8 +26,6 @@ import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT64;
 import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT96;
 
 import io.delta.kernel.types.*;
-import static io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ;
-import static io.delta.kernel.types.TimestampType.TIMESTAMP;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
@@ -44,31 +42,40 @@ public class TimestampConverters {
      *
      * @param initialBatchSize Initial batch size of the generated column vector
      * @param typeFromFile     Column type metadata from Parquet file
+     * @param typeFromClient  Column type from client
      * @return instance of {@link Converter}
      */
-    public static Converter createTimestampConverter(int initialBatchSize, Type typeFromFile) {
+    public static Converter createTimestampConverter(int initialBatchSize,
+                                                     Type typeFromFile,
+                                                     DataType typeFromClient) {
         PrimitiveType primType = typeFromFile.asPrimitiveType();
+        LogicalTypeAnnotation typeAnnotation = primType.getLogicalTypeAnnotation();
+        boolean isTimestampTz = (typeFromClient instanceof TimestampType);
 
         if (primType.getPrimitiveTypeName() == INT96) {
-            return new TimestampBinaryConverter(TIMESTAMP, initialBatchSize);
-        } else if (primType.getPrimitiveTypeName() == INT64) {
-            LogicalTypeAnnotation typeAnnotation = primType.getLogicalTypeAnnotation();
-            if (!(typeAnnotation instanceof TimestampLogicalTypeAnnotation)) {
-                throw new RuntimeException(String.format(
-                        "Unsupported timestamp column with Parquet type %s.",
-                        typeFromFile));
-            }
+            // INT96 does not have a logical type in both TIMESTAMP and TIMESTAMP_NTZ
+            // Also, TimestampNTZ type does not require rebasing
+            // due to its lack of time zone context.
+            return new TimestampBinaryConverter(typeFromClient, initialBatchSize);
+        } else if (primType.getPrimitiveTypeName() == INT64 &&
+                typeAnnotation instanceof TimestampLogicalTypeAnnotation) {
             TimestampLogicalTypeAnnotation timestamp =
                     (TimestampLogicalTypeAnnotation) typeAnnotation;
 
-            checkArgument(timestamp.isAdjustedToUTC(),
-                    "TimestampType must have Parquet TimestampType(isAdjustedToUTC=true)");
+            boolean isAdjustedUtc = timestamp.isAdjustedToUTC();
+            if (!((isTimestampTz && isAdjustedUtc) || (!isTimestampTz && !isAdjustedUtc))) {
+                throw new RuntimeException(String.format(
+                        "Incompatible Utc adjustment for timestamp column. " +
+                                "Client type: %s, File type: %s, isAdjustedUtc: %s",
+                        typeFromClient, typeFromFile, isAdjustedUtc));
+            }
 
             switch (timestamp.getUnit()) {
                 case MICROS:
-                    return new ParquetColumnReaders.LongColumnReader(TIMESTAMP, initialBatchSize);
+                    return new ParquetColumnReaders.LongColumnReader(typeFromClient,
+                            initialBatchSize);
                 case MILLIS:
-                    return new TimestampMillisConverter(TIMESTAMP, initialBatchSize);
+                    return new TimestampMillisConverter(typeFromClient, initialBatchSize);
                 default:
                     throw new UnsupportedOperationException(String.format(
                             "Unsupported Parquet TimeType unit=%s", timestamp.getUnit()));
@@ -77,39 +84,6 @@ public class TimestampConverters {
             throw new RuntimeException(String.format(
                     "Unsupported timestamp column with Parquet type %s.",
                     typeFromFile));
-        }
-    }
-
-    /**
-     * Create a {@code timestamp_ntz} column type reader
-     *
-     * @param initialBatchSize Initial batch size of the generated column vector
-     * @param typeFromFile     Column type metadata from Parquet file
-     * @return instance of {@link Converter}
-     */
-    public static Converter createTimestampNtzConverter(int initialBatchSize, Type typeFromFile) {
-        PrimitiveType primType = typeFromFile.asPrimitiveType();
-
-        LogicalTypeAnnotation logicalType = primType.getLogicalTypeAnnotation();
-        checkArgument(logicalType instanceof TimestampLogicalTypeAnnotation,
-                "Invalid logical type annotation for timestamp_ntz type columns: " + logicalType);
-
-        checkArgument(primType.getPrimitiveTypeName() == INT64,
-                "Invalid storage type for timestamp_ntz columns: "
-                        + primType.getPrimitiveTypeName());
-
-        TimestampLogicalTypeAnnotation timestamp = (TimestampLogicalTypeAnnotation) logicalType;
-        checkArgument(!timestamp.isAdjustedToUTC(),
-                TIMESTAMP_NTZ + " must have Parquet TimestampType(isAdjustedToUTC=false)");
-
-        switch (timestamp.getUnit()) {
-            case MICROS:
-                return new ParquetColumnReaders.LongColumnReader(TIMESTAMP_NTZ, initialBatchSize);
-            case MILLIS:
-                return new TimestampMillisConverter(TIMESTAMP_NTZ, initialBatchSize);
-            default:
-                throw new UnsupportedOperationException(String.format(
-                        "Unsupported Parquet TimeType unit=%s", timestamp.getUnit()));
         }
     }
 

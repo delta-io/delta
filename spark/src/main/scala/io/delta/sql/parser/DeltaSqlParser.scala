@@ -59,7 +59,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
-import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
+import org.apache.spark.sql.catalyst.parser.{CompoundBody, ParseErrorListener, ParseException, ParserInterface, ParserInterfaceShims}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
@@ -72,7 +72,8 @@ import org.apache.spark.sql.types._
  * A SQL parser that tries to parse Delta commands. If failing to parse the SQL text, it will
  * forward the call to `delegate`.
  */
-class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
+class DeltaSqlParser(val delegateSpark: ParserInterface) extends ParserInterfaceShims {
+  private val delegate = ParserInterfaceShims(delegateSpark)
   private val builder = new DeltaSqlAstBuilder
   private val substitution = new VariableSubstitution
 
@@ -155,6 +156,9 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parseTableSchema(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
+
+  override def parseScript(sqlScriptText: String): CompoundBody =
+    delegate.parseScript(sqlScriptText)
 }
 
 /**

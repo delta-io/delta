@@ -24,10 +24,25 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import io.delta.kernel.internal.util.Clock;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 
 public class TableImpl implements Table {
     public static Table forPath(Engine engine, String path) {
+        return forPath(engine, path, System::currentTimeMillis);
+    }
+
+    /**
+     * Instantiate a table object for the Delta Lake table at the given path. It takes an additional
+     * parameter called {@link Clock} which helps in testing.
+     *
+     * @param engine {@link Engine} instance to use in Delta Kernel.
+     * @param path location of the table.
+     * @param clock {@link Clock} instance to use for time-related operations.
+     *
+     * @return an instance of {@link Table} representing the Delta table at the given path
+     */
+    public static Table forPath(Engine engine, String path, Clock clock) {
         String resolvedPath;
         try {
             resolvedPath = wrapEngineExceptionThrowsIO(
@@ -37,17 +52,19 @@ public class TableImpl implements Table {
         } catch (IOException io) {
             throw new UncheckedIOException(io);
         }
-        return new TableImpl(resolvedPath);
+        return new TableImpl(resolvedPath, clock);
     }
 
     private final SnapshotManager snapshotManager;
     private final String tablePath;
+    private final Clock clock;
 
-    public TableImpl(String tablePath) {
+    public TableImpl(String tablePath, Clock clock) {
         this.tablePath = tablePath;
         final Path dataPath = new Path(tablePath);
         final Path logPath = new Path(dataPath, "_delta_log");
         this.snapshotManager = new SnapshotManager(logPath, dataPath);
+        this.clock = clock;
     }
 
     @Override
@@ -84,6 +101,10 @@ public class TableImpl implements Table {
             String engineInfo,
             Operation operation) {
         return new TransactionBuilderImpl(this, engineInfo, operation);
+    }
+
+    public Clock getClock() {
+        return clock;
     }
 
     protected Path getDataPath() {

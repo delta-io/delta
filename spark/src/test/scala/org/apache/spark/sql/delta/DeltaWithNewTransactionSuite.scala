@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -27,7 +28,8 @@ import org.apache.spark.util.{ThreadUtils, Utils}
 trait DeltaWithNewTransactionSuiteBase extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with CoordinatedCommitsBaseSuite {
 
   /**
    * Test whether `withNewTransaction` captures all delta read made within it and correctly
@@ -347,3 +349,8 @@ class DeltaWithNewTransactionIdColumnMappingSuite extends DeltaWithNewTransactio
 
 class DeltaWithNewTransactionNameColumnMappingSuite extends DeltaWithNewTransactionSuite
   with DeltaColumnMappingEnableNameMode
+
+class DeltaWithNewTransactionWithCoordinatedCommitsBatch100Suite
+   extends DeltaWithNewTransactionSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+}

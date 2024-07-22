@@ -16,30 +16,35 @@
 
 package org.apache.spark.sql.delta.hudi
 
+import java.io.File
+import java.time.Instant
+import java.util.UUID
+import java.util.stream.Collectors
+
+import scala.collection.JavaConverters
+
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, OptimisticTransaction}
+import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.scalatest.concurrent.Eventually
+import org.scalatest.time.SpanSugar._
 import org.apache.hudi.common.config.HoodieMetadataConfig
 import org.apache.hudi.common.engine.HoodieLocalEngineContext
 import org.apache.hudi.common.fs.FSUtils
 import org.apache.hudi.common.model.HoodieBaseFile
 import org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
 import org.apache.hudi.metadata.HoodieMetadataFileSystemView
+import org.apache.hudi.storage.StorageConfiguration
+import org.apache.hudi.storage.hadoop.{HadoopStorageConfiguration, HoodieHadoopStorage}
+
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.avro.SchemaConverters
-import org.apache.spark.sql.delta.DeltaOperations.Truncate
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, RemoveFile}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ByteType, IntegerType, ShortType, StructField, StructType}
 import org.apache.spark.util.{ManualClock, Utils}
-import org.scalatest.concurrent.Eventually
-import org.scalatest.time.SpanSugar._
-
-import java.io.File
-import java.time.Instant
-import java.util.UUID
-import java.util.stream.Collectors
-import scala.collection.JavaConverters
 
 class ConvertToHudiSuite extends QueryTest with Eventually {
 
@@ -147,18 +152,86 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     }
   }
 
-  for (invalidFieldDef <- Seq("col3 ARRAY<STRING>", "col3 MAP<STRING, STRING>")) {
-    test(s"Table Throws Exception for Unsupported Type ($invalidFieldDef)") {
-      intercept[DeltaUnsupportedOperationException] {
-        _sparkSession.sql(
-          s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING, $invalidFieldDef) USING DELTA
-             |LOCATION '$testTablePath'
-             |TBLPROPERTIES (
-             |  'delta.universalFormat.enabledFormats' = 'hudi',
-             |  'delta.enableDeletionVectors' = false
-             |)""".stripMargin)
-      }
+  test("Enabling Delete Vector After Hudi Enabled Already Throws Exception") {
+    intercept[DeltaUnsupportedOperationException] {
+      _sparkSession.sql(
+        s"""CREATE TABLE `$testTableName` (col1 INT, col2 STRING) USING DELTA
+           |LOCATION '$testTablePath'
+           |TBLPROPERTIES (
+           |  'delta.universalFormat.enabledFormats' = 'hudi'
+           |)""".stripMargin)
+      _sparkSession.sql(
+        s"""ALTER TABLE `$testTableName` SET TBLPROPERTIES (
+           |  'delta.enableDeletionVectors' = true
+           |)""".stripMargin)
     }
+  }
+
+  test(s"Conversion behavior for lists") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName` (col1 ARRAY<INT>) USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES (array(1, 2, 3))")
+    verifyFilesAndSchemaMatch()
+  }
+
+  test(s"Conversion behavior for lists of structs") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName`
+         |(col1 ARRAY<STRUCT<field1: INT, field2: STRING>>) USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(s"INSERT INTO `$testTableName` " +
+      s"VALUES (array(named_struct('field1', 1, 'field2', 'hello'), " +
+      s"named_struct('field1', 2, 'field2', 'world')))")
+    verifyFilesAndSchemaMatch()
+  }
+
+  test(s"Conversion behavior for lists of lists") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName`
+         |(col1 ARRAY<ARRAY<INT>>) USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(s"INSERT INTO `$testTableName` " +
+      s"VALUES (array(array(1, 2, 3), array(4, 5, 6)))")
+    verifyFilesAndSchemaMatch()
+  }
+
+  test(s"Conversion behavior for maps") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName` (col1 MAP<STRING, INT>) USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(
+      s"INSERT INTO `$testTableName` VALUES (map('a', 1, 'b', 2, 'c', 3))"
+    )
+    verifyFilesAndSchemaMatch()
+  }
+
+  test(s"Conversion behavior for nested structs") {
+    _sparkSession.sql(
+      s"""CREATE TABLE `$testTableName` (col1 STRUCT<field1: INT, field2: STRING,
+         |field3: STRUCT<field4: INT, field5: INT, field6: STRING>>)
+         |USING DELTA
+         |LOCATION '$testTablePath'
+         |TBLPROPERTIES (
+         |  'delta.universalFormat.enabledFormats' = 'hudi'
+         |)""".stripMargin)
+    _sparkSession.sql(
+      s"INSERT INTO `$testTableName` VALUES (named_struct('field1', 1, 'field2', 'hello', " +
+        "'field3', named_struct('field4', 2, 'field5', 3, 'field6', 'world')))"
+    )
+    verifyFilesAndSchemaMatch()
   }
 
   test("validate Hudi timeline archival and cleaning") {
@@ -173,7 +246,8 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
         val file = AddFile(i.toString + ".parquet", Map.empty, 1, 1, true) :: Nil
         val delete: Seq[Action] = if (i > 1) {
           val timestamp = startTime + (System.currentTimeMillis() - actualTestStartTime)
-          RemoveFile((i - 1).toString + ".parquet", Some(timestamp), true) :: Nil
+          val prevFile = AddFile((i - 1).toString + ".parquet", Map.empty, 1, 1, true)
+          prevFile.removeWithTimestamp(timestamp) :: Nil
         } else {
           Nil
         }
@@ -184,7 +258,8 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       }
 
       val metaClient: HoodieTableMetaClient = HoodieTableMetaClient.builder
-        .setConf(log.newDeltaHadoopConf()).setBasePath(log.dataPath.toString)
+        .setConf(new HadoopStorageConfiguration(log.newDeltaHadoopConf()))
+        .setBasePath(log.dataPath.toString)
         .setLoadActiveTimelineOnLoad(true)
         .build
       // Timeline requires a clean commit for proper removal of entries from the Hudi Metadata Table
@@ -199,7 +274,10 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
   test("validate various data types") {
     _sparkSession.sql(
       s"""CREATE TABLE `$testTableName` (col1 BIGINT, col2 BOOLEAN, col3 DATE,
-         | col4 DOUBLE, col5 FLOAT, col6 INT, col7 STRING, col8 TIMESTAMP)
+         | col4 DOUBLE, col5 FLOAT, col6 INT, col7 STRING, col8 TIMESTAMP,
+         | col9 BINARY, col10 DECIMAL(5, 2),
+         | col11 STRUCT<field1: INT, field2: STRING,
+         | field3: STRUCT<field4: INT, field5: INT, field6: STRING>>)
          | USING DELTA
          |LOCATION '$testTablePath'
          |TBLPROPERTIES (
@@ -208,14 +286,49 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
     val nowSeconds = Instant.now().getEpochSecond
     _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES (123, true, "
       + s"date(from_unixtime($nowSeconds)), 32.1, 1.23, 456, 'hello world', "
-      + s"timestamp(from_unixtime($nowSeconds)))")
+      + s"timestamp(from_unixtime($nowSeconds)), X'1ABF', -999.99,"
+      + s"STRUCT(1, 'hello', STRUCT(2, 3, 'world')))")
     verifyFilesAndSchemaMatch()
+  }
+
+  for (invalidType <- Seq("SMALLINT", "TINYINT", "TIMESTAMP_NTZ", "VOID")) {
+    test(s"Unsupported Type $invalidType Throws Exception") {
+      intercept[DeltaUnsupportedOperationException] {
+        _sparkSession.sql(
+          s"""CREATE TABLE `$testTableName` (col1 $invalidType) USING DELTA
+             |LOCATION '$testTablePath'
+             |TBLPROPERTIES (
+             |  'delta.universalFormat.enabledFormats' = 'hudi'
+             |)""".stripMargin)
+      }
+    }
+  }
+
+
+  test("all batches of actions are converted") {
+    withSQLConf(
+      DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT.key -> "3"
+    ) {
+      _sparkSession.sql(
+        s"""CREATE TABLE `$testTableName` (col1 INT)
+           | USING DELTA
+           |LOCATION '$testTablePath'""".stripMargin)
+      for (i <- 1 to 10) {
+        _sparkSession.sql(s"INSERT INTO `$testTableName` VALUES ($i)")
+      }
+      _sparkSession.sql(
+        s"""ALTER TABLE `$testTableName` SET TBLPROPERTIES (
+           |  'delta.universalFormat.enabledFormats' = 'hudi'
+           |)""".stripMargin)
+      verifyFilesAndSchemaMatch()
+    }
   }
 
   def buildHudiMetaClient(): HoodieTableMetaClient = {
     val hadoopConf: Configuration = _sparkSession.sparkContext.hadoopConfiguration
+    val storageConf : StorageConfiguration[_] = new HadoopStorageConfiguration(hadoopConf)
     HoodieTableMetaClient.builder
-      .setConf(hadoopConf).setBasePath(testTablePath)
+      .setConf(storageConf).setBasePath(testTablePath)
       .setLoadActiveTimelineOnLoad(true)
       .build
   }
@@ -236,13 +349,15 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       // To avoid requiring Hudi spark dependencies, we first lookup the active base files and then
       // assert by reading those active base files (parquet) directly
       val hadoopConf: Configuration = _sparkSession.sparkContext.hadoopConfiguration
+      val storageConf : StorageConfiguration[_] = new HadoopStorageConfiguration(hadoopConf)
       val metaClient: HoodieTableMetaClient = buildHudiMetaClient()
-      val engContext: HoodieLocalEngineContext = new HoodieLocalEngineContext(hadoopConf)
+      val engContext: HoodieLocalEngineContext = new HoodieLocalEngineContext(storageConf)
       val fsView: HoodieMetadataFileSystemView = new HoodieMetadataFileSystemView(engContext,
         metaClient, metaClient.getActiveTimeline.getCommitsTimeline.filterCompletedInstants,
         HoodieMetadataConfig.newBuilder.enable(true).build)
+      val hoodieStorage = new HoodieHadoopStorage(testTablePath, storageConf)
       val paths = JavaConverters.asScalaBuffer(
-        FSUtils.getAllPartitionPaths(engContext, testTablePath, true, false))
+        FSUtils.getAllPartitionPaths(engContext, hoodieStorage, testTablePath, true, false))
         .flatMap(partition => JavaConverters.asScalaBuffer(fsView.getLatestBaseFiles(partition)
           .collect(Collectors.toList[HoodieBaseFile])))
         .map(baseFile => baseFile.getPath).sorted
@@ -257,6 +372,7 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
         s"Files do not match.\nExpected: $expectedFiles\nActual: $paths")
       // Assert schemas are equal
       val expectedSchema = deltaDF.schema
+
       assert(hudiSchemaAsStruct.equals(expectedSchema),
         s"Schemas do not match.\nExpected: $expectedSchema\nActual: $hudiSchemaAsStruct")
     }
@@ -287,7 +403,6 @@ class ConvertToHudiSuite extends QueryTest with Eventually {
       .appName("UniformSession")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-      .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
       .getOrCreate()
   }
 }

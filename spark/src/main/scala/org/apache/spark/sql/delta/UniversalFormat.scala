@@ -18,12 +18,14 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
+import org.apache.spark.sql.types.{ByteType, CalendarIntervalType, NullType, ShortType, TimestampNTZType}
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
@@ -31,8 +33,9 @@ import org.apache.spark.sql.types.{ArrayType, MapType, NullType}
  * The UniForm Delta feature governs and implements the actual conversion of Delta metadata into
  * other formats.
  *
- * Currently, UniForm only supports Iceberg. When `delta.universalFormat.enabledFormats` contains
- * "iceberg", we say that Universal Format (Iceberg) is enabled.
+ * UniForm supports both Iceberg and Hudi. When `delta.universalFormat.enabledFormats` contains
+ * "iceberg", we say that Universal Format (Iceberg) is enabled. When it contains "hudi", we say
+ * that Universal Format (Hudi) is enabled.
  *
  * [[enforceInvariantsAndDependencies]] ensures that all of UniForm's requirements for the
  * specified format are met (e.g. for 'iceberg' that IcebergCompatV1 or V2 is enabled).
@@ -51,6 +54,35 @@ object UniversalFormat extends DeltaLogging {
   val ICEBERG_FORMAT = "iceberg"
   val HUDI_FORMAT = "hudi"
   val SUPPORTED_FORMATS = Set(HUDI_FORMAT, ICEBERG_FORMAT)
+
+  /**
+   * Check if the operation is CREATE/REPLACE TABLE or REORG UPGRADE UNIFORM commands.
+   *
+   * @param op the delta operation to be checked.
+   * @return whether the operation is create or reorg.
+   */
+  def isCreatingOrReorgTable(op: Option[DeltaOperations.Operation]): Boolean = op match {
+    case Some(_: DeltaOperations.CreateTable) |
+         Some(_: DeltaOperations.UpgradeUniformProperties) |
+         // REPLACE TABLE is also considered creating table to preserve the
+         // the semantics for `isCreatingNewTable` in `OptimisticTransaction`.
+         Some(_: DeltaOperations.ReplaceTable) =>
+      true
+    // this is to conform with the semantics in `enforceDependenciesInConfiguration`
+    case None => true
+    case _ => false
+  }
+
+  /**
+   * Check if the operation is REORG UPGRADE UNIFORM command.
+   *
+   * @param op the delta operation to be checked.
+   * @return whether the operation is REORG UPGRADE UNIFORM.
+   */
+  def isReorgUpgradeUniform(op: Option[DeltaOperations.Operation]): Boolean = op match {
+    case Some(_: DeltaOperations.UpgradeUniformProperties) => true
+    case _ => false
+  }
 
   def icebergEnabled(metadata: Metadata): Boolean = {
     DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(ICEBERG_FORMAT)
@@ -80,11 +112,11 @@ object UniversalFormat extends DeltaLogging {
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
-      isCreatingOrReorgTable: Boolean,
+      operation: Option[DeltaOperations.Operation],
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
     enforceHudiDependencies(newestMetadata, snapshot)
     enforceIcebergInvariantsAndDependencies(
-      snapshot, newestProtocol, newestMetadata, isCreatingOrReorgTable, actions)
+      snapshot, newestProtocol, newestMetadata, operation, actions)
   }
 
   /**
@@ -99,9 +131,9 @@ object UniversalFormat extends DeltaLogging {
       if (DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(newestMetadata)) {
         throw DeltaErrors.uniFormHudiDeleteVectorCompat()
       }
-      // TODO: remove once map/list support is added https://github.com/delta-io/delta/issues/2738
       SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
-        f.isInstanceOf[MapType] || f.isInstanceOf[ArrayType] || f.isInstanceOf[NullType]
+        f.isInstanceOf[NullType] | f.isInstanceOf[ByteType] | f.isInstanceOf[ShortType] |
+        f.isInstanceOf[TimestampNTZType]
       } match {
         case Some(unsupportedType) =>
           throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
@@ -122,7 +154,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
-      isCreatingOrReorg: Boolean,
+      operation: Option[DeltaOperations.Operation],
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
 
     val prevMetadata = snapshot.metadata
@@ -154,8 +186,8 @@ object UniversalFormat extends DeltaLogging {
                   remainingSupportedFormats.mkString(","))
             }
 
-            logInfo(s"[tableId=$tableId] IcebergCompat is being disabled. Auto-disabling " +
-              "Universal Format (Iceberg), too.")
+            logInfo(log"[${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " +
+              log"IcebergCompat is being disabled. Auto-disabling Universal Format (Iceberg), too.")
 
             (None, Some(newestMetadata.copy(configuration = newConfiguration)))
           } else {
@@ -171,7 +203,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot,
       newestProtocol = protocolToCheck,
       newestMetadata = metadataToCheck,
-      isCreatingOrReorg,
+      operation,
       actions
     )
     protocolToCheck = v1protocolUpdate.getOrElse(protocolToCheck)
@@ -182,7 +214,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot,
       newestProtocol = protocolToCheck,
       newestMetadata = metadataToCheck,
-      isCreatingOrReorg,
+      operation,
       actions
     )
     changed ||= v2protocolUpdate.nonEmpty || v2metadataUpdate.nonEmpty
@@ -215,7 +247,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot,
       newestProtocol = snapshot.protocol,
       newestMetadata = metadata,
-      isCreatingOrReorgTable = true,
+      operation = None,
       actions = Seq()
     )
 
@@ -254,6 +286,7 @@ object UniversalFormat extends DeltaLogging {
     }
   }
 }
+
 /** Class to facilitate the conversion of Delta into other table formats. */
 abstract class UniversalFormatConverter(spark: SparkSession) {
   /**

@@ -694,4 +694,34 @@ class SnapshotManagementParallelListingSuite extends QueryTest
       }
     }
   }
+
+  test("throws exception when additional listing also can't reconcile") {
+    val batchSize = ConcurrentBackfillCommitCoordinatorBuilder.batchSize
+    val endVersion = batchSize + 3
+    withSQLConf(
+        COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
+          ConcurrentBackfillCommitCoordinatorBuilder.getName,
+        DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
+      withTempDir { tempDir =>
+        val path = tempDir.getCanonicalPath
+        val dataPath = new Path(path)
+
+        writeDeltaData(path, endVersion)
+
+        // Delete 5.json to create a permanent gap between file-system i.e. [0, 4] and
+        // commit-store [6, 8] which would even an additional listing won't be able to reconcile.
+        val deltaLog = DeltaLog.forTable(spark, dataPath)
+        deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf()).delete(
+          FileNames.unsafeDeltaFile(deltaLog.logPath, batchSize), true)
+
+        // Invalidate cache to ensure re-listing.
+        DeltaLog.invalidateCache(spark, dataPath)
+
+        val e = intercept[IllegalStateException] {
+          DeltaLog.forTable(spark, dataPath).update()
+        }
+        assert(e.getMessage.contains("unexpectedly still requires additional file-system listing"))
+      }
+    }
+  }
 }

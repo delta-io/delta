@@ -75,13 +75,12 @@ trait TransactionExecutionTestMixin {
 
   /**
    * Run `functions` with the ordering defined by `observerOrdering` function.
-   * This function returns the usage records generated during the run of these queries and also
-   * futures for each of the query results.
+   * This function returns futures for each of the query results.
    */
-  private[delta] def runFunctionsWithOrderingFromObserver(functions: Seq[() => Array[Row]])
+  private[delta] def runFunctionsWithOrderingFromObserver
+      (functions: Seq[() => Array[Row]])
       (observerOrdering: (Seq[TransactionObserver]) => Unit)
-      : (Seq[UsageRecord], Seq[Future[Array[Row]]]) = {
-
+      : Seq[Future[Array[Row]]] = {
     val executors = functions.zipWithIndex.map { case (_, index) =>
       ThreadUtils.newDaemonSingleThreadExecutor(threadName = s"executor-txn-$index")
     }
@@ -89,22 +88,22 @@ trait TransactionExecutionTestMixin {
       val (observers, futures) = functions.zipWithIndex.map { case (fn, index) =>
         runFunctionWithObserver(name = s"query-$index", executors(index), fn)
       }.unzip
-      val usageRecords = Log4jUsageLogger.track {
-        // Run the observer ordering function.
-        observerOrdering(observers)
 
-        // wait for futures to succeed or fail
-        for (future <- futures) {
-          try {
-            ThreadUtils.awaitResult(future, timeout)
-          } catch {
-            case _: SparkException =>
-              // pass
-              true
-          }
+      // Run the observer ordering function.
+      observerOrdering(observers)
+
+      // wait for futures to succeed or fail
+      for (future <- futures) {
+        try {
+          ThreadUtils.awaitResult(future, timeout)
+        } catch {
+          case _: SparkException =>
+            // pass
+            true
         }
       }
-      (usageRecords, futures)
+
+      futures
     } finally {
       for (executor <- executors) {
         executor.shutdownNow()
@@ -134,10 +133,12 @@ trait TransactionExecutionTestMixin {
    * t2 --------- TxnB starts
    * t3 --------- TxnB commits
    * t6 -------------------------------------- TxnA commits
+   *
+   * This function returns futures for each of the query runs.
    */
   def runTxnsWithOrder__A_Start__B__A_End(txnA: () => Array[Row], txnB: () => Array[Row])
-      : (Seq[UsageRecord], Future[Array[Row]], Future[Array[Row]]) = {
-    val (usageRecords, Seq(futureA, futureB)) =
+      : (Future[Array[Row]], Future[Array[Row]]) = {
+    val Seq(futureA, futureB) =
       runFunctionsWithOrderingFromObserver(Seq(txnA, txnB)) {
         case (observerA :: observerB :: Nil) =>
           // A starts
@@ -154,7 +155,7 @@ trait TransactionExecutionTestMixin {
           observerA.phases.backfillPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.backfillPhase.hasLeft, timeout)
       }
-    (usageRecords, futureA, futureB)
+    (futureA, futureB)
   }
 
   /**
@@ -166,14 +167,16 @@ trait TransactionExecutionTestMixin {
    * t4 ----------------- TxnC starts
    * t5 ----------------- TxnC commits
    * t6 -------------------------------------- TxnA commits
+   *
+   * This function returns futures for each of the query runs.
    */
   def runTxnsWithOrder__A_Start__B__C__A_End(
       txnA: () => Array[Row],
       txnB: () => Array[Row],
       txnC: () => Array[Row])
-      : (Seq[UsageRecord], Future[Array[Row]], Future[Array[Row]], Future[Array[Row]]) = {
+      : (Future[Array[Row]], Future[Array[Row]], Future[Array[Row]]) = {
 
-    val (usageRecords, Seq(futureA, futureB, futureC)) =
+    val Seq(futureA, futureB, futureC) =
       runFunctionsWithOrderingFromObserver(Seq(txnA, txnB, txnC)) {
         case (observerA :: observerB :: observerC :: Nil) =>
           // A starts
@@ -194,6 +197,6 @@ trait TransactionExecutionTestMixin {
           observerA.phases.backfillPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.backfillPhase.hasLeft, timeout)
       }
-    (usageRecords, futureA, futureB, futureC)
+    (futureA, futureB, futureC)
   }
 }

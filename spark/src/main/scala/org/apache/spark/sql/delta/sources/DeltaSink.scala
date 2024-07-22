@@ -21,11 +21,13 @@ import java.util.concurrent.ConcurrentHashMap
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
 import org.apache.spark.sql.delta.actions.{FileAction, SetTransaction}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -86,8 +88,10 @@ case class DeltaSink(
             , op = streamingUpdate)
       }
       logInfo(
-        s"Committed transaction, batchId=${batchId}, duration=${durationMs} ms, " +
-        s"added ${newFiles.size} files, removed ${deletedFiles.size} files.")
+        log"Committed transaction, batchId=${MDC(DeltaLogKeys.BATCH_ID, batchId)}, " +
+        log"duration=${MDC(DeltaLogKeys.DURATION, durationMs)} ms, " +
+        log"added ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size)} files, " +
+        log"removed ${MDC(DeltaLogKeys.NUM_FILES2, deletedFiles.size)} files.")
       val executionId = sc.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
       SQLMetrics.postDriverMetricUpdates(sc, executionId, metrics.values.toSeq)
     }
@@ -125,7 +129,8 @@ case class DeltaSink(
 
     val currentVersion = txn.txnVersion(queryId)
     if (currentVersion >= batchId) {
-      logInfo(s"Skipping already complete epoch $batchId, in query $queryId")
+      logInfo(log"Skipping already complete epoch ${MDC(DeltaLogKeys.BATCH_ID, batchId)}, " +
+        log"in query ${MDC(DeltaLogKeys.QUERY_ID, queryId)}")
       return false
     }
 
@@ -141,8 +146,10 @@ case class DeltaSink(
     val totalSize = newFiles.map(_.getFileSize).sum
     val totalLogicalRecords = newFiles.map(_.numLogicalRecords.getOrElse(0L)).sum
     logInfo(
-      s"Wrote ${newFiles.size} files, with total size ${totalSize}, " +
-      s"${totalLogicalRecords} logical records, duration=${writeFilesTimeMs} ms.")
+      log"Wrote ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size)} files, with total size " +
+      log"${MDC(DeltaLogKeys.NUM_BYTES, totalSize)}, " +
+      log"${MDC(DeltaLogKeys.NUM_RECORDS, totalLogicalRecords)} logical records, " +
+      log"duration=${MDC(DeltaLogKeys.DURATION, writeFilesTimeMs)} ms.")
 
     val info = DeltaOperations.StreamingUpdate(outputMode, queryId, batchId, options.userMetadata
                                                )

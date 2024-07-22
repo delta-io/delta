@@ -135,6 +135,30 @@ public class Metadata {
         );
     }
 
+    @Override
+    public String toString() {
+        List<String> partitionColumnsStr = VectorUtils.toJavaList(partitionColumns);
+        StringBuilder sb = new StringBuilder();
+        sb.append("List(");
+        for (String partitionColumn : partitionColumnsStr) {
+            sb.append(partitionColumn).append(", ");
+        }
+        if (sb.substring(sb.length() - 2).equals(", ")) {
+            sb.setLength(sb.length() - 2);  // Remove the last comma and space
+        }
+        sb.append(")");
+        return "Metadata{" +
+                "id='" + id + '\'' +
+                ", name=" + name +
+                ", description=" + description +
+                ", format=" + format +
+                ", schemaString='" + schemaString + '\'' +
+                ", partitionColumns=" + sb +
+                ", createdTime=" + createdTime +
+                ", configuration=" + configuration.get() +
+                '}';
+    }
+
     public String getSchemaString() {
         return schemaString;
     }
