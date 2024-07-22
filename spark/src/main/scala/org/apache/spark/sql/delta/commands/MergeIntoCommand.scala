@@ -113,7 +113,7 @@ case class MergeIntoCommand(
           source,
           condition,
           matchedClauses,
-          notMatchedClauses,
+          notMatchedClausesForInsertExpressions,
           isInsertOnly)
 
         val mergeActions = {
