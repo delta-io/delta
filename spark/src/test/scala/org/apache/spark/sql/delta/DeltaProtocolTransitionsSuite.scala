@@ -29,7 +29,7 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait DeltaProtocolTransitionsBaseSuite
-  extends QueryTest
+    extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest {
 
