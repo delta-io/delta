@@ -159,9 +159,8 @@ public class Checkpointer {
                 }
                 currentVersion -= 1000; // search for checkpoint in previous 1000 entries
             } catch (IOException e) {
-                String msg = String.format(
-                    "Failed to list checkpoint files for version %s in %s.",
-                    version, tableLogPath);
+                String msg = String.format("Failed to list checkpoint files for version %s in %s.",
+                        version, tableLogPath);
                 logger.warn(msg, e);
                 return new Tuple2<>(Optional.empty(), numberOfFilesSearched);
             }

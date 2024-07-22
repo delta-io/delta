@@ -129,13 +129,13 @@ public class TransactionImpl
                     return doCommit(engine, commitAsVersion, dataActions);
                 } catch (FileAlreadyExistsException fnfe) {
                     logger.info("Concurrent write detected when committing as version = {}. " +
-                        "Trying to resolve conflicts and retry commit.", commitAsVersion);
+                            "Trying to resolve conflicts and retry commit.", commitAsVersion);
                     TransactionRebaseState rebaseState = ConflictChecker
-                        .resolveConflicts(engine, readSnapshot, commitAsVersion, this);
+                            .resolveConflicts(engine, readSnapshot, commitAsVersion, this);
                     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
                     checkArgument(commitAsVersion < newCommitAsVersion,
-                        "New commit version %d should be greater than the previous commit " +
-                            "attempt version %d.", newCommitAsVersion, commitAsVersion);
+                            "New commit version %d should be greater than the previous commit " +
+                                    "attempt version %d.", newCommitAsVersion, commitAsVersion);
                     commitAsVersion = newCommitAsVersion;
                 }
                 numRetries++;
