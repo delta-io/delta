@@ -93,7 +93,7 @@ public class SnapshotImpl implements Snapshot {
     public CreateCheckpointIterator getCreateCheckpointIterator(
             Engine engine) {
         long minFileRetentionTimestampMillis =
-                System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
+                System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(engine, metadata);
         return new CreateCheckpointIterator(engine,
                 logSegment,
                 minFileRetentionTimestampMillis
@@ -141,7 +141,7 @@ public class SnapshotImpl implements Snapshot {
      * @return the timestamp of the latest commit
      */
     public long getTimestamp(Engine engine) {
-        if (TableConfig.isICTEnabled(metadata)) {
+        if (TableConfig.isICTEnabled(engine, metadata)) {
             if (!inCommitTimestampOpt.isPresent()) {
                 try {
                     Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(

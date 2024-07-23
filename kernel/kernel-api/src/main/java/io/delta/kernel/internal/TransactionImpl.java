@@ -245,7 +245,7 @@ public class TransactionImpl
 
             return new TransactionCommitResult(
                     commitAsVersion,
-                    isReadyForCheckpoint(commitAsVersion));
+                    isReadyForCheckpoint(engine, commitAsVersion));
         } catch (FileAlreadyExistsException e) {
             throw e;
         } catch (IOException ioe) {
@@ -269,7 +269,7 @@ public class TransactionImpl
      */
     private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
             Engine engine, long currentTimestamp) {
-        if (isICTEnabled(metadata)) {
+        if (isICTEnabled(engine, metadata)) {
             long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
             return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
         } else {
@@ -291,8 +291,8 @@ public class TransactionImpl
         );
     }
 
-    private boolean isReadyForCheckpoint(long newVersion) {
-        int checkpointInterval = CHECKPOINT_INTERVAL.fromMetadata(metadata);
+    private boolean isReadyForCheckpoint(Engine engine, long newVersion) {
+        int checkpointInterval = CHECKPOINT_INTERVAL.fromMetadata(engine, metadata);
         return newVersion > 0 && newVersion % checkpointInterval == 0;
     }
 

@@ -16,9 +16,10 @@
 package io.delta.kernel.test
 
 import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
-
-import io.delta.kernel.data.ColumnVector
+import io.delta.kernel.data.{ColumnVector, MapValue}
+import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
+import scala.collection.JavaConverters._
 
 trait VectorTestUtils {
 
@@ -47,6 +48,21 @@ trait VectorTestUtils {
       override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getString(rowId: Int): String = values(rowId)
+    }
+  }
+
+  protected def mapTypeVector(values: Seq[Map[String, String]]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = new MapType(StringType.STRING, StringType.STRING, true)
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getMap(rowId: Int): MapValue =
+        VectorUtils.stringStringMapValue(values(rowId).asJava)
     }
   }
 

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.actions.Metadata;
@@ -161,13 +162,15 @@ public class TableFeatures {
      * enabled when the delta property name (delta.enableInCommitTimestamps-preview) is set to true
      * in the metadata if it is not already enabled.
      *
+     * @param engine the engine to use for IO operations
      * @param metadata the metadata of the table
+     * @param protocol the protocol of the table
      * @return the writer features that should be enabled automatically
      */
     public static Set<String> extractAutomaticallyEnabledWriterFeatures(
-            Metadata metadata, Protocol protocol) {
+            Engine engine, Metadata metadata, Protocol protocol) {
         return TableFeatures.SUPPORTED_WRITER_FEATURES.stream()
-                .filter(f -> metadataRequiresWriterFeatureToBeEnabled(metadata, f))
+                .filter(f -> metadataRequiresWriterFeatureToBeEnabled(engine, metadata, f))
                 .filter(f -> protocol.getWriterFeatures() == null ||
                         !protocol.getWriterFeatures().contains(f))
                 .collect(Collectors.toSet());
@@ -207,15 +210,16 @@ public class TableFeatures {
      * Determine whether a writer feature must be supported and enabled to satisfy the metadata
      * requirements.
      *
+     * @param engine the engine to use for IO operations
      * @param metadata the table metadata
      * @param feature the writer feature to check
      * @return whether the writer feature must be enabled
      */
     private static boolean metadataRequiresWriterFeatureToBeEnabled(
-            Metadata metadata, String feature) {
+            Engine engine, Metadata metadata, String feature) {
         switch (feature) {
             case "inCommitTimestamp-preview":
-                return TableConfig.isICTEnabled(metadata);
+                return TableConfig.isICTEnabled(engine, metadata);
             default:
                 return false;
         }
