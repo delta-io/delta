@@ -41,6 +41,11 @@ trait WriteDeltaHMSReadIceberg extends UniFormE2ETest with DeltaSQLCommandTest w
 }
 
 class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaHMSReadIceberg {
+  /**
+   * Upgrade the default test table to `icebergCompatVersion`.
+   *
+   * @param icebergCompatVersion the version to upgrade the table.
+   */
   private def runReorgUpgradeUniform(icebergCompatVersion: Int): Unit = {
     write(
       s"""
@@ -50,6 +55,13 @@ class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaH
     )
   }
 
+  /**
+   * Check `AddFile.tags` exist or not for all the current files in
+   * the default test table.
+   *
+   * @param tagsShouldExist whether the tags should exist for the table.
+   * @param value if exist, what should the value of the tags be.
+   */
   private def assertTagsExistForLatestSnapshot(
       tagsShouldExist: Boolean,
       value: String = null): Unit = {
@@ -63,6 +75,9 @@ class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaH
     }
   }
 
+  /**
+   * Add `IcebergCompatV1` tags to default test table, only used for testing.
+   */
   private def addMockIcebergCompatV1Tags(): Unit = {
     val log = DeltaLog.forTable(spark, new TableIdentifier(testTableName))
     val snapshot = log.update()
