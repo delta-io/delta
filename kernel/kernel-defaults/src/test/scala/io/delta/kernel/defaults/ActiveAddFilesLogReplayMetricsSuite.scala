@@ -34,7 +34,7 @@ import org.scalatest.funsuite.AnyFunSuite
 class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
 
   test("active add files log replay metrics: only delta files") {
-    withTempDirAndEngine { (path, engine) =>
+    withTmpDirAndEngine { (path, engine) =>
       for (_ <- 0 to 9) {
         appendCommit(path)
       }
@@ -51,7 +51,7 @@ class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
   Seq(true, false).foreach { multipartCheckpoint =>
     val checkpointStr = if (multipartCheckpoint) "multipart " else ""
     test(s"active add files log replay metrics: ${checkpointStr}checkpoint + delta files") {
-      withTempDirAndEngine { (path, engine) =>
+      withTmpDirAndEngine { (path, engine) =>
         for (_ <- 0 to 3) {
           appendCommit(path)
         }
@@ -74,7 +74,7 @@ class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
     val checkpointStr = if (multipartCheckpoint) "multipart " else ""
     test(s"active add files log replay metrics: ${checkpointStr}checkpoint + " +
         s"delta files + tombstones") {
-      withTempDirAndEngine { (path, engine) =>
+      withTmpDirAndEngine { (path, engine) =>
         for (_ <- 0 to 3) {
           appendCommit(path)
         } // has 8 add files
@@ -102,7 +102,7 @@ class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
     val checkpointStr = if (multipartCheckpoint) "multipart " else ""
     test(s"active add files log replay metrics: ${checkpointStr}checkpoint + delta files +" +
         s" tombstones + duplicate adds") {
-      withTempDirAndEngine { (path, engine) =>
+      withTmpDirAndEngine { (path, engine) =>
         for (_ <- 0 to 1) {
           appendCommit(path)
         } // activeAdds = 4
@@ -161,7 +161,7 @@ class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
     checkTable(tablePath, expResults)
   }
 
-  def withTempDirAndEngine(f: (String, Engine) => Unit): Unit = {
+  def withTmpDirAndEngine(f: (String, Engine) => Unit): Unit = {
     val engine = DefaultEngine.create(new Configuration() {
       {
         // Set the batch sizes to small so that we get to test the multiple batch scenarios.

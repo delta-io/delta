@@ -28,6 +28,15 @@ public class DefaultEngineErrors {
         return new IllegalArgumentException(msg, cause);
     }
 
+    public static IllegalArgumentException canNotInstantiateCommitCoordinatorBuilder(
+            String commitCoordinatorBuilderClassName, String context, Exception cause) {
+        String msg = format(
+                "Can not instantiate `CommitCoordinatorBuilder` class (%s): %s",
+                context,
+                commitCoordinatorBuilderClassName);
+        return new IllegalArgumentException(msg, cause);
+    }
+
     /**
      * Exception for when the default expression evaluator cannot evaluate an expression.
      * @param expression the unsupported expression

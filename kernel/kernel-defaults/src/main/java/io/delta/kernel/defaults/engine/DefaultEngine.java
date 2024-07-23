@@ -55,7 +55,7 @@ public class DefaultEngine
     @Override
     public CommitCoordinatorClientHandler getCommitCoordinatorClientHandler(
             String name, Map<String, String> conf) {
-        throw new UnsupportedOperationException("CommitCoordinatorClientHandler is not supported.");
+        return new DefaultCommitCoordinatorClientHandler(hadoopConf, name, conf);
     }
 
     /**
