@@ -23,6 +23,7 @@ import java.util.function.Predicate;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.types.MapType;
 import io.delta.kernel.types.StringType;
@@ -33,6 +34,7 @@ import io.delta.kernel.internal.util.IntervalParserUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.util.InternalUtils.getSingularElement;
 import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Represents the table properties. Also provides methods to access the property values
@@ -141,11 +143,7 @@ public class TableConfig<T> {
             new TableConfig<>(
                     "delta.coordinatedCommits.commitCoordinatorConf-preview",
                     null, /* default values */
-                    (engineOpt, v) -> {
-                        Engine engine = engineOpt.orElseThrow(
-                                () -> new IllegalStateException("Engine is not provided"));
-                        return parseJSONKeyValueMap(engine, v);
-                    },
+                    TableConfig::parseJSONKeyValueMap,
                     value -> true,
                     "A string-to-string map of configuration properties for the" +
                             " coordinated commits-coordinator."
@@ -159,11 +157,7 @@ public class TableConfig<T> {
             new TableConfig<>(
                     "delta.coordinatedCommits.tableConf-preview",
                     null, /* default values */
-                    (engineOpt, v) -> {
-                        Engine engine = engineOpt.orElseThrow(
-                                () -> new IllegalStateException("Engine is not provided"));
-                        return parseJSONKeyValueMap(engine, v);
-                    },
+                    TableConfig::parseJSONKeyValueMap,
                     value -> true,
                     "A string-to-string map of configuration properties for" +
                             "  describing the table to commit-coordinator."
@@ -187,14 +181,14 @@ public class TableConfig<T> {
 
     private final String key;
     private final String defaultValue;
-    private final BiFunction<Optional<Engine>, String, T> fromString;
+    private final BiFunction<Engine, String, T> fromString;
     private final Predicate<T> validator;
     private final String helpMessage;
 
     private TableConfig(
             String key,
             String defaultValue,
-            BiFunction<Optional<Engine>, String, T> fromString,
+            BiFunction<Engine, String, T> fromString,
             Predicate<T> validator,
             String helpMessage) {
         this.key = key;
@@ -213,8 +207,8 @@ public class TableConfig<T> {
      */
     public T fromMetadata(Engine engine, Metadata metadata) {
         String value = metadata.getConfiguration().getOrDefault(key, defaultValue);
-        validate(Optional.of(engine), value);
-        return fromString.apply(Optional.of(engine), value);
+        validate(engine, value);
+        return fromString.apply(engine, value);
     }
 
     /**
@@ -244,7 +238,7 @@ public class TableConfig<T> {
             if (key.startsWith("delta.")) {
                 TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
                 if (tableConfig != null) {
-                    tableConfig.validate(Optional.of(engine), value);
+                    tableConfig.validate(engine, value);
                     validatedConfigurations.put(tableConfig.getKey(), value);
                 } else {
                     throw DeltaErrors.unknownConfigurationException(key);
@@ -260,17 +254,6 @@ public class TableConfig<T> {
         return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(engine, metadata);
     }
 
-    private void validate(Optional<Engine> engineOpt, String value) {
-        T parsedValue = fromString.apply(engineOpt, value);
-        if (!validator.test(parsedValue)) {
-            throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
-        }
-    }
-
-    private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
-        configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
-    }
-
     /**
      * Parse the given JSON string into a map of key-value pairs. The JSON string should be in the
      * format of """{"key1": "value1", "key2": "value2", ...}""" whose keys and values are strings.
@@ -279,7 +262,7 @@ public class TableConfig<T> {
      * @param jsonString the JSON string to parse
      * @return the map of key-value pairs
      */
-    private static Map<String, String> parseJSONKeyValueMap(Engine engine, String jsonString) {
+    protected static Map<String, String> parseJSONKeyValueMap(Engine engine, String jsonString) {
         if (jsonString == null) {
             return Collections.emptyMap();
         }
@@ -288,18 +271,28 @@ public class TableConfig<T> {
         // MapType(StringType, StringType) using existing engine.getJsonHandler().parseJson API.
         StructType schema = new StructType()
                 .add("config", new MapType(StringType.STRING, StringType.STRING, true));
-        CloseableIterator<Row> batchRows = engine.getJsonHandler().parseJson(
+        try (CloseableIterator<Row> batchRows = engine.getJsonHandler().parseJson(
                 singletonStringColumnVector(String.format("{\"config\": %s}", jsonString)),
                 schema,
-                Optional.empty()
-        ).getRows();
-        try {
+                Optional.empty()).getRows()) {
             Row row = getSingularElement(batchRows).orElseThrow(
-                    () -> new IllegalStateException("Iterator should not be empty"));
-            assert !row.isNullAt(0);
+                    () -> new IllegalStateException(
+                            String.format("Unable to parse %s", jsonString)));
+            checkArgument(!row.isNullAt(0));
             return VectorUtils.toJavaMap(row.getMap(0));
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new KernelException(e);
         }
+    }
+
+    private void validate(Engine engine, String value) {
+        T parsedValue = fromString.apply(engine, value);
+        if (!validator.test(parsedValue)) {
+            throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
+        }
+    }
+
+    private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
+        configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
     }
 }

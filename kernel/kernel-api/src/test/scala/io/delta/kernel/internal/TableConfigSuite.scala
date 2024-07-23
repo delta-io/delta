@@ -15,85 +15,75 @@
  */
 package io.delta.kernel.internal
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue}
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue, Row}
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.{stringArrayValue, stringVector}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.{DataType, MapType, StringType, StructType}
+import io.delta.kernel.utils.CloseableIterator
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.io.IOException
 import java.util.{Collections, Optional}
 import scala.collection.JavaConverters._
 
 class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
-  def getEmptyMetadata: Metadata = {
-    new Metadata(
-      java.util.UUID.randomUUID().toString,
-      Optional.empty(),
-      Optional.empty(),
-      new Format(),
-      "",
-      null,
-      stringArrayValue(Collections.emptyList()),
-      Optional.empty(),
-      VectorUtils.stringStringMapValue(Collections.emptyMap())
-    )
-  }
 
-  test("Coordinated Commit Related Properties from Metadata") {
+  test("Parse Map[String, String] type table config") {
     val expMap = Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\"")
-    val engine1 = mockEngine(jsonHandler = new KeyValueJsonHandler(expMap))
-    val m1 = getEmptyMetadata.withNewConfiguration(
-      Map(
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "cc-name",
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey ->
-          """{"key1": "string_value", "key2Int": "2", "key3ComplexStr": "\"hello\""}""",
-        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey ->
-          """{"key1": "string_value", "key2Int": "2", "key3ComplexStr": "\"hello\""}""").asJava
-    )
-    assert(TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetadata(engine1, m1) ===
-      Optional.of("cc-name"))
+    val engine = mockEngine(jsonHandler = new KeyValueJsonHandler(expMap))
+    assert(
+      TableConfig.parseJSONKeyValueMap(
+        engine,
+        """{"key1": "string_value", "key2Int": "2", "key3ComplexStr": "\"hello\""}""") ===
+        expMap.asJava)
 
-    assert(TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(engine1, m1) ===
-      expMap.asJava)
-
-    assert(TableConfig.COORDINATED_COMMITS_TABLE_CONF.fromMetadata(engine1, m1) ===
-      expMap.asJava)
-
-    val engine2 = mockEngine(jsonHandler = new RuntimeExceptionJsonHandler)
-    val m2 = getEmptyMetadata.withNewConfiguration(
-      Map(
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> null,
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey ->
-          """{"key1": "string_value", "key2Int": "2""",
-        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey ->
-          """{"key1": "string_value", "key2Int": "2""").asJava
-    )
-    assert(TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetadata(engine2, m2) ===
-      Optional.empty())
-    intercept[RuntimeException] {
-      TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(engine2, m2)
+    val engine1 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(0))
+    val e1 = intercept[IllegalStateException] {
+      TableConfig.parseJSONKeyValueMap(engine1, """{"key": "value"}""")
     }
-    intercept[RuntimeException] {
-      TableConfig.COORDINATED_COMMITS_TABLE_CONF.fromMetadata(engine2, m2)
+    assert(e1.getMessage.contains("""Unable to parse {"key": "value"}"""))
+
+    val engine2 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(2))
+    val e2 = intercept[IllegalArgumentException] {
+      TableConfig.parseJSONKeyValueMap(engine2, """{"key": "value"}""")
     }
+    assert(e2.getMessage.contains("Iterator contains more than one element"))
+
+    val errMsg = "Close called failed"
+    val engine3 = mockEngine(jsonHandler = new ReturnCloseFailIteratorJsonHandler(errMsg))
+    val e3 = intercept[KernelException] {
+      TableConfig.parseJSONKeyValueMap(engine3, """{"key": "value"}""")
+    }
+    assert(e3.getMessage.contains(s"java.io.IOException: $errMsg"))
+
+    val engine4 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(1))
+    val e4 = intercept[IllegalArgumentException] {
+      TableConfig.parseJSONKeyValueMap(engine4, """{"key": "value"}""")
+    }
+    assert(e4.getMessage === null)
   }
 }
 
+/**
+ * Mock JsonHandler which returns a ColumnarBatch with a single row containing a Map[String, String]
+ * column.
+ */
 class KeyValueJsonHandler(map: Map[String, String]) extends BaseMockJsonHandler {
-  val schema: StructType =
+  val expSchema: StructType =
     new StructType().add("config", new MapType(StringType.STRING, StringType.STRING, true))
   override def parseJson(
     jsonStringVector: ColumnVector,
     outputSchema: StructType,
     selectionVector: Optional[ColumnVector]): ColumnarBatch = {
+    assert(outputSchema == expSchema)
     new ColumnarBatch {
-      override def getSchema: StructType = schema
+      override def getSchema: StructType = outputSchema
 
       override def getColumnVector(ordinal: Int): ColumnVector = {
         ordinal match {
-          case 0 => mapTypeVector(map.keys.toSeq, map.values.toSeq) // path
+          case 0 => mapTypeVector(map)
         }
       }
 
@@ -101,7 +91,7 @@ class KeyValueJsonHandler(map: Map[String, String]) extends BaseMockJsonHandler 
     }
   }
 
-  def mapTypeVector(keys: Seq[String], values: Seq[String]): ColumnVector = {
+  def mapTypeVector(map: Map[String, String]): ColumnVector = {
     new ColumnVector {
       override def getDataType: DataType = new MapType(StringType.STRING, StringType.STRING, true)
 
@@ -111,21 +101,63 @@ class KeyValueJsonHandler(map: Map[String, String]) extends BaseMockJsonHandler 
 
       override def isNullAt(rowId: Int): Boolean = rowId >= 1
 
-      override def getMap(rowId: Int): MapValue = new MapValue {
-
-        override def getSize: Int = keys.size
-
-        override def getKeys: ColumnVector = stringVector(keys.asJava)
-
-        override def getValues: ColumnVector = stringVector(values.asJava)
-      }
+      override def getMap(rowId: Int): MapValue = VectorUtils.stringStringMapValue(map.asJava)
     }
   }
 }
 
-class RuntimeExceptionJsonHandler extends BaseMockJsonHandler {
+/**
+ * Mock JsonHandler which returns a ColumnarBatch with nRow rows containing a single null column.
+ */
+class ReturnNullRowsJsonHandler(nRow: Int) extends BaseMockJsonHandler {
   override def parseJson(
     jsonStringVector: ColumnVector,
     outputSchema: StructType,
-    selectionVector: Optional[ColumnVector]): ColumnarBatch = throw new RuntimeException()
+    selectionVector: Optional[ColumnVector]): ColumnarBatch = {
+    new ColumnarBatch {
+      override def getSchema: StructType = outputSchema
+
+      override def getColumnVector(ordinal: Int): ColumnVector = {
+        stringVector(List.fill(nRow)(null).asInstanceOf[List[String]].asJava)
+      }
+
+      override def getSize: Int = nRow
+    }
+  }
+}
+
+/**
+ * Mock JsonHandler which returns a ColumnarBatch with an iterator that throws an IOException when
+ * close is called.
+ */
+class ReturnCloseFailIteratorJsonHandler(errMsg: String) extends BaseMockJsonHandler {
+  override def parseJson(
+    jsonStringVector: ColumnVector,
+    outputSchema: StructType,
+    selectionVector: Optional[ColumnVector]): ColumnarBatch = {
+    new ColumnarBatch {
+      override def getSchema: StructType = outputSchema
+
+      override def getColumnVector(ordinal: Int): ColumnVector = null
+
+      override def getSize: Int = 1
+
+      override def getRows: CloseableIterator[Row] = {
+        new CloseableIterator[Row] {
+          var rowId = 0
+
+          override def hasNext: Boolean = rowId < 1
+
+          override def next(): Row = {
+            rowId += 1
+            null
+          }
+
+          override def close(): Unit = {
+            throw new IOException(errMsg)
+          }
+        }
+      }
+    }
+  }
 }
