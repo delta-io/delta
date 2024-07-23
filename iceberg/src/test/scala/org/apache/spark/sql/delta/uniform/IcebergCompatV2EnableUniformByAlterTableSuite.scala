@@ -23,11 +23,13 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, Snapshot}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.uniform.hms.HMSTest
 
 trait IcebergCompatV2ParquetTestUtilsBase extends WriteDeltaHMSReadIceberg {
+  override val compatVersion: Int = 2
+
   /**
    * Assert the invariance between old and new parquet footers,
    * this will check if the number of overlapped parquet footers
@@ -176,6 +178,9 @@ trait IcebergCompatV2ParquetTestUtilsBase extends WriteDeltaHMSReadIceberg {
          | CREATE TABLE $id (id INT, name STRING, date TIMESTAMP)
          | USING DELTA
          | PARTITIONED BY (id)
+         | TBLPROPERTIES (
+         |   'delta.enableDeletionVectors' = 'true'
+         | )
          |""".stripMargin
     )
   }
@@ -290,22 +295,6 @@ trait IcebergCompatV2ParquetTestUtilsBase extends WriteDeltaHMSReadIceberg {
   }
 
   /**
-   * Ensure the clustering columns for the table match with the expected column.
-   *
-   * @param id the table id used for creation.
-   * @param col the expected column.
-   */
-  protected def assertLiquidTableProperties(id: String, col: String): Unit = {
-    val tableMetadata = spark.sessionState.catalog.getTableMetadata(new TableIdentifier(id))
-    val clusteringColumns = tableMetadata.properties.getOrElse("clusteringColumns", "")
-    val expectedColumn = "[[\"" + s"$col" + "\"]]"
-    assert(
-      clusteringColumns == expectedColumn,
-      s"expect `clusterColumns` to be $expectedColumn, but get $clusteringColumns"
-    )
-  }
-
-  /**
    * Get all parquet footers of data files for the specified table.
    *
    * @param spark the spark session used to get the footers.
@@ -344,7 +333,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
    * @param id the table to be altered.
    */
   private def enforceDeltaUniformRequireProperties(id: String): Unit = {
-    sql(
+    write(
       s"""
          | ALTER TABLE $id
          | SET TBLPROPERTIES (
@@ -363,7 +352,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
    * @param id the table id used for ALTER TABLE to enable `IcebergCompatV2`.
    */
   private def enableIcebergCompatV2ByAlterTable(id: String): Unit = {
-    sql(
+    write(
       s"""
          | ALTER TABLE $id
          | SET TBLPROPERTIES (
@@ -381,8 +370,8 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
    * @param id the table id.
    * @param loc the table location.
    */
-  private def alterTableToEnableIcebergCompatV2BaseCase(id: String, loc: String): Unit = {
-    createVanillaDeltaTableWithDV(id, loc)
+  private def alterTableToEnableIcebergCompatV2BaseCase(id: String): Unit = {
+    createVanillaDeltaTableWithDV(id)
     insertInitialRowsIntoTable(id)
 
     val parquetFooters1 = getParquetFooters(spark, id)
@@ -396,7 +385,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
     assertParquetFootersProperties(
       oldParquetFooters = parquetFooters1,
       newParquetFooters = parquetFooters2,
-      expectedNumOfOverlappedParquetFiles = 2,
+      expectedNumOfOverlappedParquetFiles = 3,
       expectedNumOfAddedParquetFiles = 2,
       isOverlappedIcebergCompatV2 = false,
       isAddedIcebergCompatV2 = true
@@ -406,17 +395,17 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
   }
 
   test("Enable IcebergCompatV2 By ALTER TABLE Base Case") {
-    withTempTableAndDir { case (id, loc) =>
-      alterTableToEnableIcebergCompatV2BaseCase(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      alterTableToEnableIcebergCompatV2BaseCase(id)
     }
   }
 
   test("Enable IcebergCompatV2 For Vanilla Table By ALTER TABLE With Deletion Vectors Disabled") {
-    withTempTableAndDir { case (id, loc) =>
-      createVanillaDeltaTableWithoutDV(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      createVanillaDeltaTableWithoutDV(id)
       insertInitialRowsIntoTable(id)
 
-      sql(
+      write(
         s"""
            | ALTER TABLE $id
            | SET TBLPROPERTIES (
@@ -436,7 +425,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
       assertParquetFootersProperties(
         oldParquetFooters = parquetFooters1,
         newParquetFooters = parquetFooters2,
-        expectedNumOfOverlappedParquetFiles = 2,
+        expectedNumOfOverlappedParquetFiles = 3,
         expectedNumOfAddedParquetFiles = 2,
         isOverlappedIcebergCompatV2 = false,
         isAddedIcebergCompatV2 = true
@@ -447,11 +436,11 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
   }
 
   test("Enable IcebergCompatV2 By ALTER TABLE With Purging Deletion Vectors") {
-    withTempTableAndDir { case (id, loc) =>
-      createVanillaDeltaTableWithDV(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      createVanillaDeltaTableWithDV(id)
       insertInitialRowsIntoTable(id)
 
-      sql(
+      write(
         s"""
            | DELETE FROM $id
            | WHERE name = 'Alex'
@@ -462,7 +451,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
       // note: this may be different if `autoOptimize` has been enabled,
       // which will automatically rewrite the parquet file with DV when
       // the above DELETE FROM command is triggered.
-      sql(
+      write(
         s"""
            | REORG TABLE $id APPLY (PURGE)
            |""".stripMargin
@@ -490,12 +479,12 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
   }
 
   test("REORG UPGRADE UNIFORM Should Rewrite All Parquet Files To Be IcebergCompatV2") {
-    withTempTableAndDir { case (id, loc) =>
-      alterTableToEnableIcebergCompatV2BaseCase(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      alterTableToEnableIcebergCompatV2BaseCase(id)
 
       // run the REORG UPGRADE UNIFORM command to rewrite the portion of
       // parquet files that are not `IcebergCompatV2`.
-      sql(
+      write(
         s"""
            | REORG TABLE $id APPLY
            | (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = 2))
@@ -513,8 +502,8 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
   // TODO: update this test when automatically disable V1 is supported when upgrading
   //       from an existing `IcebergCompatV1` table.
   test("Manually Enable V2 and Disable V1 When Upgrading From an IcebergCompatV1 Table") {
-    withTempTableAndDir { case (id, loc) =>
-      createIcebergCompatV1Table(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      createIcebergCompatV1Table(id)
       insertInitialRowsIntoTable(id)
 
       val parquetFooters1 = getParquetFooters(spark, id)
@@ -529,7 +518,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
 
       // enable `IcebergCompatV2` for the `IcebergCompatV1` table.
       // note that `IcebergCompatV1` needs to be disabled *manually* as for now.
-      sql(
+      write(
         s"""
            | ALTER TABLE $id
            | SET TBLPROPERTIES (
@@ -546,7 +535,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
       assertParquetFootersProperties(
         oldParquetFooters = parquetFooters1,
         newParquetFooters = parquetFooters2,
-        expectedNumOfOverlappedParquetFiles = 2,
+        expectedNumOfOverlappedParquetFiles = 3,
         expectedNumOfAddedParquetFiles = 2,
         isOverlappedIcebergCompatV2 = true,
         isAddedIcebergCompatV2 = true
@@ -567,11 +556,11 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
   }
 
   test("Deletion Vectors Needs To Be Disabled Before Enabling IcebergCompatV2 By ALTER TABLE") {
-    withTempTableAndDir { case (id, loc) =>
-      createVanillaDeltaTableWithDV(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      createVanillaDeltaTableWithDV(id)
       insertInitialRowsIntoTable(id)
 
-      sql(
+      write(
         s"""
            | ALTER TABLE $id
            | SET TBLPROPERTIES (
@@ -587,54 +576,15 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
     }
   }
 
-  test("Deletion Vectors Needs To Be Purged Before Enabling IcebergCompatV2 By ALTER TABLE") {
-    withTempTableAndDir { case (id, loc) =>
-      createVanillaDeltaTableWithDV(id, loc)
-      insertInitialRowsIntoTable(id)
-
-      sql(
-        s"""
-           | DELETE FROM $id
-           | WHERE name = 'Cat'
-           |""".stripMargin
-      )
-
-      sql(
-        s"""
-           | ALTER TABLE $id
-           | SET TBLPROPERTIES (
-           |   'delta.enableDeletionVectors' = 'false',
-           |   'delta.columnMapping.mode' = 'name'
-           | )
-           |""".stripMargin
-      )
-
-      val ex = intercept[DeltaUnsupportedOperationException](
-        sql(
-          s"""
-             | ALTER TABLE $id
-             | SET TBLPROPERTIES (
-             |   'delta.enableIcebergCompatV2' = 'true',
-             |   'delta.universalFormat.enabledFormats' = 'iceberg'
-             | )
-             |""".stripMargin
-        )
-      )
-      assertResult(
-        "DELTA_ICEBERG_COMPAT_VIOLATION.DELETION_VECTORS_NOT_PURGED"
-      )(ex.getErrorClass)
-    }
-  }
-
   test("Enabling V1 and V2 At The Same Time For Vanilla Delta Table Should Fail") {
-    withTempTableAndDir { case (id, loc) =>
-      createVanillaDeltaTableWithDV(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      createVanillaDeltaTableWithDV(id)
       insertInitialRowsIntoTable(id)
 
       enforceDeltaUniformRequireProperties(id)
 
       val ex = intercept[DeltaUnsupportedOperationException](
-        sql(
+        write(
           s"""
              | ALTER TABLE $id
              | SET TBLPROPERTIES (
@@ -652,14 +602,14 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
   }
 
   test("Enabling V1 and V2 At The Same Time For IcebergCompatV1 Delta Uniform Table Should Fail") {
-    withTempTableAndDir { case (id, loc) =>
-      createIcebergCompatV1Table(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      createIcebergCompatV1Table(id)
       insertInitialRowsIntoTable(id)
 
       enforceDeltaUniformRequireProperties(id)
 
       val ex = intercept[DeltaUnsupportedOperationException](
-        sql(
+        write(
           s"""
              | ALTER TABLE $id
              | SET TBLPROPERTIES (
@@ -677,8 +627,8 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
   }
 
   test("Disable Column-Mapping When Enabling IcebergCompatV2 By ALTER TABLE Should Fail") {
-    withTempTableAndDir { case (id, loc) =>
-      createVanillaDeltaTableWithDV(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      createVanillaDeltaTableWithDV(id)
       insertInitialRowsIntoTable(id)
 
       enforceDeltaUniformRequireProperties(id)
@@ -686,7 +636,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
       // disable column-mapping when enabling `IcebergCompatV2`
       // delta uniform by ALTER TABLE should fail
       val ex = intercept[DeltaUnsupportedOperationException](
-        sql(
+        write(
           s"""
              | ALTER TABLE $id
              | SET TBLPROPERTIES (
@@ -703,42 +653,15 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
     }
   }
 
-  test("Enable UniForm By Altering Liquid Table") {
-    withTempTableAndDir { case (id, loc) =>
-      createLiquidDeltaTable(id, loc)
-      insertInitialRowsIntoTable(id)
-
-      val parquetFooters1 = getParquetFooters(spark, id)
-
-      enforceDeltaUniformRequireProperties(id)
-      enableIcebergCompatV2ByAlterTable(id)
-
-      insertAdditionalRowsIntoTable(id)
-
-      // sanity check for the liquid table properties
-      assertLiquidTableProperties(id, "id")
-
-      val parquetFooters2 = getParquetFooters(spark, id)
-      assertParquetFootersProperties(
-        oldParquetFooters = parquetFooters1,
-        newParquetFooters = parquetFooters2,
-        expectedNumOfOverlappedParquetFiles = 1,
-        expectedNumOfAddedParquetFiles = 1,
-        isOverlappedIcebergCompatV2 = false,
-        isAddedIcebergCompatV2 = true
-      )
-    }
-  }
-
   test("Enable UniForm With LIST, MAP, and Column-Mapping Enabled By ALTER TABLE") {
-    withTempTableAndDir { case (id, loc) =>
-      createDeltaTableWithNestedTypesAndColumnMapping(id, loc)
+    withTempTableAndDir { case (id, _) =>
+      createDeltaTableWithNestedTypesAndColumnMapping(id)
       insertRowToDeltaTableWithNestedTypesAndColumnMapping(id)
 
       val parquetFooters1 = getParquetFooters(spark, id)
 
       // only DV needs to be disabled here
-      sql(
+      write(
         s"""
            | ALTER TABLE $id
            | SET TBLPROPERTIES (

@@ -16,9 +16,14 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkSessionSwitch
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.{ColumnMappingTableFeature, DeltaLog, FeatureAutomaticallyEnabledByMetadata, IcebergCompatV1TableFeature, IcebergCompatV2TableFeature, UniversalFormat, WriterFeature}
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
+
+import java.util.UUID
 
 /**
  * Base classes for all UniForm end-to-end test cases. Provides support to
@@ -37,6 +42,78 @@ trait UniFormE2ETest
   with SparkSessionSwitch {
 
   private var _readerSparkSession: Option[SparkSession] = None
+
+  val compatVersion: Int = -1
+
+  val allCompatVersions: Seq[Int] = Seq(1, 2)
+
+  val allCompatTFs: Seq[WriterFeature with FeatureAutomaticallyEnabledByMetadata] =
+    Seq(IcebergCompatV1TableFeature, IcebergCompatV2TableFeature)
+
+  /**
+   * Executes `f` with params (tableId, tempPath).
+   *
+   * We want to use a temp directory in addition to a unique temp table so that when the async
+   * iceberg conversion runs and completes, the parent folder is still removed.
+   */
+  protected def withTempTableAndDir(f: (String, String) => Unit): Unit = {
+    val tableId = s"testTable${UUID.randomUUID()}".replace("-", "_")
+    withTempDir { dir =>
+      val tablePath = new Path(dir.toString, "table")
+
+      withTable(tableId) {
+        f(tableId, s"'$tablePath'")
+      }
+    }
+  }
+
+  /**
+   * Assert the protocol and properties for the specific iceberg compatible version.
+   *
+   * @param tableId the table to be checked.
+   * @param compatVersion the specific iceberg compatible version to check.
+   */
+  protected def assertIcebergCompatProtocolAndProperties(
+       tableId: String,
+       compatVersion: Int = compatVersion): Unit = {
+    assert(allCompatVersions.contains(compatVersion))
+
+    val snapshot = DeltaLog.forTable(spark, new TableIdentifier(tableId)).update()
+    val protocol = snapshot.protocol
+    val tblProperties = snapshot.getProperties
+    val tableFeature = allCompatTFs(compatVersion - 1)
+
+    val expectedMinReaderVersion = Math.max(
+      ColumnMappingTableFeature.minReaderVersion,
+      tableFeature.minReaderVersion
+    )
+
+    val expectedMinWriterVersion = Math.max(
+      ColumnMappingTableFeature.minWriterVersion,
+      tableFeature.minWriterVersion
+    )
+
+    assert(protocol.minReaderVersion >= expectedMinReaderVersion)
+    assert(protocol.minWriterVersion >= expectedMinWriterVersion)
+    assert(protocol.writerFeatures.get.contains(tableFeature.name))
+    assert(tblProperties(s"delta.enableIcebergCompatV$compatVersion") === "true")
+    assert(Seq("name", "id").contains(tblProperties("delta.columnMapping.mode")))
+  }
+
+  /**
+   * Assert UniForm Iceberg related protocol and properties.
+   *
+   * @param tableId the table to be checked.
+   * @param compatVersion the specific iceberg compatible version to check.
+   */
+  protected def assertUniFormIcebergProtocolAndProperties(
+      tableId: String,
+      compatVersion: Int = compatVersion): Unit = {
+    assertIcebergCompatProtocolAndProperties(tableId, compatVersion)
+
+    val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableId)).update()
+    assert(UniversalFormat.icebergEnabled(snapshot.metadata))
+  }
 
   /**
    * Execute write operations through the writer SparkSession
