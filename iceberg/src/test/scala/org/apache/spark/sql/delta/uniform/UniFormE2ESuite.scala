@@ -19,10 +19,9 @@ package org.apache.spark.sql.delta.uniform
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.uniform.{UniFormE2EIcebergSuiteBase, UniFormE2ETest}
 import org.apache.spark.SparkConf
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.uniform.hms.HMSTest
@@ -51,15 +50,28 @@ class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaH
     )
   }
 
-  private def assertTagsExistForLatestSnapshot(tagsShouldExist: Boolean): Unit = {
+  private def assertTagsExistForLatestSnapshot(
+      tagsShouldExist: Boolean,
+      value: String = null): Unit = {
     val snapshot = DeltaLog.forTable(spark, new TableIdentifier(testTableName)).update()
     snapshot.allFiles.collect().forall { addFile =>
       if (!tagsShouldExist) {
         addFile.tags == null
       } else {
-        addFile.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0") == "2"
+        addFile.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0") == value
       }
     }
+  }
+
+  private def addMockIcebergCompatV1Tags(): Unit = {
+    val log = DeltaLog.forTable(spark, new TableIdentifier(testTableName))
+    val snapshot = log.update()
+    val txn = log.startTransaction(None, Some(snapshot))
+    val updatedFiles = snapshot.allFiles.collect().map { file =>
+      file.copyWithTag(AddFile.Tags.ICEBERG_COMPAT_VERSION, "1")
+    }
+    txn.commitLarge(
+      spark, updatedFiles.toIterator, None, DeltaOperations.ManualUpdate, Map.empty, Map.empty)
   }
 
   test("Reorg Upgrade Uniform Basic Test") {
@@ -69,7 +81,7 @@ class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaH
       assertTagsExistForLatestSnapshot(tagsShouldExist = false)
 
       runReorgUpgradeUniform(icebergCompatVersion = 2)
-      assertTagsExistForLatestSnapshot(tagsShouldExist = true)
+      assertTagsExistForLatestSnapshot(tagsShouldExist = true, value = "2")
     }
   }
 
@@ -90,7 +102,20 @@ class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaH
       assertTagsExistForLatestSnapshot(tagsShouldExist = false)
 
       runReorgUpgradeUniform(icebergCompatVersion = 2)
-      assertTagsExistForLatestSnapshot(tagsShouldExist = true)
+      assertTagsExistForLatestSnapshot(tagsShouldExist = true, value = "2")
+    }
+  }
+
+  test("Reorg Upgrade Uniform Should Succeed If Tags Is Not Null") {
+    withTable(testTableName) {
+      write(s"CREATE TABLE $testTableName (id INT, name STRING) USING DELTA")
+      write(s"INSERT INTO $testTableName VALUES (1, 'Alex'), (2, 'Michael')")
+      assertTagsExistForLatestSnapshot(tagsShouldExist = false)
+      addMockIcebergCompatV1Tags()
+      assertTagsExistForLatestSnapshot(tagsShouldExist = true, value = "1")
+
+      runReorgUpgradeUniform(icebergCompatVersion = 2)
+      assertTagsExistForLatestSnapshot(tagsShouldExist = true, value = "2")
     }
   }
 }
