@@ -51,13 +51,13 @@ class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaH
     )
   }
 
-  private def assertTagsExistForLatestSnapshot(isNull: Boolean): Unit = {
+  private def assertTagsExistForLatestSnapshot(tagsShouldExist: Boolean): Unit = {
     val snapshot = DeltaLog.forTable(spark, new TableIdentifier(testTableName)).update()
     snapshot.allFiles.collect().forall { addFile =>
-      if (isNull) {
+      if (!tagsShouldExist) {
         addFile.tags == null
       } else {
-        addFile.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0").contains("2")
+        addFile.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0") == "2"
       }
     }
   }
@@ -66,10 +66,10 @@ class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaH
     withTable(testTableName) {
       write(s"CREATE TABLE $testTableName (id INT, name STRING) USING DELTA")
       write(s"INSERT INTO $testTableName VALUES (1, 'Alex'), (2, 'Michael')")
-      assertTagsExistForLatestSnapshot(isNull = true)
+      assertTagsExistForLatestSnapshot(tagsShouldExist = false)
 
       runReorgUpgradeUniform(icebergCompatVersion = 2)
-      assertTagsExistForLatestSnapshot(isNull = false)
+      assertTagsExistForLatestSnapshot(tagsShouldExist = true)
     }
   }
 
@@ -87,10 +87,10 @@ class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaH
            |""".stripMargin
       )
       write(s"INSERT INTO $testTableName VALUES (1, 'Alex'), (2, 'Michael')")
-      assertTagsExistForLatestSnapshot(isNull = true)
+      assertTagsExistForLatestSnapshot(tagsShouldExist = false)
 
       runReorgUpgradeUniform(icebergCompatVersion = 2)
-      assertTagsExistForLatestSnapshot(isNull = false)
+      assertTagsExistForLatestSnapshot(tagsShouldExist = true)
     }
   }
 }
