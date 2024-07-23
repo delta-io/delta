@@ -131,8 +131,9 @@ class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorg
     : Seq[AddFile] = {
     def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
       if (file.tags == null) return true
-      val icebergCompatVersion = file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
-      !icebergCompatVersion.exists(_.toString == icebergCompatVersion)
+      val fileIcebergCompatVersion =
+        file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
+      fileIcebergCompatVersion != icebergCompatVersion.toString
     }
     files.filter(shouldRewriteToBeIcebergCompatible)
   }
