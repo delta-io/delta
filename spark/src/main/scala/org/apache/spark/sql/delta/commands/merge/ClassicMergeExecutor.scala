@@ -387,8 +387,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     val (joinedAndPrecomputedConditionsDF, clausesWithPrecompConditions) =
         generatePrecomputedConditionsAndDF(
           joinedDF,
-          clauses = matchedClauses ++ notMatchedClausesForInsertExpressions ++
-            notMatchedBySourceClauses)
+          clauses = matchedClauses ++ notMatchedClauses ++ notMatchedBySourceClauses)
 
     // In case Row IDs are preserved, get the attribute expression of the Row ID column.
     val rowIdColumnExpressionOpt =

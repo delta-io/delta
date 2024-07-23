@@ -63,8 +63,6 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS) &&
       DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
   }
-  protected def notMatchedClausesForInsertExpressions: Seq[DeltaMergeIntoNotMatchedClause] =
-    notMatchedClauses
 
   override val (canMergeSchema, canOverwriteSchema) = {
     // Delta options can't be passed to MERGE INTO currently, so they'll always be empty.
@@ -130,13 +128,11 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   }
 
   /** Whether this merge statement has only MATCHED clauses. */
-  protected def isMatchedOnly: Boolean =
-    notMatchedClauses.isEmpty && matchedClauses.nonEmpty &&
+  protected def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty &&
     notMatchedBySourceClauses.isEmpty
 
   /** Whether this merge statement only has only insert (NOT MATCHED) clauses. */
-  protected def isInsertOnly: Boolean = matchedClauses.isEmpty &&
-    notMatchedClauses.nonEmpty &&
+  protected def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.nonEmpty &&
     notMatchedBySourceClauses.isEmpty
 
   /** Whether this merge statement includes inserts statements. */
