@@ -17,8 +17,8 @@ package io.delta.kernel.internal
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue, Row}
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.{stringArrayValue, stringVector}
+import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.{DataType, MapType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -33,32 +33,29 @@ class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
   test("Parse Map[String, String] type table config") {
     val expMap = Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\"")
     val engine = mockEngine(jsonHandler = new KeyValueJsonHandler(expMap))
-    assert(
-      TableConfig.parseJSONKeyValueMap(
-        engine,
-        """{"key1": "string_value", "key2Int": "2", "key3ComplexStr": "\"hello\""}""") ===
-        expMap.asJava)
+    val input = """{"key1": "string_value", "key2Int": "2", "key3ComplexStr": "\"hello\""}"""
+    assert(TableConfig.parseJSONKeyValueMap(engine, input) === expMap.asJava)
 
-    val engine1 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(0))
+    val engine1 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(nRow = 0))
     val e1 = intercept[IllegalStateException] {
       TableConfig.parseJSONKeyValueMap(engine1, """{"key": "value"}""")
     }
     assert(e1.getMessage.contains("""Unable to parse {"key": "value"}"""))
 
-    val engine2 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(2))
+    val engine2 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(nRow = 2))
     val e2 = intercept[IllegalArgumentException] {
       TableConfig.parseJSONKeyValueMap(engine2, """{"key": "value"}""")
     }
     assert(e2.getMessage.contains("Iterator contains more than one element"))
 
     val errMsg = "Close called failed"
-    val engine3 = mockEngine(jsonHandler = new ReturnCloseFailIteratorJsonHandler(errMsg))
+    val engine3 = mockEngine(jsonHandler = new ReturnCloseFailIteratorJsonHandler(errMsg = errMsg))
     val e3 = intercept[KernelException] {
       TableConfig.parseJSONKeyValueMap(engine3, """{"key": "value"}""")
     }
     assert(e3.getMessage.contains(s"java.io.IOException: $errMsg"))
 
-    val engine4 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(1))
+    val engine4 = mockEngine(jsonHandler = new ReturnNullRowsJsonHandler(nRow = 1))
     val e4 = intercept[IllegalArgumentException] {
       TableConfig.parseJSONKeyValueMap(engine4, """{"key": "value"}""")
     }
@@ -70,7 +67,8 @@ class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
  * Mock JsonHandler which returns a ColumnarBatch with a single row containing a Map[String, String]
  * column.
  */
-class KeyValueJsonHandler(map: Map[String, String]) extends BaseMockJsonHandler {
+class KeyValueJsonHandler(
+  map: Map[String, String]) extends BaseMockJsonHandler with VectorTestUtils {
   val expSchema: StructType =
     new StructType().add("config", new MapType(StringType.STRING, StringType.STRING, true))
   override def parseJson(
@@ -83,25 +81,11 @@ class KeyValueJsonHandler(map: Map[String, String]) extends BaseMockJsonHandler 
 
       override def getColumnVector(ordinal: Int): ColumnVector = {
         ordinal match {
-          case 0 => mapTypeVector(map)
+          case 0 => mapTypeVector(Seq(map))
         }
       }
 
       override def getSize: Int = 1
-    }
-  }
-
-  def mapTypeVector(map: Map[String, String]): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = new MapType(StringType.STRING, StringType.STRING, true)
-
-      override def getSize: Int = 1
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = rowId >= 1
-
-      override def getMap(rowId: Int): MapValue = VectorUtils.stringStringMapValue(map.asJava)
     }
   }
 }

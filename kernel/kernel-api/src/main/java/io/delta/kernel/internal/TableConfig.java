@@ -255,12 +255,15 @@ public class TableConfig<T> {
     }
 
     /**
-     * Parse the given JSON string into a map of key-value pairs. The JSON string should be in the
-     * format of """{"key1": "value1", "key2": "value2", ...}""" whose keys and values are strings.
+     * Parses the given JSON string into a map of key-value pairs.
+     * <p>
+     * The JSON string should be in the format:
+     * <pre>{@code {"key1": "value1", "key2": "value2", ...}}</pre>
+     * where both keys and values are strings.
      *
-     * @param engine the engine instance
-     * @param jsonString the JSON string to parse
-     * @return the map of key-value pairs
+     * @param engine the {@link Engine} instance used for parsing
+     * @param jsonString The JSON string to parse
+     * @return A map containing the key-value pairs extracted from the JSON string
      */
     protected static Map<String, String> parseJSONKeyValueMap(Engine engine, String jsonString) {
         if (jsonString == null) {
@@ -275,8 +278,8 @@ public class TableConfig<T> {
                 singletonStringColumnVector(String.format("{\"config\": %s}", jsonString)),
                 schema,
                 Optional.empty()).getRows()) {
-            Row row = getSingularElement(batchRows).orElseThrow(
-                    () -> new IllegalStateException(
+            Row row = getSingularElement(batchRows)
+                    .orElseThrow(() -> new IllegalStateException(
                             String.format("Unable to parse %s", jsonString)));
             checkArgument(!row.isNullAt(0));
             return VectorUtils.toJavaMap(row.getMap(0));
