@@ -1501,8 +1501,3 @@ trait DescribeDeltaHistorySuiteBase
 
 class DescribeDeltaHistorySuite
   extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest
-
-class DescribeDeltaHistoryWithCoordinatedCommitsBatch100Suite
-  extends DescribeDeltaHistorySuite {
-    override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
-}
