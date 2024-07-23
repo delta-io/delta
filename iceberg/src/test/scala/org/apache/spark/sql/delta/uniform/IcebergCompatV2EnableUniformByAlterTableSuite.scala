@@ -17,15 +17,10 @@
 package org.apache.spark.sql.delta.uniform
 
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.uniform.{UniFormE2EIcebergSuiteBase, UniFormE2ETest}
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOperationException, Snapshot}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.uniform.hms.HMSTest
 
 trait IcebergCompatV2ParquetTestUtilsBase extends WriteDeltaHMSReadIceberg {
   override val compatVersion: Int = 2
@@ -471,7 +466,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite extends IcebergCompatV2Parqu
         expectedNumOfOverlappedParquetFiles = 2,
         expectedNumOfAddedParquetFiles = 2,
         isOverlappedIcebergCompatV2 = false,
-        isAddedIcebergCompatV2 = true,
+        isAddedIcebergCompatV2 = true
       )
 
       assertUniFormIcebergProtocolAndProperties(id)
