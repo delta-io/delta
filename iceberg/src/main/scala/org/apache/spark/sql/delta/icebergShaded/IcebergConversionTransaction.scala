@@ -250,7 +250,7 @@ class IcebergConversionTransaction(
   }
 
   def getExpireSnapshotHelper(): ExpireSnapshotHelper = {
-    val ret = new ExpireSnapshotHelper(txn.expireSnapshots())
+    val ret = new ExpireSnapshotHelper(txn.expireSnapshots().cleanExpiredFiles(false))
     fileUpdates += ret
     ret
   }
