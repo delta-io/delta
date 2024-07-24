@@ -16,6 +16,7 @@
 package io.delta.kernel.internal;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
@@ -24,6 +25,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Clock;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 
 public class TableImpl implements Table {
     public static Table forPath(Engine engine, String path) {
@@ -43,9 +45,12 @@ public class TableImpl implements Table {
     public static Table forPath(Engine engine, String path, Clock clock) {
         String resolvedPath;
         try {
-            resolvedPath = engine.getFileSystemClient().resolvePath(path);
+            resolvedPath = wrapEngineExceptionThrowsIO(
+                () -> engine.getFileSystemClient().resolvePath(path),
+                "Resolving path %s",
+                path);
         } catch (IOException io) {
-            throw new RuntimeException(io);
+            throw new UncheckedIOException(io);
         }
         return new TableImpl(resolvedPath, clock);
     }

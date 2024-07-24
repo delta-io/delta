@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.actions;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.IntStream;
 import static java.util.stream.Collectors.toMap;
@@ -35,6 +36,7 @@ import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 
@@ -189,18 +191,23 @@ public class CommitInfo {
     public static Optional<CommitInfo> getCommitInfoOpt(
             Engine engine,
             Path logPath,
-            long version) throws IOException {
+            long version) {
         final FileStatus file = FileStatus.of(
                 FileNames.deltaFile(logPath, version), /* path */
                 0, /* size */
                 0 /* modification time */);
         final StructType COMMITINFO_READ_SCHEMA = new StructType()
                 .add("commitInfo", CommitInfo.FULL_SCHEMA);
-        try (CloseableIterator<ColumnarBatch> columnarBatchIter = engine.getJsonHandler()
+        try (CloseableIterator<ColumnarBatch> columnarBatchIter = wrapEngineExceptionThrowsIO(
+            () -> engine.getJsonHandler()
                 .readJsonFiles(
-                        singletonCloseableIterator(file),
-                        COMMITINFO_READ_SCHEMA,
-                        Optional.empty())) {
+                    singletonCloseableIterator(file),
+                    COMMITINFO_READ_SCHEMA,
+                    Optional.empty()),
+            "Reading the commit info with schema=%s from delta file %s",
+            COMMITINFO_READ_SCHEMA,
+            file.getPath())
+        ) {
             while (columnarBatchIter.hasNext()) {
                 final ColumnarBatch columnarBatch = columnarBatchIter.next();
                 assert(columnarBatch.getSchema().equals(COMMITINFO_READ_SCHEMA));
@@ -215,7 +222,7 @@ public class CommitInfo {
                 }
             }
         } catch (IOException ex) {
-            throw new RuntimeException("Could not close iterator", ex);
+            throw new UncheckedIOException("Could not close iterator", ex);
         }
 
         logger.info("No commit info found for commit of version {}", version);

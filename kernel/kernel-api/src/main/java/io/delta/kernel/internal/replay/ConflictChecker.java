@@ -31,6 +31,7 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.isICTEnabled;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
@@ -241,8 +242,12 @@ public class ConflictChecker {
         String firstWinningCommitFile =
                 deltaFile(snapshot.getLogPath(), snapshot.getVersion(engine) + 1);
 
-        try (CloseableIterator<FileStatus> files = engine.getFileSystemClient()
-                .listFrom(firstWinningCommitFile)) {
+        try (CloseableIterator<FileStatus> files = wrapEngineExceptionThrowsIO(
+            () -> engine.getFileSystemClient()
+                .listFrom(firstWinningCommitFile),
+            "Listing from %s",
+            firstWinningCommitFile)
+        ) {
             // Select all winning transaction commit files.
             List<FileStatus> winningCommitFiles = new ArrayList<>();
             while (files.hasNext()) {

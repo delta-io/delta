@@ -36,6 +36,7 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -95,15 +96,29 @@ public class PartitionUtils {
             if (partitionValues.containsKey(structField.getName())) {
                 // Create a partition vector
 
-                ExpressionEvaluator evaluator = expressionHandler.getEvaluator(
-                    dataBatch.getSchema(),
-                    literalForPartitionValue(
-                        structField.getDataType(),
-                        partitionValues.get(structField.getName())),
-                    structField.getDataType()
+                ColumnarBatch finalDataBatch = dataBatch;
+                ExpressionEvaluator evaluator = wrapEngineException(
+                    () -> expressionHandler.getEvaluator(
+                        finalDataBatch.getSchema(),
+                        literalForPartitionValue(
+                            structField.getDataType(),
+                            partitionValues.get(structField.getName())),
+                        structField.getDataType()
+                    ),
+                    "Get the expression evaluator for partition column %s with datatype=%s and " +
+                        "value=%s",
+                    structField.getName(),
+                    structField.getDataType(),
+                    partitionValues.get(structField.getName())
                 );
 
-                ColumnVector partitionVector = evaluator.eval(dataBatch);
+                ColumnVector partitionVector = wrapEngineException(
+                    () -> evaluator.eval(finalDataBatch),
+                    "Evaluating the partition value expression %s",
+                    literalForPartitionValue(
+                        structField.getDataType(),
+                        partitionValues.get(structField.getName()))
+                );
                 dataBatch = dataBatch.withNewColumn(colIdx, structField, partitionVector);
             }
         }

@@ -16,6 +16,7 @@
 package io.delta.kernel.internal;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -41,6 +42,7 @@ import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -231,17 +233,27 @@ public class TransactionImpl
 
             if (commitAsVersion == 0) {
                 // New table, create a delta log directory
-                if (!engine.getFileSystemClient().mkdirs(logPath.toString())) {
-                    throw new RuntimeException(
-                            "Failed to create delta log directory: " + logPath);
+                if (!wrapEngineExceptionThrowsIO(
+                    () -> engine.getFileSystemClient().mkdirs(logPath.toString()),
+                    "Creating directories for path %s",
+                    logPath
+                )) {
+                    throw new RuntimeException("Failed to create delta log directory: " + logPath);
                 }
             }
 
             // Write the staged data to a delta file
-            engine.getJsonHandler().writeJsonFileAtomically(
-                    FileNames.deltaFile(logPath, commitAsVersion),
-                    dataAndMetadataActions,
-                    false /* overwrite */);
+            wrapEngineExceptionThrowsIO(
+                () -> {
+                    engine.getJsonHandler().writeJsonFileAtomically(
+                        FileNames.deltaFile(logPath, commitAsVersion),
+                        dataAndMetadataActions,
+                        false /* overwrite */);
+                    return null;
+                },
+                "Write file actions to JSON log file `%s`",
+                FileNames.deltaFile(logPath, commitAsVersion)
+            );
 
             return new TransactionCommitResult(
                     commitAsVersion,
@@ -249,7 +261,7 @@ public class TransactionImpl
         } catch (FileAlreadyExistsException e) {
             throw e;
         } catch (IOException ioe) {
-            throw new RuntimeException(ioe);
+            throw new UncheckedIOException(ioe);
         }
     }
 
