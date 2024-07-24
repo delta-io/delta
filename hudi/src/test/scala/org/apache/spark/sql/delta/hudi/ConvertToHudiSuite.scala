@@ -60,7 +60,7 @@ trait HudiTestBase extends QueryTest
   protected def spark: SparkSession
 
   def buildHudiMetaClient(testTablePath: String): HoodieTableMetaClient = {
-    val hadoopConf: Configuration = spark.sessionState.newHadoopConf()
+    val hadoopConf: Configuration = spark.sparkContext.hadoopConfiguration
     val storageConf : StorageConfiguration[_] = new HadoopStorageConfiguration(hadoopConf)
     HoodieTableMetaClient.builder
       .setConf(storageConf).setBasePath(testTablePath)
@@ -72,7 +72,7 @@ trait HudiTestBase extends QueryTest
     eventually(timeout(30.seconds)) {
       // To avoid requiring Hudi spark dependencies, we first lookup the active base files and then
       // assert by reading those active base files (parquet) directly
-      val hadoopConf: Configuration = spark.sessionState.newHadoopConf()
+      val hadoopConf: Configuration = spark.sparkContext.hadoopConfiguration
       val storageConf : StorageConfiguration[_] = new HadoopStorageConfiguration(hadoopConf)
       val metaClient: HoodieTableMetaClient = buildHudiMetaClient(testTablePath)
       val engContext: HoodieLocalEngineContext = new HoodieLocalEngineContext(storageConf)
