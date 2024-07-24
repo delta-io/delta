@@ -52,7 +52,7 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.2"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
@@ -172,6 +172,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     targetJvm := "8",
     // For adding staged Spark RC versions, e.g.:
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
+    resolvers += "Apache Spark 3.5.2 (RC3) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1459/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
     Antlr4 / antlr4Version := "4.9.3",
