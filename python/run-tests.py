@@ -28,7 +28,9 @@ def test(root_dir, package):
     # framework.
     python_root_dir = path.join(root_dir, "python")
     test_dir = path.join(python_root_dir, path.join("delta", "tests"))
-    test_files = [os.path.join(test_dir, "test_deltatable.py")]
+    test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
+                  if os.path.isfile(os.path.join(test_dir, f)) and
+                  f.endswith(".py") and not f.startswith("_")]
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
 
     for test_file in test_files:
@@ -177,7 +179,7 @@ if __name__ == "__main__":
     package = prepare(root_dir)
 
     run_python_style_checks(root_dir)
-    # run_mypy_tests(root_dir)
-    # run_pypi_packaging_tests(root_dir)
-    # run_delta_connect_codegen_python(root_dir)
+    run_mypy_tests(root_dir)
+    run_pypi_packaging_tests(root_dir)
+    run_delta_connect_codegen_python(root_dir)
     test(root_dir, package)

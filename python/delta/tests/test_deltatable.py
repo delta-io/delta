@@ -638,6 +638,16 @@ class DeltaTableTestsMixin:
         deltaTable.update(expr("col2 = 11"), {"col1": expr("2")})
         self.__checkAnswer(deltaTable.toDF(), [(2, 12)], schema=["col1", "col2"])
 
+    def __verify_identity_column(self, tableName: str, deltaTable: DeltaTable) -> None:
+        for i in range(2):
+            cmd = "INSERT INTO {table} (val) VALUES ({i})".format(table=tableName, i=i)
+            self.spark.sql(cmd)
+        cmd = "INSERT INTO {table} (id3, val) VALUES (8, 2)".format(table=tableName)
+        self.spark.sql(cmd)
+        self.__checkAnswer(deltaTable.toDF(),
+                           expectedAnswer=[(1, 2, 2, 0), (2, 3, 4, 1), (3, 4, 8, 2)],
+                           schema=["id1", "id2", "id3", "val"])
+
     def __build_delta_table(self, builder: DeltaTableBuilder) -> DeltaTable:
         return builder.addColumn("col1", "int", comment="foo", nullable=False) \
             .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
@@ -941,6 +951,41 @@ class DeltaTableTestsMixin:
                                        partitioningColumns=["col1"],
                                        tblComment="comment")
 
+    def test_create_table_with_identity_column(self) -> None:
+        for ifNotExists in (False, True):
+            tableName = "testTable{}".format(ifNotExists)
+            with self.table(tableName):
+                try:
+                    self.spark.conf.set("spark.databricks.delta.identityColumn.enabled", "true")
+                    builder = (
+                        DeltaTable.createIfNotExists(self.spark)
+                        if ifNotExists
+                        else DeltaTable.create(self.spark))
+                    builder = builder.tableName(tableName)
+                    builder = (
+                        builder.addColumn(
+                            "id1", LongType(), generatedAlwaysAs=IdentityGenerator())
+                        .addColumn(
+                            "id2",
+                            "BIGINT",
+                            generatedAlwaysAs=IdentityGenerator(start=2))
+                        .addColumn(
+                            "id3",
+                            "bigint",
+                            generatedByDefaultAs=IdentityGenerator(start=2, step=2))
+                        .addColumn("val", "bigint", nullable=False))
+
+                    deltaTable = builder.execute()
+                    self.__verify_table_schema(
+                        tableName,
+                        deltaTable.toDF().schema,
+                        ["id1", "id2", "id3", "val"],
+                        [LongType(), LongType(), LongType(), LongType()],
+                        nullables={"id1", "id2", "id3"})
+                    self.__verify_identity_column(tableName, deltaTable)
+                finally:
+                    self.spark.conf.unset("spark.databricks.delta.identityColumn.enabled")
+
     def test_delta_table_builder_with_bad_args(self) -> None:
         builder = DeltaTable.create(self.spark).location(self.tempFile)
 
@@ -977,14 +1022,6 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.addColumn("a", "int", generatedAlwaysAs=1)  # type: ignore[arg-type]
 
-        # bad generatedAlwaysAs - column data type must be Long
-        with self.assertRaises(TypeError):
-            builder.addColumn(
-                "a",
-                "int",
-                generatedAlwaysAs=IdentityGenerator()
-            )  # type: ignore[arg-type]
-
         # bad generatedAlwaysAs - step can't be 0
         with self.assertRaises(ValueError):
             builder.addColumn(
@@ -1008,14 +1045,6 @@ class DeltaTableTestsMixin:
                 "a",
                 "bigint",
                 generatedByDefaultAs=""
-            )  # type: ignore[arg-type]
-
-        # bad generatedByDefaultAs - column data type must be Long
-        with self.assertRaises(TypeError):
-            builder.addColumn(
-                "a",
-                "int",
-                generatedByDefaultAs=IdentityGenerator()
             )  # type: ignore[arg-type]
 
         # bad generatedByDefaultAs - step can't be 0
