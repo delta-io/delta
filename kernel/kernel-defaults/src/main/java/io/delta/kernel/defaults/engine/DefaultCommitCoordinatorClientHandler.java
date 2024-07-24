@@ -132,8 +132,7 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
                 },
                 StorageKernelAPIAdapter.toStorageUpdatedActions(updatedActions)));
         } catch (CommitFailedException e) {
-            throw new io.delta.kernel.engine.coordinatedcommits.CommitFailedException(
-                    e.getRetryable(), e.getConflict(), e.getMessage());
+            throw StorageKernelAPIAdapter.toKernelAPICommitFailedException(e);
         }
     }
 

@@ -16,24 +16,20 @@
 
 package io.delta.kernel.defaults.internal.coordinatedcommits
 
-import io.delta.storage.commit.{CommitCoordinatorClient, InMemoryCommitCoordinator}
-import org.apache.hadoop.conf.Configuration
-
 import java.util
 
-object InMemoryCommitCoordinatorBuilder {
-  val batchSizeMap: util.Map[Long, InMemoryCommitCoordinator] =
-    new util.HashMap[Long, InMemoryCommitCoordinator]()
-
-  // Visible only for UTs
-  private[defaults] def clearInMemoryInstances(): Unit = {
-    batchSizeMap.clear()
-  }
-}
+import io.delta.storage.commit.{CommitCoordinatorClient, InMemoryCommitCoordinator}
+import org.apache.hadoop.conf.Configuration
 
 /**
  * The [[InMemoryCommitCoordinatorBuilder]] class is responsible for creating singleton instances of
  * [[InMemoryCommitCoordinator]] with the specified batchSize.
+ *
+ * For testing purposes, a test can clear the instances of [[InMemoryCommitCoordinator]] by calling
+ * [[InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()]], configure the
+ * [[InMemoryCommitCoordinatorBuilder]] and batchSize in hadoopConf passed to the engine. In this
+ * way, the [[InMemoryCommitCoordinator]] instances can be used by Kernel read and write across
+ * the test.
  */
 class InMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
   extends CommitCoordinatorBuilder(hadoopConf) {
@@ -52,5 +48,20 @@ class InMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
       InMemoryCommitCoordinatorBuilder.batchSizeMap.put(batchSize, coordinator)
       coordinator
     }
+  }
+}
+
+/**
+ * The [[InMemoryCommitCoordinatorBuilder]] companion object is responsible for storing the
+ * singleton instances of [[InMemoryCommitCoordinator]] based on the batchSize. This is useful for
+ * checking the state of the instances in UTs.
+ */
+object InMemoryCommitCoordinatorBuilder {
+  val batchSizeMap: util.Map[Long, InMemoryCommitCoordinator] =
+    new util.HashMap[Long, InMemoryCommitCoordinator]()
+
+  // Visible only for UTs
+  private[defaults] def clearInMemoryInstances(): Unit = {
+    batchSizeMap.clear()
   }
 }

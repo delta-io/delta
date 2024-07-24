@@ -20,10 +20,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import io.delta.kernel.engine.coordinatedcommits.Commit;
-import io.delta.kernel.engine.coordinatedcommits.CommitResponse;
-import io.delta.kernel.engine.coordinatedcommits.GetCommitsResponse;
-import io.delta.kernel.engine.coordinatedcommits.UpdatedActions;
+import io.delta.kernel.engine.coordinatedcommits.*;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractCommitInfo;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
@@ -73,6 +70,11 @@ public class StorageKernelAPIAdapter {
                 .map(StorageKernelAPIAdapter::toKernelAPICommit)
                 .collect(Collectors.toList());
         return new GetCommitsResponse(commits, response.getLatestTableVersion());
+    }
+
+    public static CommitFailedException toKernelAPICommitFailedException(
+            io.delta.storage.commit.CommitFailedException e) {
+        return new CommitFailedException(e.getRetryable(), e.getConflict(), e.getMessage());
     }
 
     public static io.delta.storage.commit.actions.AbstractMetadata toStorageAbstractMetadata(
