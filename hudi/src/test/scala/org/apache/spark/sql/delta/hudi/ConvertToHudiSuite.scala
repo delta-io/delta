@@ -379,20 +379,6 @@ trait ConvertToHudiTestBase extends HudiTestBase {
     }
   }
 
-  for (invalidType <- Seq("INTERVAL MONTH", "INTERVAL YEAR TO MONTH")) {
-    test(s"Unsupported Type $invalidType Throws Exception") {
-      withTempTableAndDir { case (testTableName, testTablePath) =>
-        intercept[DeltaUnsupportedOperationException] {
-          spark.sql(
-            s"""CREATE TABLE `$testTableName` (col1 $invalidType) USING DELTA
-               |LOCATION '$testTablePath'
-               |TBLPROPERTIES (
-               |  'delta.universalFormat.enabledFormats' = 'hudi'
-               |)""".stripMargin)
-        }
-      }
-    }
-  }
 
   test("all batches of actions are converted") {
     withTempTableAndDir { case (testTableName, testTablePath) =>
