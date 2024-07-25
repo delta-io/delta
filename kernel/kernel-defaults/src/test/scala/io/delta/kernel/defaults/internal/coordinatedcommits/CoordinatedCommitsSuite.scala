@@ -45,48 +45,63 @@ import scala.collection.JavaConverters._
 class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
   with CoordinatedCommitsTestUtils {
 
+  def setupCoordinatedCommitFilesForTest(
+    engine: Engine,
+    tablePath: String,
+    coordinatorName: String = "tracking-in-memory",
+    coordinatorConf: String = "{}",
+    tableConfToOverwrite: String = null): Unit = {
+    val handler =
+      engine.getCommitCoordinatorClientHandler(
+        coordinatorName, OBJ_MAPPER.readValue(coordinatorConf, classOf[util.Map[String, String]]))
+    val logPath = new Path("file:" + tablePath, "_delta_log")
+    val tableSpark = Table.forPath(engine, tablePath)
+
+    spark.range(0, 10).write.format("delta").mode("overwrite").save(tablePath) // version 0
+    spark.range(10, 20).write.format("delta").mode("append").save(tablePath) // version 1
+    spark.range(20, 30).write.format("delta").mode("append").save(tablePath) // version 2
+    checkAnswer(
+      spark.sql(s"SELECT * FROM delta.`$tablePath`").collect().map(TestRow(_)),
+      (0L to 29L).map(TestRow(_)))
+
+    var tableConf: util.Map[String, String] = null
+
+    (0 to 2).foreach{ version =>
+      val delta = getHadoopDeltaFile(logPath, version)
+
+      if (version == 0) {
+        tableConf = handler.registerTable(
+          logPath.toString,
+          -1L,
+          CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(getEmptyMetadata),
+          CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(1, 1)))
+        val tableConfString = if (tableConfToOverwrite != null) {
+          tableConfToOverwrite
+        } else {
+          OBJ_MAPPER.writeValueAsString(tableConf)
+        }
+        val rows = addCoordinatedCommitToMetadataRow(
+          engine,
+          delta,
+          tableSpark.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl],
+          Map(
+            TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> coordinatorName,
+            TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> coordinatorConf,
+            TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey -> tableConfString))
+        writeCommitZero(engine, logPath, rows)
+      } else {
+        val rows = getRowsFromFile(engine, delta)
+        commit(logPath.toString, tableConf, version, version, rows, handler)
+        logPath.getFileSystem(hadoopConf).delete(delta)
+      }
+    }
+  }
+
   test("cold snapshot initialization") {
     InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
     withTempDirAndEngine ({ (tablePath, engine) =>
-      val handler =
-        engine.getCommitCoordinatorClientHandler("tracking-in-memory", Collections.emptyMap())
-      val logPath = new Path("file:" + tablePath, "_delta_log")
-      val tableSpark = Table.forPath(engine, tablePath)
+      setupCoordinatedCommitFilesForTest(engine, tablePath)
 
-      spark.range(0, 10).write.format("delta").mode("overwrite").save(tablePath) // version 0
-      spark.range(10, 20).write.format("delta").mode("append").save(tablePath) // version 1
-      spark.range(20, 30).write.format("delta").mode("append").save(tablePath) // version 2
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`$tablePath`").collect().map(TestRow(_)),
-        (0L to 29L).map(TestRow(_)))
-
-      var tableConf: util.Map[String, String] = null
-
-      (0 to 2).foreach{ version =>
-        val delta = getHadoopDeltaFile(logPath, version)
-
-        if (version == 0) {
-          tableConf = handler.registerTable(
-            logPath.toString,
-            -1L,
-            CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(getEmptyMetadata),
-            CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(1, 1)))
-          val rows = addCoordinatedCommitToMetadataRow(
-            engine,
-            delta,
-            tableSpark.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl],
-            Map(
-              TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "tracking-in-memory",
-              TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}",
-              TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey ->
-                OBJ_MAPPER.writeValueAsString(tableConf)))
-          writeCommitZero(engine, logPath, rows)
-        } else {
-          val rows = getRowsFromFile(engine, delta)
-          commit(logPath.toString, tableConf, version, version, rows, handler)
-          logPath.getFileSystem(hadoopConf).delete(delta)
-        }
-      }
       val table = Table.forPath(engine, tablePath)
       val snapshot0 = table.getSnapshotAsOfVersion(engine, 0)
       val result0 = readSnapshot(snapshot0, snapshot0.getSchema(engine), null, null, engine)
@@ -109,47 +124,12 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
   test("snapshot read should use coordinated commit related properties properly") {
     InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
     withTempDirAndEngine( { (tablePath, engine) =>
-      val handler = engine.getCommitCoordinatorClientHandler(
-        "test-coordinator", TestCommitCoordinator.expCoordinatorConf)
-      val logPath = new Path("file:" + tablePath, "_delta_log")
-      val tableSpark = Table.forPath(engine, tablePath)
+      setupCoordinatedCommitFilesForTest(
+        engine,
+        tablePath,
+        coordinatorName = "test-coordinator",
+        coordinatorConf = OBJ_MAPPER.writeValueAsString(TestCommitCoordinator.expCoordinatorConf))
 
-      spark.range(0, 10).write.format("delta").mode("overwrite").save(tablePath) // version 0
-      spark.range(10, 20).write.format("delta").mode("append").save(tablePath) // version 1
-      spark.range(20, 30).write.format("delta").mode("append").save(tablePath) // version 2
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`$tablePath`").collect().map(TestRow(_)),
-        (0L to 29L).map(TestRow(_)))
-
-      var tableConf: util.Map[String, String] = null
-
-      (0 to 2).foreach{ version =>
-        val delta = getHadoopDeltaFile(logPath, version)
-
-        if (version == 0) {
-          val rows = addCoordinatedCommitToMetadataRow(
-            engine,
-            delta,
-            tableSpark.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl],
-            Map(
-              TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "test-coordinator",
-              TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey ->
-                OBJ_MAPPER.writeValueAsString(TestCommitCoordinator.expCoordinatorConf),
-              TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey ->
-                OBJ_MAPPER.writeValueAsString(TestCommitCoordinator.expTableConf)))
-          tableConf = handler.registerTable(
-            logPath.toString,
-            -1L,
-            CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(getEmptyMetadata),
-            CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(1, 1)))
-          writeCommitZero(engine, logPath, rows)
-          assert (tableConf === TestCommitCoordinator.expTableConf)
-        } else {
-          val rows = getRowsFromFile(engine, delta)
-          commit(logPath.toString, tableConf, version, version, rows, handler)
-          logPath.getFileSystem(hadoopConf).delete(delta)
-        }
-      }
       val table = Table.forPath(engine, tablePath)
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
@@ -169,45 +149,11 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
   test("snapshot read fails if we try to put bad value for COORDINATED_COMMITS_TABLE_CONF") {
     InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
     withTempDirAndEngine( { (tablePath, engine) =>
-      val handler = engine.getCommitCoordinatorClientHandler(
-        "tracking-in-memory", Collections.emptyMap())
-      val logPath = new Path("file:" + tablePath, "_delta_log")
-      val tableSpark = Table.forPath(engine, tablePath)
+      setupCoordinatedCommitFilesForTest(
+        engine,
+        tablePath,
+        tableConfToOverwrite = """{"key1": "string_value", "key2Int": "2""")
 
-      spark.range(0, 10).write.format("delta").mode("overwrite").save(tablePath) // version 0
-      spark.range(10, 20).write.format("delta").mode("append").save(tablePath) // version 1
-      spark.range(20, 30).write.format("delta").mode("append").save(tablePath) // version 2
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`$tablePath`").collect().map(TestRow(_)),
-        (0L to 29L).map(TestRow(_)))
-
-      var tableConf: util.Map[String, String] = null
-
-      (0 to 2).foreach{ version =>
-        val delta = getHadoopDeltaFile(logPath, version)
-
-        if (version == 0) {
-          tableConf = handler.registerTable(
-            logPath.toString,
-            -1L,
-            CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(getEmptyMetadata),
-            CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(1, 1)))
-          val rows = addCoordinatedCommitToMetadataRow(
-            engine,
-            delta,
-            tableSpark.getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl],
-            Map(
-              TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "tracking-in-memory",
-              TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}",
-              TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey ->
-                """{"key1": "string_value", "key2Int": "2"""))
-          writeCommitZero(engine, logPath, rows)
-        } else {
-          val rows = getRowsFromFile(engine, delta)
-          commit(logPath.toString, tableConf, version, version, rows, handler)
-          logPath.getFileSystem(hadoopConf).delete(delta)
-        }
-      }
       val table = Table.forPath(engine, tablePath)
       intercept[RuntimeException] {
         table.getLatestSnapshot(engine)

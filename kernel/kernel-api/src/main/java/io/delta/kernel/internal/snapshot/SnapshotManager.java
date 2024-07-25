@@ -19,6 +19,7 @@ package io.delta.kernel.internal.snapshot;
 import java.io.*;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -328,23 +329,23 @@ public class SnapshotManager {
                 .orElse(Collections.emptyList());
 
 
-        final long[] maxDeltaVersionSeen = {startVersion - 1};
+        final AtomicLong maxDeltaVersionSeen = new AtomicLong(startVersion - 1);
         Optional<List<FileStatus>> resultFromFsListingOpt = listFromOrNone(engine,
                 startVersion).map(fileStatusesIter -> {
                     final List<FileStatus> output = new ArrayList<>();
 
                     while (fileStatusesIter.hasNext()) {
                         final FileStatus fileStatus = fileStatusesIter.next();
+                        final String fileName = getName(fileStatus.getPath());
 
                         // Pick up all checkpoint and delta files
-                        if (!isDeltaCommitOrCheckpointFile(getName(fileStatus.getPath()))) {
+                        if (!isDeltaCommitOrCheckpointFile(fileName)) {
                             continue;
                         }
 
                         // Checkpoint files of 0 size are invalid but may be ignored silently when
                         // read, hence we drop them so that we never pick up such checkpoints.
-                        if (FileNames.isCheckpointFile(getName(fileStatus.getPath())) &&
-                                fileStatus.getSize() == 0) {
+                        if (FileNames.isCheckpointFile(fileName) && fileStatus.getSize() == 0) {
                             continue;
                         }
 
@@ -370,9 +371,9 @@ public class SnapshotManager {
                         // maxDeltaVersionSeen should be equal to fileVersion.
                         // But we are being defensive here and taking max of all the fileVersions
                         // seen.
-                        if (FileNames.isCommitFile(getName(fileStatus.getPath()))) {
-                            maxDeltaVersionSeen[0] = Math.max(maxDeltaVersionSeen[0],
-                                    FileNames.deltaVersion(fileStatus.getPath()));
+                        if (FileNames.isCommitFile(fileName)) {
+                            maxDeltaVersionSeen.set(Math.max(maxDeltaVersionSeen.get(),
+                                    FileNames.deltaVersion(fileStatus.getPath())));
                         }
 
                         output.add(fileStatus);
@@ -388,7 +389,7 @@ public class SnapshotManager {
         List<FileStatus> unbackfilledCommitsFiltered = new ArrayList<>();
         boolean dropConditionMet = false;
         for (Commit commit : unbackfilledCommits) {
-            if (!dropConditionMet && commit.getVersion() <= maxDeltaVersionSeen[0]) {
+            if (!dropConditionMet && commit.getVersion() <= maxDeltaVersionSeen.get()) {
                 continue;
             } else {
                 dropConditionMet = true;
@@ -419,21 +420,21 @@ public class SnapshotManager {
                     "Will search for the checkpoint files directly.", tablePath);
         }
         Optional<LogSegment> logSegmentOpt =
-                getLogSegmentFrom(engine, lastCheckpointOpt);
+            getLogSegmentFrom(engine, lastCheckpointOpt);
 
         return logSegmentOpt
-                .map(logSegment -> getSnapshot(engine, logSegment))
+                .map(logSegment -> getCoordinatedCommitsAwareSnapshot(engine, logSegment))
                 .orElseThrow(() -> new TableNotFoundException(tablePath.toString()));
     }
 
-    private SnapshotImpl getSnapshot(Engine engine, LogSegment initialSegmentForNewSnapshot) {
+    private SnapshotImpl getCoordinatedCommitsAwareSnapshot(
+            Engine engine, LogSegment initialSegmentForNewSnapshot) {
         SnapshotImpl newSnapshot = createSnapshot(initialSegmentForNewSnapshot, engine);
 
         Optional<CommitCoordinatorClientHandler> newCommitCoordinatorClientHandlerOpt =
                 newSnapshot.getCommitCoordinatorClientHandlerOpt(engine);
-        boolean shouldUpdate = newCommitCoordinatorClientHandlerOpt.isPresent();
 
-        if (shouldUpdate) {
+        if (newCommitCoordinatorClientHandlerOpt.isPresent()) {
             Optional<LogSegment> segmentOpt = getLogSegmentForVersion(engine,
                     Optional.empty(), /* startCheckpointOpt */
                     newSnapshot.getLogSegment().checkpointVersionOpt /* versionToLoadOpt */,

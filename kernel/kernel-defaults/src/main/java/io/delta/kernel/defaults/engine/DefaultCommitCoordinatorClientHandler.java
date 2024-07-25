@@ -173,8 +173,4 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
                 commitCoordinatorClient.semanticEquals(
                 ((DefaultCommitCoordinatorClientHandler) other).commitCoordinatorClient);
     }
-
-    public CommitCoordinatorClient getCommitCoordinatorClient() {
-        return commitCoordinatorClient;
-    }
 }
