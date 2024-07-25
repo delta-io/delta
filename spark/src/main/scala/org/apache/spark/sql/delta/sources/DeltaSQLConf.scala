@@ -1000,7 +1000,7 @@ trait DeltaSQLConfBase {
         | Delta table.
         |""".stripMargin)
       .booleanConf
-      .createWithDefault(Utils.isTesting)
+      .createWithDefault(true)
 
   val DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS =
     buildConf("legacy.storeOptionsAsProperties")
