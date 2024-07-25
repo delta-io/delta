@@ -18,12 +18,14 @@ package io.delta.storage
 
 import java.io.File
 import java.net.URI
+import java.nio.file.Files
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
 import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.spark.sql.delta.FakeFileSystem
+import org.apache.spark.sql.delta.storage.LogStoreAdaptor
 import org.apache.spark.sql.delta.util.FileNames
 
 /////////////////////
@@ -46,6 +48,31 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
 
   def getFailingDeltaVersionPath(logDir: File, version: Int): Path = {
     FileNames.unsafeDeltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), version)
+  }
+
+  test("listFrom only checks latest external store entry if listing a delta file") {
+    withTempDir { tempDir =>
+      val store = createLogStore(spark)
+          .asInstanceOf[LogStoreAdaptor].logStoreImpl
+          .asInstanceOf[MemoryLogStore]
+      val logDir = new File(tempDir.getCanonicalPath, "_delta_log")
+      logDir.mkdir()
+
+      val deltaFilePath = getDeltaVersionPath(logDir, 0)
+      val dataFilePath = new Path(tempDir.getCanonicalPath, ".part-00000-da82aeb5-snappy.parquet")
+
+      val fs = deltaFilePath.getFileSystem(sessionHadoopConf)
+      fs.create(deltaFilePath).close()
+      fs.create(dataFilePath).close()
+
+      assert(store.numGetLatestExternalEntryCalls() == 0)
+
+      store.listFrom(deltaFilePath, sessionHadoopConf)
+      assert(store.numGetLatestExternalEntryCalls() == 1) // contacted external store
+
+      store.listFrom(dataFilePath, sessionHadoopConf)
+      assert(store.numGetLatestExternalEntryCalls() == 1) // do not contact external store
+    }
   }
 
   test("single write") {
