@@ -127,15 +127,18 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
-        final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
-        final Path tablePath = getTablePath(resolvedPath);
-        final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
 
-        if (entry.isPresent() && !entry.get().complete) {
-            // Note: `fixDeltaLog` will apply per-JVM mutual exclusion via a lock to help reduce
-            // the chance of many reader threads in a single JVM doing duplicate copies of
-            // T(N) -> N.json.
-            fixDeltaLog(fs, entry.get());
+        if (FileNameUtils.isDeltaFile(path)) {
+            final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
+            final Path tablePath = getTablePath(resolvedPath);
+            final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
+
+            if (entry.isPresent() && !entry.get().complete) {
+                // Note: `fixDeltaLog` will apply per-JVM mutual exclusion via a lock to help reduce
+                // the chance of many reader threads in a single JVM doing duplicate copies of
+                // T(N) -> N.json.
+                fixDeltaLog(fs, entry.get());
+            }
         }
 
         // This is predicated on the storage system providing consistent listing
