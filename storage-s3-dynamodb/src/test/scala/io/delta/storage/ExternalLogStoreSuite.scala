@@ -20,11 +20,14 @@ import java.io.File
 import java.net.URI
 import java.nio.file.Files
 
+import io.delta.storage.BaseExternalLogStore.isDeltaLogPath
+import io.delta.storage.internal.FileNameUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
 import org.scalatest.funsuite.AnyFunSuite
 
-import org.apache.spark.sql.delta.FakeFileSystem
+import org.apache.spark.sql.delta.{DeltaLog, FakeFileSystem}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreAdaptor
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -33,6 +36,8 @@ import org.apache.spark.sql.delta.util.FileNames
 /////////////////////
 
 class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSuite {
+  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+
   override protected val publicLogStoreClassName: String =
     classOf[MemoryLogStore].getName
 
@@ -50,7 +55,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     FileNames.unsafeDeltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), version)
   }
 
-  test("listFrom only checks latest external store entry if listing a delta file") {
+  test("#3423: listFrom only checks latest external store entry if listing a delta file") {
     withTempDir { tempDir =>
       val store = createLogStore(spark)
           .asInstanceOf[LogStoreAdaptor].logStoreImpl
@@ -65,13 +70,33 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       fs.create(deltaFilePath).close()
       fs.create(dataFilePath).close()
 
-      assert(store.numGetLatestExternalEntryCalls() == 0)
+      assert(MemoryLogStore.numGetLatestExternalEntryCalls == 0)
 
       store.listFrom(deltaFilePath, sessionHadoopConf)
-      assert(store.numGetLatestExternalEntryCalls() == 1) // contacted external store
+      assert(MemoryLogStore.numGetLatestExternalEntryCalls == 1) // contacted external store
 
       store.listFrom(dataFilePath, sessionHadoopConf)
-      assert(store.numGetLatestExternalEntryCalls() == 1) // do not contact external store
+      assert(MemoryLogStore.numGetLatestExternalEntryCalls == 1) // do not contact external store
+    }
+  }
+
+  // TODO: improve this test before merging
+  test("#3423: VACUUM does not check external store for latest entry") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+        val path = tempDir.getCanonicalPath
+
+        spark.range(100).repartition(1).write.format("delta").save(path)
+
+        spark.sql(s"DELETE FROM delta.`$path`")
+
+        val numExternalCallsBeforeVacuum = MemoryLogStore.numGetLatestExternalEntryCalls
+
+        spark.sql(s"VACUUM delta.`$path` RETAIN 0 HOURS")
+
+        // Before the fix for #3423, this number was 9
+        assert(MemoryLogStore.numGetLatestExternalEntryCalls == numExternalCallsBeforeVacuum + 4)
+      }
     }
   }
 
@@ -290,7 +315,26 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     }
   }
 
-  protected def shouldUseRenameToWriteCheckpoint: Boolean = false
+  test("BaseExternalLogStore::isDeltaLogPath") {
+    // json file
+    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log/0000.json")))
+
+    // checkpoint file
+    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log/0010.checkpoint.parquet")))
+
+    // file listing prefix
+    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log/0000.")))
+
+    // delta_log folder (with / prefix)
+    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log/")))
+
+    // delta_log folder (without / prefix)
+    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log")))
+
+    // edge cases of `_delta_log` in a folder name
+    assert(!isDeltaLogPath(new Path("s3://bucket/__delta_log/")))
+    assert(!isDeltaLogPath(new Path("s3://bucket/_delta_log_")))
+  }
 }
 
 ///////////////////////////////////

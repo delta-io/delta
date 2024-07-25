@@ -21,6 +21,7 @@ import java.io.InterruptedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -127,9 +128,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     @Override
     public Iterator<FileStatus> listFrom(Path path, Configuration hadoopConf) throws IOException {
         final FileSystem fs = path.getFileSystem(hadoopConf);
+        final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
 
-        if (FileNameUtils.isDeltaFile(path)) {
-            final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
+        if (isDeltaLogPath(resolvedPath)) {
             final Path tablePath = getTablePath(resolvedPath);
             final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
 
@@ -473,5 +474,17 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
             // IllegalArgumentException somewhere else. Instead, catch and wrap it here.
             throw new IllegalArgumentException(e);
         }
+    }
+
+    /**
+     * Returns true if this path is equal to or contained within a _delta_log folder.
+     * Visible for testing.
+     */
+    static boolean isDeltaLogPath(Path normalizedPath) {
+        return Arrays.stream(normalizedPath
+            .toUri()
+            .toString()
+            .split(Path.SEPARATOR)
+        ).anyMatch("_delta_log"::equals);
     }
 }
