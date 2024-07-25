@@ -1216,6 +1216,34 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("new table with column mapping mode = id and nested schema") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b",
+          new StructType()
+            .add("d", IntegerType.INTEGER, true)
+            .add("e", IntegerType.INTEGER, true))
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
+      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("c").getMetadata, 5, "UUID")
+
+      val innerStruct = structType.get("b").getDataType.asInstanceOf[StructType]
+      assertColumnMapping(innerStruct.get("d").getMetadata, 3, "UUID")
+      assertColumnMapping(innerStruct.get("e").getMetadata, 4, "UUID")
+    }
+  }
+
+
   private def assertColumnMapping(meta: FieldMetadata, expId: Long, expPhyName: String): Unit = {
     assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
     // For new tables the physical column name is a UUID. For existing tables, we

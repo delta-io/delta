@@ -35,6 +35,11 @@ public class MapType extends DataType {
         this.valueField = new StructField("value", valueType, valueContainsNull);
     }
 
+    public MapType(StructField keyField, StructField valueField) {
+        this.keyField = keyField;
+        this.valueField = valueField;
+    }
+
     public StructField getKeyField() {
         return keyField;
     }

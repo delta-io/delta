@@ -15,10 +15,11 @@
  */
 package io.delta.kernel.internal.util
 
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode._
 import io.delta.kernel.internal.util.ColumnMapping._
-import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructType}
+import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, MapType, StringType, StructField, StructType}
 import org.assertj.core.api.Assertions.{assertThat, assertThatNoException, assertThatThrownBy}
 import org.assertj.core.util.Maps
 import org.scalatest.funsuite.AnyFunSuite
@@ -124,6 +125,91 @@ class ColumnMappingSuite extends AnyFunSuite {
       .isEqualTo(15)
   }
 
+  test("finding max column id with nested struct type") {
+    val nestedStruct = new StructType()
+      .add("d", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build())
+      .add("e", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 4).build())
+
+    val schema = new StructType()
+      .add("a", StringType.STRING,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 1).build)
+      .add("b", nestedStruct,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 2).build)
+      .add("c", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 5).build)
+
+    assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(5)
+  }
+
+  test("finding max column id with nested struct type and random ids") {
+    val nestedStruct = new StructType()
+      .add("d", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 2).build())
+      .add("e", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 1).build())
+
+    val schema = new StructType()
+      .add("a", StringType.STRING,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build)
+      .add("b", nestedStruct,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 4).build)
+      .add("c", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 5).build)
+
+    assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(5)
+  }
+
+  test("finding max column id with nested array type") {
+    val nestedStruct = new StructType()
+      .add("e", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 4).build())
+      .add("f", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 5).build())
+
+    val nestedMeta = FieldMetadata.builder()
+      .putLong(COLUMN_MAPPING_ID_KEY, 2)
+      .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY,
+        FieldMetadata.builder().putLong("b.element", 6).build())
+      .build()
+
+    val schema = new StructType()
+      .add("a", StringType.STRING,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 1).build)
+      .add("b", new ArrayType(new StructField("d", nestedStruct, false)), nestedMeta)
+      .add("c", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build)
+
+    assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(6)
+  }
+
+  test("finding max column id with nested map type") {
+    val nestedStruct = new StructType()
+      .add("e", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 4).build())
+      .add("f", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 5).build())
+
+    val nestedMeta = FieldMetadata.builder()
+      .putLong(COLUMN_MAPPING_ID_KEY, 2)
+      .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY,
+        FieldMetadata.builder()
+          .putLong("b.key", 11)
+          .putLong("b.value", 12).build())
+      .build()
+
+    val schema = new StructType()
+      .add("a", StringType.STRING,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 1).build)
+      .add("b", new MapType(IntegerType.INTEGER,
+        new StructField("d", nestedStruct, false).getDataType, false), nestedMeta)
+      .add("c", IntegerType.INTEGER,
+        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build)
+
+    assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(12)
+  }
+
   test("assign id and physical name to new table") {
     val schema: StructType = new StructType()
       .add("a", StringType.STRING, true)
@@ -191,6 +277,262 @@ class ColumnMappingSuite extends AnyFunSuite {
       .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
       .hasEntrySatisfying(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
         (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+  }
+
+  test("assign id and physical name to new table with nested struct type" +
+    " and enableIcebergCompatV2=true") {
+    val schema: StructType =
+      new StructType()
+        .add("a", StringType.STRING)
+        .add("b",
+          new StructType()
+            .add("d", IntegerType.INTEGER)
+            .add("e", IntegerType.INTEGER))
+        .add("c", IntegerType.INTEGER)
+
+    val metadata: Metadata =
+      ColumnMapping.updateColumnMappingMetadata(
+        createMetadata(schema).withNewConfiguration(
+          Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")), "id", true)
+
+    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getSchema.get("b").getDataType.asInstanceOf[StructType]
+      .get("d").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (3L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getSchema.get("b").getDataType.asInstanceOf[StructType]
+      .get("e").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (4L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getSchema.get("c").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (5L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getConfiguration)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
+  }
+
+  test("assign id and physical name to new table with array type and enableIcebergCompatV2=true") {
+    val schema: StructType =
+      new StructType()
+        .add("a", StringType.STRING)
+        .add("b", new ArrayType(IntegerType.INTEGER, false))
+        .add("c", IntegerType.INTEGER)
+
+    val metadata: Metadata =
+      ColumnMapping.updateColumnMappingMetadata(
+        createMetadata(schema).withNewConfiguration(
+          Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")), "id", true)
+
+    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    // verify nested ids
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
+      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+      .hasSize(1)
+      .anySatisfy((k: AnyRef, v: AnyRef) => {
+        assertThat(k).asString.startsWith("col-")
+        assertThat(k).asString.endsWith(".element")
+        assertThat(v).isEqualTo(4L)
+      })
+
+    assertThat(metadata.getSchema.get("c").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (3L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getConfiguration)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "4")
+  }
+
+  test("assign id and physical name to new table with map type and enableIcebergCompatV2=true") {
+    val schema: StructType =
+      new StructType()
+        .add("a", StringType.STRING)
+        .add("b", new MapType(IntegerType.INTEGER, StringType.STRING, false))
+        .add("c", IntegerType.INTEGER)
+
+    val metadata: Metadata =
+      ColumnMapping.updateColumnMappingMetadata(
+        createMetadata(schema).withNewConfiguration(
+          Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")), "id", true)
+
+    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    // verify nested ids
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
+      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+      .anySatisfy((k: AnyRef, v: AnyRef) => {
+        assertThat(k).asString.startsWith("col-")
+        assertThat(k).asString.endsWith(".key")
+        assertThat(v).isEqualTo(4L)
+      })
+      .anySatisfy((k: AnyRef, v: AnyRef) => {
+        assertThat(k).asString.startsWith("col-")
+        assertThat(k).asString.endsWith(".value")
+        assertThat(v).isEqualTo(5L)
+      })
+
+    assertThat(metadata.getSchema.get("c").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (3L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getConfiguration)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
+  }
+
+  test("assign id and physical name to new table with nested schema" +
+    " and enableIcebergCompatV2=true") {
+    val schema: StructType =
+      new StructType()
+        .add("a", StringType.STRING)
+        .add("b", new MapType(
+          IntegerType.INTEGER,
+          new StructType()
+            .add("d", IntegerType.INTEGER)
+            .add("e", IntegerType.INTEGER)
+            .add("f", new ArrayType(
+              new StructType()
+                .add("g", IntegerType.INTEGER)
+                .add("h", IntegerType.INTEGER),
+                false),
+              false),
+          false))
+        .add("c", IntegerType.INTEGER)
+
+    val metadata: Metadata =
+      ColumnMapping.updateColumnMappingMetadata(
+        createMetadata(schema).withNewConfiguration(
+          Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")), "id", true)
+
+    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    // verify nested ids
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
+      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+      .anySatisfy((k: AnyRef, v: AnyRef) => {
+        assertThat(k).asString.startsWith("col-")
+        assertThat(k).asString.endsWith(".key")
+        assertThat(v).isEqualTo(9L)
+      })
+      .anySatisfy((k: AnyRef, v: AnyRef) => {
+        assertThat(k).asString.startsWith("col-")
+        assertThat(k).asString.endsWith(".value")
+        assertThat(v).isEqualTo(10L)
+      })
+
+    val mapType = metadata.getSchema.get("b").getDataType.asInstanceOf[MapType]
+    assertThat(mapType.getKeyField.getMetadata.getEntries)
+      .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_ID_KEY)
+      .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+
+    assertThat(mapType.getValueField.getMetadata.getEntries)
+      .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_ID_KEY)
+      .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+
+    val innerStruct = mapType.getValueField.getDataType.asInstanceOf[StructType]
+    assertThat(innerStruct.get("d").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (3L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(innerStruct.get("e").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (4L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(innerStruct.get("f").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (5L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    val innerArray = innerStruct.get("f").getDataType.asInstanceOf[ArrayType]
+    // verify nested ids
+    assertThat(innerStruct.get("f").getMetadata.getEntries
+      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+      .hasSize(1)
+      .anySatisfy((k: AnyRef, v: AnyRef) => {
+        assertThat(k).asString.startsWith("col-")
+        assertThat(k).asString.endsWith(".element")
+        assertThat(v).isEqualTo(11L)
+      })
+
+    val structInArray = innerArray.getElementField.getDataType.asInstanceOf[StructType]
+    assertThat(structInArray.get("g").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (6L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(structInArray.get("h").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (7L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getSchema.get("c").getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (8L).asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+
+    assertThat(metadata.getConfiguration)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "11")
   }
 
   private def createMetadata(schema: StructType) = new Metadata(
