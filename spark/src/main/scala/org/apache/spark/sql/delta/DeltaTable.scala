@@ -22,7 +22,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.metering.{DeltaLogging, LogThrottler}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -270,15 +270,21 @@ object DeltaTableUtils extends PredicateHelper
           // return the error we found at the original path, if any.
           // This gives us best-effort detection of delta logs in the hierarchy, but with more
           // useful error messages when access was actually missing.
-          logWarning(log"Access error while exploring path hierarchy for a delta log."
-            + log"original path=${MDC(DeltaLogKeys.PATH, path)}, "
-            + log"path with error=${MDC(DeltaLogKeys.PATH2, currentPath)}", ex)
+          logThrottler.throttledWithSkippedLogMessage { skippedStr =>
+            logWarning(log"Access error while exploring path hierarchy for a delta log."
+                + log"original path=${MDC(DeltaLogKeys.PATH, path)}, "
+                + log"path with error=${MDC(DeltaLogKeys.PATH2, currentPath)}."
+                + skippedStr,
+              ex)
+          }
           return noneOrError()
       }
       currentPath = currentPath.getParent
     }
     noneOrError()
   }
+
+  private val logThrottler = new LogThrottler()
 
   /** Whether a path should be hidden for delta-related file operations, such as Vacuum and Fsck. */
   def isHiddenDirectory(partitionColumnNames: Seq[String], pathName: String): Boolean = {
