@@ -29,12 +29,10 @@ import java.util.Optional;
  * database)
  */
 public class MemoryLogStore extends BaseExternalLogStore {
-    private int numGetLatestExternalEntryCalls;
+    public static int numGetLatestExternalEntryCalls = 0;
 
     public MemoryLogStore(Configuration hadoopConf) {
         super(hadoopConf);
-
-        this.numGetLatestExternalEntryCalls = 0;
     }
 
     ///////////////////
@@ -85,14 +83,6 @@ public class MemoryLogStore extends BaseExternalLogStore {
             .stream()
             .filter(item -> item.tablePath.equals(fixedTablePath))
             .max(Comparator.comparing(ExternalCommitEntry::absoluteFilePath));
-    }
-
-    ///////////////////////
-    // Counter Accessors //
-    ///////////////////////
-
-    public int numGetLatestExternalEntryCalls() {
-        return numGetLatestExternalEntryCalls;
     }
 
     ////////////////////
