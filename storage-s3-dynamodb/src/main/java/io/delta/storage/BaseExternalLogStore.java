@@ -130,6 +130,8 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         final FileSystem fs = path.getFileSystem(hadoopConf);
         final Path resolvedPath = stripUserInfo(fs.makeQualified(path));
 
+        // VACUUM operations may use this LogStore::listFrom API. We don't need to attempt to
+        // perform a fix/recovery during such operations that are not listing the _delta_log.
         if (isDeltaLogPath(resolvedPath)) {
             final Path tablePath = getTablePath(resolvedPath);
             final Optional<ExternalCommitEntry> entry = getLatestExternalEntry(tablePath);
@@ -476,11 +478,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
         }
     }
 
-    /**
-     * Returns true if this path is equal to or contained within a _delta_log folder.
-     * Visible for testing.
-     */
-    static boolean isDeltaLogPath(Path normalizedPath) {
+    /** Returns true if this path is contained within a _delta_log folder. */
+    @VisibleForTesting
+    protected boolean isDeltaLogPath(Path normalizedPath) {
         return Arrays.stream(normalizedPath
             .toUri()
             .toString()

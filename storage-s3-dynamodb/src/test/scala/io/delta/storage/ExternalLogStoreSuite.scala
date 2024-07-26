@@ -18,15 +18,12 @@ package io.delta.storage
 
 import java.io.File
 import java.net.URI
-import java.nio.file.Files
 
-import io.delta.storage.BaseExternalLogStore.isDeltaLogPath
-import io.delta.storage.internal.FileNameUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
 import org.scalatest.funsuite.AnyFunSuite
 
-import org.apache.spark.sql.delta.{DeltaLog, FakeFileSystem}
+import org.apache.spark.sql.delta.FakeFileSystem
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreAdaptor
 import org.apache.spark.sql.delta.util.FileNames
@@ -80,24 +77,67 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     }
   }
 
-  // TODO: improve this test before merging
   test("#3423: VACUUM does not check external store for latest entry") {
-    withTempDir { tempDir =>
-      withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
-        val path = tempDir.getCanonicalPath
+    def doVacuumTestGetNumVacuumListCalls(usePreviousListBehavior: Boolean): Int = {
+      var ret = -1
 
-        spark.range(100).repartition(1).write.format("delta").save(path)
+      withTempDir { tempDir =>
+        withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+          spark.conf.set(
+            MemoryLogStore.IS_DELTA_LOG_PATH_OVERRIDE_KEY,
+            usePreviousListBehavior)
 
-        spark.sql(s"DELETE FROM delta.`$path`")
+          val path = tempDir.getCanonicalPath
 
-        val numExternalCallsBeforeVacuum = MemoryLogStore.numGetLatestExternalEntryCalls
+          spark.range(100).repartition(1).write.format("delta").save(path)
 
-        spark.sql(s"VACUUM delta.`$path` RETAIN 0 HOURS")
+          spark.sql(s"DELETE FROM delta.`$path`")
 
-        // Before the fix for #3423, this number was 9
-        assert(MemoryLogStore.numGetLatestExternalEntryCalls == numExternalCallsBeforeVacuum + 4)
+          val numExternalCallsBeforeVacuum = MemoryLogStore.numGetLatestExternalEntryCalls
+
+          spark.sql(s"VACUUM delta.`$path` RETAIN 0 HOURS")
+
+          val numExternalCallsAfterVacuum = MemoryLogStore.numGetLatestExternalEntryCalls
+
+          ret = numExternalCallsAfterVacuum - numExternalCallsBeforeVacuum
+        }
       }
+
+      ret
     }
+
+    val numVacuumListCallsWithPreviousListBehavior = doVacuumTestGetNumVacuumListCalls(true)
+    val numVacuumListCallsWithCurrentListBehavior = doVacuumTestGetNumVacuumListCalls(false)
+
+    assert(numVacuumListCallsWithPreviousListBehavior > numVacuumListCallsWithCurrentListBehavior)
+  }
+
+  test("#3423: BaseExternalLogStore::isDeltaLogPath") {
+    val store = createLogStore(spark)
+        .asInstanceOf[LogStoreAdaptor].logStoreImpl
+        .asInstanceOf[MemoryLogStore]
+
+    // json file
+    assert(store.isDeltaLogPath(new Path("s3://bucket/_delta_log/0000.json")))
+
+    // checkpoint file
+    assert(store.isDeltaLogPath(new Path("s3://bucket/_delta_log/0010.checkpoint.parquet")))
+
+    // file listing prefix
+    assert(store.isDeltaLogPath(new Path("s3://bucket/_delta_log/0000.")))
+
+    // delta_log folder (with / prefix)
+    assert(store.isDeltaLogPath(new Path("s3://bucket/_delta_log/")))
+
+    // delta_log folder (without / prefix)
+    assert(store.isDeltaLogPath(new Path("s3://bucket/_delta_log")))
+
+    // obvious negative cases
+    assert(!store.isDeltaLogPath(new Path("s3://bucket/part-000-UUID.parquet")))
+
+    // edge cases of `_delta_log` in a folder
+    assert(!store.isDeltaLogPath(new Path("s3://bucket/__delta_log/")))
+    assert(!store.isDeltaLogPath(new Path("s3://bucket/_delta_log_")))
   }
 
   test("single write") {
@@ -313,27 +353,6 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
         assert(MemoryLogStore.get(delta0_fail) eq MemoryLogStore.get(delta0_normal))
       }
     }
-  }
-
-  test("BaseExternalLogStore::isDeltaLogPath") {
-    // json file
-    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log/0000.json")))
-
-    // checkpoint file
-    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log/0010.checkpoint.parquet")))
-
-    // file listing prefix
-    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log/0000.")))
-
-    // delta_log folder (with / prefix)
-    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log/")))
-
-    // delta_log folder (without / prefix)
-    assert(isDeltaLogPath(new Path("s3://bucket/_delta_log")))
-
-    // edge cases of `_delta_log` in a folder name
-    assert(!isDeltaLogPath(new Path("s3://bucket/__delta_log/")))
-    assert(!isDeltaLogPath(new Path("s3://bucket/_delta_log_")))
   }
 }
 
