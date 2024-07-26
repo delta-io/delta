@@ -56,7 +56,7 @@ import java.util.Iterator;
  */
 public abstract class LogStore {
 
-  protected final Configuration initHadoopConf;
+  protected Configuration initHadoopConf;
 
   public LogStore(Configuration initHadoopConf) {
     this.initHadoopConf = initHadoopConf;
