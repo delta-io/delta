@@ -386,22 +386,16 @@ public class SnapshotManager {
             return resultFromFsListingOpt;
         }
 
-        List<FileStatus> unbackfilledCommitsFiltered = new ArrayList<>();
-        boolean dropConditionMet = false;
-        for (Commit commit : unbackfilledCommits) {
-            if (!dropConditionMet && commit.getVersion() <= maxDeltaVersionSeen.get()) {
-                continue;
-            } else {
-                dropConditionMet = true;
-            }
-            if (versionToLoad.isPresent() && commit.getVersion() > versionToLoad.get()) {
-                break;
-            }
-            unbackfilledCommitsFiltered.add(commit.getFileStatus());
-        }
+        List<FileStatus> relevantUnbackfilledCommits = unbackfilledCommits
+                .stream()
+                .filter((commit) -> commit.getVersion() > maxDeltaVersionSeen.get())
+                .filter((commit) -> !versionToLoad.isPresent() ||
+                        commit.getVersion() <= versionToLoad.get())
+                .map(Commit::getFileStatus)
+                .collect(Collectors.toList());
 
         return resultFromFsListingOpt.map(fsListing -> {
-            fsListing.addAll(unbackfilledCommitsFiltered);
+            fsListing.addAll(relevantUnbackfilledCommits);
             return fsListing;
         });
     }
@@ -436,8 +430,8 @@ public class SnapshotManager {
 
         if (newCommitCoordinatorClientHandlerOpt.isPresent()) {
             Optional<LogSegment> segmentOpt = getLogSegmentForVersion(engine,
-                    Optional.empty(), /* startCheckpointOpt */
-                    newSnapshot.getLogSegment().checkpointVersionOpt /* versionToLoadOpt */,
+                    newSnapshot.getLogSegment().checkpointVersionOpt, /* startCheckpointOpt */
+                    Optional.empty() /* versionToLoadOpt */,
                     newCommitCoordinatorClientHandlerOpt /* commitCoordinatorClientHandlerOpt */,
                     /* coordinatedCommitsTableConf */
                     COORDINATED_COMMITS_TABLE_CONF.fromMetadata(engine, newSnapshot.getMetadata()));
