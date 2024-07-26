@@ -52,7 +52,7 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
     FileNames.unsafeDeltaFile(new Path(s"failing:${logDir.getCanonicalPath}"), version)
   }
 
-  test("#3423: listFrom only checks latest external store entry if listing a delta file") {
+  test("#3423: listFrom only checks latest external store entry if listing a delta log file") {
     withTempDir { tempDir =>
       val store = createLogStore(spark)
           .asInstanceOf[LogStoreAdaptor].logStoreImpl
@@ -73,12 +73,15 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       assert(MemoryLogStore.numGetLatestExternalEntryCalls == 1) // contacted external store
 
       store.listFrom(dataFilePath, sessionHadoopConf)
-      assert(MemoryLogStore.numGetLatestExternalEntryCalls == 1) // do not contact external store
+      assert(MemoryLogStore.numGetLatestExternalEntryCalls == 1) // did not contact external store
     }
   }
 
   test("#3423: VACUUM does not check external store for latest entry") {
-    def doVacuumTestGetNumVacuumListCalls(usePreviousListBehavior: Boolean): Int = {
+
+    // previous behaviour: always check external store for latest entry when listing
+    // current behaviour: only check external store for latest entry when listing a delta log file
+    def doVacuumTestGetNumVacuumExternalStoreCalls(usePreviousListBehavior: Boolean): Int = {
       var ret = -1
 
       withTempDir { tempDir =>
@@ -106,10 +109,10 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
       ret
     }
 
-    val numVacuumListCallsWithPreviousListBehavior = doVacuumTestGetNumVacuumListCalls(true)
-    val numVacuumListCallsWithCurrentListBehavior = doVacuumTestGetNumVacuumListCalls(false)
-
-    assert(numVacuumListCallsWithPreviousListBehavior > numVacuumListCallsWithCurrentListBehavior)
+    assert(
+      doVacuumTestGetNumVacuumExternalStoreCalls(true) >
+      doVacuumTestGetNumVacuumExternalStoreCalls(false)
+    )
   }
 
   test("#3423: BaseExternalLogStore::isDeltaLogPath") {
