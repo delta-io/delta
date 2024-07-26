@@ -39,3 +39,4 @@ We want to wrap any unchecked exceptions thrown from the `Engine` implementation
 This requires wrapping all method calls into the `Engine` implementation. We do this using helper methods in `DeltaErrors` like `wrapEngineException` <mark>(TODO ADD LINK)</mark>. For usage see example 1<mark>(TODO ADD LINK)</mark> and example 2<mark>(TODO ADD LINK)</mark>.
 
 Note: this does not catch all exceptions originating from the engine implementation, as exceptions that are not thrown until access will not be wrapped (i.e. exceptions thrown within iterators, in `ColumnVector` implementations, etc)
+- When checked exceptions cannot be thrown we instead wrap the checked exception in a `KernelEngineException`. See here <mark>(TODO ADD LINK)</mark> for an example.
