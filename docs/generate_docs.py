@@ -59,6 +59,7 @@ def main():
 
 
 def generate_and_copy_api_docs(api_docs_root_dir, target_loc):
+    return
     print("Building API docs")
 
     with WorkingDirectory(target_loc):

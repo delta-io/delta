@@ -27,7 +27,9 @@ This is the documentation site for <Delta>.
     delta-deletion-vectors
     delta-drop-feature
     delta-apidoc
+    delta-spark-connect
     delta-storage
+    delta-coordinated-commits
     delta-type-widening
     delta-uniform
     delta-sharing
