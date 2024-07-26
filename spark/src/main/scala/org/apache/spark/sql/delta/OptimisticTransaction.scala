@@ -1594,6 +1594,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           case NonFatal(_) =>
             recordCommitLargeFailure(e, op)
             throw e
+          case _ =>
+            throw e
         }
     }
   }
