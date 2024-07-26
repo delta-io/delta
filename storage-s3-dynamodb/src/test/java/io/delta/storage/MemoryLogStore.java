@@ -90,7 +90,7 @@ public class MemoryLogStore extends BaseExternalLogStore {
 
     @Override
     protected boolean isDeltaLogPath(Path normalizedPath) {
-        if (initHadoopConf.getBoolean(IS_DELTA_LOG_PATH_OVERRIDE_KEY, false)) {
+        if (initHadoopConf().getBoolean(IS_DELTA_LOG_PATH_OVERRIDE_KEY, false)) {
             return true; // hardcoded to return true
         } else {
             return super.isDeltaLogPath(normalizedPath); // only return true if in _delta_log folder
