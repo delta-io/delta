@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.FakeFileSystem
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStoreAdaptor
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.functions.col
 
 /////////////////////
 // Base Test Suite //
@@ -92,7 +93,12 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
 
           val path = tempDir.getCanonicalPath
 
-          spark.range(100).repartition(1).write.format("delta").save(path)
+          spark.range(100)
+              .withColumn("part", col("id") % 10)
+              .write
+              .format("delta")
+              .partitionBy("part")
+              .save(path)
 
           spark.sql(s"DELETE FROM delta.`$path`")
 
