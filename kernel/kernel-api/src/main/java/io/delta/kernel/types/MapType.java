@@ -27,34 +27,40 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class MapType extends DataType {
 
-    private final DataType keyType;
-    private final DataType valueType;
-    private final boolean valueContainsNull;
+    private final StructField keyField;
+    private final StructField valueField;
 
     public MapType(DataType keyType, DataType valueType, boolean valueContainsNull) {
-        this.keyType = keyType;
-        this.valueType = valueType;
-        this.valueContainsNull = valueContainsNull;
+        this.keyField = new StructField("key", keyType, false);
+        this.valueField = new StructField("value", valueType, valueContainsNull);
+    }
+
+    public StructField getKeyField() {
+        return keyField;
+    }
+
+    public StructField getValueField() {
+        return valueField;
     }
 
     public DataType getKeyType() {
-        return keyType;
+        return getKeyField().getDataType();
     }
 
     public DataType getValueType() {
-        return valueType;
+        return getValueField().getDataType();
     }
 
     public boolean isValueContainsNull() {
-        return valueContainsNull;
+        return valueField.isNullable();
     }
 
     @Override
     public boolean equivalent(DataType dataType) {
         return dataType instanceof MapType &&
-            ((MapType) dataType).getKeyType().equivalent(keyType) &&
-            ((MapType) dataType).getValueType().equivalent(valueType) &&
-            ((MapType) dataType).valueContainsNull == valueContainsNull;
+            ((MapType) dataType).getKeyType().equivalent(getKeyType()) &&
+            ((MapType) dataType).getValueType().equivalent(getValueType()) &&
+            ((MapType) dataType).isValueContainsNull() == isValueContainsNull();
     }
 
     @Override
@@ -66,13 +72,13 @@ public class MapType extends DataType {
             return false;
         }
         MapType mapType = (MapType) o;
-        return valueContainsNull == mapType.valueContainsNull && keyType.equals(mapType.keyType) &&
-            valueType.equals(mapType.valueType);
+        return Objects.equals(keyField, mapType.keyField) &&
+                Objects.equals(valueField, mapType.valueField);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(keyType, valueType, valueContainsNull);
+        return Objects.hash(keyField, valueField);
     }
 
     @Override
@@ -82,11 +88,11 @@ public class MapType extends DataType {
             "\"keyType\": %s," +
             "\"valueType\": %s," +
             "\"valueContainsNull\": %s" +
-            "}", keyType.toJson(), valueType.toJson(), valueContainsNull);
+            "}", getKeyType().toJson(), getValueType().toJson(), isValueContainsNull());
     }
 
     @Override
     public String toString() {
-        return String.format("map[%s, %s]", keyType, valueType);
+        return String.format("map[%s, %s]", getKeyType(), getValueType());
     }
 }

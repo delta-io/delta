@@ -27,26 +27,28 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class ArrayType extends DataType {
-    private final DataType elementType;
-    private final boolean containsNull;
+    private final StructField elementField;
 
     public ArrayType(DataType elementType, boolean containsNull) {
-        this.elementType = elementType;
-        this.containsNull = containsNull;
+        this.elementField = new StructField("element", elementType, containsNull);
+    }
+
+    public StructField getElementField() {
+        return elementField;
     }
 
     public DataType getElementType() {
-        return elementType;
+        return elementField.getDataType();
     }
 
     public boolean containsNull() {
-        return containsNull;
+        return elementField.isNullable();
     }
 
     @Override
     public boolean equivalent(DataType dataType) {
         return dataType instanceof ArrayType &&
-            ((ArrayType) dataType).getElementType().equivalent(elementType);
+            ((ArrayType) dataType).getElementType().equivalent(getElementType());
     }
 
     @Override
@@ -58,13 +60,12 @@ public class ArrayType extends DataType {
             return false;
         }
         ArrayType arrayType = (ArrayType) o;
-        return containsNull == arrayType.containsNull
-            && Objects.equals(elementType, arrayType.elementType);
+        return Objects.equals(elementField, arrayType.elementField);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(elementType, containsNull);
+        return Objects.hash(elementField);
     }
 
     @Override
@@ -73,11 +74,11 @@ public class ArrayType extends DataType {
             "\"type\": \"array\"," +
             "\"elementType\": %s," +
             "\"containsNull\": %s" +
-            "}", elementType.toJson(), containsNull);
+            "}", getElementType().toJson(), containsNull());
     }
 
     @Override
     public String toString() {
-        return "array[" + elementType + "]";
+        return "array[" + getElementType() + "]";
     }
 }
