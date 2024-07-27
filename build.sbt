@@ -264,9 +264,6 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
-  ).configureUnidoc(
-    generatedJavaDoc = false,
-    generateScalaDoc = false
   )
 
 lazy val connectClient = (project in file("spark-connect/client"))
@@ -353,9 +350,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
         dest.get()
       }
     }.taskValue
-  ).configureUnidoc(
-    generatedJavaDoc = false,
-    generateScalaDoc = false
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -482,7 +476,15 @@ lazy val spark = (project in file("spark"))
   .configureUnidoc(
     generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
     generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION
-  )
+  ).settings(
+    // spark-connect has classes with the same name as spark-core, this causes compilation issues
+    // with unidoc since it concatenates the classpaths from all modules
+    // ==> thus we exclude such sources
+    // (mostly) relevant github issue: https://github.com/sbt/sbt-unidoc/issues/77
+    ScalaUnidoc / unidoc / fullClasspath := {
+      (ScalaUnidoc / unidoc / fullClasspath).value
+        .filter(f => !f.data.getCanonicalPath.contains("spark-connect"))
+    })
 
 lazy val contribs = (project in file("contribs"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")

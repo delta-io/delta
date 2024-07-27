@@ -154,6 +154,12 @@ object Unidoc {
             sourceFilePatternsToKeep = unidocSourceFilePatterns.value
           )
         },
+
+//        ScalaUnidoc / unidoc / fullClasspath := {
+//          (ScalaUnidoc / unidoc / fullClasspath).value
+//            .filter(f => !f.data.getCanonicalPath.contains("spark-connect")
+//          )
+//        }
       ) else Nil
 
       javaUnidocSettings ++ scalaUnidocSettings
