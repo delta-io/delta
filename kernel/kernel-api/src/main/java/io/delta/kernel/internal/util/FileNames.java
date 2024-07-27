@@ -29,6 +29,7 @@ public final class FileNames {
     private static final Pattern DELTA_FILE_PATTERN =
         Pattern.compile("\\d+\\.json");
 
+    // Example: 00000000000000000001.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.json
     private static final Pattern UUID_DELTA_FILE_REGEX =
             Pattern.compile("(\\d+)\\.([^\\.]+)\\.json");
 

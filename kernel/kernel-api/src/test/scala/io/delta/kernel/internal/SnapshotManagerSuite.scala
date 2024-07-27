@@ -15,22 +15,26 @@
  */
 package io.delta.kernel.internal
 
-import java.util.{Arrays, Collections, Optional}
-
+import java.util.{Arrays, Collections, List, Optional}
+import java.{lang => javaLang}
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
-
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.engine.CommitCoordinatorClientHandler
+import io.delta.kernel.engine.coordinatedcommits.{Commit, CommitResponse, GetCommitsResponse}
 import io.delta.kernel.exceptions.InvalidTableException
 import io.delta.kernel.expressions.Predicate
+import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, SidecarFile}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
+import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager, TableCommitCoordinatorClientHandler}
 import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
+
+import scala.collection.JavaConverters._
 
 class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
@@ -177,7 +181,10 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       numParts: Int = -1,
       startCheckpoint: Optional[java.lang.Long] = Optional.empty(),
       versionToLoad: Optional[java.lang.Long] = Optional.empty(),
-      v2CheckpointSpec: Seq[(Long, Boolean, Int)] = Seq.empty): Unit = {
+      v2CheckpointSpec: Seq[(Long, Boolean, Int)] = Seq.empty,
+      unbackfilledDeltaVersions: Seq[Long] = Seq.empty,
+      tableCommitCoordinatorClientHandlerOpt:
+        Optional[TableCommitCoordinatorClientHandler] = Optional.empty()): Unit = {
     val deltas = deltaFileStatuses(deltaVersions)
     val singularCheckpoints = singularCheckpointFileStatuses(checkpointVersions)
     val multiCheckpoints = multiCheckpointFileStatuses(multiCheckpointVersions, numParts)
@@ -221,15 +228,14 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           new MockSidecarJsonHandler(expectedSidecars)),
         Optional.empty(),
         versionToLoad,
-        Optional.empty(),
-        null
+        tableCommitCoordinatorClientHandlerOpt
       )
       assert(logSegmentOpt.isPresent())
 
       val expectedDeltas = deltaFileStatuses(
         deltaVersions.filter { v =>
           v > expectedCheckpointVersion.getOrElse(-1L) && v <= versionToLoad.orElse(Long.MaxValue)
-        }
+        } ++ unbackfilledDeltaVersions
       )
       val expectedCheckpoints = expectedCheckpointVersion.map { v =>
         if (expectedV2Checkpoint.nonEmpty) {
@@ -242,13 +248,15 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         }
       }.getOrElse(Seq.empty)
 
+      val maxVersion =
+        if (unbackfilledDeltaVersions.isEmpty) deltaVersions.max else unbackfilledDeltaVersions.max
       checkLogSegment(
         logSegmentOpt.get(),
-        expectedVersion = versionToLoad.orElse(deltaVersions.max),
+        expectedVersion = versionToLoad.orElse(maxVersion),
         expectedDeltas = expectedDeltas,
         expectedCheckpoints = expectedCheckpoints,
         expectedCheckpointVersion = expectedCheckpointVersion,
-        expectedLastCommitTimestamp = versionToLoad.orElse(deltaVersions.max) * 10
+        expectedLastCommitTimestamp = versionToLoad.orElse(maxVersion) * 10
       )
     }
   }
@@ -313,14 +321,16 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       files: Seq[FileStatus],
       startCheckpoint: Optional[java.lang.Long] = Optional.empty(),
       versionToLoad: Optional[java.lang.Long] = Optional.empty(),
-      expectedErrorMessageContains: String = "")(implicit classTag: ClassTag[T]): Unit = {
+      expectedErrorMessageContains: String = "",
+      tableCommitCoordinatorClientHandlerOpt:
+        Optional[TableCommitCoordinatorClientHandler] = Optional.empty()
+  )(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
       snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(files),
         startCheckpoint,
         versionToLoad,
-        Optional.empty(),
-        null
+        tableCommitCoordinatorClientHandlerOpt
       )
     }
     assert(e.getMessage.contains(expectedErrorMessageContains))
@@ -445,8 +455,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       createMockFSListFromEngine(Seq.empty),
       Optional.empty(),
       Optional.empty(),
-      Optional.empty(),
-      null
+      Optional.empty()
     )
     assert(!logSegmentOpt.isPresent())
   }
@@ -498,8 +507,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         createMockFSListFromEngine(listFrom(checkpointV)(_)),
         Optional.of(checkpointV),
         Optional.empty(),
-        Optional.empty(),
-        null
+        Optional.empty()
       )
       assert(logSegmentOpt.isPresent())
       checkLogSegment(
@@ -840,8 +848,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         createMockFSListFromEngine(deltas ++ corruptedCheckpoint ++ checkpoints),
         Optional.empty(),
         Optional.empty(),
-        Optional.empty(),
-        null
+        Optional.empty()
       )
       val checkpointVersion = validVersions.sorted.lastOption
       assert(logSegmentOpt.isPresent())
@@ -863,10 +870,57 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       createMockFSListFromEngine(Seq.empty),
       Optional.of(1),
       Optional.empty(),
-      Optional.empty(),
-      null
+      Optional.empty()
     )
     assert(!logSegmentOpt.isPresent())
+  }
+
+  /* ------------------- COORDINATED COMMITS TESTS ------------------ */
+  test("read with getCommits return empty lists") {
+    testWithCheckpoints(
+      (0L to 50L),
+      Seq(10, 30, 50),
+      Seq(20, 40),
+      numParts = 5,
+      tableCommitCoordinatorClientHandlerOpt =
+        Optional.of(new MockTableCommitCoordinatorClientHandler(logPath))
+    )
+  }
+
+  test("read with getCommits return a list with serveral unbackfilled commits") {
+    val unbackfilledCommits1 = Seq(51L)
+    testWithCheckpoints(
+      (0L to 50L),
+      Seq(10, 30, 50),
+      Seq(20, 40),
+      numParts = 5,
+      unbackfilledDeltaVersions = unbackfilledCommits1,
+      tableCommitCoordinatorClientHandlerOpt =
+        Optional.of(new MockTableCommitCoordinatorClientHandler(logPath, unbackfilledCommits1))
+    )
+
+    val unbackfilledCommits2 = 51L to 60L
+    testWithCheckpoints(
+      (0L to 50L),
+      Seq(10, 30, 50),
+      Seq(20, 40),
+      numParts = 5,
+      unbackfilledDeltaVersions = unbackfilledCommits2,
+      tableCommitCoordinatorClientHandlerOpt =
+        Optional.of(new MockTableCommitCoordinatorClientHandler(logPath, unbackfilledCommits2))
+    )
+  }
+
+  test("read with getCommits throws an exception") {
+    val errMsg = "getCommits failed"
+    testExpectedError[RuntimeException](
+      files = deltaFileStatuses(0L until 10L),
+      versionToLoad = Optional.of(5),
+      expectedErrorMessageContains = errMsg,
+      tableCommitCoordinatorClientHandlerOpt =
+        Optional.of(new MockTableCommitCoordinatorClientHandler(
+          logPath, e = new RuntimeException(errMsg)))
+    )
   }
 }
 
@@ -906,4 +960,19 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
     singletonSidecarIterator(sidecars)
+}
+
+class MockTableCommitCoordinatorClientHandler(
+  logPath: Path, versions: Seq[Long] = Seq.empty, e: Throwable = null)
+  extends TableCommitCoordinatorClientHandler(null, null, null) {
+  override def getCommits(
+    startVersion: javaLang.Long, endVersion: javaLang.Long): GetCommitsResponse = {
+    if (e != null) {
+      throw e
+    }
+    new GetCommitsResponse(
+      versions
+        .map(v => new Commit(v, FileStatus.of(FileNames.deltaFile(logPath, v), v, v*10), v)).asJava,
+      if (versions.isEmpty) -1 else versions.last)
+  }
 }

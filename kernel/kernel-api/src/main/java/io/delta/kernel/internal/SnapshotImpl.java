@@ -19,7 +19,6 @@ import java.util.Optional;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.engine.CommitCoordinatorClientHandler;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 
@@ -30,6 +29,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.TableCommitCoordinatorClientHandler;
 import static io.delta.kernel.internal.TableConfig.*;
 
 /**
@@ -164,11 +164,15 @@ public class SnapshotImpl implements Snapshot {
      * @param engine the engine to use for IO operations
      * @return the commit coordinator client handler for this snapshot
      */
-    public Optional<CommitCoordinatorClientHandler> getCommitCoordinatorClientHandlerOpt(
+    public Optional<TableCommitCoordinatorClientHandler> getTableCommitCoordinatorClientHandlerOpt(
             Engine engine) {
-        return COORDINATED_COMMITS_COORDINATOR_NAME.fromMetadata(engine, metadata).map(
-                commitCoordinatorStr -> engine.getCommitCoordinatorClientHandler(
+        return COORDINATED_COMMITS_COORDINATOR_NAME.fromMetadata(engine, metadata)
+                .map(commitCoordinatorStr -> engine.getCommitCoordinatorClientHandler(
                         commitCoordinatorStr,
-                        COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(engine, metadata)));
+                        COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(engine, metadata)))
+                .map(handler -> new TableCommitCoordinatorClientHandler(
+                        handler,
+                        logPath.toString(),
+                        COORDINATED_COMMITS_TABLE_CONF.fromMetadata(engine, metadata)));
     }
 }

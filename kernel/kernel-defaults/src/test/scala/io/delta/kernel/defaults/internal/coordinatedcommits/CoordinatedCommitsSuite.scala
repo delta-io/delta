@@ -28,7 +28,7 @@ import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.actions.{CommitInfo, Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.actions.SingleAction.{createMetadataSingleAction, FULL_SCHEMA}
 import io.delta.kernel.internal.fs.{Path => KernelPath}
-import io.delta.kernel.internal.snapshot.SnapshotManager
+import io.delta.kernel.internal.snapshot.{SnapshotManager, TableCommitCoordinatorClientHandler}
 import io.delta.kernel.internal.util.{CoordinatedCommitsUtils, FileNames}
 import io.delta.kernel.internal.util.Preconditions.checkArgument
 import io.delta.kernel.internal.util.Utils.{closeCloseables, singletonCloseableIterator, toCloseableIterator}
@@ -149,10 +149,10 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
       checkAnswer(result, (0L to 29L).map(TestRow(_)))
-      assert(snapshot.getCommitCoordinatorClientHandlerOpt(engine).isPresent)
+      assert(snapshot.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
       assert(
         snapshot
-          .getCommitCoordinatorClientHandlerOpt(engine)
+          .getTableCommitCoordinatorClientHandlerOpt(engine)
           .get()
           .semanticEquals(
             engine.getCommitCoordinatorClientHandler(
@@ -249,9 +249,10 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
         Optional.of(1L),
         Optional.of(4L),
         Optional.of(
-          engine.getCommitCoordinatorClientHandler(
-            "tracking-in-memory", Collections.emptyMap())),
-        Collections.emptyMap()
+          new TableCommitCoordinatorClientHandler(
+            engine.getCommitCoordinatorClientHandler("tracking-in-memory", Collections.emptyMap()),
+            logPath.toString,
+            Collections.emptyMap()))
       )
       assert(logSegmentOpt.isPresent)
       val logSegment = logSegmentOpt.get()
