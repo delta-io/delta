@@ -1045,12 +1045,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           val profileFile = prepareProfileFile(tempDir)
           test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
         }
-        // BEGIN-EDGE
-        withSQLConf(getUnityCatalogClassesSQLConf.toSeq: _*) {
-          val ucTableFullName = s"catalog.schema.$sharedTableName"
-          test(s"uc-deltasharing://$ucTableFullName#$ucTableFullName")
-        }
-        // END-EDGE
       }
     }
   }
@@ -1105,12 +1099,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             val profileFile = prepareProfileFile(tempDir)
             test(profileFile.getCanonicalPath + s"#share1.default.$sharedTableName")
           }
-          // BEGIN-EDGE
-          withSQLConf(getUnityCatalogClassesSQLConf.toSeq: _*) {
-            val ucTableFullName = s"catalog.schema.$sharedTableName"
-            test(s"uc-deltasharing://$ucTableFullName#$ucTableFullName")
-          }
-          // END-EDGE
         }
       }
     }
