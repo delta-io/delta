@@ -354,6 +354,7 @@ class DeltaFormatSharingSourceSuite
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       val deltaTableName = "delta_table_restart_special"
       withTable(deltaTableName) {
+        // scalastyle:off nonascii
         sql(s"""CREATE TABLE $deltaTableName (`第一列` STRING) USING DELTA""".stripMargin)
         val sharedTableName = "shared_streaming_table_special"
         prepareMockedClientMetadata(deltaTableName, sharedTableName)
@@ -376,6 +377,7 @@ class DeltaFormatSharingSourceSuite
               .format("delta")
               .option("checkpointLocation", checkpointDir.toString)
               .start(outputDir.toString)
+            // scalastyle:on nonascii
 
             try {
               q.processAllAvailable()

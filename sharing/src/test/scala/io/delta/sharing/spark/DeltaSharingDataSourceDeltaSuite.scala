@@ -1006,6 +1006,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_special"
       withTable(deltaTableName) {
+        // scalastyle:off nonascii
         sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
                |USING DELTA PARTITIONED BY (c2)
                |""".stripMargin)
@@ -1026,6 +1027,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         val expectedSchema: StructType = new StructType()
           .add("第一列", IntegerType)
           .add("c2", StringType)
+        // scalastyle:on nonascii
         val expected = spark.read.format("delta").table(deltaTableName)
 
         def test(tablePath: String): Unit = {
@@ -1053,6 +1055,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf_special"
       withTable(deltaTableName) {
+        // scalastyle:off nonascii
         sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
                |USING DELTA PARTITIONED BY (c2)
                |TBLPROPERTIES (delta.enableChangeDataFeed = true)
@@ -1066,6 +1069,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           }
           sql(s"INSERT INTO $deltaTableName VALUES ${valuesBuilder.result().mkString(",")}")
           sql(s"""UPDATE $deltaTableName SET `第一列` = `第一列` + 100 where c2 = "${iteration}"""")
+          // scalastyle:on nonascii
           sql(s"""DELETE FROM $deltaTableName where c2 = "${iteration}"""")
         }
 
