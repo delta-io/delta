@@ -86,10 +86,12 @@ def run_example(version, maven_repo, project_dir, main_class, test_cases):
 
 def clear_artifact_cache():
     print("Clearing Delta Kernel artifacts from ivy2 and mvn cache")
-    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta.kernel"))
-    delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta.kernel"))
-    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
-    delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta"))
+    ivy_caches_to_clear = [path for path in os.listdir(os.path.expanduser("~")) if path.startswith(".ivy")]
+    print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
+    for path in ivy_caches_to_clear:
+        for subpath in ["io.delta", "io.delta.kernel"]:
+            delete_if_exists(os.path.expanduser(f"~/{path}/cache/{subpath}"))
+            delete_if_exists(os.path.expanduser(f"~/{path}/local/{subpath}"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 
