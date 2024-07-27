@@ -350,6 +350,112 @@ class DeltaFormatSharingSourceSuite
     }
   }
 
+  test("restart works sharing with special chars") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_restart_special"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (`第一列` STRING) USING DELTA""".stripMargin)
+        val sharedTableName = "shared_streaming_table_special"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          def InsertToDeltaTable(values: String): Unit = {
+            sql(s"INSERT INTO $deltaTableName VALUES $values")
+          }
+
+          // TODO: check testStream() function helper
+          def processAllAvailableInStream(): Unit = {
+            val q = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+              .filter($"第一列" contains "keep")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
+
+            try {
+              q.processAllAvailable()
+            } finally {
+              q.stop()
+            }
+          }
+
+          // Able to stream snapshot at version 1.
+          InsertToDeltaTable("""("keep1"), ("keep2"), ("drop1")""")
+          prepareMockedClientAndFileSystemResult(
+            deltaTable = deltaTableName,
+            sharedTable = sharedTableName,
+            versionAsOf = Some(1L)
+          )
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          processAllAvailableInStream()
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            Seq("keep1", "keep2").toDF()
+          )
+
+          // No new data, so restart will not process any new data.
+          processAllAvailableInStream()
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            Seq("keep1", "keep2").toDF()
+          )
+
+          // Able to stream new data at version 2.
+          InsertToDeltaTable("""("keep3"), ("keep4"), ("drop2")""")
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName,
+            sharedTableName,
+            2,
+            2
+          )
+          processAllAvailableInStream()
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            Seq("keep1", "keep2", "keep3", "keep4").toDF()
+          )
+
+          sql(s"""OPTIMIZE $deltaTableName""")
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName,
+            sharedTableName,
+            2,
+            3
+          )
+          // Optimize doesn't produce new data, so restart will not process any new data.
+          processAllAvailableInStream()
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            Seq("keep1", "keep2", "keep3", "keep4").toDF()
+          )
+
+          // Able to stream new data at version 3.
+          InsertToDeltaTable("""("keep5"), ("keep6"), ("drop3")""")
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName,
+            sharedTableName,
+            3,
+            4
+          )
+
+          processAllAvailableInStream()
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            Seq("keep1", "keep2", "keep3", "keep4", "keep5", "keep6").toDF()
+          )
+          assertBlocksAreCleanedUp()
+        }
+      }
+    }
+  }
+
   test("streaming works with deletes on basic table") {
     withTempDir { inputDir =>
       val deltaTableName = "delta_table_deletes"
