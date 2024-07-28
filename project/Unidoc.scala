@@ -46,7 +46,8 @@ object Unidoc {
     def configureUnidoc(
       docTitle: String = null,
       generatedJavaDoc: Boolean = true,
-      generateScalaDoc: Boolean = false
+      generateScalaDoc: Boolean = false,
+      classPathToSkip: String = null
     ): Project = {
       if (!generatedJavaDoc && !generateScalaDoc) return projectToUpdate
 
@@ -65,7 +66,7 @@ object Unidoc {
               "com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
           ),
 
-          generateUnidocSettings(docTitle, generateScalaDoc),
+          generateUnidocSettings(docTitle, generateScalaDoc, classPathToSkip),
 
           // Ensure unidoc is run with tests.
           (Test / test) := ((Test / test) dependsOn (Compile / unidoc)).value
@@ -74,7 +75,8 @@ object Unidoc {
 
     private def generateUnidocSettings(
         customDocTitle: String,
-        generateScalaDoc: Boolean): Def.SettingsDefinition = {
+        generateScalaDoc: Boolean,
+        classPathToSkip : String): Def.SettingsDefinition = {
 
       val internalFilePattern = Seq("/internal/", "/execution/", "$")
 
@@ -155,11 +157,11 @@ object Unidoc {
           )
         },
 
-//        ScalaUnidoc / unidoc / fullClasspath := {
-//          (ScalaUnidoc / unidoc / fullClasspath).value
-//            .filter(f => !f.data.getCanonicalPath.contains("spark-connect")
-//          )
-//        }
+        ScalaUnidoc / unidoc / fullClasspath := {
+          (ScalaUnidoc / unidoc / fullClasspath).value
+            .filter(f =>
+              classPathToSkip == null || !f.data.getCanonicalPath.contains(classPathToSkip))
+        }
       ) else Nil
 
       javaUnidocSettings ++ scalaUnidocSettings
