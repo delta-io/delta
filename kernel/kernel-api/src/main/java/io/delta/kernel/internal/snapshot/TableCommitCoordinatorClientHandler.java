@@ -27,6 +27,12 @@ import io.delta.kernel.engine.coordinatedcommits.GetCommitsResponse;
 import io.delta.kernel.engine.coordinatedcommits.UpdatedActions;
 import io.delta.kernel.utils.CloseableIterator;
 
+/**
+ * A wrapper around {@link CommitCoordinatorClientHandler} that provides a more user-friendly API
+ * for committing/ accessing commits to a specific table. This class takes care of passing the
+ * table specific configuration to the underlying {@link CommitCoordinatorClientHandler} e.g.
+ * logPath / coordinatedCommitsTableConf.
+ */
 public class TableCommitCoordinatorClientHandler {
     private final CommitCoordinatorClientHandler commitCoordinatorClientHandler;
     private final String logPath;

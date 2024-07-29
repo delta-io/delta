@@ -137,7 +137,7 @@ public class SnapshotManager {
         Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(engine,
                 Optional.empty(), /* startCheckpointOpt */
                 Optional.of(version) /* versionToLoadOpt */,
-                /* tableCommitCoordinatorClientHandlerOpt */
+                /* tableCommitHandlerOpt */
                 upperBoundSnapshot.getTableCommitCoordinatorClientHandlerOpt(engine));
 
         return logSegmentOpt
@@ -292,18 +292,23 @@ public class SnapshotManager {
      * exists, throws an exception that the state is not reconstructable.
      * <p>
      * This method lists all delta files and checkpoint files with the following steps:
-     * 1. Collect un-backfilled files by making call to commit-coordinator
-     * 2. Collect backfilled files and checkpoint files by making call to file-system
-     * 3. Filter un-backfilled files to exclude overlapping delta files collected from both
-     * commit-coordinator and file-system to avoid duplicates.
-     * 4. Merge and return the backfilled files and filtered un-backfilled files.
+     * <ul>
+     *     <li>When the table is set up with a commit coordinator, retrieve any files that haven't
+     *     been backfilled by initiating a request to the commit coordinator service. If the table
+     *     is not configured to use a commit coordinator, this list will be empty.</li>
+     *     <li>Collect commit files (aka backfilled commits) and checkpoint files by listing the
+     *     contents of the Delta log on storage.</li>
+     *     <li>Filter un-backfilled files to exclude overlapping delta files collected from both
+     *     commit-coordinator and file-system to avoid duplicates.</li>
+     *     <li>Merge and return the backfilled files and filtered un-backfilled files.</li>
+     * </ul>
      * <p>
      * *Note*: If table is a coordinated-commits table, the commit-coordinator client MUST be passed
      * to correctly list the commits.
      * @param startVersion  the version to start. Inclusive.
      * @param versionToLoad the optional parameter to set the max version we should return.
      *                      Inclusive. Must be >= startVersion if provided.
-     * @param tableCommitCoordinatorClientHandlerOpt the optional commit-coordinator client handler
+     * @param tableCommitHandlerOpt the optional commit-coordinator client handler
      *                                               to use for fetching un-backfilled commits.
      * @return Some array of files found (possibly empty, if no usable commit files are present), or
      * None if the listing returned no files at all.
@@ -312,7 +317,7 @@ public class SnapshotManager {
         Engine engine,
         long startVersion,
         Optional<Long> versionToLoad,
-        Optional<TableCommitCoordinatorClientHandler> tableCommitCoordinatorClientHandlerOpt) {
+        Optional<TableCommitCoordinatorClientHandler> tableCommitHandlerOpt) {
         versionToLoad.ifPresent(v ->
             checkArgument(
                 v >= startVersion,
@@ -323,8 +328,11 @@ public class SnapshotManager {
             ));
         logger.debug("startVersion: {}, versionToLoad: {}", startVersion, versionToLoad);
 
+        // Fetching the unbackfilled commits before doing the log directory listing to avoid a gap
+        // in delta versions if some delta files are backfilled after the log directory listing but
+        // before the unbackfilled commits listing
         List<Commit> unbackfilledCommits = getUnbackfilledCommits(
-                tableCommitCoordinatorClientHandlerOpt,
+                tableCommitHandlerOpt,
                 startVersion,
                 versionToLoad);
 
@@ -388,7 +396,7 @@ public class SnapshotManager {
                             return output;
                         });
 
-        if (!tableCommitCoordinatorClientHandlerOpt.isPresent()) {
+        if (!tableCommitHandlerOpt.isPresent()) {
             return resultFromFsListingOpt;
         }
 
@@ -407,11 +415,11 @@ public class SnapshotManager {
     }
 
     private List<Commit> getUnbackfilledCommits(
-            Optional<TableCommitCoordinatorClientHandler> tableCommitCoordinatorClientHandlerOpt,
+            Optional<TableCommitCoordinatorClientHandler> tableCommitHandlerOpt,
             long startVersion,
             Optional<Long> versionToLoad) {
         try {
-            return tableCommitCoordinatorClientHandlerOpt
+            return tableCommitHandlerOpt
                     .map(commitCoordinatorClientHandler -> {
                         logger.info("Getting un-backfilled commits from commit coordinator for " +
                                         "table: {}", tablePath);
@@ -421,8 +429,8 @@ public class SnapshotManager {
                     })
                     .orElse(Collections.emptyList());
         } catch (Exception e) {
-            logger.info(
-                    "Failed to get unbackfilled commits of table {} with getCommits API: {}",
+            logger.error(
+                    "Failed to get unbackfilled commits of table {} with commit coordinator: {}",
                     tablePath,
                     e);
             throw e;
@@ -462,8 +470,7 @@ public class SnapshotManager {
                     engine,
                     newSnapshot.getLogSegment().checkpointVersionOpt, /* startCheckpointOpt */
                     Optional.empty() /* versionToLoadOpt */,
-                    /* tableCommitCoordinatorClientHandlerOpt */
-                    newTableCommitCoordinatorClientHandlerOpt);
+                    newTableCommitCoordinatorClientHandlerOpt /* tableCommitHandlerOpt */);
             newSnapshot = segmentOpt
                     .map(segment -> createSnapshot(segment, engine))
                     .orElseThrow(() -> new TableNotFoundException(tablePath.toString()));
@@ -552,7 +559,7 @@ public class SnapshotManager {
         Engine engine,
         Optional<Long> startCheckpoint,
         Optional<Long> versionToLoad,
-        Optional<TableCommitCoordinatorClientHandler> tableCommitCoordinatorClientHandlerOpt) {
+        Optional<TableCommitCoordinatorClientHandler> tableCommitHandlerOpt) {
         // Only use startCheckpoint if it is <= versionToLoad
         Optional<Long> startCheckpointToUse = startCheckpoint
                 .filter(v -> !versionToLoad.isPresent() || v <= versionToLoad.get());
@@ -583,7 +590,7 @@ public class SnapshotManager {
                         engine,
                         startVersion,
                         versionToLoad,
-                        tableCommitCoordinatorClientHandlerOpt);
+                        tableCommitHandlerOpt);
         logger.info("{}: Took {}ms to list the files after starting checkpoint",
                 tablePath,
                 System.currentTimeMillis() - startTimeMillis);
@@ -594,7 +601,7 @@ public class SnapshotManager {
                     startCheckpointToUse,
                     versionToLoad,
                     newFiles,
-                    tableCommitCoordinatorClientHandlerOpt);
+                    tableCommitHandlerOpt);
         } finally {
             logger.info("{}: Took {}ms to construct a log segment",
                     tablePath,
@@ -611,7 +618,7 @@ public class SnapshotManager {
         Optional<Long> startCheckpointOpt,
         Optional<Long> versionToLoadOpt,
         Optional<List<FileStatus>> filesOpt,
-        Optional<TableCommitCoordinatorClientHandler> tableCommitCoordinatorClientHandlerOpt) {
+        Optional<TableCommitCoordinatorClientHandler> tableCommitHandlerOpt) {
         final List<FileStatus> newFiles;
         if (filesOpt.isPresent()) {
             newFiles = filesOpt.get();
@@ -650,7 +657,7 @@ public class SnapshotManager {
             return getLogSegmentForVersion(engine,
                     Optional.empty(),
                     versionToLoadOpt,
-                    tableCommitCoordinatorClientHandlerOpt);
+                    tableCommitHandlerOpt);
         }
 
         Tuple2<List<FileStatus>, List<FileStatus>> checkpointsAndDeltas = ListUtils
