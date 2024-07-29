@@ -1107,7 +1107,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
       }
     }
   }
-  
+
   /**
    * deletion vector tests
    */
