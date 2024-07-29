@@ -24,7 +24,7 @@ import io.delta.kernel.defaults.engine.DefaultCommitCoordinatorClientHandler
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.ConcurrentWriteException
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{CommitInfo, Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.actions.SingleAction.{createMetadataSingleAction, FULL_SCHEMA}
 import io.delta.kernel.internal.fs.{Path => KernelPath}
@@ -53,7 +53,6 @@ import scala.collection.immutable.Seq
 
 class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
   with CoordinatedCommitsTestUtils {
-
   private val trackingInMemoryBatchSize10Config = Map(
     CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
       classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
@@ -64,13 +63,11 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
     commitDatas: Seq[Seq[FilteredColumnarBatch]],
     coordinatorName: String = "tracking-in-memory",
     coordinatorConf: String = "{}",
-    tableConfToOverwrite: String = null,
     versionConvertToCC: Long = 0L,
     coordinatedCommitNum: Long = 3L,
     checkpointVersion: Long = -1L,
     backfillVersion: Long = -1L): Unit = {
     assert(checkpointVersion < versionConvertToCC)
-
     val table = Table.forPath(engine, tablePath)
     val totalCommitNum = coordinatedCommitNum + versionConvertToCC
     val handler = engine.getCommitCoordinatorClientHandler(
@@ -112,67 +109,71 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
   }
 
   test("0th commit happens via filesystem") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val logPath = new Path(table.getPath(engine), "_delta_log")
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = true,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> dataBatches1),
-        tableProperties = Map(
-          COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "nobackfilling-commit-coordinator",
-          COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}")
-      )
-
-      assert(engine.getFileSystemClient.listFrom(FileNames.listingPrefix(logPath, 0L)).exists { f =>
-        new Path(f.getPath).getName === "00000000000000000000.json"
-      })
-    }, Map(CommitCoordinatorProvider.
+    val config = Map(CommitCoordinatorProvider.
       getCommitCoordinatorNameConfKey("nobackfilling-commit-coordinator") ->
       classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "5"))
+      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "5")
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val table = Table.forPath(engine, tablePath)
+        val logPath = new Path(table.getPath(engine), "_delta_log")
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1),
+          tableProperties = Map(
+            COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "nobackfilling-commit-coordinator",
+            COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}")
+        )
+
+        assert(
+          engine.getFileSystemClient.listFrom(FileNames.listingPrefix(logPath, 0L)).exists { f =>
+          new Path(f.getPath).getName === "00000000000000000000.json"
+        })
+    })
   }
 
   test("basic write") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val logPath = new Path(table.getPath(engine), "_delta_log")
-      val commitsDir = new File(FileNames.commitDirPath(logPath).toUri)
-      val deltaDir = new File(logPath.toUri)
+    val config =
+      Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
+        classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
+        InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "2")
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val table = Table.forPath(engine, tablePath)
+        val logPath = new Path(table.getPath(engine), "_delta_log")
+        val commitsDir = new File(FileNames.commitDirPath(logPath).toUri)
+        val deltaDir = new File(logPath.toUri)
 
-      val commitDatas = Seq.fill(2)(dataBatches1)
-      setupCoordinatedCommitsForTest(engine, tablePath, commitDatas, coordinatedCommitNum = 2L)
+        val commitDatas = Seq.fill(2)(dataBatches1)
+        setupCoordinatedCommitsForTest(engine, tablePath, commitDatas, coordinatedCommitNum = 2L)
 
-      assert(getCommitVersions(commitsDir) === Array(1))
-      assert(getCommitVersions(deltaDir) === Array(0))
+        assert(getCommitVersions(commitsDir) === Array(1))
+        assert(getCommitVersions(deltaDir) === Array(0))
 
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = false,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2))
-      )
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2))
+        )
 
-      assert(getCommitVersions(commitsDir) === Array(1, 2))
-      assert(getCommitVersions(deltaDir) === Array(0, 1, 2))
+        assert(getCommitVersions(commitsDir) === Array(1, 2))
+        assert(getCommitVersions(deltaDir) === Array(0, 1, 2))
 
-      val snapshot = table.getLatestSnapshot(engine)
-      val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
-      val expectedAnswer = dataBatches1.flatMap(_.toTestRows) ++
-        dataBatches1.flatMap(_.toTestRows) ++
-        dataBatches1.flatMap(_.toTestRows) ++
-        dataBatches2.flatMap(_.toTestRows)
-      checkAnswer(result, expectedAnswer)
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "2"))
+        val snapshot = table.getLatestSnapshot(engine)
+        val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
+        val expectedAnswer = dataBatches1.flatMap(_.toTestRows) ++
+          dataBatches1.flatMap(_.toTestRows) ++
+          dataBatches1.flatMap(_.toTestRows) ++
+          dataBatches2.flatMap(_.toTestRows)
+        checkAnswer(result, expectedAnswer)
+    })
   }
 
   def testWithCoordinatorCommits(
@@ -422,118 +423,121 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
   }
 
   test("snapshot is updated recursively when FS table is converted to commit-coordinator table") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      val commitDatas = Seq.fill(5)(dataBatches1)
-      setupCoordinatedCommitsForTest(
-        engine,
-        tablePath,
-        commitDatas,
-        versionConvertToCC = 2L)
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val commitDatas = Seq.fill(5)(dataBatches1)
+        setupCoordinatedCommitsForTest(
+          engine,
+          tablePath,
+          commitDatas,
+          versionConvertToCC = 2L)
 
-      val table = Table.forPath(engine, tablePath)
+        val table = Table.forPath(engine, tablePath)
 
-      val snapshotV1 = table.getSnapshotAsOfVersion(engine, 1L).asInstanceOf[SnapshotImpl]
-      assert(snapshotV1.getVersion(engine) === 1L)
-      assert(!snapshotV1.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
+        val snapshotV1 = table.getSnapshotAsOfVersion(engine, 1L).asInstanceOf[SnapshotImpl]
+        assert(snapshotV1.getVersion(engine) === 1L)
+        assert(!snapshotV1.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
 
-      val snapshotV4 = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assert(snapshotV4.getVersion(engine) === 4)
-      assert(snapshotV4.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
-      // only delta 3/4 will be un-backfilled and should have two dots in filename (x.uuid.json)
-      assert(
-        snapshotV4
-          .getLogSegment.deltas.count(f => new Path(f.getPath).getName.count(_ == '.') == 2) === 2)
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+        val snapshotV4 = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        assert(snapshotV4.getVersion(engine) === 4)
+        assert(snapshotV4.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
+        // only delta 3/4 will be un-backfilled and should have two dots in filename (x.uuid.json)
+        assert(
+          snapshotV4
+            .getLogSegment
+            .deltas.count(f => new Path(f.getPath).getName.count(_ == '.') == 2) === 2)
+    })
   }
 
   testWithDifferentBackfillInterval("post commit snapshot creation") { backfillInterval =>
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      def getDeltasInPostCommitSnapshot(table: Table): Seq[String] = {
-        table
-          .getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-          .getLogSegment.deltas
-          .map(f => new Path(f.getPath).getName.replace("0000000000000000000", "")).toList
-      }
+    val config =
+      Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
+        classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
+        InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> backfillInterval.toString)
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        def getDeltasInPostCommitSnapshot(table: Table): Seq[String] = {
+          table
+            .getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+            .getLogSegment.deltas
+            .map(f => new Path(f.getPath).getName.replace("0000000000000000000", "")).toList
+        }
 
-      val table = Table.forPath(engine, tablePath)
-      // Commit 0
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = true,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> dataBatches1),
-        tableProperties = Map(
-          COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "tracking-in-memory",
-          COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}")
-      )
-      assert(getDeltasInPostCommitSnapshot(table) === Seq("0.json"))
+        val table = Table.forPath(engine, tablePath)
+        // Commit 0
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1),
+          tableProperties = Map(
+            COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "tracking-in-memory",
+            COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}")
+        )
+        assert(getDeltasInPostCommitSnapshot(table) === Seq("0.json"))
 
-      // Commit 1
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = false,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> dataBatches2)
-      ) // version 1
-      val commit1 = if (backfillInterval < 2) "1.json" else "1.uuid-1.json"
-      assert(getDeltasInPostCommitSnapshot(table) === Seq("0.json", commit1))
+        // Commit 1
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches2)
+        ) // version 1
+        val commit1 = if (backfillInterval < 2) "1.json" else "1.uuid-1.json"
+        assert(getDeltasInPostCommitSnapshot(table) === Seq("0.json", commit1))
 
-      // Commit 2
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = false,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> dataBatches1)
-      ) // version 2
-      if (backfillInterval <= 2) {
-        // backfill would have happened at commit 2. Next deltaLog.update will pickup the backfilled
-        // files.
-        assert(getDeltasInPostCommitSnapshot(table) === Seq("0.json", "1.json", "2.json"))
-      } else {
-        assert(getDeltasInPostCommitSnapshot(table) ===
-          Seq("0.json", "1.uuid-1.json", "2.uuid-2.json"))
-      }
+        // Commit 2
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1)
+        ) // version 2
+        if (backfillInterval <= 2) {
+          // backfill would have happened at commit 2. Next deltaLog.update will pickup the
+          // backfilled files.
+          assert(getDeltasInPostCommitSnapshot(table) === Seq("0.json", "1.json", "2.json"))
+        } else {
+          assert(getDeltasInPostCommitSnapshot(table) ===
+            Seq("0.json", "1.uuid-1.json", "2.uuid-2.json"))
+        }
 
-      // Commit 3
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = false,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> dataBatches2)
-      ) // version 3
-      val commit3 = if (backfillInterval < 2) "3.json" else "3.uuid-3.json"
-      if (backfillInterval <= 2) {
-        assert(getDeltasInPostCommitSnapshot(table) === Seq("0.json", "1.json", "2.json", commit3))
-      } else {
-        assert(getDeltasInPostCommitSnapshot(table) ===
-          Seq("0.json", "1.uuid-1.json", "2.uuid-2.json", commit3))
-      }
+        // Commit 3
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches2)
+        ) // version 3
+        val commit3 = if (backfillInterval < 2) "3.json" else "3.uuid-3.json"
+        if (backfillInterval <= 2) {
+          assert(
+            getDeltasInPostCommitSnapshot(table) === Seq("0.json", "1.json", "2.json", commit3))
+        } else {
+          assert(getDeltasInPostCommitSnapshot(table) ===
+            Seq("0.json", "1.uuid-1.json", "2.uuid-2.json", commit3))
+        }
 
-      val expectedAnswer = dataBatches1.flatMap(_.toTestRows) ++
-        dataBatches2.flatMap(_.toTestRows) ++
-        dataBatches1.flatMap(_.toTestRows) ++
-        dataBatches2.flatMap(_.toTestRows)
-      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      checkAnswer(
-        readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine), expectedAnswer)
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-    classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-    InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> backfillInterval.toString))
+        val expectedAnswer = dataBatches1.flatMap(_.toTestRows) ++
+          dataBatches2.flatMap(_.toTestRows) ++
+          dataBatches1.flatMap(_.toTestRows) ++
+          dataBatches2.flatMap(_.toTestRows)
+        val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        checkAnswer(
+          readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine), expectedAnswer)
+    })
   }
 
   test("table.getSnapshotAsOfVersion") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
     def checkGetSnapshotAt(engine: Engine, table: Table, version: Long): Unit = {
       var snapshot: SnapshotImpl = null
 
@@ -547,74 +551,114 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
       checkAnswer(
         readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine), expectedAnswer)
     }
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val commitDatas = Seq.fill(5)(dataBatches1)
-      setupCoordinatedCommitsForTest(
-        engine,
-        tablePath,
-        commitDatas,
-        versionConvertToCC = 3L,
-        coordinatedCommitNum = 2L)
-      for (version <- 0L to 4L) {
-        checkGetSnapshotAt(engine, table, version)
-      }
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val table = Table.forPath(engine, tablePath)
+        val commitDatas = Seq.fill(5)(dataBatches1)
+        setupCoordinatedCommitsForTest(
+          engine,
+          tablePath,
+          commitDatas,
+          versionConvertToCC = 3L,
+          coordinatedCommitNum = 2L)
+        for (version <- 0L to 4L) {
+          checkGetSnapshotAt(engine, table, version)
+        }
+    })
   }
 
   test("transfer from one commit-coordinator to another commit-coordinator fails " +
     "[CC-1 -> CC-2 fails]") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      enableCoordinatedCommits(engine, tablePath, "tracking-in-memory", isNewTable = true)
-      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assert(snapshot.getVersion(engine) === 0L)
-      assert(snapshot.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
-
-      // Change commit-coordinator
-      val ex = intercept[IllegalStateException] {
-        enableCoordinatedCommits(engine, tablePath, "nobackfilling-commit-coordinator")
-      }
-      assert(ex.getMessage.contains(
-        "from one commit-coordinator to another commit-coordinator is not allowed"))
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
+    val config = Map(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
+        classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
       CommitCoordinatorProvider.
         getCommitCoordinatorNameConfKey("nobackfilling-commit-coordinator") ->
         classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10")
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val table = Table.forPath(engine, tablePath)
+        enableCoordinatedCommits(engine, tablePath, "tracking-in-memory", isNewTable = true)
+        val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        assert(snapshot.getVersion(engine) === 0L)
+        assert(snapshot.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
+
+        // Change commit-coordinator
+        val ex = intercept[IllegalStateException] {
+          enableCoordinatedCommits(engine, tablePath, "nobackfilling-commit-coordinator")
+        }
+        assert(ex.getMessage.contains(
+          "from one commit-coordinator to another commit-coordinator is not allowed"))
+    })
   }
 
   test("FS -> CC upgrade is not retried on a conflict") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      val txn = createTxn(
-        engine,
-        tablePath,
-        isNewTable = true,
-        testSchema,
-        Seq.empty,
-        tableProperties = Map(
-          COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "tracking-in-memory",
-          COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}"))
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val txn = createTxn(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema,
+          Seq.empty,
+          tableProperties = Map(
+            COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "tracking-in-memory",
+            COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}"))
 
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = true,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> dataBatches1))
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema,
+          partCols = Seq.empty,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
-      intercept[ConcurrentWriteException] {
-        txn.commit(engine, emptyIterable()) // upgrade txn committed
-      }
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+        intercept[ConcurrentWriteException] {
+          txn.commit(engine, emptyIterable()) // upgrade txn committed
+        }
+    })
+  }
+
+  test("Conflict resolution should work with coordinated commits") {
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+
+        val commitDatas = Seq.fill(4)(dataBatches1)
+        setupCoordinatedCommitsForTest(
+          engine,
+          tablePath,
+          commitDatas,
+          versionConvertToCC = 2L,
+          coordinatedCommitNum = 2L)
+
+        val startTime = System.currentTimeMillis()
+        val clock = new ManualClock(startTime)
+        val txn1 = createTxn(
+          engine,
+          tablePath,
+          schema = testSchema,
+          partCols = Seq.empty,
+          clock = clock
+        )
+        clock.setTime(startTime)
+        appendData(
+          engine,
+          tablePath,
+          data = Seq(Map.empty[String, Literal] -> dataBatches2),
+          clock = clock
+        )
+        clock.setTime(startTime - 1000)
+        commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
+        val ver4Snapshot = table.getSnapshotAsOfVersion(engine, 4L).asInstanceOf[SnapshotImpl]
+        val ver5Snapshot = table.getSnapshotAsOfVersion(engine, 5L).asInstanceOf[SnapshotImpl]
+        assert(
+          ver5Snapshot.getTimestamp(engine) === ver4Snapshot.getTimestamp(engine) + 1)
+    })
   }
 
   def getCommitVersions(dir: File): Array[Long] = {

@@ -85,7 +85,7 @@ public class TableFeatures {
      *     <li>protocol writer version 1.</li>
      *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
      *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview},
-     *     {@code coordinatedCommits-preview} feature enabled.</li>
+     *     {@code coordinatedCommits-preview}, {@code columnMapping} feature enabled.</li>
      * </ul>
      *
      * @param protocol    Table protocol

@@ -68,6 +68,12 @@ public class TransactionImpl
      */
     private static final int NUM_TXN_RETRIES = 200;
 
+    /**
+     * The maximum number of non-conflict commit attempts we will try for a single commit before
+     * failing the transaction.
+     */
+    private static final int NUM_NON_CONFLICT_TXN_RETRIES = 10;
+
     private final UUID txnId = UUID.randomUUID();
 
     private final boolean isNewTable; // the transaction is creating a new table
@@ -148,6 +154,8 @@ public class TransactionImpl
                                     .getCommitCoordinatorClientHandler(
                                             engine, metadata, protocol).isPresent();
             int numRetries = 0;
+            int nonConflictAttemptNumber = 0;
+            boolean shouldCheckForConflicts = false;
             do {
                 logger.info("Committing transaction as version = {}.", commitAsVersion);
                 try {
@@ -156,6 +164,34 @@ public class TransactionImpl
                     if (isFsToCcCommit) {
                         throw DeltaErrors.concurrentWriteException();
                     }
+                    if (!readSnapshot
+                            .getTableCommitCoordinatorClientHandlerOpt(engine).isPresent()) {
+                        // For filesystem based tables, we use LogStore to do the commit. On a
+                        // conflict, LogStore returns FileAlreadyExistsException necessitating
+                        // conflict resolution. For commit-coordinators, FileAlreadyExistsException
+                        // isn't expected under normal operations and thus retries are not performed
+                        // if this exception is thrown by CommitCoordinatorClient.
+                        shouldCheckForConflicts = true;
+                    } else {
+                        throw new RuntimeException(fnfe);
+                    }
+                } catch (CommitFailedException cfe) {
+                    if (cfe.getRetryable()) {
+                        if (cfe.getConflict()) {
+                            shouldCheckForConflicts = true;
+                            nonConflictAttemptNumber = 0;
+                        } else {
+                            if (nonConflictAttemptNumber >= NUM_NON_CONFLICT_TXN_RETRIES) {
+                                throw new RuntimeException(cfe);
+                            } else {
+                                nonConflictAttemptNumber++;
+                            }
+                        }
+                    } else {
+                        throw new RuntimeException(cfe);
+                    }
+                }
+                if (shouldCheckForConflicts) {
                     logger.info("Concurrent write detected when committing as version = {}. " +
                             "Trying to resolve conflicts and retry commit.", commitAsVersion);
                     TransactionRebaseState rebaseState = ConflictChecker
@@ -373,7 +409,7 @@ public class TransactionImpl
             long commitAsVersion,
             CommitInfo attemptCommitInfo,
             CloseableIterable<Row> dataActions)
-            throws FileAlreadyExistsException {
+            throws FileAlreadyExistsException, CommitFailedException {
         List<Row> metadataActions = new ArrayList<>();
         metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
         if (shouldUpdateMetadata || isNewTable) {
@@ -441,8 +477,6 @@ public class TransactionImpl
             throw e;
         } catch (IOException ioe) {
             throw new UncheckedIOException(ioe);
-        } catch (CommitFailedException e) {
-            throw new RuntimeException(e);
         }
     }
 
