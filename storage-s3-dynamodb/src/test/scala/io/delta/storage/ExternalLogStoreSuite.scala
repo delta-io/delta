@@ -39,6 +39,12 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
   override protected val publicLogStoreClassName: String =
     classOf[MemoryLogStore].getName
 
+  protected override def beforeEach(): Unit = {
+    super.beforeEach()
+
+    MemoryLogStore.numGetLatestExternalEntryCalls = 0
+  }
+
   testHadoopConf(
     expectedErrMsg = "No FileSystem for scheme \"fake\"",
     "fs.fake.impl" -> classOf[FakeFileSystem].getName,
