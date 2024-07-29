@@ -282,8 +282,10 @@ public interface Scan {
     /**
      * If necessary, converts the read schema data type to the parquet data type.
      * Currently only used to convert "variant" to "struct<value: binary, metadata: binary>".
+     *
+     * TODO(r.chen): Figure out how to make this private or reorganize this later.
      */
-    private static DataType getParquetPhysicalType(DataType parquetType, DataType schemaType) {
+    static DataType getParquetPhysicalType(DataType parquetType, DataType schemaType) {
         if (schemaType instanceof VariantType) {
             return parquetType;
         } else if (schemaType instanceof StructType) {
