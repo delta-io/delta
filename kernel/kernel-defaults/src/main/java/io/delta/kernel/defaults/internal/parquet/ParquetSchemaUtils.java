@@ -208,14 +208,46 @@ class ParquetSchemaUtils {
             }
         } else {
             if (type.getLogicalTypeAnnotation() == LogicalTypeAnnotation.listType()) {
-                GroupType gt = (GroupType) type;
+                // Parquet's message type includes an additional group type between the array
+                // and the child element type. For example:
+                // optional group array_map_v (LIST) {
+                //     // The "list" field is between the array and child map type.
+                //     repeated group list {
+                //         optional group element (MAP) {
+                //             repeated group key_value {
+                //                 required binary key (STRING);
+                //                 required group value {
+                //                     required binary value;
+                //                     required binary metadata;
+                //                 }
+                //             }
+                //         }
+                //     }
+                // }
+                GroupType gt = (GroupType) ((GroupType) type).getType(0);
                 Type childType = gt.getType(0);
                 return new ArrayType(
                     toKernelType(childType), childType.getRepetition() == OPTIONAL);
             } else if (type.getLogicalTypeAnnotation() == LogicalTypeAnnotation.mapType()) {
-                GroupType gt = (GroupType) type;
-                Type keyType = gt.getType(0);
-                Type valueType = gt.getType(1);
+                // Parquet's message type includes an additional group type between the map type
+                // and the key and value types. For example:
+                // optional group array_map_v (LIST) {
+                //     repeated group list {
+                //         optional group element (MAP) {
+                //             // The "key_value" field is between the map and child types.
+                //             repeated group key_value {
+                //                 required binary key (STRING);
+                //                 required group value {
+                //                     required binary value;
+                //                     required binary metadata;
+                //                 }
+                //             }
+                //         }
+                //     }
+                // }
+                GroupType keyValueGroup = (GroupType) ((GroupType) type).getType(0);
+                Type keyType = keyValueGroup.getType(0);
+                Type valueType = keyValueGroup.getType(1);
                 return new MapType(
                     toKernelType(keyType),
                     toKernelType(valueType),

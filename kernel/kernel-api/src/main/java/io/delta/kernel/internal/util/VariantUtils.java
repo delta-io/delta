@@ -27,13 +27,14 @@ import io.delta.kernel.types.*;
 public class VariantUtils {
     public static ColumnarBatch withVariantColumns(
             ExpressionHandler expressionHandler,
-            ColumnarBatch dataBatch) {
+            ColumnarBatch dataBatch,
+            StructType physicalReadSchema) {
         for (int i = 0; i < dataBatch.getSchema().length(); i++) {
-            StructField field = dataBatch.getSchema().at(i);
-            if (!(field.getDataType() instanceof StructType) &&
-                !(field.getDataType() instanceof ArrayType) &&
-                !(field.getDataType() instanceof MapType) &&
-                (field.getDataType() != VariantType.VARIANT ||
+            StructField kernelField = physicalReadSchema.at(i);
+            if (!(kernelField.getDataType() instanceof StructType) &&
+                !(kernelField.getDataType() instanceof ArrayType) &&
+                !(kernelField.getDataType() instanceof MapType) &&
+                (kernelField.getDataType() != VariantType.VARIANT ||
                 dataBatch.getColumnVector(i).getDataType() == VariantType.VARIANT)) {
                 continue;
             }
@@ -43,16 +44,16 @@ public class VariantUtils {
                 // TODO: probably better to pass in the schema as an expression argument
                 // so the schema is enforced at the expression level. Need to pass in a literal
                 // schema
-                new StructType().add(field),
+                new StructType().add(kernelField),
                 new ScalarExpression(
                     "variant_coalesce",
-                    Arrays.asList(new Column(field.getName()))
+                    Arrays.asList(new Column(kernelField.getName()))
                 ),
                 VariantType.VARIANT
             );
 
             ColumnVector variantCol = evaluator.eval(dataBatch);
-            dataBatch = dataBatch.withReplacedColumnVector(i, field, variantCol);
+            dataBatch = dataBatch.withReplacedColumnVector(i, kernelField, variantCol);
         }
         return dataBatch;
     }

@@ -31,6 +31,7 @@ import org.apache.parquet.io.api.RecordMaterializer;
 import org.apache.parquet.schema.MessageType;
 import static org.apache.parquet.hadoop.ParquetInputFormat.*;
 
+import io.delta.kernel.Scan;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
@@ -181,7 +182,11 @@ public class ParquetFileReader {
                 Map<String, String> keyValueMetaData,
                 MessageType fileSchema,
                 ReadContext readContext) {
-            rowRecordCollector = new RowRecordCollector(maxBatchSize, readSchema, fileSchema);
+            StructType parquetSchemaToRead = Scan.getParquetPhysicalReadSchema(
+                (StructType) ParquetSchemaUtils.toKernelType(fileSchema),
+                readSchema);
+            rowRecordCollector =
+                new RowRecordCollector(maxBatchSize, parquetSchemaToRead, fileSchema);
             return rowRecordCollector;
         }
 

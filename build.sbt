@@ -48,6 +48,7 @@ spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
 kernelDefaults / sparkVersion := getSparkVersion()
+storage / sparkVersion := getSparkVersion()
 goldenTables / sparkVersion := getSparkVersion()
 
 // Dependent library versions
@@ -552,6 +553,8 @@ lazy val storage = (project in file("storage"))
     name := "delta-storage",
     commonSettings,
     javaOnlyReleaseSettings,
+    crossSparkSettings(),
+
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
