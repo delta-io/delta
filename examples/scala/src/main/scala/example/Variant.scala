@@ -32,8 +32,15 @@ object Variant {
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .getOrCreate()
 
+    // Only run this example for Spark versions >= 4.0.0
+    if (spark.version.split("\\.").head.toInt < 4) {
+      println(s"Skipping Variant.scala since Spark version ${spark.version} is too low")
+      return
+    }
+
     // Create and insert variant values.
     try {
+      println("Creating and inserting variant values")
       spark.sql(s"DROP TABLE IF EXISTS $tableName")
       spark.sql(s"CREATE TABLE $tableName(v VARIANT) USING DELTA")
       spark.sql(s"INSERT INTO $tableName VALUES (parse_json('1'))")
@@ -46,7 +53,7 @@ object Variant {
       val expected = (0 until 10).toSeq
       assert(expected == ids)
 
-      spark.sql("DELETE FROM tbl WHERE variant_get(v, '$.k', 'INT') = 0")
+      spark.sql(s"DELETE FROM $tableName WHERE variant_get(v, '$$.k', 'INT') = 0")
       val idsWithDelete = spark.sql("SELECT variant_get(v, '$.k', 'INT') out " +
                                     s"""FROM $tableName WHERE contains(schema_of_variant(v), 'k')
                                     ORDER BY out""")
@@ -59,8 +66,9 @@ object Variant {
     
     // Convert Parquet table with variant values to Delta.
     try {
+      println("Converting a parquet table with variant values to Delta")
       spark.sql(s"DROP TABLE IF EXISTS $tableName")
-      spark.sql("""CREATE TABLE tbl USING PARQUET AS (
+      spark.sql(s"""CREATE TABLE $tableName USING PARQUET AS (
         SELECT parse_json(format_string('%s', id)) v FROM range(0, 10))""")
       spark.sql(s"CONVERT TO DELTA $tableName")
       val convertToDeltaIds = spark.sql(s"SELECT v::int v FROM $tableName ORDER BY v")
@@ -75,6 +83,7 @@ object Variant {
 
     // DeltaTable create with variant Scala API.
     try {
+      println("Creating a delta table with variant type using the DeltaTable API")
       spark.sql(s"DROP TABLE IF EXISTS $tableName")
       val table = io.delta.tables.DeltaTable.create()
         .tableName(tableName)
