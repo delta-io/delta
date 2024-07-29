@@ -16,13 +16,14 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.uniform.{UniFormE2EIcebergSuiteBase, UniFormE2ETest}
+
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
-import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.uniform.hms.HMSTest
 
