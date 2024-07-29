@@ -1002,6 +1002,112 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
+  test("DeltaSharingDataSource able to read data with special chars") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_special"
+      withTable(deltaTableName) {
+        // scalastyle:off nonascii
+        sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
+               |USING DELTA PARTITIONED BY (c2)
+               |""".stripMargin)
+        // The table operations take about 6~10 seconds.
+        for (i <- 0 to 99) {
+          val iteration = s"iteration $i"
+          val valuesBuilder = Seq.newBuilder[String]
+          for (j <- 0 to 99) {
+            valuesBuilder += s"""(${i * 10 + j}, "$iteration")"""
+          }
+          sql(s"INSERT INTO $deltaTableName VALUES ${valuesBuilder.result().mkString(",")}")
+        }
+
+        val sharedTableName = "shared_table_more"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        val expectedSchema: StructType = new StructType()
+          .add("第一列", IntegerType)
+          .add("c2", StringType)
+        // scalastyle:on nonascii
+        val expected = spark.read.format("delta").table(deltaTableName)
+
+        def test(tablePath: String): Unit = {
+          assert(
+            expectedSchema == spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+              .schema
+          )
+          val df =
+            spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+          checkAnswer(df, expected)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read cdf with special chars") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_cdf_special"
+      withTable(deltaTableName) {
+        // scalastyle:off nonascii
+        sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
+               |USING DELTA PARTITIONED BY (c2)
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)
+               |""".stripMargin)
+        // The table operations take about 20~30 seconds.
+        for (i <- 0 to 9) {
+          val iteration = s"iteration $i"
+          val valuesBuilder = Seq.newBuilder[String]
+          for (j <- 0 to 49) {
+            valuesBuilder += s"""(${i * 10 + j}, "$iteration")"""
+          }
+          sql(s"INSERT INTO $deltaTableName VALUES ${valuesBuilder.result().mkString(",")}")
+          sql(s"""UPDATE $deltaTableName SET `第一列` = `第一列` + 100 where c2 = "${iteration}"""")
+          // scalastyle:on nonascii
+          sql(s"""DELETE FROM $deltaTableName where c2 = "${iteration}"""")
+        }
+
+        val sharedTableName = "shard_table_cdf_special"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        Seq(0, 10, 20, 30).foreach { startingVersion =>
+          prepareMockedClientAndFileSystemResultForCdf(
+            deltaTableName,
+            sharedTableName,
+            startingVersion
+          )
+
+          val expected = spark.read
+            .format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", startingVersion)
+            .table(deltaTableName)
+
+          def test(tablePath: String): Unit = {
+            val df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+            checkAnswer(df, expected)
+            assert(df.count() > 0)
+          }
+
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            test(profileFile.getCanonicalPath + s"#share1.default.$sharedTableName")
+          }
+        }
+      }
+    }
+  }
+
   /**
    * deletion vector tests
    */
