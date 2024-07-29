@@ -458,7 +458,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test"
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.assertj" % "assertj-core" % "3.26.3" % "test"
     ),
     // Generate the package object to provide the version information in runtime.
     Compile / sourceGenerators += Def.task {

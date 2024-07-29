@@ -147,4 +147,8 @@ public class StructField {
     public int hashCode() {
         return Objects.hash(name, dataType, nullable, metadata);
     }
+
+    public StructField withNewMetadata(FieldMetadata metadata) {
+        return new StructField(name, dataType, nullable, metadata);
+    }
 }

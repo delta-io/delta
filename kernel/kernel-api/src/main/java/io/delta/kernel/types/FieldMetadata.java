@@ -199,6 +199,18 @@ public final class FieldMetadata {
         }
 
         /**
+         * Adds all metadata from {@code meta.metadata} to the builder's {@code metadata}.
+         * Entries in the builder's {@code metadata} are overwritten with the
+         * entries from {@code meta.metadata}.
+         * @param meta The {@link FieldMetadata} instance holding metadata
+         * @return this
+         */
+        public Builder fromMetadata(FieldMetadata meta) {
+            metadata.putAll(meta.metadata);
+            return this;
+        }
+
+        /**
          * @return a new {@link FieldMetadata} with the mappings added to the builder
          */
         public FieldMetadata build() {

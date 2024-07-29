@@ -164,6 +164,18 @@ public class TableConfig<T> {
             );
 
     /**
+     * This table property is used to control the column mapping mode.
+     */
+    public static final TableConfig<String> COLUMN_MAPPING_MODE =
+            new TableConfig<>(
+                    "delta.columnMapping.mode",
+                    "none", /* default values */
+                    (engineOpt, v) -> String.valueOf(v),
+                    value -> "none".equals(value) || "id".equals(value) || "name".equals(value),
+                    "Needs to be one of none, id, name."
+            );
+
+    /**
      * All the valid properties that can be set on the table.
      */
     private static final Map<String, TableConfig<?>> VALID_PROPERTIES = Collections.unmodifiableMap(
@@ -176,6 +188,7 @@ public class TableConfig<T> {
                 addConfig(this, COORDINATED_COMMITS_COORDINATOR_NAME);
                 addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
                 addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
+                addConfig(this, COLUMN_MAPPING_MODE);
             }}
     );
 
