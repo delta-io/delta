@@ -195,12 +195,15 @@ case class DeltaSink(
   private def castDataIfNeeded(data: DataFrame, targetSchema: StructType): DataFrame = {
     if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_TYPE_CHANGES)) return data
 
-    if (DataTypeUtils.equalsIgnoreCaseAndNullability(data.schema, targetSchema)) return data
-
     // We should respect 'spark.sql.caseSensitive' here but writing to a Delta sink is currently
     // case insensitive so we align with that.
     val targetTypes =
-      CaseInsensitiveMap[DataType](targetSchema.map(f => f.name -> f.dataType).toMap)
+      CaseInsensitiveMap[DataType](targetSchema.map(field => field.name -> field.dataType).toMap)
+
+    val needCast = data.schema.exists { field =>
+      !DataTypeUtils.equalsIgnoreCaseAndNullability(field.dataType, targetTypes(field.name))
+    }
+    if (!needCast) return data
 
     val castColumns = data.columns.map { columnName =>
       val castExpr = castIfNeeded(

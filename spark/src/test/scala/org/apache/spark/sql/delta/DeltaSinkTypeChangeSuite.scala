@@ -21,7 +21,7 @@ import java.sql.{Date, Timestamp}
 
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkArithmeticException, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, Encoder, Row}
 import org.apache.spark.sql.execution.streaming.{MemoryStream, StreamExecution}
 import org.apache.spark.sql.functions.{col, lit}
@@ -118,7 +118,6 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
       assert(stream.currentSchema("value").dataType === IntegerType)
       checkAnswer(stream.read(), Row(17) :: Row(23) :: Nil)
       checkOperationHistory(stream, expectedOperations = Seq(
-        "STREAMING UPDATE", // Initial table creation
         "STREAMING UPDATE", // First write
         "STREAMING UPDATE"  // Second write
       ))
@@ -140,8 +139,14 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
           val ex = intercept[StreamingQueryException] {
             stream.write(Long.MaxValue)("CAST(value AS LONG)")
           }
+
+          def getSparkArithmeticException(ex: Throwable): SparkArithmeticException = ex match {
+            case e: SparkArithmeticException => e
+            case e: Throwable if e.getCause != null => getSparkArithmeticException(e.getCause)
+            case e => fail(s"Unexpected exception: $e")
+          }
           checkError(
-            exception = ex.getCause.asInstanceOf[SparkThrowable],
+            exception = getSparkArithmeticException(ex),
             errorClass = "CAST_OVERFLOW_IN_TABLE_INSERT",
             parameters = Map(
             "sourceType" -> "\"BIGINT\"",
@@ -375,7 +380,6 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
         Row(Timestamp.valueOf("2024-07-28 12:00:00"), "abc") ::
         Row(Timestamp.valueOf("2024-07-29 00:00:00"), null) :: Nil)
       checkOperationHistory(stream, expectedOperations = Seq(
-        "STREAMING UPDATE", // Initial table creation
         "STREAMING UPDATE", // First write
         "STREAMING UPDATE"  // Second write
       ))
@@ -409,7 +413,6 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
       checkAnswer(stream.read(), Row(100) :: Row(17) :: Nil)
 
       checkOperationHistory(stream, expectedOperations = Seq(
-        "STREAMING UPDATE",  // Initial table creation
         "STREAMING UPDATE",  // First write
         "SET TBLPROPERTIES", // Enable column mapping
         "DROP COLUMNS",      // Drop column
