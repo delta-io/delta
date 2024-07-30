@@ -136,9 +136,15 @@ public class SnapshotManager {
         Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(engine,
                 Optional.empty(), /* startCheckpointOpt */
                 Optional.of(version) /* versionToLoadOpt */,
-                /* tableCommitHandlerOpt */
-                Optional.empty());
+                Optional.empty() /* tableCommitHandlerOpt */);
 
+        // For non-coordinated commit table, the {@code getCoodinatedCommitsAwareSnapshot} will
+        // create the snapshot with the {@code logSegmentOpt} built here and will not trigger other
+        // operations. For coordinated commit table, the {@code getCoodinatedCommitsAwareSnapshot}
+        // will create the snapshot with the {@code logSegmentOpt} built here and will build the
+        // logSegment again by also fetching the unbackfilled commits from the commit coordinator.
+        // With the unbackfilled commits plus the backfilled commits in Delta log, a new snapshot
+        // will be created.
         SnapshotImpl snapshot = logSegmentOpt
                 .map(logSegment -> getCoordinatedCommitsAwareSnapshot(
                         engine, logSegment, Optional.of(version)))
@@ -367,31 +373,26 @@ public class SnapshotManager {
                         continue;
                     }
 
-                    // Checkpoint files of 0 size are invalid but may be ignored
-                    // silently when read, hence we drop them so that we never pick up
-                    // such checkpoints.
-                    if (FileNames.isCheckpointFile(fileName) &&
-                            fileStatus.getSize() == 0) {
+                    // Checkpoint files of 0 size are invalid but may be ignored silently when read,
+                    // hence we drop them so that we never pick up such checkpoints.
+                    if (FileNames.isCheckpointFile(fileName) && fileStatus.getSize() == 0) {
                         continue;
                     }
 
                     // Take files until the version we want to load
                     final boolean versionWithinRange = versionToLoad
-                            .map(v -> FileNames
-                                    .getFileVersion(
-                                            new Path(fileStatus.getPath())) <= v)
+                            .map(v -> FileNames.getFileVersion(new Path(fileStatus.getPath())) <= v)
                             .orElse(true);
                     if (!versionWithinRange) {
-                        // If we haven't taken any files yet and the first file we see
-                        // is greater than the versionToLoad then the versionToLoad is
-                        // not reconstructable from the existing logs
+                        // If we haven't taken any files yet and the first file we see is greater
+                        // than the versionToLoad then the versionToLoad is not reconstructable
+                        // from the existing logs
                         if (output.isEmpty()) {
-                            long earliestVersion = DeltaHistoryManager
-                                    .getEarliestRecreatableCommit(engine, logPath);
+                            long earliestVersion =
+                                    DeltaHistoryManager.getEarliestRecreatableCommit(
+                                            engine, logPath);
                             throw DeltaErrors.versionBeforeFirstAvailableCommit(
-                                    tablePath.toString(),
-                                    versionToLoad.get(),
-                                    earliestVersion);
+                                    tablePath.toString(), versionToLoad.get(), earliestVersion);
                         }
                         break;
                     }
