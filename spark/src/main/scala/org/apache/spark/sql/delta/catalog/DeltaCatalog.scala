@@ -591,6 +591,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case deltaTable: DeltaTableV2 => deltaTable
       case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
         throw DeltaErrors.alterClusterByNotOnDeltaTableException()
+      case _ if changes.exists(_.isInstanceOf[SyncIdentity]) =>
+        throw DeltaErrors.identityColumnAlterNonDeltaFormatError()
       case _ => return super.alterTable(ident, changes: _*)
     }
 

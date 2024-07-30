@@ -23,12 +23,15 @@ import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types._
 
+case class IdentityColumnTestTableRow(id: Long, value: String)
 
 /**
  * Identity Column test suite for the SYNC IDENTITY command.
  */
 trait IdentityColumnSyncSuiteBase
   extends IdentityColumnTestUtils {
+
+  import testImplicits._
   private val tblName = "identity_test"
 
   /**
@@ -56,22 +59,145 @@ trait IdentityColumnSyncSuiteBase
   test("alter table sync identity delta") {
     val starts = Seq(-1, 1)
     val steps = Seq(-3, 3)
-    for (start <- starts; step <- steps) {
+    val alterKeywords = Seq("ALTER", "CHANGE")
+    for (start <- starts; step <- steps; alterKeyword <- alterKeywords) {
       withSimpleGeneratedByDefaultTable(start, step) {
         // Test empty table.
         val oldSchema = DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.schema
-        sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+        sql(s"ALTER TABLE $tblName $alterKeyword COLUMN id SYNC IDENTITY")
         assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.schema == oldSchema)
 
         // Test a series of values that are not all following start and step configurations.
         for (i <- start to (start + step * 10)) {
           sql(s"INSERT INTO $tblName VALUES($i, 'v')")
-          sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+          sql(s"ALTER TABLE $tblName $alterKeyword COLUMN id SYNC IDENTITY")
           val expected = start + (((i - start) + (step - 1)) / step) * step
           val schema = DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.schema
           assert(schema("id").metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK) ==
             expected)
         }
+      }
+    }
+  }
+
+  test("sync identity with values before start") {
+    withSimpleGeneratedByDefaultTable(startsWith = 100L, incrementBy = 2L) {
+      sql(s"INSERT INTO $tblName (id, value) VALUES (1, 'a'), (2, 'b'), (99, 'c')")
+      sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
+
+      val result = spark.read.table(tblName)
+        .as[IdentityColumnTestTableRow]
+        .collect()
+        .sortBy(_.id)
+      assert(result.length === 6)
+      assert(result.take(3) === Seq(IdentityColumnTestTableRow(1, "a"),
+                                    IdentityColumnTestTableRow(2, "b"),
+                                    IdentityColumnTestTableRow(99, "c")))
+      checkGeneratedIdentityValues(
+        sortedRows = result.takeRight(3),
+        start = 100,
+        step = 2,
+        expectedLowerBound = 100,
+        expectedUpperBound =
+          highWaterMark(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot, "id"),
+        expectedDistinctCount = 3)
+    }
+  }
+
+  test("sync identity with start in table") {
+    withSimpleGeneratedByDefaultTable(startsWith = 100L, incrementBy = 2L) {
+      sql(s"INSERT INTO $tblName (id, value) VALUES (1, 'a'), (2, 'b'), (100, 'c')")
+      sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
+
+      val result = spark.read.table(tblName)
+        .as[IdentityColumnTestTableRow]
+        .collect()
+        .sortBy(_.id)
+      assert(result.length === 6)
+      assert(result.take(3) === Seq(IdentityColumnTestTableRow(1, "a"),
+                                    IdentityColumnTestTableRow(2, "b"),
+                                    IdentityColumnTestTableRow(100, "c")))
+      checkGeneratedIdentityValues(
+        sortedRows = result.takeRight(3),
+        start = 100,
+        step = 2,
+        expectedLowerBound = 101,
+        expectedUpperBound =
+          highWaterMark(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot, "id"),
+        expectedDistinctCount = 3)
+    }
+  }
+
+  test("sync identity with values before and after start") {
+    withSimpleGeneratedByDefaultTable(startsWith = 100L, incrementBy = 2L) {
+      sql(s"INSERT INTO $tblName (id, value) VALUES (1, 'a'), (2, 'b'), (101, 'c')")
+      sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
+
+      val result = spark.read.table(tblName)
+        .as[IdentityColumnTestTableRow]
+        .collect()
+        .sortBy(_.id)
+      assert(result.length === 6)
+      assert(result.take(3) === Seq(IdentityColumnTestTableRow(1, "a"),
+                                    IdentityColumnTestTableRow(2, "b"),
+                                    IdentityColumnTestTableRow(101, "c")))
+      checkGeneratedIdentityValues(
+        sortedRows = result.takeRight(3),
+        start = 100,
+        step = 2,
+        expectedLowerBound = 102,
+        expectedUpperBound =
+          highWaterMark(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot, "id"),
+        expectedDistinctCount = 3)
+    }
+  }
+
+  test("sync identity with values before start and negative step") {
+    withSimpleGeneratedByDefaultTable(startsWith = -10L, incrementBy = -2L) {
+      sql(s"INSERT INTO $tblName (id, value) VALUES (1, 'a'), (2, 'b'), (-9, 'c')")
+      sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
+
+      val result = spark.read.table(tblName)
+        .as[IdentityColumnTestTableRow]
+        .collect()
+        .sortBy(_.id)
+      assert(result.length === 6)
+      assert(result.takeRight(3) === Seq(IdentityColumnTestTableRow(-9, "c"),
+                                         IdentityColumnTestTableRow(1, "a"),
+                                         IdentityColumnTestTableRow(2, "b")))
+      checkGeneratedIdentityValues(
+        sortedRows = result.take(3),
+        start = -10,
+        step = -2,
+        expectedLowerBound =
+          highWaterMark(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot, "id"),
+        expectedUpperBound = -10,
+        expectedDistinctCount = 3)
+    }
+  }
+
+  test("alter table sync identity - deleting high watermark rows followed by sync identity" +
+    " brings down the highWatermark") {
+    for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      withTable(tblName) {
+        createTableWithIdColAndIntValueCol(tblName, generatedAsIdentityType, Some(1L), Some(10L))
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+        (0 to 4).foreach { v =>
+          sql(s"INSERT INTO $tblName(value) VALUES ($v)")
+        }
+
+        checkAnswer(sql(s"SELECT max(id) FROM $tblName"), Row(41))
+        sql(s"DELETE FROM $tblName WHERE value IN (0, 3, 4)")
+        assert(highWaterMark(deltaLog.snapshot, "id") === 41L)
+        sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+        assert(highWaterMark(deltaLog.snapshot, "id") === 21L)
+        sql(s"INSERT INTO $tblName(value) VALUES (8)")
+        checkAnswer(sql(s"SELECT max(id) FROM $tblName"), Row(31))
+        checkAnswer(sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $tblName"), Row(true))
       }
     }
   }
@@ -83,6 +209,21 @@ trait IdentityColumnSyncSuiteBase
     }
   }
 
+  test("alter table sync identity non delta") {
+    withTable(tblName) {
+      sql(
+        s"""
+           |CREATE TABLE $tblName (
+           |  id BIGINT,
+           |  value INT
+           |) USING parquet;
+           |""".stripMargin)
+      val ex = intercept[AnalysisException] {
+        sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      }
+      assert(ex.getMessage.contains("ALTER TABLE ALTER COLUMN SYNC IDENTITY is only supported"))
+    }
+  }
 
   test("alter table sync identity non identity column") {
     withTable(tblName) {
@@ -100,6 +241,7 @@ trait IdentityColumnSyncSuiteBase
     }
   }
 }
+
 
 class IdentityColumnSyncScalaSuite
   extends IdentityColumnSyncSuiteBase
