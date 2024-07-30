@@ -30,8 +30,8 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.util.IntervalParserUtils;
-import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import static io.delta.kernel.internal.util.InternalUtils.getSingularElement;
 import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -166,12 +166,12 @@ public class TableConfig<T> {
     /**
      * This table property is used to control the column mapping mode.
      */
-    public static final TableConfig<String> COLUMN_MAPPING_MODE =
+    public static final TableConfig<ColumnMappingMode> COLUMN_MAPPING_MODE =
             new TableConfig<>(
                     "delta.columnMapping.mode",
                     "none", /* default values */
-                    (engineOpt, v) -> String.valueOf(v),
-                    value -> "none".equals(value) || "id".equals(value) || "name".equals(value),
+                    (engineOpt, v) -> ColumnMappingMode.fromTableConfig(v),
+                    value -> true,
                     "Needs to be one of none, id, name."
             );
 

@@ -17,6 +17,7 @@ package io.delta.kernel.internal.util;
 
 import java.util.*;
 
+import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
@@ -27,18 +28,43 @@ import io.delta.kernel.internal.actions.Metadata;
 public class ColumnMapping {
     private ColumnMapping() {}
 
+    public enum ColumnMappingMode {
+        NONE("none"),
+        ID("id"),
+        NAME("name");
+
+        public final String value;
+
+        ColumnMappingMode(String value) {
+            this.value = value;
+        }
+
+        public static ColumnMappingMode fromTableConfig(String modeString) {
+            for (ColumnMappingMode mode : ColumnMappingMode.values()) {
+                if (mode.value.equalsIgnoreCase(modeString)) {
+                    return mode;
+                }
+            }
+            throw new InvalidConfigurationValueException(
+                    COLUMN_MAPPING_MODE_KEY,
+                    modeString,
+                    String.format("Needs to be one of: %s.",
+                            Arrays.toString(ColumnMappingMode.values())));
+        }
+
+        @Override
+        public String toString() {
+            return this.value;
+        }
+    }
+
     public static final String COLUMN_MAPPING_MODE_KEY = "delta.columnMapping.mode";
-    public static final String COLUMN_MAPPING_MODE_NONE = "none";
-    public static final String COLUMN_MAPPING_MODE_NAME = "name";
-    public static final String COLUMN_MAPPING_MODE_ID = "id";
     public static final String COLUMN_MAPPING_PHYSICAL_NAME_KEY =
         "delta.columnMapping.physicalName";
     public static final String COLUMN_MAPPING_ID_KEY = "delta.columnMapping.id";
 
     public static final String PARQUET_FIELD_ID_KEY = "parquet.field.id";
     public static final String COLUMN_MAPPING_MAX_COLUMN_ID_KEY = "delta.columnMapping.maxColumnId";
-    private static final Set<String> NAME_OR_ID = new HashSet<>(
-            Arrays.asList(COLUMN_MAPPING_MODE_NAME, COLUMN_MAPPING_MODE_ID));
 
     /////////////////
     // Public APIs //
@@ -50,10 +76,10 @@ public class ColumnMapping {
      * @param  configuration Configuration
      * @return Column mapping mode. One of ("none", "name", "id")
      */
-    public static String getColumnMappingMode(Map<String, String> configuration) {
-        return configuration.getOrDefault(
-            COLUMN_MAPPING_MODE_KEY,
-            COLUMN_MAPPING_MODE_NONE);
+    public static ColumnMappingMode getColumnMappingMode(Map<String, String> configuration) {
+        return Optional.ofNullable(configuration.get(COLUMN_MAPPING_MODE_KEY))
+                .map(ColumnMappingMode::fromTableConfig)
+                .orElse(ColumnMappingMode.NONE);
     }
 
     /**
@@ -63,16 +89,7 @@ public class ColumnMapping {
      * @param metadata Metadata of the table
      */
     public static void throwOnUnsupportedColumnMappingMode(Metadata metadata) {
-        String columnMappingMode = getColumnMappingMode(metadata.getConfiguration());
-        switch (columnMappingMode) {
-            case COLUMN_MAPPING_MODE_NONE: // fall through
-            case COLUMN_MAPPING_MODE_ID: // fall through
-            case COLUMN_MAPPING_MODE_NAME:
-                return;
-            default:
-                throw new UnsupportedOperationException(
-                    "Unsupported column mapping mode: " + columnMappingMode);
-        }
+        getColumnMappingMode(metadata.getConfiguration());
     }
 
     /**
@@ -86,13 +103,13 @@ public class ColumnMapping {
     public static StructType convertToPhysicalSchema(
             StructType logicalSchema,
             StructType physicalSchema,
-            String columnMappingMode) {
+            ColumnMappingMode columnMappingMode) {
         switch (columnMappingMode) {
-            case COLUMN_MAPPING_MODE_NONE:
+            case NONE:
                 return logicalSchema;
-            case COLUMN_MAPPING_MODE_ID: // fall through
-            case COLUMN_MAPPING_MODE_NAME:
-                boolean includeFieldIds = columnMappingMode.equals(COLUMN_MAPPING_MODE_ID);
+            case ID: // fall through
+            case NAME:
+                boolean includeFieldIds = columnMappingMode == ColumnMappingMode.ID;
                 return convertToPhysicalSchema(logicalSchema, physicalSchema, includeFieldIds);
             default:
                 throw new UnsupportedOperationException(
@@ -117,28 +134,29 @@ public class ColumnMapping {
             Map<String, String> oldConfig,
             Map<String, String> newConfig,
             boolean isNewTable) {
-        String oldMappingMode = getColumnMappingMode(oldConfig);
-        String newMappingMode = getColumnMappingMode(newConfig);
+        ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
+        ColumnMappingMode newMappingMode = getColumnMappingMode(newConfig);
 
         Preconditions.checkArgument(isNewTable ||
-                        allowMappingModeChange(oldMappingMode, newMappingMode),
+                        validModeChange(oldMappingMode, newMappingMode),
                 "Changing column mapping mode from '%s' to '%s' is not supported",
                 oldMappingMode, newMappingMode);
     }
 
-    public static boolean isColumnMappingModeEnabled(String columnMappingMode) {
-        return NAME_OR_ID.contains(columnMappingMode);
+    public static boolean isColumnMappingModeEnabled(ColumnMappingMode columnMappingMode) {
+        return columnMappingMode == ColumnMappingMode.ID ||
+                columnMappingMode == ColumnMappingMode.NAME;
     }
 
     public static Metadata updateColumnMappingMetadata(
             Metadata metadata,
-            String columnMappingMode,
+            ColumnMappingMode columnMappingMode,
             boolean isNewTable) {
         switch (columnMappingMode) {
-            case COLUMN_MAPPING_MODE_NONE:
+            case NONE:
                 return metadata;
-            case COLUMN_MAPPING_MODE_ID: // fall through
-            case COLUMN_MAPPING_MODE_NAME:
+            case ID: // fall through
+            case NAME:
                 return assignColumnIdAndPhysicalName(metadata, isNewTable);
             default:
                 throw new UnsupportedOperationException(
@@ -231,11 +249,10 @@ public class ColumnMapping {
         return logicalType;
     }
 
-    private static boolean allowMappingModeChange(String oldMode, String newMode) {
+    private static boolean validModeChange(ColumnMappingMode oldMode, ColumnMappingMode newMode) {
         // only upgrade from none to name mapping is allowed
         return oldMode.equals(newMode) ||
-                (COLUMN_MAPPING_MODE_NONE.equals(oldMode) &&
-                        COLUMN_MAPPING_MODE_NAME.equals(newMode));
+                (oldMode == ColumnMappingMode.NONE && newMode == ColumnMappingMode.NAME);
     }
 
     /**
