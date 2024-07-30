@@ -120,11 +120,7 @@ public class ColumnMapping {
     /** Returns the physical name for a given {@link StructField} */
     public static String getPhysicalName(StructField field) {
         if (hasPhysicalName(field)) {
-            // TODO: add method to FieldMetadata to extract this as String
-            // instead of casting here
-            return (String) field
-                    .getMetadata()
-                    .get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+            return field.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
         } else {
             return field.getName();
         }
@@ -194,14 +190,12 @@ public class ColumnMapping {
                     logicalType,
                     physicalField.getDataType(),
                     includeFieldId);
-            String physicalName = (String) physicalField
+            String physicalName = physicalField
                 .getMetadata()
-                .get(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+                .getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
 
             if (includeFieldId) {
-                Long fieldId = (Long) physicalField
-                    .getMetadata()
-                    .get(COLUMN_MAPPING_ID_KEY);
+                Long fieldId = physicalField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
                 FieldMetadata fieldMetadata = FieldMetadata.builder()
                     .putLong(PARQUET_FIELD_ID_KEY, fieldId)
                     .build();
@@ -307,8 +301,6 @@ public class ColumnMapping {
     }
 
     private static int getColumnId(StructField field) {
-        // TODO: add a method to FieldMetadata to extract this as an int
-        // instead of having to parse it here
-        return Integer.parseInt(field.getMetadata().get(COLUMN_MAPPING_ID_KEY).toString());
+        return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
     }
 }

@@ -348,7 +348,7 @@ class ParquetSchemaUtils {
     private static int getFieldId(FieldMetadata fieldMetadata) {
         // Field id delta schema metadata is deserialized as long, but the range should always
         // be within integer range.
-        Long fieldId = (Long) fieldMetadata.get(ColumnMapping.PARQUET_FIELD_ID_KEY);
+        Long fieldId = fieldMetadata.getLong(ColumnMapping.PARQUET_FIELD_ID_KEY);
         long fieldIdLong = fieldId.longValue();
         int fieldIdInt = (int) fieldIdLong;
         checkArgument(
