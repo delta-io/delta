@@ -173,7 +173,7 @@ trait IdentityColumnTestUtils
       assert((row.id - start) % step === 0)
     }
     assert(sortedRows.last.id <= expectedUpperBound)
-    assert(sortedRows.distinct.size === expectedDistinctCount)
+    assert(sortedRows.map(_.id).distinct.size === expectedDistinctCount)
   }
 }
 
