@@ -16,14 +16,13 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.lang.{Double => DoubleJ, Float => FloatJ}
-
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, ExpressionTestUtils, TestRow}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.internal.util.ColumnMapping
-import io.delta.kernel.internal.util.ColumnMapping.convertToPhysicalSchema
+import io.delta.kernel.internal.util.ColumnMapping.{ColumnMappingMode, convertToPhysicalSchema}
 import io.delta.kernel.types._
 import io.delta.kernel.utils.DataFileStatus
 import org.apache.spark.sql.{functions => sparkfn}
@@ -179,7 +178,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
           val schema = tableSchema(inputLocation)
 
           val physicalSchema = if (hasColumnMappingId(inputLocation)) {
-            convertToPhysicalSchema(schema, schema, ColumnMapping.COLUMN_MAPPING_MODE_ID)
+            convertToPhysicalSchema(schema, schema, ColumnMappingMode.ID)
           } else {
             schema
           }

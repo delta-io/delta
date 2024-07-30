@@ -52,6 +52,14 @@ class FileMetadataMaterializationTracker extends LoggingShims {
   private val materializationMetrics = new FileMetadataMaterializationMetrics()
 
   /**
+   * Signals to execute the batch early in the event that we overallocated to
+   * materialize a task.
+   */
+  def executeBatchEarly(): Boolean = {
+    numOverAllocatedPermits > 0
+  }
+
+  /**
    * A per task permit allocator which allows materializing a new task.
    * @return - TaskLevelPermitAllocator to be used to materialize a task
    */
@@ -165,6 +173,24 @@ object FileMetadataMaterializationTracker extends DeltaLogging {
   private[sql] def initializeSemaphoreForTests(semaphore: Semaphore): Unit = {
     globalFileMaterializationLimit.set(semaphore.availablePermits())
     materializationSemaphore = semaphore
+  }
+
+  /**
+   * @return - return a version of the FileMetadataMaterializationTracker where every operation
+   *         is a noop
+   */
+  val noopTracker:
+      FileMetadataMaterializationTracker = new FileMetadataMaterializationTracker() {
+
+    override def releasePermits(numPermits: Int): Unit = { }
+
+    override def createTaskLevelPermitAllocator() = new TaskLevelPermitAllocator(this) {
+      override def acquirePermit(): Unit = { }
+    }
+
+    override def executeBatchEarly(): Boolean = false
+
+    override def releaseAllPermits(): Unit = { }
   }
 
   /**
