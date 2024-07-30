@@ -242,63 +242,6 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
     })
   }
 
-  test("getLogSegmentForVersion with commitCoordinatorClientHandler provided") {
-    val config = trackingInMemoryBatchSize10Config
-    testWithCoordinatorCommits(config, {
-      (tablePath, engine) =>
-        setupCoordinatedCommitFilesForTest(
-          engine,
-          tablePath,
-          versionConvertToCC = 2L,
-          coordinatedCommitNum = 4L,
-          checkpointVersion = 1L)
-
-        val logPath = new KernelPath("file:" + tablePath, "_delta_log")
-        val snapshotManager = new SnapshotManager(logPath, new KernelPath(tablePath))
-        val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-          engine,
-          Optional.of(1L),
-          Optional.of(4L),
-          Optional.of(
-            new TableCommitCoordinatorClientHandler(
-              engine.getCommitCoordinatorClientHandler(
-                "tracking-in-memory", Collections.emptyMap()),
-              logPath.toString,
-              Collections.emptyMap()))
-        )
-        assert(logSegmentOpt.isPresent)
-        val logSegment = logSegmentOpt.get()
-        assert(logSegment.logPath == logPath)
-        assert(logSegment.version == 4L)
-        var nextUuidSuffix = 1L
-        val expectedDeltas = (2L until 5L)
-          .map(v => {
-            val fileName = if (v == 2L) {
-              FileNames.deltaFile(logPath, v)
-            } else {
-              nextUuidSuffix += 1
-              CCU.getUnbackfilledDeltaFile(
-                new Path(logPath.toString), v, Optional.of(s"uuid-${nextUuidSuffix - 1}")).toString
-            }
-            FileStatus.of(fileName, 0, 0)
-          })
-        assert(expectedDeltas.map(f => f.getPath) == logSegment.deltas.asScala.map(f => f.getPath))
-        val expectedCheckpoints = Seq(1L).map(v =>
-          FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, 0, 0)
-        )
-        assert(expectedCheckpoints.map(f => f.getPath) ==
-          logSegment.checkpoints.asScala.map(f => f.getPath))
-        assert(logSegment.checkpointVersionOpt.isPresent &&
-          logSegment.checkpointVersionOpt.get == 1L)
-        assert(logSegment.lastCommitTimestamp ==
-          engine.getFileSystemClient.listFrom(
-            CCU.getUnbackfilledDeltaFile(
-              new Path(logPath.toString),
-              4L,
-              Optional.of(s"uuid-2")).toString).next.getModificationTime)
-    })
-  }
-
   test("getSnapshotAt with coordinated commits enabled") {
     val config = trackingInMemoryBatchSize10Config
     testWithCoordinatorCommits(config, {

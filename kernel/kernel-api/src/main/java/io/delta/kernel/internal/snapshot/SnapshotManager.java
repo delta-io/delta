@@ -133,12 +133,18 @@ public class SnapshotManager {
             Engine engine,
             long version) throws TableNotFoundException {
 
-        Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(engine,
+        Optional<LogSegment> logSegmentOpt = getLogSegmentAtOrBeforeVersion(engine,
                 Optional.empty(), /* startCheckpointOpt */
                 Optional.of(version) /* versionToLoadOpt */,
-                /* tableCommitHandlerOpt */
-                Optional.empty());
+                Optional.empty() /* tableCommitHandlerOpt */);
 
+        // For non-coordinated commit table, the {@code getCoodinatedCommitsAwareSnapshot} will
+        // create the snapshot with the {@code logSegmentOpt} built here and will not trigger other
+        // operations. For coordinated commit table, the {@code getCoodinatedCommitsAwareSnapshot}
+        // will create the snapshot with the {@code logSegmentOpt} built here and will build the
+        // logSegment again by also fetching the unbackfilled commits from the commit coordinator.
+        // With the unbackfilled commits plus the backfilled commits in Delta log, a new snapshot
+        // will be created.
         SnapshotImpl snapshot = logSegmentOpt
                 .map(logSegment -> getCoordinatedCommitsAwareSnapshot(
                         engine, logSegment, Optional.of(version)))
@@ -367,31 +373,26 @@ public class SnapshotManager {
                         continue;
                     }
 
-                    // Checkpoint files of 0 size are invalid but may be ignored
-                    // silently when read, hence we drop them so that we never pick up
-                    // such checkpoints.
-                    if (FileNames.isCheckpointFile(fileName) &&
-                            fileStatus.getSize() == 0) {
+                    // Checkpoint files of 0 size are invalid but may be ignored silently when read,
+                    // hence we drop them so that we never pick up such checkpoints.
+                    if (FileNames.isCheckpointFile(fileName) && fileStatus.getSize() == 0) {
                         continue;
                     }
 
                     // Take files until the version we want to load
                     final boolean versionWithinRange = versionToLoad
-                            .map(v -> FileNames
-                                    .getFileVersion(
-                                            new Path(fileStatus.getPath())) <= v)
-                            .orElse(true);
+                        .map(v -> FileNames.getFileVersion(new Path(fileStatus.getPath())) <= v)
+                        .orElse(true);
+
                     if (!versionWithinRange) {
-                        // If we haven't taken any files yet and the first file we see
-                        // is greater than the versionToLoad then the versionToLoad is
-                        // not reconstructable from the existing logs
+                        // If we haven't taken any files yet and the first file we see is greater
+                        // than the versionToLoad then the versionToLoad is not reconstructable
+                        // from the existing logs
                         if (output.isEmpty()) {
-                            long earliestVersion = DeltaHistoryManager
-                                    .getEarliestRecreatableCommit(engine, logPath);
+                            long earliestVersion = DeltaHistoryManager.getEarliestRecreatableCommit(
+                                engine, logPath);
                             throw DeltaErrors.versionBeforeFirstAvailableCommit(
-                                    tablePath.toString(),
-                                    versionToLoad.get(),
-                                    earliestVersion);
+                                tablePath.toString(), versionToLoad.get(), earliestVersion);
                         }
                         break;
                     }
@@ -488,7 +489,7 @@ public class SnapshotManager {
                 newSnapshot.getTableCommitCoordinatorClientHandlerOpt(engine);
 
         if (newTableCommitCoordinatorClientHandlerOpt.isPresent()) {
-            Optional<LogSegment> segmentOpt = getLogSegmentForVersion(
+            Optional<LogSegment> segmentOpt = getLogSegmentAtOrBeforeVersion(
                     engine,
                     newSnapshot.getLogSegment().checkpointVersionOpt, /* startCheckpointOpt */
                     versionToLoadOpt /* versionToLoadOpt */,
@@ -555,7 +556,7 @@ public class SnapshotManager {
     private Optional<LogSegment> getLogSegmentFrom(
         Engine engine,
         Optional<CheckpointMetaData> startingCheckpoint) {
-        return getLogSegmentForVersion(engine,
+        return getLogSegmentAtOrBeforeVersion(engine,
                 startingCheckpoint.map(x -> x.version),
                 Optional.empty(),
                 Optional.empty());
@@ -577,7 +578,7 @@ public class SnapshotManager {
      * @return Some LogSegment to build a Snapshot if files do exist after the given
      * startCheckpoint. None, if the delta log directory was missing or empty.
      */
-    public Optional<LogSegment> getLogSegmentForVersion(
+    protected Optional<LogSegment> getLogSegmentAtOrBeforeVersion(
         Engine engine,
         Optional<Long> startCheckpoint,
         Optional<Long> versionToLoad,
@@ -619,7 +620,7 @@ public class SnapshotManager {
 
         startTimeMillis = System.currentTimeMillis();
         try {
-            return getLogSegmentForVersion(engine,
+            return getLogSegmentAtOrBeforeVersion(engine,
                     startCheckpointToUse,
                     versionToLoad,
                     newFiles,
@@ -635,7 +636,7 @@ public class SnapshotManager {
      * Helper function for the getLogSegmentForVersion above. Called with a provided files list,
      * and will then try to construct a new LogSegment using that.
      */
-    protected Optional<LogSegment> getLogSegmentForVersion(
+    protected Optional<LogSegment> getLogSegmentAtOrBeforeVersion(
         Engine engine,
         Optional<Long> startCheckpointOpt,
         Optional<Long> versionToLoadOpt,
@@ -676,7 +677,7 @@ public class SnapshotManager {
         } else if (newFiles.isEmpty()) {
             // The directory may be deleted and recreated and we may have stale state in our
             // DeltaLog singleton, so try listing from the first version
-            return getLogSegmentForVersion(engine,
+            return getLogSegmentAtOrBeforeVersion(engine,
                     Optional.empty(),
                     versionToLoadOpt,
                     tableCommitHandlerOpt);

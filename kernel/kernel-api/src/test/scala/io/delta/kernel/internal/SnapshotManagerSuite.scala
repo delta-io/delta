@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal
+package io.delta.kernel.internal.snapshot
 
 import java.util.{Arrays, Collections, List, Optional}
 import java.{lang => javaLang}
@@ -222,7 +222,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         }
       }.getOrElse((Seq.empty, Seq.empty))
 
-      val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
+      val logSegmentOpt = snapshotManager.getLogSegmentAtOrBeforeVersion(
         createMockFSListFromEngine(listFromProvider(deltas ++ checkpointFiles)("/"),
           new MockSidecarParquetHandler(expectedSidecars),
           new MockSidecarJsonHandler(expectedSidecars)),
@@ -326,7 +326,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         Optional[TableCommitCoordinatorClientHandler] = Optional.empty()
   )(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
-      snapshotManager.getLogSegmentForVersion(
+      snapshotManager.getLogSegmentAtOrBeforeVersion(
         createMockFSListFromEngine(files),
         startCheckpoint,
         versionToLoad,
@@ -451,7 +451,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("getLogSegmentForVersion: empty delta log") {
     // listDeltaAndCheckpointFiles = Optional.empty()
-    val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
+    val logSegmentOpt = snapshotManager.getLogSegmentAtOrBeforeVersion(
       createMockFSListFromEngine(Seq.empty),
       Optional.empty(),
       Optional.empty(),
@@ -488,7 +488,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       listFromProvider(files)(filePath)
     }
     for (checkpointV <- Seq(10, 20)) {
-      val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
+      val logSegmentOpt = snapshotManager.getLogSegmentAtOrBeforeVersion(
         createMockFSListFromEngine(listFrom(checkpointV)(_)),
         Optional.of(checkpointV),
         Optional.empty(),
@@ -829,7 +829,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         .take(4)
       val checkpoints = singularCheckpointFileStatuses(validVersions)
       val deltas = deltaFileStatuses(deltaVersions)
-      val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
+      val logSegmentOpt = snapshotManager.getLogSegmentAtOrBeforeVersion(
         createMockFSListFromEngine(deltas ++ corruptedCheckpoint ++ checkpoints),
         Optional.empty(),
         Optional.empty(),
@@ -851,7 +851,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("getLogSegmentForVersion: corrupt _last_checkpoint with empty delta log") {
     // listDeltaAndCheckpointFiles = Optional.empty()
-    val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
+    val logSegmentOpt = snapshotManager.getLogSegmentAtOrBeforeVersion(
       createMockFSListFromEngine(Seq.empty),
       Optional.of(1),
       Optional.empty(),
