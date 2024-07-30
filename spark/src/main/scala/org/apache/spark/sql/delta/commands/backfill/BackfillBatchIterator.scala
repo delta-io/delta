@@ -45,8 +45,6 @@ class BackfillBatchIterator[BackfillBatchType](
     override def next(): AddFile = underlying.next()
   }
 
-  private val sourcePeekableItr = addFileItr.buffered
-
   private val buffer: ListBuffer[AddFile] = ListBuffer.empty[AddFile]
 
   private var lastBin: Seq[AddFile] = Nil
@@ -54,11 +52,11 @@ class BackfillBatchIterator[BackfillBatchType](
   private def createBin(): Seq[AddFile] = {
     val taskLevelPermitAllocator = tracker.createTaskLevelPermitAllocator()
 
-    while (sourcePeekableItr.hasNext) {
+    while (addFileItr.hasNext) {
       // Acquire permit to fetch the next file from source.
       taskLevelPermitAllocator.acquirePermit()
 
-      val nextFile = sourcePeekableItr.next()
+      val nextFile = addFileItr.next()
 
       buffer.append(nextFile)
 
