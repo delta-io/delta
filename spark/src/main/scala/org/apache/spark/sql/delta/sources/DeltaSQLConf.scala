@@ -1466,6 +1466,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STREAMING_SINK_ALLOW_TYPE_CHANGES =
+    buildConf("streaming.sink.allowTypeChanges")
+      .internal()
+      .doc("Whether to accept writing data to a Delta streaming sink when the data type doesn't " +
+        "match the type in the underlying Delta table. When true, data is cast to the expected " +
+        "type before the write. When false, the write fails.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(

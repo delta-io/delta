@@ -444,7 +444,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    * 'spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag. is false, and based on
    * 'spark.sql.ansi.enabled' otherwise.
    */
-  private def cast(child: Expression, dataType: DataType, columnName: String): Expression = {
+  protected def cast(child: Expression, dataType: DataType, columnName: String): Expression = {
     if (conf.getConf(DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG)) {
       return Cast(child, dataType, Option(conf.sessionLocalTimeZone))
     }
