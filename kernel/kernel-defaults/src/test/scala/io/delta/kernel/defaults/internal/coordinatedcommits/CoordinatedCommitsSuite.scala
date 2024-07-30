@@ -33,7 +33,7 @@ import io.delta.kernel.internal.util.{CoordinatedCommitsUtils, FileNames}
 import io.delta.kernel.internal.util.Preconditions.checkArgument
 import io.delta.kernel.internal.util.Utils.{closeCloseables, singletonCloseableIterator, toCloseableIterator}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse, InMemoryCommitCoordinator, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse, InMemoryCommitCoordinator, UpdatedActions, CoordinatedCommitsUtils => CCU}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
@@ -47,6 +47,11 @@ import scala.math
 
 class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
   with CoordinatedCommitsTestUtils {
+
+  private val trackingInMemoryBatchSize10Config = Map(
+    CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
+      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
+    InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10")
 
   def setupCoordinatedCommitFilesForTest(
     engine: Engine,
@@ -114,165 +119,215 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
     }
   }
 
-  test("cold snapshot initialization") {
+  def testWithCoordinatorCommits(
+    hadoopConf: Map[String, String] = Map.empty, f: (String, Engine) => Unit): Unit = {
     InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      setupCoordinatedCommitFilesForTest(engine, tablePath)
+    withTempDirAndEngine(f, hadoopConf)
+  }
 
-      val table = Table.forPath(engine, tablePath)
-      for (version <- 0L to 1L) {
-        val snapshot = table.getSnapshotAsOfVersion(engine, version)
-        val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
-        checkAnswer(result, (0L to version * 10L + 9L).map(TestRow(_)))
-      }
+  test("cold snapshot initialization") {
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        setupCoordinatedCommitFilesForTest(engine, tablePath)
 
-      TrackingCommitCoordinatorClient.numGetCommitsCalled.set(0)
-      val snapshot2 = table.getLatestSnapshot(engine)
-      val result2 = readSnapshot(snapshot2, snapshot2.getSchema(engine), null, null, engine)
-      checkAnswer(result2, (0L to 29L).map(TestRow(_)))
-      assert(TrackingCommitCoordinatorClient.numGetCommitsCalled.get === 1)
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      TrackingInMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+        val table = Table.forPath(engine, tablePath)
+        for (version <- 0L to 1L) {
+          val snapshot = table.getSnapshotAsOfVersion(engine, version)
+          val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
+          checkAnswer(result, (0L to version * 10L + 9L).map(TestRow(_)))
+        }
+
+        TrackingCommitCoordinatorClient.numGetCommitsCalled.set(0)
+        val snapshot2 = table.getLatestSnapshot(engine)
+        val result2 = readSnapshot(snapshot2, snapshot2.getSchema(engine), null, null, engine)
+        checkAnswer(result2, (0L to 29L).map(TestRow(_)))
+        assert(TrackingCommitCoordinatorClient.numGetCommitsCalled.get === 1)
+    })
   }
 
   test("snapshot read should use coordinated commit related properties properly") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine( { (tablePath, engine) =>
-      setupCoordinatedCommitFilesForTest(
-        engine,
-        tablePath,
-        coordinatorName = "test-coordinator",
-        coordinatorConf = OBJ_MAPPER.writeValueAsString(TestCommitCoordinator.EXP_COORDINATOR_CONF))
+    val config = Map(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("test-coordinator") ->
+        classOf[TestCommitCoordinatorBuilder].getName)
+    testWithCoordinatorCommits(config, {
+        (tablePath, engine) =>
+          setupCoordinatedCommitFilesForTest(
+            engine,
+            tablePath,
+            coordinatorName = "test-coordinator",
+            coordinatorConf = OBJ_MAPPER.writeValueAsString(
+              TestCommitCoordinator.EXP_COORDINATOR_CONF))
 
-      val table = Table.forPath(engine, tablePath)
-      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
-      checkAnswer(result, (0L to 29L).map(TestRow(_)))
-      assert(snapshot.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
-      assert(
-        snapshot
-          .getTableCommitCoordinatorClientHandlerOpt(engine)
-          .get()
-          .semanticEquals(
-            engine.getCommitCoordinatorClientHandler(
-              "test-coordinator", TestCommitCoordinator.EXP_COORDINATOR_CONF)))
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("test-coordinator") ->
-      classOf[TestCommitCoordinatorBuilder].getName))
+          val table = Table.forPath(engine, tablePath)
+          val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+          val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
+          checkAnswer(result, (0L to 29L).map(TestRow(_)))
+          assert(snapshot.getTableCommitCoordinatorClientHandlerOpt(engine).isPresent)
+          assert(
+            snapshot
+              .getTableCommitCoordinatorClientHandlerOpt(engine)
+              .get()
+              .semanticEquals(
+                engine.getCommitCoordinatorClientHandler(
+                  "test-coordinator", TestCommitCoordinator.EXP_COORDINATOR_CONF)))
+    })
   }
 
   test("snapshot read fails if we try to put bad value for COORDINATED_COMMITS_TABLE_CONF") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine( { (tablePath, engine) =>
-      setupCoordinatedCommitFilesForTest(
-        engine,
-        tablePath,
-        tableConfToOverwrite = """{"key1": "string_value", "key2Int": "2""")
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        setupCoordinatedCommitFilesForTest(
+          engine,
+          tablePath,
+          tableConfToOverwrite = """{"key1": "string_value", "key2Int": "2""")
 
-      val table = Table.forPath(engine, tablePath)
-      intercept[RuntimeException] {
-        table.getLatestSnapshot(engine)
-      }
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      TrackingInMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+        val table = Table.forPath(engine, tablePath)
+        intercept[RuntimeException] {
+          table.getLatestSnapshot(engine)
+        }
+    })
   }
 
   test("snapshot read with checkpoint before table converted to coordinated commit table") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      setupCoordinatedCommitFilesForTest(
-        engine,
-        tablePath,
-        versionConvertToCC = 2L,
-        coordinatedCommitNum = 2L,
-        checkpointVersion = 1L)
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        setupCoordinatedCommitFilesForTest(
+          engine,
+          tablePath,
+          versionConvertToCC = 2L,
+          coordinatedCommitNum = 2L,
+          checkpointVersion = 1L)
 
-      val table = Table.forPath(engine, tablePath)
-      for (version <- 0L to 2L) {
-        val snapshot = table.getSnapshotAsOfVersion(engine, version)
-        val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
-        checkAnswer(result, (0L to version * 10L + 9L).map(TestRow(_)))
-      }
+        val table = Table.forPath(engine, tablePath)
+        for (version <- 0L to 2L) {
+          val snapshot = table.getSnapshotAsOfVersion(engine, version)
+          val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
+          checkAnswer(result, (0L to version * 10L + 9L).map(TestRow(_)))
+        }
 
-      TrackingCommitCoordinatorClient.numGetCommitsCalled.set(0)
-      val snapshot3 = table.getLatestSnapshot(engine)
-      val result3 = readSnapshot(snapshot3, snapshot3.getSchema(engine), null, null, engine)
-      checkAnswer(result3, (0L to 39L).map(TestRow(_)))
-      assert(TrackingCommitCoordinatorClient.numGetCommitsCalled.get === 1)
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      TrackingInMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+        TrackingCommitCoordinatorClient.numGetCommitsCalled.set(0)
+        val snapshot3 = table.getLatestSnapshot(engine)
+        val result3 = readSnapshot(snapshot3, snapshot3.getSchema(engine), null, null, engine)
+        checkAnswer(result3, (0L to 39L).map(TestRow(_)))
+        assert(TrackingCommitCoordinatorClient.numGetCommitsCalled.get === 1)
+    })
   }
 
   test("snapshot read with overlap between filesystem based commits and coordinated commits") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      setupCoordinatedCommitFilesForTest(
-        engine,
-        tablePath,
-        versionConvertToCC = 2L,
-        coordinatedCommitNum = 4L,
-        deleteVersion = 4L)
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        setupCoordinatedCommitFilesForTest(
+          engine,
+          tablePath,
+          versionConvertToCC = 2L,
+          coordinatedCommitNum = 4L,
+          deleteVersion = 4L)
 
-      val table = Table.forPath(engine, tablePath)
-      for (version <- 0L to 4L) {
-        val snapshot = table.getSnapshotAsOfVersion(engine, version)
-        val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
-        checkAnswer(result, (0L to version * 10L + 9L).map(TestRow(_)))
-      }
+        val table = Table.forPath(engine, tablePath)
+        for (version <- 0L to 4L) {
+          val snapshot = table.getSnapshotAsOfVersion(engine, version)
+          val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
+          checkAnswer(result, (0L to version * 10L + 9L).map(TestRow(_)))
+        }
 
-      TrackingCommitCoordinatorClient.numGetCommitsCalled.set(0)
-      val snapshot5 = table.getLatestSnapshot(engine)
-      val result5 = readSnapshot(snapshot5, snapshot5.getSchema(engine), null, null, engine)
-      checkAnswer(result5, (0L to 59L).map(TestRow(_)))
-      assert(TrackingCommitCoordinatorClient.numGetCommitsCalled.get === 1)
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      TrackingInMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+        TrackingCommitCoordinatorClient.numGetCommitsCalled.set(0)
+        val snapshot5 = table.getLatestSnapshot(engine)
+        val result5 = readSnapshot(snapshot5, snapshot5.getSchema(engine), null, null, engine)
+        checkAnswer(result5, (0L to 59L).map(TestRow(_)))
+        assert(TrackingCommitCoordinatorClient.numGetCommitsCalled.get === 1)
+    })
   }
 
   test("getLogSegmentForVersion with commitCoordinatorClientHandler provided") {
-    InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
-    withTempDirAndEngine ({ (tablePath, engine) =>
-      setupCoordinatedCommitFilesForTest(
-        engine,
-        tablePath,
-        versionConvertToCC = 2L,
-        coordinatedCommitNum = 4L,
-        checkpointVersion = 1L)
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        setupCoordinatedCommitFilesForTest(
+          engine,
+          tablePath,
+          versionConvertToCC = 2L,
+          coordinatedCommitNum = 4L,
+          checkpointVersion = 1L)
 
-      val logPath = new KernelPath("file:" + tablePath, "_delta_log")
-      val snapshotManager = new SnapshotManager(logPath, new KernelPath(tablePath))
-      val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-        engine,
-        Optional.of(1L),
-        Optional.of(4L),
-        Optional.of(
-          new TableCommitCoordinatorClientHandler(
-            engine.getCommitCoordinatorClientHandler("tracking-in-memory", Collections.emptyMap()),
-            logPath.toString,
-            Collections.emptyMap()))
-      )
-      assert(logSegmentOpt.isPresent)
-      val logSegment = logSegmentOpt.get()
-      assert(logSegment.logPath == logPath)
-      assert(logSegment.version == 4L)
-      val expectedDeltas = (2L until 5L)
-        .map(v => FileStatus.of(FileNames.deltaFile(logPath, v), 0, 0))
-      assert(expectedDeltas.map(f => f.getPath) == logSegment.deltas.asScala.map(f => f.getPath))
-      val expectedCheckpoints = Seq(1L).map(v =>
-        FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, 0, 0)
-      )
-      assert(expectedCheckpoints.map(f => f.getPath) ==
-        logSegment.checkpoints.asScala.map(f => f.getPath))
-      assert(logSegment.checkpointVersionOpt.isPresent && logSegment.checkpointVersionOpt.get == 1L)
-      assert(logSegment.lastCommitTimestamp ==
-        engine.getFileSystemClient.listFrom(
-          FileNames.listingPrefix(logPath, 4L)).next.getModificationTime)
-    }, Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
-      classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
-      TrackingInMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10"))
+        val logPath = new KernelPath("file:" + tablePath, "_delta_log")
+        val snapshotManager = new SnapshotManager(logPath, new KernelPath(tablePath))
+        val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
+          engine,
+          Optional.of(1L),
+          Optional.of(4L),
+          Optional.of(
+            new TableCommitCoordinatorClientHandler(
+              engine.getCommitCoordinatorClientHandler(
+                "tracking-in-memory", Collections.emptyMap()),
+              logPath.toString,
+              Collections.emptyMap()))
+        )
+        assert(logSegmentOpt.isPresent)
+        val logSegment = logSegmentOpt.get()
+        assert(logSegment.logPath == logPath)
+        assert(logSegment.version == 4L)
+        var nextUuidSuffix = 1L
+        val expectedDeltas = (2L until 5L)
+          .map(v => {
+            val fileName = if (v == 2L) {
+              FileNames.deltaFile(logPath, v)
+            } else {
+              nextUuidSuffix += 1
+              CCU.getUnbackfilledDeltaFile(
+                new Path(logPath.toString), v, Optional.of(s"uuid-${nextUuidSuffix - 1}")).toString
+            }
+            FileStatus.of(fileName, 0, 0)
+          })
+        assert(expectedDeltas.map(f => f.getPath) == logSegment.deltas.asScala.map(f => f.getPath))
+        val expectedCheckpoints = Seq(1L).map(v =>
+          FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, 0, 0)
+        )
+        assert(expectedCheckpoints.map(f => f.getPath) ==
+          logSegment.checkpoints.asScala.map(f => f.getPath))
+        assert(logSegment.checkpointVersionOpt.isPresent &&
+          logSegment.checkpointVersionOpt.get == 1L)
+        assert(logSegment.lastCommitTimestamp ==
+          engine.getFileSystemClient.listFrom(
+            CCU.getUnbackfilledDeltaFile(
+              new Path(logPath.toString),
+              4L,
+              Optional.of(s"uuid-2")).toString).next.getModificationTime)
+    })
+  }
+
+  test("getSnapshotAt with coordinated commits enabled") {
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        setupCoordinatedCommitFilesForTest(
+          engine, tablePath, versionConvertToCC = 2L)
+
+        val table = Table.forPath(engine, tablePath)
+        for (version <- 0L to 4L) {
+          val snapshot = table.getSnapshotAsOfVersion(engine, version)
+          val result = readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine)
+          checkAnswer(result, (0L to version * 10L + 9L).map(TestRow(_)))
+        }
+    })
+  }
+
+  test("versionToLoad higher than possible") {
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        setupCoordinatedCommitFilesForTest(
+          engine, tablePath, versionConvertToCC = 2L)
+        val table = Table.forPath(engine, tablePath)
+        val e = intercept[RuntimeException] {
+          table.getSnapshotAsOfVersion(engine, 5L)
+        }
+        assert(e.getMessage.contains(
+          "Cannot load table version 5 as it does not exist. The latest available version is 4"))
+    })
   }
 
   def getRowsFromFile(engine: Engine, delta: Path): CloseableIterator[Row] = {

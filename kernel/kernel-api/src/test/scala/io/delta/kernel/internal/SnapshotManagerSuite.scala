@@ -477,21 +477,6 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     )
   }
 
-  test("getLogSegmentForVersion: versionToLoad higher than possible") {
-    testExpectedError[RuntimeException](
-      files = deltaFileStatuses(Seq(0L)),
-      versionToLoad = Optional.of(15),
-      expectedErrorMessageContains =
-        "Cannot load table version 15 as it does not exist. The latest available version is 0"
-    )
-    testExpectedError[RuntimeException](
-      files = deltaFileStatuses((10L until 13L)) ++ singularCheckpointFileStatuses(Seq(10L)),
-      versionToLoad = Optional.of(15),
-      expectedErrorMessageContains =
-        "Cannot load table version 15 as it does not exist. The latest available version is 12"
-    )
-  }
-
   test("getLogSegmentForVersion: start listing from _last_checkpoint when it is provided") {
     val deltas = deltaFileStatuses(0L until 25)
     val checkpoints = singularCheckpointFileStatuses(Seq(10L, 20L))

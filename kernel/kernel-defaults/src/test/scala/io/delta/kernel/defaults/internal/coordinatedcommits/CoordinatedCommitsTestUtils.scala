@@ -155,11 +155,6 @@ trait CoordinatedCommitsTestUtils {
   }
 }
 
-object TrackingInMemoryCommitCoordinatorBuilder {
-  val BATCH_SIZE_CONF_KEY =
-    "delta.kernel.default.coordinatedCommits.trackingInMemoryCoordinator.batch-size"
-}
-
 case class TrackingInMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
   extends CommitCoordinatorBuilder(hadoopConf) {
   override def getName: String = "tracking-in-memory"

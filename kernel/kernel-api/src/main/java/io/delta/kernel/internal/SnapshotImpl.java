@@ -157,12 +157,12 @@ public class SnapshotImpl implements Snapshot {
     }
 
     /**
-     * Returns the commit coordinator client handler for this snapshot.
-     * If the snapshot is not configured to use a commit coordinator, this returns an empty
-     * Optional.
+     * Returns the commit coordinator client handler based on the table metadata in this
+     * snapshot.
      *
      * @param engine the engine to use for IO operations
-     * @return the commit coordinator client handler for this snapshot
+     * @return the commit coordinator client handler for this snapshot or empty if the metadata
+     *  is not configured to use the commit coordinator.
      */
     public Optional<TableCommitCoordinatorClientHandler> getTableCommitCoordinatorClientHandlerOpt(
             Engine engine) {

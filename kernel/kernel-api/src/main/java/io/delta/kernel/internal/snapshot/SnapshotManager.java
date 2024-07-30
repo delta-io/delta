@@ -132,17 +132,33 @@ public class SnapshotManager {
     public Snapshot getSnapshotAt(
             Engine engine,
             long version) throws TableNotFoundException {
-        SnapshotImpl upperBoundSnapshot = getSnapshotAtInit(engine);
 
         Optional<LogSegment> logSegmentOpt = getLogSegmentForVersion(engine,
                 Optional.empty(), /* startCheckpointOpt */
                 Optional.of(version) /* versionToLoadOpt */,
                 /* tableCommitHandlerOpt */
-                upperBoundSnapshot.getTableCommitCoordinatorClientHandlerOpt(engine));
+                Optional.empty());
 
-        return logSegmentOpt
-            .map(logSegment -> createSnapshot(logSegment, engine))
-            .orElseThrow(() -> new TableNotFoundException(tablePath.toString()));
+        SnapshotImpl snapshot = logSegmentOpt
+                .map(logSegment -> getCoordinatedCommitsAwareSnapshot(
+                        engine, logSegment, Optional.of(version)))
+                .orElseThrow(() -> new TableNotFoundException(tablePath.toString()));
+        long snapshotVer = snapshot.getVersion(engine);
+        if (snapshotVer != version) {
+            throw DeltaErrors.versionAfterLatestCommit(tablePath.toString(), version, snapshotVer);
+        }
+        List<FileStatus> snapshotDeltas = snapshot.getLogSegment().deltas;
+        if (!snapshotDeltas.isEmpty()) {
+            checkArgument(
+                    Objects.equals(
+                            FileNames.deltaVersion(
+                                    snapshotDeltas.get(snapshotDeltas.size() - 1).getPath()),
+                            version),
+                    format(
+                            "Did not get the last delta file version %s to compute Snapshot",
+                            version));
+        }
+        return snapshot;
     }
 
     /**
@@ -336,65 +352,64 @@ public class SnapshotManager {
                 startVersion,
                 versionToLoad);
 
-
         final AtomicLong maxDeltaVersionSeen = new AtomicLong(startVersion - 1);
-        Optional<List<FileStatus>> resultFromFsListingOpt =
-                listFromOrNone(engine, startVersion)
-                        .map(fileStatusesIter -> {
-                            final List<FileStatus> output = new ArrayList<>();
+        Optional<CloseableIterator<FileStatus>> listing = listFromOrNone(engine, startVersion);
+        Optional<List<FileStatus>> resultFromFsListingOpt = listing
+            .map(fileStatusesIter -> {
+                final List<FileStatus> output = new ArrayList<>();
 
-                            while (fileStatusesIter.hasNext()) {
-                                final FileStatus fileStatus = fileStatusesIter.next();
-                                final String fileName = getName(fileStatus.getPath());
+                while (fileStatusesIter.hasNext()) {
+                    final FileStatus fileStatus = fileStatusesIter.next();
+                    final String fileName = getName(fileStatus.getPath());
 
-                                // Pick up all checkpoint and delta files
-                                if (!isDeltaCommitOrCheckpointFile(fileName)) {
-                                    continue;
-                                }
+                    // Pick up all checkpoint and delta files
+                    if (!isDeltaCommitOrCheckpointFile(fileName)) {
+                        continue;
+                    }
 
-                                // Checkpoint files of 0 size are invalid but may be ignored
-                                // silently when read, hence we drop them so that we never pick up
-                                // such checkpoints.
-                                if (FileNames.isCheckpointFile(fileName) &&
-                                        fileStatus.getSize() == 0) {
-                                    continue;
-                                }
+                    // Checkpoint files of 0 size are invalid but may be ignored
+                    // silently when read, hence we drop them so that we never pick up
+                    // such checkpoints.
+                    if (FileNames.isCheckpointFile(fileName) &&
+                            fileStatus.getSize() == 0) {
+                        continue;
+                    }
 
-                                // Take files until the version we want to load
-                                final boolean versionWithinRange = versionToLoad
-                                        .map(v -> FileNames
-                                                .getFileVersion(
-                                                        new Path(fileStatus.getPath())) <= v)
-                                        .orElse(true);
-                                if (!versionWithinRange) {
-                                    // If we haven't taken any files yet and the first file we see
-                                    // is greater than the versionToLoad then the versionToLoad is
-                                    // not reconstructable from the existing logs
-                                    if (output.isEmpty()) {
-                                        long earliestVersion = DeltaHistoryManager
-                                                .getEarliestRecreatableCommit(engine, logPath);
-                                        throw DeltaErrors.versionBeforeFirstAvailableCommit(
-                                                tablePath.toString(),
-                                                versionToLoad.get(),
-                                                earliestVersion);
-                                    }
-                                    break;
-                                }
+                    // Take files until the version we want to load
+                    final boolean versionWithinRange = versionToLoad
+                            .map(v -> FileNames
+                                    .getFileVersion(
+                                            new Path(fileStatus.getPath())) <= v)
+                            .orElse(true);
+                    if (!versionWithinRange) {
+                        // If we haven't taken any files yet and the first file we see
+                        // is greater than the versionToLoad then the versionToLoad is
+                        // not reconstructable from the existing logs
+                        if (output.isEmpty()) {
+                            long earliestVersion = DeltaHistoryManager
+                                    .getEarliestRecreatableCommit(engine, logPath);
+                            throw DeltaErrors.versionBeforeFirstAvailableCommit(
+                                    tablePath.toString(),
+                                    versionToLoad.get(),
+                                    earliestVersion);
+                        }
+                        break;
+                    }
 
-                                // Ideally listFromOrNone should return lexiographically sorted
-                                // files amd so maxDeltaVersionSeen should be equal to fileVersion.
-                                // But we are being defensive here and taking max of all the
-                                // fileVersions seen.
-                                if (FileNames.isCommitFile(fileName)) {
-                                    maxDeltaVersionSeen.set(Math.max(maxDeltaVersionSeen.get(),
-                                            FileNames.deltaVersion(fileStatus.getPath())));
-                                }
+                    // Ideally listFromOrNone should return lexiographically sorted
+                    // files amd so maxDeltaVersionSeen should be equal to fileVersion.
+                    // But we are being defensive here and taking max of all the
+                    // fileVersions seen.
+                    if (FileNames.isCommitFile(fileName)) {
+                        maxDeltaVersionSeen.set(Math.max(maxDeltaVersionSeen.get(),
+                                FileNames.deltaVersion(fileStatus.getPath())));
+                    }
 
-                                output.add(fileStatus);
-                            }
+                    output.add(fileStatus);
+                }
 
-                            return output;
-                        });
+                return output;
+            });
 
         if (!tableCommitHandlerOpt.isPresent()) {
             return resultFromFsListingOpt;
@@ -454,12 +469,19 @@ public class SnapshotManager {
             getLogSegmentFrom(engine, lastCheckpointOpt);
 
         return logSegmentOpt
-                .map(logSegment -> getCoordinatedCommitsAwareSnapshot(engine, logSegment))
+                .map(logSegment -> getCoordinatedCommitsAwareSnapshot(
+                        engine, logSegment, Optional.empty()))
                 .orElseThrow(() -> new TableNotFoundException(tablePath.toString()));
     }
 
+    /**
+     * This can be optimized by making snapshot hint optimization to work with coordinated commits.
+     * @see <a href="https://github.com/delta-io/delta/issues/3437">issue #3437</a>.
+     */
     private SnapshotImpl getCoordinatedCommitsAwareSnapshot(
-            Engine engine, LogSegment initialSegmentForNewSnapshot) {
+            Engine engine,
+            LogSegment initialSegmentForNewSnapshot,
+            Optional<Long> versionToLoadOpt) {
         SnapshotImpl newSnapshot = createSnapshot(initialSegmentForNewSnapshot, engine);
 
         Optional<TableCommitCoordinatorClientHandler> newTableCommitCoordinatorClientHandlerOpt =
@@ -469,7 +491,7 @@ public class SnapshotManager {
             Optional<LogSegment> segmentOpt = getLogSegmentForVersion(
                     engine,
                     newSnapshot.getLogSegment().checkpointVersionOpt, /* startCheckpointOpt */
-                    Optional.empty() /* versionToLoadOpt */,
+                    versionToLoadOpt /* versionToLoadOpt */,
                     newTableCommitCoordinatorClientHandlerOpt /* tableCommitHandlerOpt */);
             newSnapshot = segmentOpt
                     .map(segment -> createSnapshot(segment, engine))
@@ -768,10 +790,6 @@ public class SnapshotManager {
             );
         }
 
-        versionToLoadOpt.filter(v -> v != newVersion).ifPresent(v -> {
-            throw DeltaErrors.versionAfterLatestCommit(tablePath.toString(), v, newVersion);
-        });
-
         // We may just be getting a checkpoint file after the filtering
         if (!deltaVersionsAfterCheckpoint.isEmpty()) {
             // If we have deltas after the checkpoint, the first file should be 1 greater than our
@@ -789,7 +807,7 @@ public class SnapshotManager {
             verifyDeltaVersions(
                 deltaVersionsAfterCheckpoint,
                 Optional.of(newCheckpointVersion + 1),
-                versionToLoadOpt,
+                Optional.empty(),
                 tablePath
             );
         }
