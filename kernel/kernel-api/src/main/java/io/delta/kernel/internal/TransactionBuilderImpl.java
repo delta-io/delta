@@ -32,12 +32,14 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
@@ -192,12 +194,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             }
         } else {
             // New table verify the given schema and partition columns
-            String mappingMode = tableProperties
-                    .map(ColumnMapping::getColumnMappingMode)
-                    .orElse("none");
-            SchemaUtils.validateSchema(
-                    schema.get(),
-                    ColumnMapping.isColumnMappingModeEnabled(mappingMode));
+            ColumnMappingMode mappingMode = ColumnMapping.getColumnMappingMode(
+                    tableProperties.orElse(Collections.emptyMap()));
+
+            SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
             SchemaUtils.validatePartitionColumns(
                     schema.get(), partitionColumns.orElse(Collections.emptyList()));
         }

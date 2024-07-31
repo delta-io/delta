@@ -167,9 +167,9 @@ trait ParquetSuiteBase extends TestUtils {
         def visitStructType(basePath: Array[String], structType: StructType): Unit = {
           structType.fields.forEach { field =>
             val deltaFieldId = field.getMetadata
-              .get(ColumnMapping.COLUMN_MAPPING_ID_KEY).asInstanceOf[Long]
+              .getLong(ColumnMapping.COLUMN_MAPPING_ID_KEY)
             val physicalName = field.getMetadata
-              .get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY).asInstanceOf[String]
+              .getString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
 
             verifyFieldId(deltaFieldId, basePath :+ physicalName)
             visitDeltaType(basePath :+ physicalName, field.getDataType)

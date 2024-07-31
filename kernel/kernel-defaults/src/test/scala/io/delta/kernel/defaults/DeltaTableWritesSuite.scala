@@ -1013,7 +1013,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           .commit(engine, emptyIterable())
       }
       assert(ex.getMessage.contains("Invalid value for table property " +
-        "'delta.columnMapping.mode': 'invalid'. Needs to be one of none, id, name."))
+        "'delta.columnMapping.mode': 'invalid'. Needs to be one of: [none, id, name]."))
     }
   }
 
@@ -1042,7 +1042,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           .build(engine)
       }
       assert(ex.getMessage.contains("Invalid value for table property " +
-        "'delta.columnMapping.mode': 'invalid'. Needs to be one of none, id, name."))
+        "'delta.columnMapping.mode': 'invalid'. Needs to be one of: [none, id, name]."))
     }
   }
 

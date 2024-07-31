@@ -27,6 +27,7 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 
@@ -132,7 +133,7 @@ public class ScanStateRow extends GenericRow {
      * Get the column mapping mode from the scan state {@link Row} returned by
      * {@link Scan#getScanState(Engine)}.
      */
-    public static String getColumnMappingMode(Row scanState) {
+    public static ColumnMappingMode getColumnMappingMode(Row scanState) {
         Map<String, String> configuration = VectorUtils.toJavaMap(
                 scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
         return ColumnMapping.getColumnMappingMode(configuration);
