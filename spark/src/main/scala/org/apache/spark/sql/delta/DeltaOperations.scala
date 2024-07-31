@@ -804,6 +804,7 @@ private[delta] object DeltaOperationMetrics {
     "numTargetFilesRemoved", // number of files removed from the sink(target)
     "numTargetChangeFilesAdded", // number of CDC files
     "executionTimeMs",  // time taken to execute the entire operation
+    "materializeSourceTimeMs", // time taken to materialize source (or determine it's not needed)
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs", // time taken to rewrite the matched files
     "numTargetDeletionVectorsAdded", // number of deletion vectors added
