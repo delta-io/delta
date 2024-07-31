@@ -1678,6 +1678,18 @@ trait DeltaSQLConfBase {
     .createWithDefault(false)
 
   //////////////////
+  // FSCK Configs
+  //////////////////
+
+  val FSCK_MAX_NUM_ENTRIES_IN_RESULT =
+  buildConf("fsck.maxNumEntriesInResult")
+    .doc("""
+       | How many entries are displayed in the result of the FSCK command in
+       | DRY RUN mode.""".stripMargin)
+    .intConf
+    .createWithDefault(1000)
+
+  //////////////////
   // Idempotent DML
   //////////////////
 
