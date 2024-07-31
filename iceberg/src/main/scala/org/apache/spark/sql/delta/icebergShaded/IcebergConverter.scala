@@ -341,22 +341,28 @@ class IcebergConverter(spark: SparkSession)
       // If we don't have a snapshot of the last converted version, get all the table addFiles
       // (via state reconstruction).
       case None =>
-        val actionsToConvert = snapshotToConvert.allFiles.toLocalIterator().asScala
-
+        val numPartitions = math.max(snapshotToConvert.numOfFiles / actionBatchSize, 1)
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
           "delta.iceberg.conversion.batch",
           data = Map(
             "version" -> snapshotToConvert.version,
-            "numDeltaFiles" -> snapshotToConvert.numOfFiles
+            "numOfFiles" -> snapshotToConvert.numOfFiles,
+            "actionBatchSize" -> actionBatchSize,
+            "numOfPartitions" -> numPartitions
           )
         )
 
-        actionsToConvert.grouped(actionBatchSize)
+        snapshotToConvert.allFiles
+          .repartition(numPartitions.toInt)
+          .collectResult()
+          .iterator
+          .asScala
+          .grouped(actionBatchSize)
           .foreach { actions =>
             needsExpireSnapshot ||= existsOptimize(actions)
             runIcebergConversionForActions(icebergTxn, actions, log.dataPath, None)
-          }
+        }
 
         // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
         if (tableOp == REPLACE_TABLE) {
