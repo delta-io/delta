@@ -67,12 +67,13 @@ def get_local_package(package_name):
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-<<<<<<< HEAD
-    package = "io.delta:delta-spark_2.12:" + version
-    return package
-=======
-    return f"io.delta:{package_name}_2.13:" + version
->>>>>>> 3e2ef32c8 ([Spark] Add Delta Connect Python Client for First 4.0 Preview branch (#3201))
+
+    major_version = int(version.split(".")[0])
+
+    if major_version >= 4:
+        return major_version, f"io.delta:{package_name}_2.13:" + version
+    else:
+        return major_version, f"io.delta:{package_name}_2.12:" + version
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
@@ -183,23 +184,22 @@ if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     prepare(root_dir)
+    major_version, delta_spark_package = get_local_package("delta-spark")
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
-    run_pypi_packaging_tests(root_dir)
-    run_delta_connect_codegen_python(root_dir)
-    run_delta_connect_tests = os.getenv("RUN_DELTA_CONNECT_TESTS")
-    if run_delta_connect_tests is None or run_delta_connect_tests == "false":
-        delta_spark_package = get_local_package("delta-spark")
-        test(root_dir, "delta", [delta_spark_package])
-    elif run_delta_connect_tests == "true":
+    # For Spark master version don't run pypi packing tests since packaging hasn't been updated yet
+    if major_version < 4:
+        run_pypi_packaging_tests(root_dir)
+    test(root_dir, "delta", [delta_spark_package])
+
+    # For versions 4.0+ run Delta Connect tests as well
+    if major_version >= 4:
+        run_delta_connect_codegen_python(root_dir)
         # TODO: In the future, find a way to get these
         # packages locally instead of downloading from Maven.
         delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
                                   "org.apache.spark:spark-connect_2.13:4.0.0-preview1",
-                                  get_local_package("delta-connect-server")]
+                                  get_local_package("delta-connect-server")[1]]
 
         test(root_dir, path.join("delta", "connect"), delta_connect_packages)
-    else:
-        raise Exception(f"Invalid value for RUN_DELTA_CONNECT_TESTS {un_delta_connect_tests}"
-                        + ", should be either true or false.")

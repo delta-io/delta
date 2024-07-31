@@ -223,8 +223,9 @@ if __name__ == "__main__":
         run_tests_in_docker(test_env_image_tag, args.group)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_delta_connect_tests = os.getenv("RUN_DELTA_CONNECT_TESTS")
-        if run_delta_connect_tests is None or run_delta_connect_tests == "false":
+        python_tests_only = os.getenv("PYTHON_TESTS_ONLY")
+
+        if python_tests_only is None or not python_tests_only:
             run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
 
         # Python tests are run only when spark group of projects are being tested.
