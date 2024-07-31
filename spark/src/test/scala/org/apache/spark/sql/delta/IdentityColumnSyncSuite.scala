@@ -73,7 +73,7 @@ trait IdentityColumnSyncSuiteBase
           sql(s"ALTER TABLE $tblName $alterKeyword COLUMN id SYNC IDENTITY")
           val expected = start + (((i - start) + (step - 1)) / step) * step
           val schema = DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.schema
-          assert(schema("id").metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK) ==
+          assert(schema("id").metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK) ===
             expected)
         }
       }
