@@ -76,6 +76,8 @@ statement
         (USING INVENTORY (inventoryTable=qualifiedName | LEFT_PAREN inventoryQuery=subQuery RIGHT_PAREN))?
         (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
+    | FSCK REPAIR TABLE (path=STRING | table=qualifiedName)             
+        (DRY RUN)?                                                      #fsckRepairTable
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
@@ -237,7 +239,7 @@ nonReserved
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
     | REORG | APPLY | PURGE | UPGRADE | UNIFORM | ICEBERG_COMPAT_VERSION
-    | RESTORE | AS | OF
+    | RESTORE | AS | OF | FSCK | REPAIR
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
     | NO | STATISTICS
     | CLONE | SHALLOW
@@ -270,6 +272,7 @@ EXISTS: 'EXISTS';
 FALSE: 'FALSE';
 FEATURE: 'FEATURE';
 FOR: 'FOR';
+FSCK: 'FSCK';
 GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
@@ -290,6 +293,7 @@ OPTIMIZE: 'OPTIMIZE';
 REORG: 'REORG';
 PARTITIONED: 'PARTITIONED';
 PURGE: 'PURGE';
+REPAIR: 'REPAIR';
 REPLACE: 'REPLACE';
 RESTORE: 'RESTORE';
 RETAIN: 'RETAIN';
