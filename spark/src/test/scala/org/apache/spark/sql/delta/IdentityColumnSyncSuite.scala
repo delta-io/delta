@@ -242,7 +242,6 @@ trait IdentityColumnSyncSuiteBase
   }
 }
 
-
 class IdentityColumnSyncScalaSuite
   extends IdentityColumnSyncSuiteBase
   with ScalaDDLTestUtils
