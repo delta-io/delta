@@ -56,7 +56,7 @@ trait IdentityColumnSyncSuiteBase
     }
   }
 
-  test("alter table sync identity delta") {
+  test("alter table sync identity on delta table") {
     val starts = Seq(-1, 1)
     val steps = Seq(-3, 3)
     val alterKeywords = Seq("ALTER", "CHANGE")
@@ -202,14 +202,14 @@ trait IdentityColumnSyncSuiteBase
     }
   }
 
-  test("alter table sync identity overflow") {
+  test("alter table sync identity overflow error") {
     withSimpleGeneratedByDefaultTable(startsWith = 1L, incrementBy = 10L) {
       sql(s"INSERT INTO $tblName VALUES (${Long.MaxValue}, 'a')")
       intercept[ArithmeticException](sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY"))
     }
   }
 
-  test("alter table sync identity non delta") {
+  test("alter table sync identity on non delta table error") {
     withTable(tblName) {
       sql(
         s"""
@@ -226,7 +226,7 @@ trait IdentityColumnSyncSuiteBase
     }
   }
 
-  test("alter table sync identity non identity column") {
+  test("alter table sync identity on non identity column error") {
     withTable(tblName) {
       createTable(
         tblName,
