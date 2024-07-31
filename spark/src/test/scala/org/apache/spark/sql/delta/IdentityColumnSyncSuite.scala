@@ -221,7 +221,8 @@ trait IdentityColumnSyncSuiteBase
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
       }
-      assert(ex.getMessage.contains("ALTER TABLE ALTER COLUMN SYNC IDENTITY is only supported by Delta."))
+      assert(ex.getMessage.contains(
+        "ALTER TABLE ALTER COLUMN SYNC IDENTITY is only supported by Delta."))
     }
   }
 
@@ -237,7 +238,8 @@ trait IdentityColumnSyncSuiteBase
       val ex = intercept[AnalysisException] {
         sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
       }
-      assert(ex.getMessage.contains("ALTER TABLE ALTER COLUMN SYNC IDENTITY cannot be called on non IDENTITY columns."))
+      assert(ex.getMessage.contains(
+        "ALTER TABLE ALTER COLUMN SYNC IDENTITY cannot be called on non IDENTITY columns."))
     }
   }
 }
