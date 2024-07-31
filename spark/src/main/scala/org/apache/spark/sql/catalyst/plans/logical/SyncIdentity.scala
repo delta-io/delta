@@ -21,7 +21,7 @@ import org.apache.spark.sql.connector.catalog.TableChange
 import org.apache.spark.sql.connector.catalog.TableChange.ColumnChange
 
 /**
- * A `ColumnChange` to model `ALTER TABLE ALTER COLUMN SYNC IDENTITY` command.
+ * A `ColumnChange` to model `ALTER TABLE ... ALTER (CHANGE) COLUMN ... SYNC IDENTITY` command.
  *
  * @param fieldNames The (potentially nested) column name.
  */
