@@ -65,7 +65,7 @@ trait IdentityColumnSyncSuiteBase
         // Test empty table.
         val oldSchema = DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.schema
         sql(s"ALTER TABLE $tblName $alterKeyword COLUMN id SYNC IDENTITY")
-        assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.schema == oldSchema)
+        assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.schema === oldSchema)
 
         // Test a series of values that are not all following start and step configurations.
         for (i <- start to (start + step * 10)) {
