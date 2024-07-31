@@ -16,6 +16,21 @@
 
 package org.apache.spark.sql.delta.commands.backfill
 
+import org.apache.spark.sql.delta.{DeltaOperations, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.AddFile
 
-case class RowTrackingBackfillBatch(filesInBatch: Seq[AddFile])
+case class RowTrackingBackfillBatch(filesInBatch: Seq[AddFile]) extends BackfillBatch {
+  override val backfillBatchStatsOpType = "delta.rowTracking.backfill.batch.stats"
+
+  /** Mark all files as dataChange = false and commit. */
+  override protected def prepareFilesAndCommit(
+      txn: OptimisticTransaction,
+      batchId: Int): Unit = {
+    val filesToCommit = filesInBatch.map(_.copy(dataChange = false))
+    // Base Row IDs are added as part of the OptimisticTransaction.prepareCommit(), so we don't
+    // need to do anything here other than recommit the files.
+    // Note: A backfill commit can be empty ,i.e. have no file actions, at commit time due to
+    // files being removed by concurrent conflict resolution.
+    txn.commit(filesToCommit, DeltaOperations.RowTrackingBackfill(batchId))
+  }
+}

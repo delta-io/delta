@@ -19,14 +19,19 @@ package org.apache.spark.sql.delta.rowtracking
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, RowId, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
 class RowTrackingConflictResolutionSuite extends QueryTest
   with SharedSparkSession with RowIdTestUtils {
+
+  override def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
 
   private val testTableName = "test_table"
 

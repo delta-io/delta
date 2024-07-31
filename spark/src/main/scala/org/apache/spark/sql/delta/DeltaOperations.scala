@@ -486,6 +486,10 @@ object DeltaOperations {
 
   sealed abstract class OptimizeOrReorg(override val name: String, predicates: Seq[Expression])
     extends OperationWithPredicates(name, predicates)
+
+  /** operation name for ROW TRACKING BACKFILL command */
+  val ROW_TRACKING_BACKFILL_OPERATION_NAME = "ROW TRACKING BACKFILL"
+
   /** parameter key to indicate whether it's an Auto Compaction */
   val AUTO_COMPACTION_PARAMETER_KEY = "auto"
 
@@ -575,6 +579,14 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "oldClusteringColumns" -> oldClusteringColumns,
       "newClusteringColumns" -> newClusteringColumns)
+  }
+
+  /** Recorded when we backfill a Delta table's existing AddFiles with row tracking data. */
+  case class RowTrackingBackfill(
+      batchId: Int = 0) extends Operation(ROW_TRACKING_BACKFILL_OPERATION_NAME) {
+    override val parameters: Map[String, Any] = Map(
+      "batchId" -> JsonUtils.toJson(batchId)
+    )
   }
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
