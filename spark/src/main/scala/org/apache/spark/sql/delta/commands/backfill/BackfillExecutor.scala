@@ -69,9 +69,9 @@ trait BackfillExecutor extends DeltaLogging {
       batches.zipWithIndex.foreach { case (batch, batchId) =>
         activeThreadSemaphore.acquire()
         futures += globalThreadPool.submit(() => try {
+          // Make sure each commit has the same active spark session
+          SparkSession.setActiveSession(spark)
           recordDeltaOperation(origTxn.deltaLog, backFillBatchOpType) {
-            // Make sure each commit has the same active spark session
-            SparkSession.setActiveSession(spark)
             batch.execute(origTxn, batchId, numSuccessfulBatch, numFailedBatch)
           }
         } finally {
