@@ -355,8 +355,7 @@ class IcebergConverter(spark: SparkSession)
 
         snapshotToConvert.allFiles
           .repartition(numPartitions.toInt)
-          .collectResult()
-          .iterator
+          .toLocalIterator
           .asScala
           .grouped(actionBatchSize)
           .foreach { actions =>
