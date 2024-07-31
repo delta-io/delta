@@ -175,6 +175,13 @@ public class TableConfig<T> {
                     "Needs to be one of none, id, name."
             );
 
+    /**
+     * Table property that enables modifying the table in accordance with the
+     * Delta-Iceberg Compatibility V2 protocol.
+     *
+     * @see <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-iceberg-compatibility-v2">
+     * Delta-Iceberg Compatibility V2 Protocol</a>
+     */
     public static final TableConfig<Boolean> ICEBERG_COMPAT_V2_ENABLED =
             new TableConfig<>(
                     "delta.enableIcebergCompatV2",

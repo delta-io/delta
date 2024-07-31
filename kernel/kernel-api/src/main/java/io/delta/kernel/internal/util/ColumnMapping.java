@@ -195,7 +195,7 @@ public class ColumnMapping {
             return maxColumnId;
         } else if (field.getDataType() instanceof ArrayType) {
             ArrayType arrayType = (ArrayType) field.getDataType();
-            return Math.max(maxColumnId, findMaxColumnId(arrayType.getElementField(), maxColumnId));
+            return findMaxColumnId(arrayType.getElementField(), maxColumnId);
         } else if (field.getDataType() instanceof MapType) {
             MapType mapType = (MapType) field.getDataType();
             return Math.max(
@@ -302,14 +302,16 @@ public class ColumnMapping {
         StructType schema = metadata.getSchema();
         AtomicInteger maxColumnId = new AtomicInteger(
                 Math.max(
-                Integer.parseInt(metadata.getConfiguration()
-                        .getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0")),
-                findMaxColumnId(schema)));
+                        Integer.parseInt(
+                                metadata.getConfiguration().getOrDefault(
+                                        COLUMN_MAPPING_MAX_COLUMN_ID_KEY,
+                                        "0")),
+                        findMaxColumnId(schema)));
         StructType newSchema = new StructType();
         for (StructField field : schema.fields()) {
             newSchema = newSchema.add(
-                    transformSchema(
-                            assignColumnIdAndPhysicalName(field, maxColumnId, isNewTable),
+                    transformAndAssignColumnIdAndPhysicalName(
+                            assignColumnIdAndPhysicalNameToField(field, maxColumnId, isNewTable),
                             maxColumnId,
                             isNewTable));
         }
@@ -325,7 +327,25 @@ public class ColumnMapping {
         return metadata.withNewSchema(newSchema).withNewConfiguration(config);
     }
 
-    private static StructField transformSchema(
+    /**
+     * Recursively visits each nested struct / array / map type and assigns an id using the current
+     * maximum id as the basis and increments from there.
+     * Additionally, assigns a physical name based on a random UUID or re-uses the old display name
+     * if the mapping mode is updated on an existing table.
+     * Note that key / value fields of a map and the element field of an array are not assigned an
+     * id / physical name. Such functionality is actually being handled by
+     * {@link ColumnMapping#rewriteFieldIdsForIceberg(StructType, AtomicInteger)}.
+     *
+     * @param field       The current {@link StructField}
+     * @param maxColumnId Holds the current maximum id. Value is incremented whenever the
+     *                    current max id value is used to keep the current value always the max id
+     * @param isNewTable  Whether this is a new or an existing table. For existing tables the
+     *                    physical name will be re-used from the old display name
+     * @return A new {@link StructField} with updated metadata under the
+     * {@link ColumnMapping#COLUMN_MAPPING_ID_KEY} and the
+     * {@link ColumnMapping#COLUMN_MAPPING_PHYSICAL_NAME_KEY} keys
+     */
+    private static StructField transformAndAssignColumnIdAndPhysicalName(
             StructField field, AtomicInteger maxColumnId, boolean isNewTable) {
         DataType dataType = field.getDataType();
         if (dataType instanceof StructType) {
@@ -333,8 +353,8 @@ public class ColumnMapping {
             StructType schema = new StructType();
             for (StructField f : type.fields()) {
                 schema = schema.add(
-                        transformSchema(
-                                assignColumnIdAndPhysicalName(f, maxColumnId, isNewTable),
+                        transformAndAssignColumnIdAndPhysicalName(
+                                assignColumnIdAndPhysicalNameToField(f, maxColumnId, isNewTable),
                                 maxColumnId,
                                 isNewTable));
             }
@@ -342,7 +362,7 @@ public class ColumnMapping {
                     field.getName(), schema, field.isNullable(), field.getMetadata());
         } else if (dataType instanceof ArrayType) {
             ArrayType type = (ArrayType) dataType;
-            StructField elementField = transformSchema(
+            StructField elementField = transformAndAssignColumnIdAndPhysicalName(
                     type.getElementField(), maxColumnId, isNewTable);
             return new StructField(
                     field.getName(),
@@ -351,8 +371,10 @@ public class ColumnMapping {
                     field.getMetadata());
         } else if (dataType instanceof MapType) {
             MapType type = (MapType) dataType;
-            StructField key = transformSchema(type.getKeyField(), maxColumnId, isNewTable);
-            StructField value = transformSchema(type.getValueField(), maxColumnId, isNewTable);
+            StructField key = transformAndAssignColumnIdAndPhysicalName(
+                    type.getKeyField(), maxColumnId, isNewTable);
+            StructField value = transformAndAssignColumnIdAndPhysicalName(
+                    type.getValueField(), maxColumnId, isNewTable);
             return new StructField(
                     field.getName(),
                     new MapType(key, value),
@@ -362,7 +384,21 @@ public class ColumnMapping {
         return field;
     }
 
-    private static StructField assignColumnIdAndPhysicalName(
+    /**
+     * Assigns an id using the current maximum id as the basis and increments from there.
+     * Additionally, assigns a physical name based on a random UUID or re-uses the old display name
+     * if the mapping mode is updated on an existing table.
+     *
+     * @param field       The current {@link StructField} to assign an id / physical name to
+     * @param maxColumnId Holds the current maximum id. Value is incremented whenever the
+     *                    current max id value is used to keep the current value always the max id
+     * @param isNewTable  Whether this is a new or an existing table. For existing tables the
+     *                    physical name will be re-used from the old display name
+     * @return A new {@link StructField} with updated metadata under the
+     * {@link ColumnMapping#COLUMN_MAPPING_ID_KEY} and the
+     * {@link ColumnMapping#COLUMN_MAPPING_PHYSICAL_NAME_KEY} keys
+     */
+    private static StructField assignColumnIdAndPhysicalNameToField(
             StructField field, AtomicInteger maxColumnId, boolean isNewTable) {
         if (!hasColumnId(field)) {
             field = field.withNewMetadata(FieldMetadata.builder()
@@ -379,6 +415,35 @@ public class ColumnMapping {
                     .build());
         }
         return field;
+    }
+
+    private static boolean hasColumnId(StructField field) {
+        return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
+    }
+
+    private static boolean hasPhysicalName(StructField field) {
+        return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+    }
+
+    private static int getColumnId(StructField field) {
+        return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
+    }
+
+    private static boolean hasNestedColumnIds(StructField field) {
+        return field.getMetadata().contains(COLUMN_MAPPING_NESTED_IDS_KEY);
+    }
+
+    private static FieldMetadata getNestedColumnIds(StructField field) {
+        return field.getMetadata().getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
+    }
+
+    private static int getMaxNestedColumnId(StructField field) {
+        return getNestedColumnIds(field).getEntries().values().stream()
+                .filter(Long.class::isInstance)
+                .map(Long.class::cast)
+                .max(Comparator.naturalOrder())
+                .orElse(0L)
+                .intValue();
     }
 
     /**
@@ -414,41 +479,27 @@ public class ColumnMapping {
     private static StructType rewriteFieldIdsForIceberg(StructType schema, AtomicInteger startId) {
         StructType newSchema = new StructType();
         for (StructField field : schema.fields()) {
-            StructField structField = transformSchema(startId, field, "");
-            newSchema = newSchema.add(structField);
+            newSchema = newSchema.add(
+                    transformSchema(startId, field, "" /** current column path */));
         }
         return newSchema;
     }
 
-    private static boolean hasColumnId(StructField field) {
-        return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
-    }
-
-    private static boolean hasPhysicalName(StructField field) {
-        return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-    }
-
-    private static int getColumnId(StructField field) {
-        return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
-    }
-
-    private static boolean hasNestedColumnIds(StructField field) {
-        return field.getMetadata().contains(COLUMN_MAPPING_NESTED_IDS_KEY);
-    }
-
-    private static FieldMetadata getNestedColumnIds(StructField field) {
-        return field.getMetadata().getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
-    }
-
-    private static int getMaxNestedColumnId(StructField field) {
-        return getNestedColumnIds(field).getEntries().values().stream()
-                .filter(v -> v instanceof Long)
-                .map(v -> (Long) v)
-                .max(Long::compare)
-                .orElse(0L)
-                .intValue();
-    }
-
+    /**
+     * Recursively visits each nested struct / array / map type and returns a new
+     * {@link StructField} with updated {@link FieldMetadata}. For array / map types that
+     * {@link FieldMetadata} tracks IDs for it's nested elements under the
+     * {@link ColumnMapping#COLUMN_MAPPING_NESTED_IDS_KEY} key.
+     * A concrete schema example can be seen at
+     * {@link ColumnMapping#rewriteFieldIdsForIceberg(StructType, AtomicInteger)}.
+     *
+     * @param currentFieldId The current maximum field id to increment and use for assignment
+     * @param structField    The field where to start from
+     * @param path           The current field path relative to the parent field (aka most recent
+     *                       ancestor with a StructField).
+     *                       An empty path indicates that there's no parent and we're at the root
+     * @return A new {@link StructField} with updated {@link FieldMetadata}
+     */
     private static StructField transformSchema(
             AtomicInteger currentFieldId,
             StructField structField,
@@ -458,17 +509,10 @@ public class ColumnMapping {
             StructType type = (StructType) dataType;
             List<StructField> fields =
                     type.fields().stream()
-                            .map(field -> {
-                                StructField nestedField = transformSchema(
-                                        currentFieldId,
-                                        field,
-                                        getPhysicalName(field));
-                                return new StructField(
-                                        nestedField.getName(),
-                                        nestedField.getDataType(),
-                                        nestedField.isNullable(),
-                                        nestedField.getMetadata());
-                            })
+                            .map(field -> transformSchema(
+                                    currentFieldId,
+                                    field,
+                                    getPhysicalName(field)))
                             .collect(Collectors.toList());
             return new StructField(
                     structField.getName(),
@@ -477,9 +521,9 @@ public class ColumnMapping {
                     structField.getMetadata());
         } else if (dataType instanceof ArrayType) {
             ArrayType type = (ArrayType) dataType;
-            path = "".equals(path) ? getPhysicalName(structField) : path;
+            String basePath = "".equals(path) ? getPhysicalName(structField) : path;
             // update element type metadata and recurse into element type
-            String elementPath = path + "." + type.getElementField().getName();
+            String elementPath = basePath + "." + type.getElementField().getName();
             structField = maybeUpdateFieldId(structField, elementPath, currentFieldId);
             StructField elementType = transformSchema(
                     currentFieldId, type.getElementField(), elementPath);
@@ -491,12 +535,12 @@ public class ColumnMapping {
         } else if (dataType instanceof MapType) {
             MapType type = (MapType) dataType;
             // update key type metadata and recurse into key type
-            path = "".equals(path) ? getPhysicalName(structField) : path;
-            String keyPath = path + "." + type.getKeyField().getName();
+            String basePath = "".equals(path) ? getPhysicalName(structField) : path;
+            String keyPath = basePath + "." + type.getKeyField().getName();
             structField = maybeUpdateFieldId(structField, keyPath, currentFieldId);
             StructField key = transformSchema(currentFieldId, type.getKeyField(), keyPath);
             // update value type metadata and recurse into value type
-            String valuePath = path + "." + type.getValueField().getName();
+            String valuePath = basePath + "." + type.getValueField().getName();
             structField = maybeUpdateFieldId(structField, valuePath, currentFieldId);
             StructField value = transformSchema(currentFieldId, type.getValueField(), valuePath);
             return new StructField(
@@ -523,12 +567,12 @@ public class ColumnMapping {
             field = field.withNewMetadata(metadata);
         }
 
-        FieldMetadata nestedMeta = field
+        FieldMetadata nestedMetadata = field
                 .getMetadata()
                 .getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
-        if (!nestedMeta.contains(key)) {
+        if (!nestedMetadata.contains(key)) {
             FieldMetadata newNestedMeta = FieldMetadata.builder()
-                    .fromMetadata(nestedMeta)
+                    .fromMetadata(nestedMetadata)
                     .putLong(key, currentFieldId.incrementAndGet())
                     .build();
             return field.withNewMetadata(

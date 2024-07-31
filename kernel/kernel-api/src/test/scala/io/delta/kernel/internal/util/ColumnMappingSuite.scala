@@ -218,17 +218,8 @@ class ColumnMappingSuite extends AnyFunSuite {
     val metadata: Metadata =
       ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, true)
 
-    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+    assertColumnMapping(metadata.getSchema.get("a"), 1L)
+    assertColumnMapping(metadata.getSchema.get("b"), 2L)
 
     assertThat(metadata.getConfiguration)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "2")
@@ -241,15 +232,8 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val metadata = ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, false)
 
-    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.isEqualTo("a"))
-
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.isEqualTo("b"))
+    assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
+    assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
 
     assertThat(metadata.getConfiguration)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "2")
@@ -292,40 +276,16 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val metadata: Metadata =
       ColumnMapping.updateColumnMappingMetadata(
-        createMetadata(schema).withNewConfiguration(
-          Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")), "id", true)
+        withIcebergCompatV2Enabled(createMetadata(schema)),
+        ID,
+        true /** isNewTable */)
 
-    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("b").getDataType.asInstanceOf[StructType]
-      .get("d").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (3L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("b").getDataType.asInstanceOf[StructType]
-      .get("e").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (4L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("c").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (5L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+    assertColumnMapping(metadata.getSchema.get("a"), 1L)
+    assertColumnMapping(metadata.getSchema.get("b"), 2L)
+    val innerStruct = metadata.getSchema.get("b").getDataType.asInstanceOf[StructType]
+    assertColumnMapping(innerStruct.get("d"), 3L)
+    assertColumnMapping(innerStruct.get("e"), 4L)
+    assertColumnMapping(metadata.getSchema.get("c"), 5L)
 
     assertThat(metadata.getConfiguration)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
@@ -340,20 +300,13 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val metadata: Metadata =
       ColumnMapping.updateColumnMappingMetadata(
-        createMetadata(schema).withNewConfiguration(
-          Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")), "id", true)
+        withIcebergCompatV2Enabled(createMetadata(schema)),
+        ID,
+        true /** isNewTable */)
 
-    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+    assertColumnMapping(metadata.getSchema.get("a"), 1L)
+    assertColumnMapping(metadata.getSchema.get("b"), 2L)
+    assertColumnMapping(metadata.getSchema.get("c"), 3L)
 
     // verify nested ids
     assertThat(metadata.getSchema.get("b").getMetadata.getEntries
@@ -365,11 +318,33 @@ class ColumnMappingSuite extends AnyFunSuite {
         assertThat(v).isEqualTo(4L)
       })
 
-    assertThat(metadata.getSchema.get("c").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (3L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+    assertThat(metadata.getConfiguration)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "4")
+  }
+
+  test("assign id and physical name to existing table with array type " +
+    "and enableIcebergCompatV2=true") {
+    val schema: StructType =
+      new StructType()
+        .add("a", StringType.STRING)
+        .add("b", new ArrayType(IntegerType.INTEGER, false))
+        .add("c", IntegerType.INTEGER)
+
+    val metadata: Metadata =
+      ColumnMapping.updateColumnMappingMetadata(
+        withIcebergCompatV2Enabled(createMetadata(schema)),
+        ID,
+        false /** isNewTable */)
+
+    assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
+    assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
+    assertColumnMapping(metadata.getSchema.get("c"), 3L, "c")
+
+    // verify nested ids
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
+      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+      .hasSize(1)
+      .containsEntry("b.element", 4L.asInstanceOf[AnyRef])
 
     assertThat(metadata.getConfiguration)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "4")
@@ -384,24 +359,18 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val metadata: Metadata =
       ColumnMapping.updateColumnMappingMetadata(
-        createMetadata(schema).withNewConfiguration(
-          Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")), "id", true)
+        withIcebergCompatV2Enabled(createMetadata(schema)),
+        ID,
+        true /** isNewTable */)
 
-    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+    assertColumnMapping(metadata.getSchema.get("a"), 1L)
+    assertColumnMapping(metadata.getSchema.get("b"), 2L)
+    assertColumnMapping(metadata.getSchema.get("c"), 3L)
 
     // verify nested ids
     assertThat(metadata.getSchema.get("b").getMetadata.getEntries
       .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+      .hasSize(2)
       .anySatisfy((k: AnyRef, v: AnyRef) => {
         assertThat(k).asString.startsWith("col-")
         assertThat(k).asString.endsWith(".key")
@@ -413,18 +382,41 @@ class ColumnMappingSuite extends AnyFunSuite {
         assertThat(v).isEqualTo(5L)
       })
 
-    assertThat(metadata.getSchema.get("c").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (3L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+    assertThat(metadata.getConfiguration)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
+  }
+
+  test("assign id and physical name to existing table with map type " +
+    "and enableIcebergCompatV2=true") {
+    val schema: StructType =
+      new StructType()
+        .add("a", StringType.STRING)
+        .add("b", new MapType(IntegerType.INTEGER, StringType.STRING, false))
+        .add("c", IntegerType.INTEGER)
+
+    val metadata: Metadata =
+      ColumnMapping.updateColumnMappingMetadata(
+        withIcebergCompatV2Enabled(createMetadata(schema)),
+        ID,
+        false /** isNewTable */)
+
+    assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
+    assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
+    assertColumnMapping(metadata.getSchema.get("c"), 3L, "c")
+
+    // verify nested ids
+    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
+      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+      .hasSize(2)
+      .containsEntry("b.key", 4L.asInstanceOf[AnyRef])
+      .containsEntry("b.value", 5L.asInstanceOf[AnyRef])
 
     assertThat(metadata.getConfiguration)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
   }
 
-  test("assign id and physical name to new table with nested schema" +
-    " and enableIcebergCompatV2=true") {
+  test("assign id and physical name to new table with nested schema " +
+    "and enableIcebergCompatV2=true") {
     val schema: StructType =
       new StructType()
         .add("a", StringType.STRING)
@@ -444,24 +436,27 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val metadata: Metadata =
       ColumnMapping.updateColumnMappingMetadata(
-        createMetadata(schema).withNewConfiguration(
-          Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")), "id", true)
+        withIcebergCompatV2Enabled(createMetadata(schema)),
+        ID,
+        true /** isNewTable */)
 
-    assertThat(metadata.getSchema.get("a").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (2L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
+    assertColumnMapping(metadata.getSchema.get("a"), 1L)
+    assertColumnMapping(metadata.getSchema.get("b"), 2L)
+    val mapType = metadata.getSchema.get("b").getDataType.asInstanceOf[MapType]
+    val innerStruct = mapType.getValueField.getDataType.asInstanceOf[StructType]
+    assertColumnMapping(innerStruct.get("d"), 3L)
+    assertColumnMapping(innerStruct.get("e"), 4L)
+    assertColumnMapping(innerStruct.get("f"), 5L)
+    val innerArray = innerStruct.get("f").getDataType.asInstanceOf[ArrayType]
+    val structInArray = innerArray.getElementField.getDataType.asInstanceOf[StructType]
+    assertColumnMapping(structInArray.get("g"), 6L)
+    assertColumnMapping(structInArray.get("h"), 7L)
+    assertColumnMapping(metadata.getSchema.get("c"), 8L)
 
     // verify nested ids
     assertThat(metadata.getSchema.get("b").getMetadata.getEntries
       .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+      .hasSize(2)
       .anySatisfy((k: AnyRef, v: AnyRef) => {
         assertThat(k).asString.startsWith("col-")
         assertThat(k).asString.endsWith(".key")
@@ -473,7 +468,6 @@ class ColumnMappingSuite extends AnyFunSuite {
         assertThat(v).isEqualTo(10L)
       })
 
-    val mapType = metadata.getSchema.get("b").getDataType.asInstanceOf[MapType]
     assertThat(mapType.getKeyField.getMetadata.getEntries)
       .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_ID_KEY)
       .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
@@ -482,26 +476,6 @@ class ColumnMappingSuite extends AnyFunSuite {
       .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_ID_KEY)
       .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
 
-    val innerStruct = mapType.getValueField.getDataType.asInstanceOf[StructType]
-    assertThat(innerStruct.get("d").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (3L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(innerStruct.get("e").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (4L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(innerStruct.get("f").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (5L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    val innerArray = innerStruct.get("f").getDataType.asInstanceOf[ArrayType]
     // verify nested ids
     assertThat(innerStruct.get("f").getMetadata.getEntries
       .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
@@ -511,25 +485,6 @@ class ColumnMappingSuite extends AnyFunSuite {
         assertThat(k).asString.endsWith(".element")
         assertThat(v).isEqualTo(11L)
       })
-
-    val structInArray = innerArray.getElementField.getDataType.asInstanceOf[StructType]
-    assertThat(structInArray.get("g").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (6L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(structInArray.get("h").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (7L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
-
-    assertThat(metadata.getSchema.get("c").getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (8L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
 
     assertThat(metadata.getConfiguration)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "11")
@@ -545,4 +500,26 @@ class ColumnMappingSuite extends AnyFunSuite {
     VectorUtils.stringArrayValue(Collections.emptyList()),
     Optional.empty(),
     VectorUtils.stringStringMapValue(Collections.emptyMap()))
+
+  private def assertColumnMapping(
+                                   field: StructField,
+                                   expId: Long,
+                                   expPhysicalName: String = "UUID"): Unit = {
+    assertThat(field.getMetadata.getEntries)
+      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, expId.asInstanceOf[AnyRef])
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+        (k: AnyRef) => {
+          if (expPhysicalName == "UUID") {
+            assertThat(k).asString.startsWith("col-")
+          } else {
+            assertThat(k).asString.isEqualTo(expPhysicalName)
+          }
+        })
+  }
+
+  private def withIcebergCompatV2Enabled(metadata: Metadata): Metadata = {
+    metadata.withNewConfiguration(
+      Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true"))
+  }
 }

@@ -1077,8 +1077,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
 
       val ex = intercept[IllegalArgumentException] {
         table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
@@ -1105,8 +1105,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
 
       val ex = intercept[IllegalArgumentException] {
         table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
@@ -1168,8 +1168,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
     }
   }
 
@@ -1185,8 +1185,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
     }
   }
 
@@ -1211,8 +1211,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val updatedSchema = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMapping(updatedSchema.get("a").getMetadata, 1, "a")
-      assertColumnMapping(updatedSchema.get("b").getMetadata, 2, "b")
+      assertColumnMapping(updatedSchema.get("a"), 1, "a")
+      assertColumnMapping(updatedSchema.get("b"), 2, "b")
     }
   }
 
@@ -1233,18 +1233,20 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val structType = table.getLatestSnapshot(engine).getSchema(engine)
-      assertColumnMapping(structType.get("a").getMetadata, 1, "UUID")
-      assertColumnMapping(structType.get("b").getMetadata, 2, "UUID")
-      assertColumnMapping(structType.get("c").getMetadata, 5, "UUID")
-
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
       val innerStruct = structType.get("b").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(innerStruct.get("d").getMetadata, 3, "UUID")
-      assertColumnMapping(innerStruct.get("e").getMetadata, 4, "UUID")
+      assertColumnMapping(innerStruct.get("d"), 3)
+      assertColumnMapping(innerStruct.get("e"), 4)
+      assertColumnMapping(structType.get("c"), 5)
     }
   }
 
-
-  private def assertColumnMapping(meta: FieldMetadata, expId: Long, expPhyName: String): Unit = {
+  private def assertColumnMapping(
+                                   field: StructField,
+                                   expId: Long,
+                                   expPhyName: String = "UUID"): Unit = {
+    val meta = field.getMetadata
     assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
     // For new tables the physical column name is a UUID. For existing tables, we
     // try to keep the physical column name same as the one in the schema
