@@ -301,11 +301,11 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
     val snapshot = log.update()
     val newProtocol = snapshot.protocol
     assert(newProtocol.isFeatureSupported(RowTrackingFeature))
-    assert(newProtocol.minReaderVersion == prevMinReaderVersion,
+    assert(newProtocol.minReaderVersion === prevMinReaderVersion,
       "The reader version does not need to be upgraded")
     val expectedMinWriterVersion = Math.max(
       prevMinWriterVersion, TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-    assert(newProtocol.minWriterVersion == expectedMinWriterVersion)
+    assert(newProtocol.minWriterVersion === expectedMinWriterVersion)
 
     // Tables should have the table property enabled at the end of ALTER TABLE command.
     assert(RowId.isEnabled(newProtocol, snapshot.metadata))
