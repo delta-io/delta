@@ -23,6 +23,7 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -3356,6 +3357,25 @@ abstract class MergeIntoSuiteBase
     "delta.dml.merge.findTouchedFiles",
     "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
     "delta.dml.merge")
+
+  test("merge execution is recorded with QueryExecutionListener") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: Nil,
+      target = (1, 1) :: (2, 2) :: Nil) { case (sourceName, targetName) =>
+      val plans = withLogicalPlansCaptured(spark, optimizedPlan = false) {
+        executeMerge(
+          tgt = s"$targetName t",
+          src = s"$sourceName s",
+          cond = "s.key = t.key",
+          update(set = "*"))
+      }
+      val mergeCommand = plans.collectFirst {
+        case m: MergeIntoCommand => m
+      }
+      assert(mergeCommand.nonEmpty,
+        "Merge command wasn't properly recorded by QueryExecutionListener")
+    }
+  }
 }
 
 

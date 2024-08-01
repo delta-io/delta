@@ -325,7 +325,7 @@ class SchemaValidationSuite
 
   /**
    * Concurrently drop column in merge condition. Merge command detects the schema change while
-   * resolving the target and throws an AnalysisException
+   * resolving the target and throws a DeltaAnalysisException
    */
   testConcurrentChange("merge - remove a column in merge condition concurrently")(
     createTable = (spark: SparkSession, tblPath: String) => {
@@ -361,7 +361,7 @@ class SchemaValidationSuite
 
   /**
    * Concurrently drop column not in merge condition but in target. Merge command detects the schema
-   * change while resolving the target and throws an AnalysisException
+   * change while resolving the target and throws a DeltaAnalysisException
    */
   testConcurrentChange("merge - remove a column not in merge condition concurrently")(
     createTable = (spark: SparkSession, tblPath: String) => {
