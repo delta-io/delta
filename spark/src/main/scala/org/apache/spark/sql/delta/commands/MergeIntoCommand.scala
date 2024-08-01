@@ -206,7 +206,8 @@ case class MergeIntoCommand(
     deltaTxn.registerSQLMetrics(spark, metrics)
 
     val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ mergeActions
-    deltaTxn.commitIfNeeded(
+    val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val commitVersion = deltaTxn.commitIfNeeded(
       actions = finalActions,
       op = DeltaOperations.Merge(
         predicate = Option(condition),
@@ -215,7 +216,7 @@ case class MergeIntoCommand(
         notMatchedBySourcePredicates =
           notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))),
       tags = RowTracking.addPreservedRowTrackingTagIfNotSet(deltaTxn.snapshot))
-    val stats = collectMergeStats(deltaTxn, materializeSourceReason)
+    val stats = collectMergeStats(deltaTxn, materializeSourceReason, commitVersion, numRecordsStats)
     recordDeltaEvent(targetDeltaLog, "delta.dml.merge.stats", data = stats)
   }
 }

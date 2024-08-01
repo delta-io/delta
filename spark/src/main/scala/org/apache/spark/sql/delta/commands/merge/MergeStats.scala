@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands.merge
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.sql.delta.NumRecordsStats
 import org.apache.spark.sql.util.ScalaExtensions._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.commons.lang3.StringUtils
@@ -136,7 +137,14 @@ case class MergeStats(
     // MergeMaterializeSource stats
     materializeSourceReason: Option[String] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    materializeSourceAttempts: Option[Long] = None
+    materializeSourceAttempts: Option[Long] = None,
+
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None
 )
 
 object MergeStats {
@@ -148,7 +156,10 @@ object MergeStats {
       notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
       notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
       isPartitioned: Boolean,
-      performedSecondSourceScan: Boolean): MergeStats = {
+      performedSecondSourceScan: Boolean,
+      commitVersion: Option[Long],
+      numRecordsStats: NumRecordsStats
+    ): MergeStats = {
 
     def metricValueIfPartitioned(metricName: String): Option[Long] = {
       if (isPartitioned) Some(metrics(metricName).value) else None
@@ -205,6 +216,10 @@ object MergeStats {
       numTargetDeletionVectorsAdded = metrics("numTargetDeletionVectorsAdded").value,
       numTargetDeletionVectorsRemoved = metrics("numTargetDeletionVectorsRemoved").value,
       numTargetDeletionVectorsUpdated = metrics("numTargetDeletionVectorsUpdated").value,
+
+      commitVersion = commitVersion,
+      numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+      numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved,
 
       // Deprecated fields
       updateConditionExpr = null,

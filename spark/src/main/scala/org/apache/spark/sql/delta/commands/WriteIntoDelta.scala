@@ -380,7 +380,14 @@ case class WriteIntoDelta(
     val command = spark.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     spark.sessionState.analyzer.checkAnalysis(command)
-    command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
+    val (deleteActions, deleteMetrics) =
+      command.asInstanceOf[DeleteCommand].performDelete(spark, txn.deltaLog, txn)
+    recordDeltaEvent(
+      deltaLog,
+      "delta.dml.write.removeFiles.stats",
+      data = deleteMetrics.copy(isWriteCommand = true)
+    )
+    deleteActions
   }
 
   override def withNewWriterConfiguration(updatedConfiguration: Map[String, String])

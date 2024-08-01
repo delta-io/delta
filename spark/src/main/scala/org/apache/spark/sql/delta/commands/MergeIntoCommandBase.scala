@@ -229,8 +229,9 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
    */
   protected def collectMergeStats(
       deltaTxn: OptimisticTransaction,
-      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
-    : MergeStats = {
+      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason,
+      commitVersion: Option[Long],
+      numRecordsStats: NumRecordsStats): MergeStats = {
     val stats = MergeStats.fromMergeSQLMetrics(
       metrics,
       condition,
@@ -238,7 +239,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       notMatchedClauses,
       notMatchedBySourceClauses,
       isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty,
-      performedSecondSourceScan = performedSecondSourceScan)
+      performedSecondSourceScan = performedSecondSourceScan,
+      commitVersion = commitVersion,
+      numRecordsStats = numRecordsStats
+    )
     stats.copy(
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))

@@ -1144,7 +1144,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def commitIfNeeded(
       actions: Seq[Action],
       op: DeltaOperations.Operation,
-      tags: Map[String, String] = Map.empty): Unit = {
+      tags: Map[String, String] = Map.empty): Option[Long] = {
     commitImpl(actions, op, canSkipEmptyCommits = true, tags = tags)
   }
 
