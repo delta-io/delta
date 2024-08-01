@@ -124,6 +124,100 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     }
   }
 
+
+  test("restore - positive step") {
+    val tableName = "identity_test_tgt"
+    withTable(tableName) {
+      generateTableWithIdentityColumn(tableName)
+      sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
+      sql(s"INSERT INTO $tableName (val) VALUES (6)")
+      checkAnswer(
+        sql(s"SELECT key, val FROM $tableName ORDER BY val ASC"),
+        Seq(Row(0, 0), Row(1, 1), Row(2, 2), Row(6, 6))
+      )
+    }
+  }
+
+  test("restore - negative step") {
+    val tableName = "identity_test_tgt"
+    withTable(tableName) {
+      generateTableWithIdentityColumn(tableName, step = -1)
+      sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
+      sql(s"INSERT INTO $tableName (val) VALUES (6)")
+      checkAnswer(
+        sql(s"SELECT key, val FROM $tableName ORDER BY val ASC"),
+        Seq(Row(0, 0), Row(-1, 1), Row(-2, 2), Row(-6, 6))
+      )
+    }
+  }
+
+  test("restore - on partitioned table") {
+      for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+        withTable(tblName) {
+          // v0.
+          createTable(
+            tblName,
+            Seq(
+              IdentityColumnSpec(generatedAsIdentityType),
+              TestColumnSpec(colName = "value", dataType = IntegerType)
+            ),
+            partitionedBy = Seq("value")
+          )
+          // v1.
+          sql(s"INSERT INTO $tblName (value) VALUES (1), (2)")
+          val v1Content = sql(s"SELECT * FROM $tblName").collect()
+          // v2.
+          sql(s"INSERT INTO $tblName (value) VALUES (3), (4)")
+          // v3: RESTORE to v1.
+          sql(s"RESTORE TABLE $tblName TO VERSION AS OF 1")
+          checkAnswer(
+            sql(s"SELECT COUNT(DISTINCT id) FROM $tblName"),
+            Row(2L)
+          )
+          checkAnswer(
+            sql(s"SELECT * FROM $tblName"),
+            v1Content
+          )
+          // v4.
+          sql(s"INSERT INTO $tblName (value) VALUES (5), (6)")
+          checkAnswer(
+            sql(s"SELECT COUNT(DISTINCT id) FROM $tblName"),
+            Row(4L)
+          )
+        }
+      }
+  }
+
+  test("clone") {
+      val oldTbl = "identity_test_old"
+      val newTbl = "identity_test_new"
+      for {
+        generatedAsIdentityType <- GeneratedAsIdentityType.values
+      } {
+        withIdentityColumnTable(generatedAsIdentityType, oldTbl) {
+          withTable(newTbl) {
+            sql(s"INSERT INTO $oldTbl (value) VALUES (1), (2)")
+            val oldSchema = DeltaLog.forTable(spark, TableIdentifier(oldTbl)).snapshot.schema
+            sql(
+              s"""
+                 |CREATE TABLE $newTbl
+                 |  SHALLOW CLONE $oldTbl
+                 |""".stripMargin)
+            val newSchema = DeltaLog.forTable(spark, TableIdentifier(newTbl)).snapshot.schema
+
+            assert(newSchema("id").metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_START) == 1L)
+            assert(newSchema("id").metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_STEP) == 1L)
+            assert(oldSchema == newSchema)
+
+            sql(s"INSERT INTO $newTbl (value) VALUES (1), (2)")
+            checkAnswer(
+              sql(s"SELECT COUNT(DISTINCT id) FROM $newTbl"),
+              Row(4L)
+            )
+          }
+        }
+      }
+  }
 }
 
 class IdentityColumnScalaSuite

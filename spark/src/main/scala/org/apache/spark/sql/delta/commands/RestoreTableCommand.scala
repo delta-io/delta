@@ -21,7 +21,7 @@ import java.sql.Timestamp
 import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DomainMetadataUtils, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DomainMetadataUtils, IdentityColumn, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -191,7 +191,13 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           filesToRemove.toLocalIterator().asScala
         }
 
-        txn.updateMetadata(snapshotToRestore.metadata)
+        // We need to merge the schema of the latest snapshot with the schema of the snapshot
+        // we're restoring to ensure that the high water mark is correct.
+        val mergedSchema = IdentityColumn.copySchemaWithMergedHighWaterMarks(
+          schemaToCopy = latestSnapshot.metadata.schema,
+          schemaWithHighWaterMarksToMerge = snapshotToRestore.metadata.schema)
+
+        txn.updateMetadata(snapshotToRestore.metadata.copy(schemaString = mergedSchema.json))
 
         val sourceProtocol = snapshotToRestore.protocol
         val targetProtocol = latestSnapshot.protocol

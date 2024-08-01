@@ -314,7 +314,12 @@ abstract class CloneTableBase(
     clonedMetadata = clonedMetadata.copy(configuration =
       clonedMetadata.configuration.filterKeys(
         !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_)).toMap)
-    clonedMetadata
+
+    val clonedSchema =
+      IdentityColumn.copySchemaWithMergedHighWaterMarks(
+        schemaToCopy = clonedMetadata.schema,
+        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema)
+    clonedMetadata.copy(schemaString = clonedSchema.json)
   }
 
   /**
