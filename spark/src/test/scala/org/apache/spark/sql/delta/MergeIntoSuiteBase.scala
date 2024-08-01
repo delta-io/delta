@@ -3369,10 +3369,10 @@ abstract class MergeIntoSuiteBase
           cond = "s.key = t.key",
           update(set = "*"))
       }
-      val mergeCommand = plans.collectFirst {
+      val mergeCommands = plans.collect {
         case m: MergeIntoCommand => m
       }
-      assert(mergeCommand.nonEmpty,
+      assert(mergeCommands.size === 1,
         "Merge command wasn't properly recorded by QueryExecutionListener")
     }
   }
