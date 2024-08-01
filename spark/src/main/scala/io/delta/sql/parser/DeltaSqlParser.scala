@@ -561,7 +561,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   }
 
   /**
-   * `ALTER TABLE ... ALTER COLUMN ... SYNC IDENTITY` command.
+   * `ALTER TABLE ... ALTER (CHANGE) COLUMN ... SYNC IDENTITY` command.
    */
   override def visitAlterTableSyncIdentity(
       ctx: AlterTableSyncIdentityContext): LogicalPlan = withOrigin(ctx) {

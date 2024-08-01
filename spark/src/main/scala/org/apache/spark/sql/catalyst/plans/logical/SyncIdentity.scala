@@ -29,10 +29,8 @@ case class SyncIdentity(fieldNames: Array[String]) extends ColumnChange {
   require(fieldNames.size == 1, "IDENTITY column cannot be a nested column.")
 }
 
-case class AlterColumnSyncIdentity(
-  table: LogicalPlan,
-  column: FieldName)
-  extends AlterTableCommand {
+case class AlterColumnSyncIdentity(table: LogicalPlan, column: FieldName)
+    extends AlterTableCommand {
   override def changes: Seq[TableChange] = {
     require(column.resolved, "FieldName should be resolved before it's converted to TableChange.")
     val colName = column.name.toArray

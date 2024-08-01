@@ -205,7 +205,9 @@ trait IdentityColumnSyncSuiteBase
   test("alter table sync identity overflow error") {
     withSimpleGeneratedByDefaultTable(startsWith = 1L, incrementBy = 10L) {
       sql(s"INSERT INTO $tblName VALUES (${Long.MaxValue}, 'a')")
-      intercept[ArithmeticException](sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY"))
+      assertThrows[ArithmeticException] {
+        sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      }
     }
   }
 
