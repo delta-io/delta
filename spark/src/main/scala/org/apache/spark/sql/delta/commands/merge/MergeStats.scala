@@ -96,6 +96,7 @@ case class MergeStats(
 
     // Timings
     executionTimeMs: Long,
+    materializeSourceTimeMs: Long,
     scanTimeMs: Long,
     rewriteTimeMs: Long,
 
@@ -166,6 +167,7 @@ object MergeStats {
 
       // Timings
       executionTimeMs = metrics("executionTimeMs").value,
+      materializeSourceTimeMs = metrics("materializeSourceTimeMs").value,
       scanTimeMs = metrics("scanTimeMs").value,
       rewriteTimeMs = metrics("rewriteTimeMs").value,
 
