@@ -61,6 +61,7 @@ class DataTypeParserSuite extends AnyFunSuite {
   checkDataType("\"timestamp\"", TimestampType.TIMESTAMP)
   checkDataType("\"decimal\"", DecimalType.USER_DEFAULT)
   checkDataType("\"decimal(10, 5)\"", new DecimalType(10, 5))
+  checkDataType("\"variant\"", VariantType.VARIANT)
 
   test("parseDataType: invalid primitive string data type") {
     checkError[IllegalArgumentException]("\"foo\"", "foo is not a supported delta data type")
@@ -79,6 +80,7 @@ class DataTypeParserSuite extends AnyFunSuite {
       for ((elementJson, elementType) <- SAMPLE_JSON_TO_TYPES) {
         val parsedType = parse(arrayTypeJson(elementJson, containsNull))
         val expectedType = new ArrayType(elementType, containsNull)
+        println(s"PARSED TPYE: ${parsedType} EXPECTED TYPE: ${expectedType}")
         assert(parsedType == expectedType)
       }
     }
@@ -209,15 +211,18 @@ object DataTypeParserSuite {
   val SAMPLE_JSON_TO_TYPES = Seq(
     ("\"string\"", StringType.STRING),
     ("\"integer\"", IntegerType.INTEGER),
+    ("\"variant\"", VariantType.VARIANT),
     (arrayTypeJson("\"string\"", true), new ArrayType(StringType.STRING, true)),
     (mapTypeJson("\"integer\"", "\"string\"", true),
       new MapType(IntegerType.INTEGER, StringType.STRING, true)),
     (structTypeJson(Seq(
       structFieldJson("col1", "\"string\"", true),
-      structFieldJson("col2", "\"string\"", false, Some("{ \"int\" : 0 }")))),
+      structFieldJson("col2", "\"string\"", false, Some("{ \"int\" : 0 }")),
+      structFieldJson("col3", "\"variant\"", false))),
       new StructType()
         .add("col1", StringType.STRING, true)
         .add("col2", StringType.STRING, false, FieldMetadata.builder().putLong("int", 0).build())
+        .add("col3", VariantType.VARIANT, false)
     )
   )
 
