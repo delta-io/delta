@@ -80,7 +80,6 @@ class DataTypeParserSuite extends AnyFunSuite {
       for ((elementJson, elementType) <- SAMPLE_JSON_TO_TYPES) {
         val parsedType = parse(arrayTypeJson(elementJson, containsNull))
         val expectedType = new ArrayType(elementType, containsNull)
-        println(s"PARSED TPYE: ${parsedType} EXPECTED TYPE: ${expectedType}")
         assert(parsedType == expectedType)
       }
     }
