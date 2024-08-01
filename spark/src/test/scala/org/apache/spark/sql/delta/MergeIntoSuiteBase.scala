@@ -3284,7 +3284,10 @@ abstract class MergeIntoSuiteBase
   }
 
   protected lazy val expectedOpTypes: Set[String] = Set(
-    "delta.dml.merge.findTouchedFiles", "delta.dml.merge.writeAllChanges", "delta.dml.merge")
+    "delta.dml.merge.materializeSource",
+    "delta.dml.merge.findTouchedFiles",
+    "delta.dml.merge.writeAllChanges",
+    "delta.dml.merge")
 
   test("insert only merge - recorded operation") {
     var events: Seq[UsageRecord] = Seq.empty
@@ -3317,7 +3320,9 @@ abstract class MergeIntoSuiteBase
     }.map(_.opType.get.typeName).toSet
 
     assert(opTypes == Set(
-      "delta.dml.merge", "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
+      "delta.dml.merge",
+      "delta.dml.merge.materializeSource",
+      "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
   }
 
   test("recorded operations - write inserts only") {
@@ -3353,6 +3358,7 @@ abstract class MergeIntoSuiteBase
   }
 
   protected lazy val expectedOpTypesInsertOnly: Set[String] = Set(
+    "delta.dml.merge.materializeSource",
     "delta.dml.merge.findTouchedFiles",
     "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
     "delta.dml.merge")
