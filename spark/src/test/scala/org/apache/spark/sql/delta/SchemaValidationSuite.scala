@@ -389,7 +389,8 @@ class SchemaValidationSuite
           "schemaDiff" -> ".*col2.*",
           "legacyFlagMessage" -> ""
         )
-      )    },
+      )
+    },
     concurrentChange = dropColFromSampleTable("col2")
   )
 
