@@ -323,7 +323,7 @@ class DeltaMergeBuilder private(
       // Resolve UpCast expressions that `PreprocessTableMerge` may have introduced.
       mergeIntoCommand = PostHocResolveUpCast(sparkSession).apply(mergeIntoCommand)
       sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-      mergeIntoCommand.asInstanceOf[MergeIntoCommand].run(sparkSession)
+      toDataset(sparkSession, mergeIntoCommand)
     }
   }
 
