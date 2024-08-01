@@ -514,7 +514,7 @@ abstract class StatsCollector(
             // the max, check the helper function for more details.
             StatisticsCollection.truncateMaxStringAgg(stringTruncateLength.get)(rawString)
           } else {
-            rawString.substring(0, stringTruncateLength.get)
+            StatisticsCollection.truncateMinStringAgg(stringTruncateLength.get)(rawString)
           }
         } else {
           rawString

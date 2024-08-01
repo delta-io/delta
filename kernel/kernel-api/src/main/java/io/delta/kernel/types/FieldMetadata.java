@@ -40,6 +40,8 @@ package io.delta.kernel.types;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import io.delta.kernel.internal.util.Preconditions;
+
 /**
  * The metadata for a given {@link StructField}. The contents are immutable.
  */
@@ -74,22 +76,50 @@ public final class FieldMetadata {
         return metadata.get(key);
     }
 
+    public Long getLong(String key) {
+        return get(key, Long.class);
+    }
+
+    public Double getDouble(String key) {
+        return get(key, Double.class);
+    }
+
+    public Boolean getBoolean(String key) {
+        return get(key, Boolean.class);
+    }
+
+    public String getString(String key) {
+        return get(key, String.class);
+    }
+
+    public FieldMetadata getMetadata(String key) {
+        return get(key, FieldMetadata.class);
+    }
+
+    public Long[] getLongArray(String key) {
+        return get(key, Long[].class);
+    }
+
+    public Double[] getDoubleArray(String key) {
+        return get(key, Double[].class);
+    }
+
+    public Boolean[] getBooleanArray(String key) {
+        return get(key, Boolean[].class);
+    }
+
+    public String[] getStringArray(String key) {
+        return get(key, String[].class);
+    }
+
+    public FieldMetadata[] getMetadataArray(String key) {
+        return get(key, FieldMetadata[].class);
+    }
+
     public String toJson() {
         return metadata.entrySet().stream()
             .map(e -> String.format("\"%s\" : %s", e.getKey(), valueToJson(e.getValue())))
             .collect(Collectors.joining(",\n", "{", "}"));
-    }
-
-    // TODO this is a hack for now until we have real serialization as part of the JsonHandler
-    /** Wraps string objects in quotations, otherwise converts using toString() */
-    private String valueToJson(Object value) {
-        if (value == null) {
-            return "null";
-        } else if (value instanceof String) {
-            return String.format("\"%s\"", value);
-        } else {
-            return value.toString();
-        }
     }
 
     @Override
@@ -135,6 +165,35 @@ public final class FieldMetadata {
      */
     public static FieldMetadata empty() {
         return builder().build();
+    }
+
+    /**
+     * @param key  the key to check for
+     * @param type the type to cast the value to
+     * @return the value (casted to the given type) to which the specified key is mapped,
+     * or null if there is no mapping for the given key
+     */
+    private <T> T get(String key, Class<T> type) {
+        Object value = get(key);
+        if (null == value) {
+            return (T) value;
+        }
+
+        Preconditions.checkArgument(value.getClass().isAssignableFrom(type),
+                "Expected '%s' to be of type '%s' but was '%s'", value, type, value.getClass());
+        return type.cast(value);
+    }
+
+    // TODO this is a hack for now until we have real serialization as part of the JsonHandler
+    /** Wraps string objects in quotations, otherwise converts using toString() */
+    private String valueToJson(Object value) {
+        if (value == null) {
+            return "null";
+        } else if (value instanceof String) {
+            return String.format("\"%s\"", value);
+        } else {
+            return value.toString();
+        }
     }
 
     /**
