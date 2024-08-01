@@ -713,7 +713,8 @@ lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client" % hadoopVersion,
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test"
+      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test",
+      "junit" % "junit" % "4.13.2" % Test
     )
   )
 
