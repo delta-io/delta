@@ -59,7 +59,7 @@ def prepare(root_dir):
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
-    run_cmd([sbt_path, "clean", "spark/publishM2 storage/publishM2"], stream_output=True)
+    run_cmd([sbt_path, "clean", "spark/publishM2", "storage/publishM2"], stream_output=True)
 
 
 def get_local_package(package_name):
