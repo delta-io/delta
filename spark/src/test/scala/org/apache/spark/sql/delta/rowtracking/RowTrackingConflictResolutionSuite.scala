@@ -215,10 +215,9 @@ class RowTrackingConflictResolutionSuite extends QueryTest
   }
 
   /** Check if base row IDs and default row commit versions have been assigned. */
-  def assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(log: DeltaLog): Unit = {
-    val files = log.update().allFiles.collect()
-    files.foreach(a => assert(a.baseRowId.nonEmpty))
-    files.foreach(a => assert(a.defaultRowCommitVersion.nonEmpty))
+  def assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles: Seq[AddFile]): Unit = {
+    finalFiles.foreach(addedFile => assert(addedFile.baseRowId.nonEmpty))
+    finalFiles.foreach(addedFile => assert(addedFile.defaultRowCommitVersion.nonEmpty))
   }
 
   test("Backfill conflict with a delete, Delete wins") {
@@ -241,7 +240,8 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       // Finish backfill.
       executeBackfill(log, backfillTxn)
 
-      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(log)
+      val finalFiles = log.update().allFiles.collect()
+      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles)
       assertRowIdsAreValid(log)
       assert(finalFiles.map(_.path).toSet === Seq(file3, file4).map(_.path).toSet)
     }
@@ -265,7 +265,8 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       // Truncate is a data-changing operation.
       deleteTxn.commit(deleteActions, Truncate())
 
-      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(log)
+      val finalFiles = log.update().allFiles.collect()
+      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles)
       assertRowIdsAreValid(log)
       assert(finalFiles.map(_.path).toSet === Seq(file3, file4).map(_.path).toSet)
     }
@@ -294,7 +295,8 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       // Finish Backfill
       executeBackfill(log, backfillTxn)
 
-      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(log)
+      val finalFiles = log.update().allFiles.collect()
+      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles)
       assertRowIdsAreValid(log)
       val allFiles = Seq(file1, file2, file3, file4)
       assert(finalFiles.map(_.path).toSet === allFiles.map(_.path).toSet)
@@ -322,7 +324,8 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       // Truncate is a data-changing operation.
       deleteTxn.commit(deleteActions, Truncate())
 
-      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(log)
+      val finalFiles = log.update().allFiles.collect()
+      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles)
       assertRowIdsAreValid(log)
       val allFiles = Seq(file1, file2, file3, file4)
       assert(finalFiles.map(_.path).toSet === allFiles.map(_.path).toSet)
