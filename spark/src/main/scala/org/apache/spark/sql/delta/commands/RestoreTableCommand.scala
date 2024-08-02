@@ -194,8 +194,8 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
         // We need to merge the schema of the latest snapshot with the schema of the snapshot
         // we're restoring to ensure that the high water mark is correct.
         val mergedSchema = IdentityColumn.copySchemaWithMergedHighWaterMarks(
-          schemaToCopy = latestSnapshot.metadata.schema,
-          schemaWithHighWaterMarksToMerge = snapshotToRestore.metadata.schema)
+          schemaToCopy = snapshotToRestore.metadata.schema,
+          schemaWithHighWaterMarksToMerge = latestSnapshot.metadata.schema)
 
         txn.updateMetadata(snapshotToRestore.metadata.copy(schemaString = mergedSchema.json))
 
