@@ -295,6 +295,11 @@ private[delta] class ConflictChecker(
         // Remove files from this Backfill commit if they were removed or re-committed by
         // a concurrent winning txn.
         if (filePathsToRemoveFromBackfill.nonEmpty) {
+          // We keep the Row Tracking high-water mark action here but it might
+          // be outdated since the winning commit could have increased the high-water mark.
+          // We will reassign the current transaction's high water-mark if that is
+          // the case, in `reassignOverlappingRowIds` which is called after
+          // `resolveRowTrackingBackfillConflicts` in `checkConflicts`.
           val newActions = currentTransactionInfo.actions.filterNot {
             case a: AddFile => filePathsToRemoveFromBackfill.contains(a.path)
             case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) => false
