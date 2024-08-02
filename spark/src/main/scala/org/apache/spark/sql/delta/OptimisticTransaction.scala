@@ -1140,6 +1140,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    *
    * Also skips creating the commit if the configured [[IsolationLevel]] doesn't need us to record
    * the commit from correctness perspective.
+   *
+   * Returns the new version the transaction committed or None if the commit was skipped.
    */
   def commitIfNeeded(
       actions: Seq[Action],
