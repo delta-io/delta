@@ -146,9 +146,10 @@ public class LikeExpressionEvaluator {
             }
 
             public String getRegexFromCacheOrEval(String pattern, char escape) {
-                String regex = (regexCache != null) ?
-                        regexCache :
-                        escapeLikeRegex(pattern, escape);
+                if (regexCache != null) {
+                    return regexCache;
+                }
+                String regex = escapeLikeRegex(pattern, escape);
                 if(isPatternLiteralType) { // set cache only for literals to avoid re-computation
                     regexCache = regex;
                 }
