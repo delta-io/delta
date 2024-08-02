@@ -312,10 +312,10 @@ private[delta] class ConflictChecker(
     if (winningCommitSummary.isRowTrackingBackfillTxn) {
       recordTime(timerPhaseName) {
         val backfillActionMap = winningCommitSummary.addedFilePathToActionMap
-        // Copy over the base row ID and row commit version assigned so that the AddFiles and
-        // RemoveFiles have matching base row ID and row commit version. If an AddFile is
-        // re-committed, it should have the same base row ID and row commit version as the one
-        // assigned by Backfill.
+        // Copy over the base row ID and default row commit version assigned so that the AddFiles
+        // and RemoveFiles have matching base row ID and default row commit version.
+        // If an AddFile is re-committed, it should have the same base row ID and
+        // default row commit version as the one assigned by Backfill.
         val newActions = currentTransactionInfo.actions.map {
           case a: AddFile if backfillActionMap.contains(a.path) =>
             val backfillAction = backfillActionMap(a.path)
