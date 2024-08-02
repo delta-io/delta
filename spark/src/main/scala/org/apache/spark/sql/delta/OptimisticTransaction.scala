@@ -1618,6 +1618,27 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Splits a transaction into smaller child transactions that operate on disjoint sets of the files
+   * read by the parent transaction. This function is typically used when you want to break a large
+   * operation into one that can be committed separately / incrementally.
+   *
+   * @param readFilesSubset The subset of files read by the current transaction that will be handled
+   *                        by the new transaction.
+   */
+  def split(readFilesSubset: Seq[AddFile]): OptimisticTransaction = {
+    assert(newMetadata.isEmpty)
+    assert(OptimisticTransaction.getActive().isEmpty,
+      "Splitting a transaction is not supported when there is an active transaction.")
+
+    val t = new OptimisticTransaction(deltaLog, catalogTable, snapshot)
+    t.executionObserver = executionObserver.createChild()
+    t.readPredicates.addAll(readPredicates)
+    t.readFiles ++= readFilesSubset
+    t.readTxn ++= readTxn
+    t
+  }
+
+  /**
    * This method registers the table with the commit-coordinator via the [[CommitCoordinatorClient]]
    * if the table is transitioning from file-system based table to coordinated-commits table.
    * @param finalMetadata the effective [[Metadata]] of the table. Note that this refers to the
