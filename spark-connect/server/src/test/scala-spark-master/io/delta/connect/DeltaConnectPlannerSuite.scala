@@ -16,17 +16,19 @@
 
 package org.apache.spark.sql.connect.delta
 
+import java.util.UUID
+
 import com.google.protobuf
 import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
-import org.apache.spark.sql.connect.service.SparkConnectTestUtils
+import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class DeltaConnectPlannerSuite
@@ -43,6 +45,16 @@ class DeltaConnectPlannerSuite
     spark_proto.Relation.newBuilder().setExtension(protobuf.Any.pack(relation.build())).build()
   }
 
+  def createDummySessionHolder(session: SparkSession): SessionHolder = {
+    val ret = SessionHolder(
+      userId = "testUser",
+      sessionId = UUID.randomUUID().toString,
+      session = session
+    )
+    SparkConnectService.sessionManager.putSessionForTesting(ret)
+    ret
+  }
+
   test("scan table by name") {
     withTable("table") {
       DeltaTable.create(spark).tableName(identifier = "table").execute()
@@ -57,7 +69,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(SparkConnectTestUtils.createDummySessionHolder(spark))
+      val result = new SparkConnectPlanner(createDummySessionHolder(spark))
         .transformRelation(input)
       val expected = DeltaTable.forName(spark, "table").toDF.queryExecution.analyzed
       comparePlans(result, expected)
@@ -84,7 +96,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(SparkConnectTestUtils.createDummySessionHolder(spark))
+      val result = new SparkConnectPlanner(createDummySessionHolder(spark))
         .transformRelation(input)
       val expected = DeltaTable.forPath(spark, dir.getAbsolutePath).toDF.queryExecution.analyzed
       comparePlans(result, expected)
