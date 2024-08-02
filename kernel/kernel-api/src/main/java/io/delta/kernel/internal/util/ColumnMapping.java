@@ -173,7 +173,7 @@ public class ColumnMapping {
     static int findMaxColumnId(StructType schema) {
         int maxColumnId = 0;
         for (StructField field : schema.fields()) {
-            maxColumnId = Math.max(maxColumnId, findMaxColumnId(field, maxColumnId));
+            maxColumnId = findMaxColumnId(field, maxColumnId);
         }
         return maxColumnId;
     }
@@ -190,7 +190,7 @@ public class ColumnMapping {
         if (field.getDataType() instanceof StructType) {
             StructType structType = (StructType) field.getDataType();
             for (StructField structField : structType.fields()) {
-                maxColumnId = Math.max(maxColumnId, findMaxColumnId(structField, maxColumnId));
+                maxColumnId = findMaxColumnId(structField, maxColumnId);
             }
             return maxColumnId;
         } else if (field.getDataType() instanceof ArrayType) {
@@ -232,8 +232,11 @@ public class ColumnMapping {
                 FieldMetadata.Builder builder = FieldMetadata.builder()
                     .putLong(PARQUET_FIELD_ID_KEY, fieldId);
 
-                // Nested field IDs for the 'element' and 'key'/'value' fields of Arrays/Maps
-                // are written when Uniform with IcebergCompatV2 is enabled on a table
+                // convertToPhysicalSchema(..) gets called when trying to find the read schema
+                // for the Parquet reader. This currently assumes that if the nested field IDs for
+                // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
+                // then IcebergCompatV2 is enabled because the schema we are looking at is from
+                // the DeltaLog and has nested field IDs setup
                 if (hasNestedColumnIds(physicalField)) {
                     builder.putFieldMetadata(
                             PARQUET_FIELD_NESTED_IDS_METADATA_KEY,
@@ -487,10 +490,9 @@ public class ColumnMapping {
 
     /**
      * Recursively visits each nested struct / array / map type and returns a new
-     * {@link StructField} with updated {@link FieldMetadata}. For array / map types that
-     * {@link FieldMetadata} tracks IDs for it's nested elements under the
-     * {@link ColumnMapping#COLUMN_MAPPING_NESTED_IDS_KEY} key.
-     * A concrete schema example can be seen at
+     * {@link StructField} with updated {@link FieldMetadata}. For array / map types the field IDs
+     * of their nested elements are under the {@link ColumnMapping#COLUMN_MAPPING_NESTED_IDS_KEY}
+     * key. A concrete schema example can be seen at
      * {@link ColumnMapping#rewriteFieldIdsForIceberg(StructType, AtomicInteger)}.
      *
      * @param currentFieldId The current maximum field id to increment and use for assignment
@@ -553,8 +555,46 @@ public class ColumnMapping {
         return structField;
     }
 
+    /**
+     * The {@code field} being passed here is either {@link ArrayType#getElementField()} or one of
+     * {@link MapType#getKeyField()}, {@link MapType#getValueField()}.
+     * For a map the passed in {@code key} will be one of columnName.key or columnName.value.
+     * For an array the passed {@code key} will be columnName.element.
+     * The columnName in this case is either the physical or the display name of the column.
+     * <p>
+     * Below is an example that shows the {@link FieldMetadata} of an array named <b>b</b>,
+     * where the array itself is assigned id = 2 with a physical name that includes a UUID.
+     * That metadata field then holds a nested {@link FieldMetadata} under the
+     * {@code COLUMN_MAPPING_NESTED_IDS_KEY} key as can be seen below, which in
+     * turn contains the assigned id.
+     * <blockquote><pre>
+     * {
+     *   "name": "b",
+     *   "type": {
+     *     "type": "array",
+     *     "elementType": "integer",
+     *     "containsNull": true
+     *   },
+     *   "nullable": true,
+     *   "metadata": {
+     *     "delta.columnMapping.id": 2,
+     *     "delta.columnMapping.physicalName": "col-859d81a5-6e36-4e43-9c8e-46aa7d80dce6"
+     *     "delta.columnMapping.nested.ids": {
+     *       "col-859d81a5-6e36-4e43-9c8e-46aa7d80dce6.element": 4
+     *     },
+     *   }
+     * }
+     * </pre></blockquote>
+     *
+     * @param field          The current field where to update the COLUMN_MAPPING_NESTED_IDS_KEY
+     * @param key            For a map this is <colName>.key or <colName>.value.
+     *                       For an array this is <colName>.element
+     * @param currentFieldId The current maximum field id to increment and use for assignment
+     * @return A field with potentially updated {@link FieldMetadata}
+     */
     private static StructField maybeUpdateFieldId(
             StructField field, String key, AtomicInteger currentFieldId) {
+        // init the nested metadata that holds the nested ids
         if (!field.getMetadata().contains(COLUMN_MAPPING_NESTED_IDS_KEY)) {
             FieldMetadata.Builder nestedIdsBuilder =
                     initNestedIdsMetadataBuilder(field);
@@ -570,6 +610,7 @@ public class ColumnMapping {
         FieldMetadata nestedMetadata = field
                 .getMetadata()
                 .getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
+        // assign an id to the nested element and update the metadata
         if (!nestedMetadata.contains(key)) {
             FieldMetadata newNestedMeta = FieldMetadata.builder()
                     .fromMetadata(nestedMetadata)

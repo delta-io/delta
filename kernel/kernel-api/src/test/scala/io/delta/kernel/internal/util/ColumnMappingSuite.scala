@@ -103,70 +103,52 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     assertThat(ColumnMapping.findMaxColumnId(
       new StructType()
-        .add("a", StringType.STRING,
-          FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 14).build)
-        .add("b", IntegerType.INTEGER,
-          FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 17).build)
-        .add("c", IntegerType.INTEGER,
-          FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build)))
+        .add("a", StringType.STRING, createMetadataWithFieldId(14))
+        .add("b", IntegerType.INTEGER, createMetadataWithFieldId(17))
+        .add("c", IntegerType.INTEGER, createMetadataWithFieldId(3))))
       .isEqualTo(17)
 
     // nested columns are currently not supported
     assertThat(ColumnMapping.findMaxColumnId(
-      new StructType().add("a", StringType.STRING,
-          FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 14).build)
+      new StructType().add("a", StringType.STRING, createMetadataWithFieldId(14))
         .add("b",
           new StructType()
             .add("d", IntegerType.INTEGER, true)
-            .add("e", IntegerType.INTEGER, true),
-          FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 15).build)
-        .add("c", IntegerType.INTEGER,
-          FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 7).build)))
+            .add("e", IntegerType.INTEGER, true), createMetadataWithFieldId(15))
+        .add("c", IntegerType.INTEGER, createMetadataWithFieldId(7))))
       .isEqualTo(15)
   }
 
   test("finding max column id with nested struct type") {
     val nestedStruct = new StructType()
-      .add("d", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build())
-      .add("e", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 4).build())
+      .add("d", IntegerType.INTEGER, createMetadataWithFieldId(3))
+      .add("e", IntegerType.INTEGER, createMetadataWithFieldId(4))
 
     val schema = new StructType()
-      .add("a", StringType.STRING,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 1).build)
-      .add("b", nestedStruct,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 2).build)
-      .add("c", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 5).build)
+      .add("a", StringType.STRING, createMetadataWithFieldId(1))
+      .add("b", nestedStruct, createMetadataWithFieldId(2))
+      .add("c", IntegerType.INTEGER, createMetadataWithFieldId(5))
 
     assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(5)
   }
 
   test("finding max column id with nested struct type and random ids") {
     val nestedStruct = new StructType()
-      .add("d", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 2).build())
-      .add("e", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 1).build())
+      .add("d", IntegerType.INTEGER, createMetadataWithFieldId(2))
+      .add("e", IntegerType.INTEGER, createMetadataWithFieldId(1))
 
     val schema = new StructType()
-      .add("a", StringType.STRING,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build)
-      .add("b", nestedStruct,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 4).build)
-      .add("c", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 5).build)
+      .add("a", StringType.STRING, createMetadataWithFieldId(3))
+      .add("b", nestedStruct, createMetadataWithFieldId(4))
+      .add("c", IntegerType.INTEGER, createMetadataWithFieldId(5))
 
     assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(5)
   }
 
   test("finding max column id with nested array type") {
     val nestedStruct = new StructType()
-      .add("e", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 4).build())
-      .add("f", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 5).build())
+      .add("e", IntegerType.INTEGER, createMetadataWithFieldId(4))
+      .add("f", IntegerType.INTEGER, createMetadataWithFieldId(5))
 
     val nestedMeta = FieldMetadata.builder()
       .putLong(COLUMN_MAPPING_ID_KEY, 2)
@@ -175,21 +157,17 @@ class ColumnMappingSuite extends AnyFunSuite {
       .build()
 
     val schema = new StructType()
-      .add("a", StringType.STRING,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 1).build)
+      .add("a", StringType.STRING, createMetadataWithFieldId(1))
       .add("b", new ArrayType(new StructField("d", nestedStruct, false)), nestedMeta)
-      .add("c", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build)
+      .add("c", IntegerType.INTEGER, createMetadataWithFieldId(3))
 
     assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(6)
   }
 
   test("finding max column id with nested map type") {
     val nestedStruct = new StructType()
-      .add("e", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 4).build())
-      .add("f", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 5).build())
+      .add("e", IntegerType.INTEGER, createMetadataWithFieldId(4))
+      .add("f", IntegerType.INTEGER, createMetadataWithFieldId(5))
 
     val nestedMeta = FieldMetadata.builder()
       .putLong(COLUMN_MAPPING_ID_KEY, 2)
@@ -200,12 +178,10 @@ class ColumnMappingSuite extends AnyFunSuite {
       .build()
 
     val schema = new StructType()
-      .add("a", StringType.STRING,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 1).build)
+      .add("a", StringType.STRING, createMetadataWithFieldId(1))
       .add("b", new MapType(IntegerType.INTEGER,
         new StructField("d", nestedStruct, false).getDataType, false), nestedMeta)
-      .add("c", IntegerType.INTEGER,
-        FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, 3).build)
+      .add("c", IntegerType.INTEGER, createMetadataWithFieldId(3))
 
     assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(12)
   }
@@ -502,9 +478,9 @@ class ColumnMappingSuite extends AnyFunSuite {
     VectorUtils.stringStringMapValue(Collections.emptyMap()))
 
   private def assertColumnMapping(
-                                   field: StructField,
-                                   expId: Long,
-                                   expPhysicalName: String = "UUID"): Unit = {
+    field: StructField,
+    expId: Long,
+    expPhysicalName: String = "UUID"): Unit = {
     assertThat(field.getMetadata.getEntries)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, expId.asInstanceOf[AnyRef])
       .hasEntrySatisfying(
@@ -521,5 +497,9 @@ class ColumnMappingSuite extends AnyFunSuite {
   private def withIcebergCompatV2Enabled(metadata: Metadata): Metadata = {
     metadata.withNewConfiguration(
       Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true"))
+  }
+
+  private def createMetadataWithFieldId(fieldId: Int) = {
+    FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, fieldId).build()
   }
 }
