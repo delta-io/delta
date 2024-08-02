@@ -262,7 +262,7 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       val finalFiles = log.update().allFiles.collect()
       finalFiles.foreach(a => assert(a.baseRowId.nonEmpty))
       assertRowIdsAreValid(log)
-      assert(finalFiles.map(_.path).toSet == Seq(file3, file4).map(_.path).toSet)
+      assert(finalFiles.map(_.path).toSet === Seq(file3, file4).map(_.path).toSet)
     }
   }
 
