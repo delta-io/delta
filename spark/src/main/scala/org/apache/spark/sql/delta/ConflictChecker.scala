@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.DeltaOperations.ROW_TRACKING_BACKFILL_OPERATION_NAME
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.coordinatedcommits.UpdatedActions
@@ -60,7 +61,8 @@ private[delta] case class CurrentTransactionInfo(
     val readSnapshot: Snapshot,
     val commitInfo: Option[CommitInfo],
     val readRowIdHighWatermark: Long,
-    val domainMetadata: Seq[DomainMetadata]) {
+    val domainMetadata: Seq[DomainMetadata],
+    val op: DeltaOperations.Operation) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -96,6 +98,9 @@ private[delta] case class CurrentTransactionInfo(
    */
   val partitionSchemaAtReadTime: StructType = readSnapshot.metadata.partitionSchema
 
+  // Whether this is a row tracking backfill transaction or not.
+  val isRowTrackingBackfillTxn = op.name == ROW_TRACKING_BACKFILL_OPERATION_NAME
+
   def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
 }
 
@@ -111,8 +116,14 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   val protocol: Option[Protocol] = actions.collectFirst { case a: Protocol => a }
   val commitInfo: Option[CommitInfo] = actions.collectFirst { case a: CommitInfo => a }.map(
     ci => ci.copy(version = Some(commitVersion)))
+  // Whether this is a row tracking backfill transaction or not.
+  val isRowTrackingBackfillTxn =
+    commitInfo.exists(_.operation == ROW_TRACKING_BACKFILL_OPERATION_NAME)
   val removedFiles: Seq[RemoveFile] = actions.collect { case a: RemoveFile => a }
   val addedFiles: Seq[AddFile] = actions.collect { case a: AddFile => a }
+  // This is used in resolveRowTrackingBackfillConflicts.
+  lazy val addedFilePathToActionMap: Map[String, AddFile] =
+    addedFiles.map(af => (af.path, af)).toMap
   val isBlindAppendOption: Option[Boolean] = commitInfo.flatMap(_.isBlindAppend)
   val blindAppendAddedFiles: Seq[AddFile] = if (isBlindAppendOption.getOrElse(false)) {
     addedFiles
@@ -159,6 +170,7 @@ private[delta] class ConflictChecker(
     // Perform cheap check for transaction dependencies before we start checks files.
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
 
+    resolveRowTrackingBackfillConflicts()
     // Row Tracking reconciliation. We perform this before the file checks to ensure that
     // no files have duplicate row IDs and avoid interacting with files that don't comply with
     // the protocol.
@@ -234,6 +246,95 @@ private[delta] class ConflictChecker(
       if (!isDowngradeCommitValid) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
           winningCommitSummary.commitInfo)
+      }
+    }
+  }
+
+  /**
+   * RowTrackingBackfill (or backfill for short for this function) is a special operation that
+   * materializes and recommits all existing files in table using one or several commits to ensure
+   * that every AddFile has a base row ID and a default row commit version. When enabling
+   * row tracking on an existing table, the following occurs:
+   *    1. (If necessary) Protocol upgrade + Table Feature Support is added
+   *    2. RowTrackingBackfill commit(s)
+   *    3. Table property and metadata are updated.
+   * RowTrackingBackfill does not do any data change. It doesn't matter whether a file is
+   * recommitted after the table feature support from Backfill or some other concurrent transaction;
+   * every AddFile just needs to have a base row ID and a default row commit version somehow.
+   * However, correctness issues can arise if we don't do the checks in this method.
+   *
+   * Check that RowTrackingBackfill is not resurrecting files that were removed concurrently and
+   * that an AddFile and its corresponding RemoveFile have the same base row ID and
+   * default row commit version. To do this, we:
+   *    1. remove AddFile's from a backfill commit if an AddFile or a RemoveFile with the same path
+   *       was added in the winning concurrent transactions. Files in a winning transaction can be
+   *       removed from backfill because they were already re-committed.
+   *    2. copy over base row IDs and default row commit versions if the current transaction re-adds
+   *       or delete an AddFile with the same path as an Addfile from a winning backfill commit.
+   */
+  private def resolveRowTrackingBackfillConflicts(): Unit = {
+    // If row tracking is not supported, there can be no backfill commit.
+    if (!RowTracking.isSupported(currentTransactionInfo.protocol)) {
+      assert(!currentTransactionInfo.isRowTrackingBackfillTxn)
+      assert(!winningCommitSummary.isRowTrackingBackfillTxn)
+      return
+    }
+
+    val timerPhaseName = "checked-row-tracking-backfill"
+    if (currentTransactionInfo.isRowTrackingBackfillTxn) {
+      recordTime(timerPhaseName) {
+        // Any winning commit seen by backfill must have row IDs and row commit versions, because
+        // `reassignOverlappingRowIds` will add a base row ID and `reassignRowCommitVersions`
+        // will add a default row commit versions to all files. So we don't need
+        // Backfill to commit the same file again.
+        val filePathsToRemoveFromBackfill = winningCommitSummary.actions.collect {
+          case a: AddFile => a.path
+          case r: RemoveFile => r.path
+        }.toSet
+
+        // Remove files from this Backfill commit if they were removed or re-committed by
+        // a concurrent winning txn.
+        if (filePathsToRemoveFromBackfill.nonEmpty) {
+          // We keep the Row Tracking high-water mark action here but it might
+          // be outdated since the winning commit could have increased the high-water mark.
+          // We will reassign the current transaction's high water-mark if that is
+          // the case, in `reassignOverlappingRowIds` which is called after
+          // `resolveRowTrackingBackfillConflicts` in `checkConflicts`.
+          val newActions = currentTransactionInfo.actions.filterNot {
+            case a: AddFile => filePathsToRemoveFromBackfill.contains(a.path)
+            case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) => false
+            case _ => throw new IllegalStateException(
+              "RowTrackingBackfill commit has an unexpected action")
+          }
+
+          val newReadFiles = currentTransactionInfo.readFiles.filterNot(
+            a => filePathsToRemoveFromBackfill.contains(a.path))
+
+          currentTransactionInfo = currentTransactionInfo.copy(
+            actions = newActions, readFiles = newReadFiles)
+        }
+      }
+    }
+
+    if (winningCommitSummary.isRowTrackingBackfillTxn) {
+      recordTime(timerPhaseName) {
+        val backfillActionMap = winningCommitSummary.addedFilePathToActionMap
+        // Copy over the base row ID and default row commit version assigned so that the AddFiles
+        // and RemoveFiles have matching base row ID and default row commit version.
+        // If an AddFile is re-committed, it should have the same base row ID and
+        // default row commit version as the one assigned by Backfill.
+        val newActions = currentTransactionInfo.actions.map {
+          case a: AddFile if backfillActionMap.contains(a.path) =>
+            val backfillAction = backfillActionMap(a.path)
+            a.copy(baseRowId = backfillAction.baseRowId,
+              defaultRowCommitVersion = backfillAction.defaultRowCommitVersion)
+          case r: RemoveFile if backfillActionMap.contains(r.path) =>
+            val backfillAction = backfillActionMap(r.path)
+            r.copy(baseRowId = backfillAction.baseRowId,
+              defaultRowCommitVersion = backfillAction.defaultRowCommitVersion)
+          case a => a
+        }
+        currentTransactionInfo = currentTransactionInfo.copy(actions = newActions)
       }
     }
   }

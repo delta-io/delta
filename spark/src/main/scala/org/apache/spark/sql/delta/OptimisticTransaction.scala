@@ -1263,7 +1263,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         readSnapshot = snapshot,
         commitInfo = Some(commitInfo),
         readRowIdHighWatermark = readRowIdHighWatermark,
-        domainMetadata = domainMetadata)
+        domainMetadata = domainMetadata,
+        op = op)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
