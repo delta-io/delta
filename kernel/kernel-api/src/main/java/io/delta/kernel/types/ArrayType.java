@@ -33,6 +33,10 @@ public class ArrayType extends DataType {
         this.elementField = new StructField("element", elementType, containsNull);
     }
 
+    public ArrayType(StructField elementField) {
+        this.elementField = elementField;
+    }
+
     public StructField getElementField() {
         return elementField;
     }
