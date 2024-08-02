@@ -260,11 +260,12 @@ private[delta] class ConflictChecker(
    *    3. Table property and metadata are updated.
    * RowTrackingBackfill does not do any data change. It doesn't matter whether a file is
    * recommitted after the table feature support from Backfill or some other concurrent transaction;
-   * every AddFile just needs to have a base row ID somehow. However, correctness issues can arise
-   * if we don't do the checks in this method.
+   * every AddFile just needs to have a base row ID and a default row commit version somehow.
+   * However, correctness issues can arise if we don't do the checks in this method.
    *
    * Check that RowTrackingBackfill is not resurrecting files that were removed concurrently and
-   * that an AddFile and its corresponding RemoveFile have the same base row ID. To do this, we:
+   * that an AddFile and its corresponding RemoveFile have the same base row ID and
+   * default row commit version. To do this, we:
    *    1. remove AddFile's from a backfill commit if an AddFile or a RemoveFile with the same path
    *       was added in the winning concurrent transactions. Files in a winning transaction can be
    *       removed from backfill because they were already re-committed.
@@ -282,8 +283,9 @@ private[delta] class ConflictChecker(
     val timerPhaseName = "checked-row-tracking-backfill"
     if (currentTransactionInfo.isRowTrackingBackfillTxn) {
       recordTime(timerPhaseName) {
-        // Any winning commit seen by backfill must have row IDs, because
-        // `reassignOverlappingRowIds` will add a base row ID to all files. So we don't need
+        // Any winning commit seen by backfill must have row IDs and row commit versions, because
+        // `reassignOverlappingRowIds` will add a base row ID and `reassignRowCommitVersions`
+        // will add a default row commit versions to all files. So we don't need
         // Backfill to commit the same file again.
         val filePathsToRemoveFromBackfill = winningCommitSummary.actions.collect {
           case a: AddFile => a.path
