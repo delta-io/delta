@@ -251,7 +251,7 @@ private[delta] class ConflictChecker(
   }
 
   /**
-   * RowTrackingBackfill (or backfill for short in this paragraph) is a special operation that
+   * RowTrackingBackfill (or backfill for short for this function) is a special operation that
    * materializes and recommits all existing files in table using one or several commits to ensure
    * that every AddFile has a base row ID and a default row commit version. When enabling
    * row tracking on an existing table, the following occurs:
