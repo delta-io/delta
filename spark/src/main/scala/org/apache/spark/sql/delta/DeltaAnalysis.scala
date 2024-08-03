@@ -620,7 +620,8 @@ class DeltaAnalysis(session: SparkSession)
       tableIdent: TableIdentifier,
       targetLocation: Option[String],
       existingTable: Option[CatalogTable],
-      srcTable: CloneSource): CatalogTable = {
+      srcTable: CloneSource,
+      propertiesOverrides: Map[String, String]): CatalogTable = {
     // If external location is defined then then table is an external table
     // If the table is a path-based table, we also say that the table is external even if no
     // metastore table will be created. This is done because we are still explicitly providing a
@@ -633,7 +634,10 @@ class DeltaAnalysis(session: SparkSession)
     } else {
       (CatalogTableType.MANAGED, CatalogStorageFormat.empty)
     }
-    val properties = srcTable.metadata.configuration
+    var properties = srcTable.metadata.configuration
+    val validatedOverrides = DeltaConfigs.validateConfigurations(propertiesOverrides)
+    properties = properties.filterKeys(!validatedOverrides.keySet.contains(_)).toMap ++
+      validatedOverrides
 
     new CatalogTable(
       identifier = tableIdent,
@@ -712,8 +716,8 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.cloneAmbiguousTarget(statement.targetLocation.get, tblIdent)
         }
         // We're creating a table by path and there won't be a place to store catalog stats
-        val catalog = createCatalogTableForCloneCommand(
-          path, byPath = true, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val catalog = createCatalogTableForCloneCommand(path, byPath = true, tblIdent, targetLocation,
+          sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         CreateDeltaTableCommand(
           catalog,
           None,
@@ -735,8 +739,8 @@ class DeltaAnalysis(session: SparkSession)
           .asTableIdentifier
         val finalTarget = new Path(statement.targetLocation.getOrElse(
           session.sessionState.catalog.defaultTablePath(tblIdent).toString))
-        val catalogTable = createCatalogTableForCloneCommand(
-          finalTarget, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val catalogTable = createCatalogTableForCloneCommand(finalTarget, byPath = false, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         val catalogTableWithPath = if (targetLocation.isEmpty) {
           catalogTable.copy(
             storage = CatalogStorageFormat.empty.copy(locationUri = Some(finalTarget.toUri)))
@@ -772,8 +776,8 @@ class DeltaAnalysis(session: SparkSession)
             case targetTable: DeltaTableV2 =>
               val path = targetTable.path
               val tblIdent = TableIdentifier(path.toString, Some("delta"))
-              val catalogTable = createCatalogTableForCloneCommand(
-                path, byPath = true, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+              val catalogTable = createCatalogTableForCloneCommand(path, byPath = true, tblIdent,
+                targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
               CreateDeltaTableCommand(
                 table = catalogTable,
                 existingTableOpt = None,
@@ -816,7 +820,8 @@ class DeltaAnalysis(session: SparkSession)
           tblIdent,
           targetLocation,
           sourceCatalogTable,
-          cloneSourceTable)
+          cloneSourceTable,
+          statement.tablePropertyOverrides)
 
         CreateDeltaTableCommand(
           catalogTable,
@@ -835,8 +840,8 @@ class DeltaAnalysis(session: SparkSession)
       case LogicalRelation(_, _, existingCatalogTable @ Some(catalogTable), _) =>
         val tblIdent = catalogTable.identifier
         val path = new Path(catalogTable.location)
-        val newCatalogTable = createCatalogTableForCloneCommand(
-          path, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val newCatalogTable = createCatalogTableForCloneCommand(path, byPath = false, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         CreateDeltaTableCommand(
           newCatalogTable,
           existingCatalogTable,
