@@ -716,8 +716,8 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.cloneAmbiguousTarget(statement.targetLocation.get, tblIdent)
         }
         // We're creating a table by path and there won't be a place to store catalog stats
-        val catalog = createCatalogTableForCloneCommand(path, byPath = true, tblIdent, targetLocation,
-          sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
+        val catalog = createCatalogTableForCloneCommand(path, byPath = true, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         CreateDeltaTableCommand(
           catalog,
           None,
