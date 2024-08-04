@@ -180,6 +180,42 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
       }
     }
   }
+
+  for {
+    isPartitioned <- BOOLEAN_DOMAIN
+  } {
+    test("UPDATE preserves Row Tracking on tables enabled using backfill, "
+        + s"isPartitioned=$isPartitioned") {
+      withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
+        // This is the expected delta log history by the end of the test.
+        // version 0: Table Creation
+        // version 1: Protocol upgrade
+        // version 2: Backfill commit
+        // version 3: Metadata upgrade (tbl properties)
+        // version 4: Update
+        val backfillCommitVersion = 2L
+        withRowTrackingEnabled(enabled = false) {
+          withTable(targetTableName) {
+            writeTestTable(
+              targetTableName, isPartitioned, lastModifiedVersion = backfillCommitVersion)
+
+            val (log, snapshot) =
+              DeltaLog.forTableWithSnapshot(spark, TableIdentifier(targetTableName))
+            assert(!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata))
+            validateSuccessfulBackfillMetrics(expectedNumSuccessfulBatches = 1) {
+              triggerBackfillOnTestTableUsingAlterTable(targetTableName, numRowsTarget, log)
+            }
+
+            val whereClause = s"id < ${numRowsPerFile / 2}"
+            // The newVersion should be 4, the commit associated with the UPDATE.
+            val newVersion = 4L
+            checkAndExecuteUpdate(
+              tableName = targetTableName, condition = Some(whereClause), newVersion)
+          }
+        }
+      }
+    }
+  }
 }
 
 trait RowTrackingUpdateDVTests extends RowTrackingUpdateSuiteBase
