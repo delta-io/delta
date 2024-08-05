@@ -311,7 +311,7 @@ abstract class CloneTableBase(
     }
 
     // Coordinated Commit configurations are never copied over to the target table.
-    val filteredConfigeration = clonedMetadata.configuration
+    val filteredConfiguration = clonedMetadata.configuration
       .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
       .toMap
     val clonedSchema =
