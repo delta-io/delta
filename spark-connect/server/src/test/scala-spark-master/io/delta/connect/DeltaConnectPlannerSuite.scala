@@ -26,7 +26,7 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
-import org.apache.spark.sql.connect.service.SessionHolder
+import org.apache.spark.sql.connect.SparkConnectTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class DeltaConnectPlannerSuite
@@ -57,7 +57,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(SessionHolder.forTesting(spark)).transformRelation(input)
+      val result = new SparkConnectPlanner(SparkConnectTestUtils.createDummySessionHolder(spark)).transformRelation(input)
       val expected = DeltaTable.forName(spark, "table").toDF.queryExecution.analyzed
       comparePlans(result, expected)
     }
@@ -83,7 +83,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(SessionHolder.forTesting(spark)).transformRelation(input)
+      val result = new SparkConnectPlanner(SparkConnectTestUtils.createDummySessionHolder(spark)).transformRelation(input)
       val expected = DeltaTable.forPath(spark, dir.getAbsolutePath).toDF.queryExecution.analyzed
       comparePlans(result, expected)
     }
