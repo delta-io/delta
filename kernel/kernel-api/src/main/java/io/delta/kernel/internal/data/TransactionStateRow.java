@@ -25,13 +25,16 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.*;
 
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 
 public class TransactionStateRow extends GenericRow {
     private static final StructType SCHEMA = new StructType()
-            .add("logicalSchemaString", StringType.STRING)
+            .add("schemaString", StringType.STRING)
             .add("partitionColumns", new ArrayType(StringType.STRING, false))
+            .add("configuration", new MapType(StringType.STRING, StringType.STRING, false))
             .add("tablePath", StringType.STRING);
 
     private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
@@ -41,8 +44,9 @@ public class TransactionStateRow extends GenericRow {
 
     public static TransactionStateRow of(Metadata metadata, String tablePath) {
         HashMap<Integer, Object> valueMap = new HashMap<>();
-        valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("schemaString"), metadata.getSchemaString());
         valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
+        valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
         valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
         return new TransactionStateRow(valueMap);
     }
@@ -64,9 +68,23 @@ public class TransactionStateRow extends GenericRow {
             COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
         return wrapEngineException(
             () -> engine.getJsonHandler().deserializeStructType(serializedSchema),
-            "Parsing the schema from the scan state. Schema JSON:\n%s",
+            "Parsing the schema from the transaction state. Schema JSON:\n%s",
             serializedSchema
         );
+    }
+
+    /**
+     * Get column mapping mode from the transaction state {@link Row} returned by
+     * {@link Transaction#getTransactionState(Engine)}
+     *
+     * @param engine           {@link Engine} instance to use for parsing the schema
+     * @param transactionState Transaction state state {@link Row}
+     * @return Column mapping mode
+     */
+    public static ColumnMappingMode getColumnMappingMode(Engine engine, Row transactionState) {
+        Map<String, String> configuration = VectorUtils.toJavaMap(
+                transactionState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
+        return ColumnMapping.getColumnMappingMode(configuration);
     }
 
     /**
