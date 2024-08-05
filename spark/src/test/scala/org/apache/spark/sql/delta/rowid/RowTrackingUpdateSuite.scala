@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.rowid
 
+import com.databricks.spark.util.DatabricksLogging
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.cdc.UpdateCDCSuite
@@ -28,7 +30,8 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
 
 trait RowTrackingUpdateSuiteBase
-  extends RowIdTestUtils {
+  extends RowIdTestUtils
+  with DatabricksLogging {
 
   protected def dvsEnabled: Boolean = false
 
@@ -195,6 +198,7 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
         // version 4: Update
         val backfillCommitVersion = 2L
         withRowTrackingEnabled(enabled = false) {
+          logConsole(s"Table content: ${spark.table(targetTableName)}")
           withTable(targetTableName) {
             writeTestTable(
               targetTableName, isPartitioned, lastModifiedVersion = backfillCommitVersion)
