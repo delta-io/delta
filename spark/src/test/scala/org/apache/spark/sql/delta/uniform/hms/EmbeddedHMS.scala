@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta.uniform.hms
 
-import java.io.{BufferedReader, File, InputStreamReader, IOException}
+import java.util.UUID
+import java.io.{BufferedReader, File, IOException, InputStreamReader}
 import java.net.ServerSocket
 import java.nio.file.Files
 import java.sql.{Connection, DriverManager}
@@ -25,7 +26,6 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hive.conf.HiveConf
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars
-
 
 /**
  * EmbeddedHMS is an embedded Hive MetaStore for testing purposes.
@@ -40,15 +40,23 @@ class EmbeddedHMS {
   private var port: Int = 0
 
   /**
+   * Generate a random suffix for HMS warehouse/metastore to keep
+   * the directory unique for each suite if running concurrently.
+   */
+  def randomSuffix: String = {
+    UUID.randomUUID().toString
+  }
+
+  /**
    * Start an EmbeddedHMS instance
    */
   def start(): Unit = {
     if (started) return
     port = EmbeddedHMS.firstAvailablePort()
-    val dbFolder = Files.createTempDirectory("ehms_metastore")
+    val dbFolder = Files.createTempDirectory("ehms_metastore_" + randomSuffix)
     Files.delete(dbFolder) // Derby needs the folder to be non-existent
     dbName = dbFolder.toString
-    whFolder = Files.createTempDirectory("ehms_warehouse").toString
+    whFolder = Files.createTempDirectory("ehms_warehouse_" + randomSuffix).toString
 
     initDatabase(dbName)
 
