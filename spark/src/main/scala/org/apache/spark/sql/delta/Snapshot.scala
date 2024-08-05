@@ -21,7 +21,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.spark.sql.util.ScalaExtensions._
+import io.delta.storage.commit.CommitCoordinatorClient
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.{MDC, MessageWithContext}

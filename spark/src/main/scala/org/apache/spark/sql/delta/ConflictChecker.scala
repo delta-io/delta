@@ -24,12 +24,12 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.DeltaOperations.ROW_TRACKING_BACKFILL_OPERATION_NAME
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.UpdatedActions
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
+import io.delta.storage.commit.UpdatedActions
 import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
@@ -81,7 +81,7 @@ private[delta] case class CurrentTransactionInfo(
   def getUpdatedActions(
       oldMetadata: Metadata,
       oldProtocol: Protocol): UpdatedActions = {
-    UpdatedActions(commitInfo.get, metadata, protocol, oldMetadata, oldProtocol)
+    new UpdatedActions(commitInfo.get, metadata, protocol, oldMetadata, oldProtocol)
   }
 
   /** Whether this transaction wants to make any [[Metadata]] update */
