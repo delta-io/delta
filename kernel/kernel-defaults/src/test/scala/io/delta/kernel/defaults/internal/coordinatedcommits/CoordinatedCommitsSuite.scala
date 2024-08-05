@@ -66,8 +66,8 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
     versionConvertToCC: Long = 0L,
     coordinatedCommitNum: Long = 3L,
     checkpointVersion: Long = -1L,
+    checkpointInterval: Long = -1L,
     backfillVersion: Long = -1L): Unit = {
-    assert(checkpointVersion < versionConvertToCC)
     val table = Table.forPath(engine, tablePath)
     val totalCommitNum = coordinatedCommitNum + versionConvertToCC
     val handler = engine.getCommitCoordinatorClientHandler(
@@ -100,6 +100,9 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
         )
       }
       if (version == checkpointVersion) {
+        table.checkpoint(engine, version)
+      }
+      if (checkpointInterval != -1 && version % checkpointInterval == 0) {
         table.checkpoint(engine, version)
       }
       if (version == backfillVersion) {
@@ -475,6 +478,51 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
           dataBatches1.flatMap(_.toTestRows) ++
           dataBatches2.flatMap(_.toTestRows)
         val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        checkAnswer(
+          readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine), expectedAnswer)
+    })
+  }
+
+  testWithDifferentBackfillInterval("Snapshot.ensureCommitFilesBackfilled") { backfillBatchSize =>
+    val config = Map(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
+        classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
+      InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> backfillBatchSize.toString)
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val table = Table.forPath(engine, tablePath)
+        val logPath = new Path(table.getPath(engine), "_delta_log")
+        val commitDatas = Seq.fill(10)(dataBatches1)
+        // Add 10 commits to the table
+        setupCoordinatedCommitsForTest(
+          engine, tablePath, commitDatas, coordinatedCommitNum = 10L)
+        val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+
+        snapshot.ensureCommitFilesBackfilled(engine)
+
+        val commitFiles =
+          engine.getFileSystemClient.listFrom(FileNames.listingPrefix(logPath, 0L))
+            .filterNot(f => f.getPath.endsWith("_commits"))
+            .map(_.getPath)
+        val backfilledCommitFiles = (0 to 9).map(
+          version => FileNames.deltaFile(logPath, version))
+        assert(commitFiles.toSeq == backfilledCommitFiles)
+    })
+  }
+
+  testWithDifferentCheckpointVersion("checkpoint with coordinated commit") {checkpointInterval =>
+    val config = trackingInMemoryBatchSize10Config
+    testWithCoordinatorCommits(config, {
+      (tablePath, engine) =>
+        val table = Table.forPath(engine, tablePath)
+        val commitDatas = Seq.fill(20)(dataBatches1)
+        // Add 20 commits to the table
+        setupCoordinatedCommitsForTest(
+          engine,
+          tablePath,
+          commitDatas, coordinatedCommitNum = 20L, checkpointInterval = checkpointInterval)
+        val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        val expectedAnswer = commitDatas.flatMap(_.flatMap(_.toTestRows))
         checkAnswer(
           readSnapshot(snapshot, snapshot.getSchema(engine), null, null, engine), expectedAnswer)
     })

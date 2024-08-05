@@ -195,6 +195,22 @@ public class SnapshotManager {
         // Get the snapshot corresponding the version
         SnapshotImpl snapshot = (SnapshotImpl) getSnapshotAt(engine, version);
 
+        // With Coordinated-Commits, commit files are not guaranteed to be backfilled immediately in
+        // the _delta_log dir. While it is possible to compute a checkpoint file without
+        // backfilling, writing the checkpoint file in the log directory before backfilling the
+        // relevant commits will leave gaps in the dir structure. This can cause issues for readers
+        // that are not communicating with the CommitCoordinator.
+        //
+        // Sample directory structure with a gap if we don't backfill commit files:
+        // _delta_log/
+        //   _commits/
+        //     00017.$uuid.json
+        //     00018.$uuid.json
+        //   00015.json
+        //   00016.json
+        //   00018.checkpoint.parquet
+        snapshot.ensureCommitFilesBackfilled(engine);
+
         // Check if writing to the given table protocol version/features is supported in Kernel
         validateWriteSupportedTable(snapshot.getProtocol(), snapshot.getMetadata(),
             snapshot.getSchema(engine), tablePath.toString());

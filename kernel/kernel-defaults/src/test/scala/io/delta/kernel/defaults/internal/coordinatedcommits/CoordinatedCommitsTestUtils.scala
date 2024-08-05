@@ -176,12 +176,21 @@ trait CoordinatedCommitsTestUtils extends DeltaTableWriteSuiteBase with TestUtil
       .commit(engine, emptyIterable())
   }
 
-  /** Run the test with different backfill batch sizes: 1, 2, 10 */
+  /** Run the test with different backfill batch sizes: 1, 2, 10, 20 */
   def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
-    Seq(1, 2, 10).foreach { backfillBatchSize =>
+    Seq(1, 2, 10, 20).foreach { backfillBatchSize =>
       test(s"$testName [Backfill batch size: $backfillBatchSize]") {
         InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()
         f(backfillBatchSize)
+      }
+    }
+  }
+
+  /** Run the test with different checkpoint interval: 1, 2, 10, 20 */
+  def testWithDifferentCheckpointVersion(testName: String)(f: Int => Unit): Unit = {
+    Seq(1, 2, 10, 20).foreach {checkpointInterval =>
+      test(s"$testName [Checkpoint Interval: $checkpointInterval]") {
+        f(checkpointInterval)
       }
     }
   }
