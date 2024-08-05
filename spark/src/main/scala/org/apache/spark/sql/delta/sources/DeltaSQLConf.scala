@@ -952,7 +952,7 @@ trait DeltaSQLConfBase {
         "delta log entry below 100mb.")
       .intConf
       .checkValue(_ > 0, "'backfill.maxNumFiles' must be positive.")
-      .createWithDefault(22000)
+      .createWithDefault(100000)
 
   val DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT =
     buildConf("backfill.maxNumFiles")
