@@ -3417,6 +3417,12 @@ trait DeltaErrorsBase
           .getOrElse(Seq.empty)
           .mkString(", ")))
   }
+
+  def unsupportedWritesWithMissingCoordinators(coordinatorName: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+      messageParameters = Array(coordinatorName))
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
