@@ -25,7 +25,9 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.types.*;
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
 import java.util.*;
 
 public class DataSkippingUtils {
@@ -313,7 +315,6 @@ public class DataSkippingUtils {
       case ">=":
         return constructBinaryDataSkippingPredicate(
             ">=", schemaHelper.getMaxColumn(leftCol), rightLit);
-
       default:
         throw new IllegalArgumentException(
             String.format("Unsupported comparator expression %s", comparator));
@@ -322,18 +323,15 @@ public class DataSkippingUtils {
 
   /**
    * Constructs a {@link DataSkippingPredicate} for a binary predicate expression with a left
-   * expression of type {@link Column} and a right expression of type {@link Literal}.
+   * column, an optional column adjustment expression and a right expression of type {@link
+   * Literal}.
    */
   private static DataSkippingPredicate constructBinaryDataSkippingPredicate(
-      String exprName, Column col, Literal lit) {
+      String exprName, Tuple2<Column, Optional<Expression>> colExpr, Literal lit) {
+    Column column = colExpr._1;
+    Expression adjColExpr = colExpr._2.isPresent() ? colExpr._2.get() : column;
     return new DataSkippingPredicate(
-        exprName,
-        Arrays.asList(col, lit),
-        new HashSet<Column>() {
-          {
-            add(col);
-          }
-        });
+        exprName, Arrays.asList(adjColExpr, lit), Collections.singleton(column));
   }
 
   private static final Map<String, String> REVERSE_COMPARATORS =

@@ -44,6 +44,15 @@ import java.util.stream.Collectors;
  *             argument. If all arguments are null returns null
  *         <li>Since version: 3.1.0
  *       </ul>
+ *   <li>Name: <code>TIMEADD</code>
+ *       <ul>
+ *         <li>Semantic: <code>TIMEADD(colExpr, milliseconds)</code>. Add the specified number of
+ *             milliseconds to the timestamp represented by <i>colExpr</i>. The adjustment does not
+ *             alter the original value but returns a new timestamp increased by the given
+ *             milliseconds. Ex: `TIMEADD(timestampColumn, 1000)` returns a timestamp 1 second
+ *             later.
+ *         <li>Since version: 3.3.0
+ *       </ul>
  * </ol>
  *
  * @since 3.0.0

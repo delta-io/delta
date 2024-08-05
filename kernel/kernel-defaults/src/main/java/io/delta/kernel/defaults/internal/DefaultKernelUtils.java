@@ -20,11 +20,25 @@ import io.delta.kernel.internal.util.DateTimeConstants;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoField;
+import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
 
 public class DefaultKernelUtils {
   private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
+  private static final DateTimeFormatter DEFAULT_JSON_TIMESTAMPNTZ_FORMATTER =
+      new DateTimeFormatterBuilder()
+          .appendPattern("yyyy-MM-dd'T'HH:mm:ss")
+          .optionalStart()
+          .appendFraction(ChronoField.MICRO_OF_SECOND, 0, 6, true)
+          .optionalEnd()
+          .toFormatter();
 
   private DefaultKernelUtils() {}
 
@@ -57,6 +71,19 @@ public class DefaultKernelUtils {
 
   public static long millisToMicros(long millis) {
     return Math.multiplyExact(millis, DateTimeConstants.MICROS_PER_MILLIS);
+  }
+
+  /**
+   * Parses a TimestampNTZ string in UTC format, supporting milliseconds and microseconds, to
+   * microseconds since the Unix epoch.
+   *
+   * @param timestampString the timestamp string to parse.
+   * @return the number of microseconds since epoch.
+   */
+  public static long parseTimestampNTZ(String timestampString) {
+    LocalDateTime time = LocalDateTime.parse(timestampString, DEFAULT_JSON_TIMESTAMPNTZ_FORMATTER);
+    Instant instant = time.toInstant(ZoneOffset.UTC);
+    return ChronoUnit.MICROS.between(Instant.EPOCH, instant);
   }
 
   /**
