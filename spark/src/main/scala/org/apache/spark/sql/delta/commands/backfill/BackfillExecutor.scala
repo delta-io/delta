@@ -80,6 +80,7 @@ trait BackfillExecutor extends DeltaLogging {
           if (tracker != null) {
             tracker.releasePermits(batch.filesInBatch.length)
           }
+          logConsole(s"Batch #$batchId released permits for ${batch.filesInBatch.length} files.")
         })
       }
       futures.foreach(_.get())
