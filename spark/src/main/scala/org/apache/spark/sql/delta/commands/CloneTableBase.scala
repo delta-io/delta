@@ -318,7 +318,7 @@ abstract class CloneTableBase(
       IdentityColumn.copySchemaWithMergedHighWaterMarks(
         schemaToCopy = clonedMetadata.schema,
         schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema)
-    clonedMetadata.copy(configuration = filteredConfigeration, schemaString = clonedSchema.json)
+    clonedMetadata.copy(configuration = filteredConfiguration, schemaString = clonedSchema.json)
   }
 
   /**
