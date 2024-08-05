@@ -1149,11 +1149,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    *
    * Also skips creating the commit if the configured [[IsolationLevel]] doesn't need us to record
    * the commit from correctness perspective.
+   *
+   * Returns the new version the transaction committed or None if the commit was skipped.
    */
   def commitIfNeeded(
       actions: Seq[Action],
       op: DeltaOperations.Operation,
-      tags: Map[String, String] = Map.empty): Unit = {
+      tags: Map[String, String] = Map.empty): Option[Long] = {
     commitImpl(actions, op, canSkipEmptyCommits = true, tags = tags)
   }
 
