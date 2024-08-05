@@ -29,6 +29,13 @@ private[delta] class PhaseLockingTransactionExecutionObserver(
     phases.commitPhase,
     phases.backfillPhase)
 
+  override def createChild(): TransactionExecutionObserver = {
+    // Just return the current thread observer.
+    // This is equivalent to the behaviour of the use-site before introduction of
+    // `createChild`.
+    TransactionExecutionObserver.getObserver
+  }
+
   /**
    * When set to true this observer will automatically update the thread's current observer to
    * the next one. Also, it will not unblock the exit barrier of the commit phase automatically.

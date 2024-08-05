@@ -18,6 +18,7 @@ package io.delta.sharing.spark
 
 import java.io.{ByteArrayInputStream, FileNotFoundException}
 import java.net.{URI, URLDecoder, URLEncoder}
+import java.nio.charset.StandardCharsets
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.{ArrayBuffer, Builder}
@@ -65,14 +66,16 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
       val arrayBuilder = Array.newBuilder[Byte]
       while (iterator.hasNext) {
         val actionJsonStr = iterator.next()
-        arrayBuilder ++= actionJsonStr.getBytes()
+        arrayBuilder ++= actionJsonStr.getBytes(StandardCharsets.UTF_8)
       }
       // We still have to load the full content of a delta log file in memory to serve them.
       // This still exposes the risk of OOM.
       new FSDataInputStream(new SeekableByteArrayInputStream(arrayBuilder.result()))
     } else {
       val content = getBlockAndReleaseLockHelper[String](f, None)
-      new FSDataInputStream(new SeekableByteArrayInputStream(content.getBytes()))
+      new FSDataInputStream(new SeekableByteArrayInputStream(
+        content.getBytes(StandardCharsets.UTF_8)
+      ))
     }
   }
 
@@ -622,7 +625,9 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       minVersion,
       ArrayBuffer[String]()
     ) += protocolAndMetadataStr
-    versionToJsonLogSize(minVersion) += protocolAndMetadataStr.length
+    versionToJsonLogSize(minVersion) += protocolAndMetadataStr.getBytes(
+      StandardCharsets.UTF_8
+    ).length
     numFileActionsInMinVersion = versionToDeltaSharingFileActions
       .getOrElseUpdate(minVersion, ArrayBuffer[model.DeltaSharingFileAction]())
       .size
@@ -636,7 +641,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
             version,
             ArrayBuffer[String]()
           ) += metadataStr
-          versionToJsonLogSize(version) += metadataStr.length
+          versionToJsonLogSize(version) += metadataStr.getBytes(StandardCharsets.UTF_8).length
         }
     }
     // Write file actions to the delta log json file.
@@ -669,7 +674,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
             version,
             ArrayBuffer[String]()
           ) += actionJsonStr
-          versionToJsonLogSize(version) += actionJsonStr.length
+          versionToJsonLogSize(version) += actionJsonStr.getBytes(StandardCharsets.UTF_8).length
 
           // 3. process expiration timestamp
           if (fileAction.expirationTimestamp != null) {
@@ -766,11 +771,11 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
           )
         case protocol: model.DeltaSharingProtocol =>
           val protocolJsonStr = protocol.deltaProtocol.json + "\n"
-          jsonLogSize += protocolJsonStr.length
+          jsonLogSize += protocolJsonStr.getBytes(StandardCharsets.UTF_8).length
           jsonLogSeq += protocolJsonStr
         case metadata: model.DeltaSharingMetadata =>
           val metadataJsonStr = metadata.deltaMetadata.json + "\n"
-          jsonLogSize += metadataJsonStr.length
+          jsonLogSize += metadataJsonStr.getBytes(StandardCharsets.UTF_8).length
           jsonLogSeq += metadataJsonStr
         case _ =>
           throw new IllegalStateException(
@@ -800,7 +805,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
       // 2. prepare json log content.
       val actionJsonStr = getActionWithDeltaSharingPath(fileAction, customTablePath) + "\n"
-      jsonLogSize += actionJsonStr.length
+      jsonLogSize += actionJsonStr.getBytes(StandardCharsets.UTF_8).length
       jsonLogSeq += actionJsonStr
 
       // 3. process expiration timestamp
@@ -869,7 +874,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     val fileStatusSeq = Seq(
       DeltaSharingLogFileStatus(
         path = jsonFilePath,
-        size = jsonLogStr.length,
+        size = jsonLogStr.getBytes(StandardCharsets.UTF_8).length,
         modificationTime = 0L
       )
     )

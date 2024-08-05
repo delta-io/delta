@@ -77,6 +77,29 @@ trait IdentityColumnTestUtils
     }
   }
 
+  protected def generateTableWithIdentityColumn(tableName: String, step: Long = 1): Unit = {
+    createTable(
+      tableName,
+      Seq(
+        IdentityColumnSpec(
+          GeneratedAlways,
+          startsWith = Some(0),
+          incrementBy = Some(step),
+          colName = "key"
+        ),
+        TestColumnSpec(colName = "val", dataType = LongType)
+      )
+    )
+
+    // Insert numRows and make sure they assigned sequential IDs
+    val numRows = 6
+    for (i <- 0 until numRows) {
+      sql(s"INSERT INTO $tableName (val) VALUES ($i)")
+    }
+    val expectedAnswer = for (i <- 0 until numRows) yield Row(i * step, i)
+    checkAnswer(sql(s"SELECT * FROM $tableName ORDER BY val ASC"), expectedAnswer)
+  }
+
   /**
    * Helper function to validate values of IDENTITY column `id` in table `tableName`. Returns the
    * new high water mark. We use minValue and maxValue to filter column `value` to get the set of

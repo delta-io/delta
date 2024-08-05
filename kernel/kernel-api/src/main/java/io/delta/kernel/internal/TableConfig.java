@@ -30,8 +30,8 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.util.IntervalParserUtils;
-import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import static io.delta.kernel.internal.util.InternalUtils.getSingularElement;
 import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -164,6 +164,34 @@ public class TableConfig<T> {
             );
 
     /**
+     * This table property is used to control the column mapping mode.
+     */
+    public static final TableConfig<ColumnMappingMode> COLUMN_MAPPING_MODE =
+            new TableConfig<>(
+                    "delta.columnMapping.mode",
+                    "none", /* default values */
+                    (engineOpt, v) -> ColumnMappingMode.fromTableConfig(v),
+                    value -> true,
+                    "Needs to be one of none, id, name."
+            );
+
+    /**
+     * Table property that enables modifying the table in accordance with the
+     * Delta-Iceberg Compatibility V2 protocol.
+     *
+     * @see <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-iceberg-compatibility-v2">
+     * Delta-Iceberg Compatibility V2 Protocol</a>
+     */
+    public static final TableConfig<Boolean> ICEBERG_COMPAT_V2_ENABLED =
+            new TableConfig<>(
+                    "delta.enableIcebergCompatV2",
+                    "false",
+                    (engineOpt, v) -> Boolean.valueOf(v),
+                    value -> true,
+                    "needs to be a boolean."
+            );
+
+    /**
      * All the valid properties that can be set on the table.
      */
     private static final Map<String, TableConfig<?>> VALID_PROPERTIES = Collections.unmodifiableMap(
@@ -176,6 +204,8 @@ public class TableConfig<T> {
                 addConfig(this, COORDINATED_COMMITS_COORDINATOR_NAME);
                 addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
                 addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
+                addConfig(this, COLUMN_MAPPING_MODE);
+                addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
             }}
     );
 

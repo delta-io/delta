@@ -99,6 +99,7 @@ trait DeltaLogKeysBase {
   case object NUM_RECORDS extends LogKeyShims
   case object NUM_RECORDS_ACTUAL extends LogKeyShims
   case object NUM_RECORDS_EXPECTED extends LogKeyShims
+  case object NUM_SKIPPED extends LogKeyShims
   case object OFFSET extends LogKeyShims
   case object OPERATION extends LogKeyShims
   case object OPERATION2 extends LogKeyShims

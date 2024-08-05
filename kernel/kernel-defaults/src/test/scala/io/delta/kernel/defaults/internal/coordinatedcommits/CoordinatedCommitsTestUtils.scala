@@ -243,7 +243,7 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
       lastKnownBackfilledVersion)
   }
 
-  override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean = this == other
+  override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
 
   def reset(): Unit = {
     TrackingCommitCoordinatorClient.numCommitsCalled.set(0)

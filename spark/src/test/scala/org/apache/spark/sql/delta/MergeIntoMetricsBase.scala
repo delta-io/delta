@@ -1344,7 +1344,8 @@ object MergeIntoMetricsBase extends QueryTest with SharedSparkSession {
   val mergeFileMetrics = Set(
     "numTargetFilesAdded", "numTargetFilesRemoved", "numTargetBytesAdded", "numTargetBytesRemoved")
   // Metrics related with execution times.
-  val mergeTimeMetrics = Set("executionTimeMs", "scanTimeMs", "rewriteTimeMs")
+  val mergeTimeMetrics = Set(
+    "executionTimeMs", "materializeSourceTimeMs", "scanTimeMs", "rewriteTimeMs")
   // Metrics related with CDF. Available only when CDF is available.
   val mergeCdfMetrics = Set("numTargetChangeFilesAdded")
   // DV Metrics.

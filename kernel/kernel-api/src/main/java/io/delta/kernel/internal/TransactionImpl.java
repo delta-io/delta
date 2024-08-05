@@ -39,6 +39,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -217,6 +218,10 @@ public class TransactionImpl
         List<Row> metadataActions = new ArrayList<>();
         metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
         if (shouldUpdateMetadata || isNewTable) {
+            this.metadata = ColumnMapping.updateColumnMappingMetadata(
+                    metadata,
+                    ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
+                    isNewTable);
             metadataActions.add(createMetadataSingleAction(metadata.toRow()));
         }
         if (shouldUpdateProtocol || isNewTable) {

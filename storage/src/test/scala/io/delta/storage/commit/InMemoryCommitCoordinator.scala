@@ -196,7 +196,7 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
     })
   }
 
-  override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean = this == other
+  override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
 
   /** Backfills a given `fileStatus` to `version`.json */
   protected def backfill(

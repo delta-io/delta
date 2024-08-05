@@ -31,12 +31,15 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
@@ -121,6 +124,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                     TableConfig.validateProperties(engine, tableProperties.get());
             Map<String, String> newProperties =
                     metadata.filterOutUnchangedProperties(validatedProperties);
+
+            ColumnMapping.verifyColumnMappingChange(
+                    metadata.getConfiguration(), newProperties, isNewTable);
+
             if (!newProperties.isEmpty()) {
                 shouldUpdateMetadata = true;
                 metadata = metadata.withNewConfiguration(newProperties);
@@ -187,7 +194,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             }
         } else {
             // New table verify the given schema and partition columns
-            SchemaUtils.validateSchema(schema.get(), false /* isColumnMappingEnabled */);
+            ColumnMappingMode mappingMode = ColumnMapping.getColumnMappingMode(
+                    tableProperties.orElse(Collections.emptyMap()));
+
+            SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
             SchemaUtils.validatePartitionColumns(
                     schema.get(), partitionColumns.orElse(Collections.emptyList()));
         }

@@ -22,6 +22,7 @@ import java.nio.file.{Files, Paths, StandardOpenOption}
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+import scala.collection.JavaConverters._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
@@ -31,12 +32,12 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.coordinatedcommits._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{unsafeDeltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -3987,9 +3988,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             logStore: LogStore,
             hadoopConf: Configuration,
             logPath: Path,
-            coordinatedCommitsTableConf: Map[String, String],
+            coordinatedCommitsTableConf: java.util.Map[String, String],
             startVersion: Long,
-            endVersionOpt: Option[Long]): Unit = {
+            endVersionOpt: java.lang.Long): Unit = {
             // Backfill fails on every other attempt.
             if (shouldFailBackfill) {
               shouldFailBackfill = !shouldFailBackfill
@@ -4033,7 +4034,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // The commit coordinator still tracks the commit that disables it.
       val commitsFromCommitCoordinator =
         log.snapshot.tableCommitCoordinatorClientOpt.get.getCommits(Some(3))
-      assert(commitsFromCommitCoordinator.getCommits.exists(_.getVersion == 3))
+      assert(commitsFromCommitCoordinator.getCommits.asScala.exists(_.getVersion == 3))
       // The next drop attempt will also trigger an explicit backfill.
       val usageLogs2 = Log4jUsageLogger.track {
         AlterTableDropFeatureDeltaCommand(

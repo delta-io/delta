@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -119,8 +120,12 @@ case class AlterTableSetPropertiesDeltaCommand(
       configuration(rowTrackingPropertyKey).toBoolean
 
     if (enableRowTracking) {
-      // TODO(longvu-db): This will be removed once we support backfill.
-      throw new UnsupportedOperationException("Cannot enable Row IDs on an existing table.")
+      // If we're enabling row tracking on an existing table, we need to complete a backfill process
+      // prior to updating the table metadata.
+      RowTrackingBackfillCommand(
+        deltaLog,
+        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
+        table.catalogTable).run(sparkSession)
     }
     val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
     val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")

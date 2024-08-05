@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
@@ -42,9 +42,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
+import io.delta.storage.commit._
+import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -169,6 +170,14 @@ class OptimisticTransaction(
       catalogTable: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None) =
     this(deltaLog, catalogTable, snapshotOpt.getOrElse(deltaLog.update()))
+}
+
+object CommitConflictFailure {
+  def unapply(e: Exception): Option[Exception] = e match {
+    case _: FileAlreadyExistsException => Some(e)
+    case e: CommitFailedException if e.getConflict => Some(e)
+    case _ => None
+  }
 }
 
 object OptimisticTransaction {
@@ -1263,7 +1272,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         readSnapshot = snapshot,
         commitInfo = Some(commitInfo),
         readRowIdHighWatermark = readRowIdHighWatermark,
-        domainMetadata = domainMetadata)
+        domainMetadata = domainMetadata,
+        op = op)
 
       // Register post-commit hooks if any
       lazy val hasFileActions = preparedActions.exists {
@@ -1519,7 +1529,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             deltaLog = deltaLog,
             coordinatedCommitsTableConf = snapshot.metadata.coordinatedCommitsTableConf)
         }
-      val updatedActions = UpdatedActions(
+      val updatedActions = new UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(attemptVersion, jsonActions, updatedActions)
@@ -1575,7 +1585,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     } catch {
       case e: Throwable =>
         e match {
-          case _: FileAlreadyExistsException | CommitFailedException(_, true, _) =>
+          case CommitConflictFailure(e) =>
             recordCommitLargeFailure(e, op)
             // Actions of a commit which went in before ours.
             // Requires updating deltaLog to retrieve these actions, as another writer may have used
@@ -1593,6 +1603,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             }
           case NonFatal(_) =>
             recordCommitLargeFailure(e, op)
+            throw e
+          case _ =>
             throw e
         }
     }
@@ -1613,6 +1625,27 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       coordinatedCommitsType.toString,
       metadataToUse.coordinatedCommitsCoordinatorName.getOrElse(""),
       metadataToUse.coordinatedCommitsCoordinatorConf)
+  }
+
+  /**
+   * Splits a transaction into smaller child transactions that operate on disjoint sets of the files
+   * read by the parent transaction. This function is typically used when you want to break a large
+   * operation into one that can be committed separately / incrementally.
+   *
+   * @param readFilesSubset The subset of files read by the current transaction that will be handled
+   *                        by the new transaction.
+   */
+  def split(readFilesSubset: Seq[AddFile]): OptimisticTransaction = {
+    assert(newMetadata.isEmpty)
+    assert(OptimisticTransaction.getActive().isEmpty,
+      "Splitting a transaction is not supported when there is an active transaction.")
+
+    val t = new OptimisticTransaction(deltaLog, catalogTable, snapshot)
+    t.executionObserver = executionObserver.createChild()
+    t.readPredicates.addAll(readPredicates)
+    t.readFiles ++= readFilesSubset
+    t.readTxn ++= readTxn
+    t
   }
 
   /**
@@ -1646,7 +1679,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, commitCoordinatorName)}" +
             log", conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, commitCoordinatorConf)}]")
           newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
-            deltaLog.logPath, readVersion, finalMetadata, protocol))
+            deltaLog.logPath, readVersion, finalMetadata, protocol).asScala.toMap)
         case (None, Some(readCommitCoordinatorClient)) =>
           // CC -> FS conversion
           val (newOwnerName, newOwnerConf) =
@@ -2214,12 +2247,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   class FileSystemBasedCommitCoordinatorClient(val deltaLog: DeltaLog)
     extends CommitCoordinatorClient {
     override def commit(
-        logStore: LogStore,
+        logStore: io.delta.storage.LogStore,
         hadoopConf: Configuration,
         logPath: Path,
-        coordinatedCommitsTableConf: Map[String, String],
+        coordinatedCommitsTableConf: java.util.Map[String, String],
         commitVersion: Long,
-        actions: Iterator[String],
+        actions: java.util.Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
       // Get thread local observer for Fuzz testing purpose.
       val executionObserver = TransactionExecutionObserver.getObserver
@@ -2227,7 +2260,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val commitFileStatus =
         doCommit(logStore, hadoopConf, logPath, commitFile, commitVersion, actions)
       executionObserver.beginBackfill()
-      val ictEnabled = updatedActions.getNewMetadata.getConfiguration.getOrElse(
+      val ictEnabled = updatedActions.getNewMetadata.getConfiguration.asScala.getOrElse(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key, "false") == "true"
       val commitTimestamp = if (ictEnabled) {
         // CommitInfo.getCommitTimestamp will return the inCommitTimestamp.
@@ -2235,38 +2268,38 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       } else {
         commitFileStatus.getModificationTime
       }
-      CommitResponse(Commit(
+      new CommitResponse(new Commit(
         commitVersion,
-        fileStatus = commitFileStatus,
-        commitTimestamp = commitTimestamp
+        commitFileStatus,
+        commitTimestamp
       ))
     }
 
     protected def doCommit(
-        logStore: LogStore,
+        logStore: io.delta.storage.LogStore,
         hadoopConf: Configuration,
         logPath: Path,
         commitFile: Path,
         commitVersion: Long,
-        actions: Iterator[String]): FileStatus = {
-      logStore.write(commitFile, actions, overwrite = false, hadoopConf)
+        actions: java.util.Iterator[String]): FileStatus = {
+      logStore.write(commitFile, actions, false, hadoopConf)
       logPath.getFileSystem(hadoopConf).getFileStatus(commitFile)
     }
 
     override def getCommits(
         logPath: Path,
-        coordinatedCommitsTableConf: Map[String, String],
-        startVersion: Option[Long],
-        endVersion: Option[Long]): GetCommitsResponse =
-      GetCommitsResponse(Seq.empty, -1)
+        coordinatedCommitsTableConf: java.util.Map[String, String],
+        startVersion: java.lang.Long,
+        endVersion: java.lang.Long): GetCommitsResponse =
+      new GetCommitsResponse(Seq.empty.asJava, -1)
 
     override def backfillToVersion(
-        logStore: LogStore,
+        logStore: io.delta.storage.LogStore,
         hadoopConf: Configuration,
         logPath: Path,
-        coordinatedCommitsTableConf: Map[String, String],
+        coordinatedCommitsTableConf: java.util.Map[String, String],
         version: Long,
-        lastKnownBackfilledVersion: Option[Long] = None): Unit = {}
+        lastKnownBackfilledVersion: java.lang.Long): Unit = {}
 
     /**
      * [[FileSystemBasedCommitCoordinatorClient]] is supposed to be treated as a singleton object
@@ -2280,6 +2313,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         case _ => false
       }
     }
+
+    override def registerTable(
+        logPath: Path,
+        currentVersion: Long,
+        currentMetadata: AbstractMetadata,
+        currentProtocol: AbstractProtocol): java.util.Map[String, String] =
+      Map.empty[String, String].asJava
   }
 
   /**

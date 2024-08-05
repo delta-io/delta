@@ -16,15 +16,18 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFile}
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.actions.AbstractMetadata
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -43,7 +46,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       startVersion: Long,
       versionToLoad: Option[Long],
-      isAsyncRequest: Boolean): GetCommitsResponse = {
+      isAsyncRequest: Boolean): JGetCommitsResponse = {
     recordFrameProfile("DeltaLog", s"CommitCoordinatorClient.getCommits.async=$isAsyncRequest") {
       val startTimeMs = System.currentTimeMillis()
       def recordEvent(additionalData: Map[String, Any]): Unit = {
@@ -151,7 +154,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       actions: Iterator[String],
       uuid: String): FileStatus = {
     val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuid))
-    logStore.write(commitPath, actions, overwrite = false, hadoopConf)
+    logStore.write(commitPath, actions.asJava, false, hadoopConf)
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
 
@@ -203,7 +206,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       deltaConfig: DeltaConfig[T]): T = {
     val conf = abstractMetadata.getConfiguration
     for (key <- deltaConfig.key +: deltaConfig.alternateKeys) {
-      conf.get(key).map { value => return deltaConfig.fromString(value) }
+      Option(conf.get(key)).map { value => return deltaConfig.fromString(value) }
     }
     deltaConfig.fromString(deltaConfig.defaultValue)
   }

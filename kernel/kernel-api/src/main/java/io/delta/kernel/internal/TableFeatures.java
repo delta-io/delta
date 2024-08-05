@@ -40,6 +40,7 @@ public class TableFeatures {
             Collections.unmodifiableSet(new HashSet<String>() {{
                     add("appendOnly");
                     add("inCommitTimestamp-preview");
+                    add("columnMapping");
                 }});
 
     ////////////////////
@@ -83,7 +84,8 @@ public class TableFeatures {
      * <ul>
      *     <li>protocol writer version 1.</li>
      *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
-     *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview}
+     *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview},
+     *     {@code columnMapping}
      *     feature enabled.</li>
      * </ul>
      *
@@ -124,6 +126,8 @@ public class TableFeatures {
                         case "appendOnly":
                             break;
                         case "inCommitTimestamp-preview":
+                            break;
+                        case "columnMapping":
                             break;
                         default:
                             throw unsupportedWriterFeature(tablePath, writerFeature);
