@@ -1223,7 +1223,9 @@ object DeltaRelation extends DeltaLogging {
         newOutput.map { a =>
           val existingReference = v2Relation.output
             .find(e => e.name == a.name && e.dataType == a.dataType && e.nullable == a.nullable)
-          existingReference.getOrElse(a)
+          existingReference.map { e =>
+            e.copy(metadata = a.metadata)(exprId = e.exprId, qualifier = e.qualifier)
+          }.getOrElse(a)
         }
       } else {
         v2Relation.output
