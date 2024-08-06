@@ -30,6 +30,7 @@ import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
 import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
+import org.apache.spark.sql.delta.commands.DescribeDeltaHistory
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class DeltaConnectPlannerSuite
