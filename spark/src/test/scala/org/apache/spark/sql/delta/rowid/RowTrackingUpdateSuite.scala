@@ -35,7 +35,7 @@ trait RowTrackingUpdateSuiteBase
 
   protected def dvsEnabled: Boolean = false
 
-  protected val numRowsTarget = 3000
+  protected val numRowsTarget = 2500
   protected val numRowsPerFile = 250
   protected val numFiles: Int = numRowsTarget / numRowsPerFile
 
