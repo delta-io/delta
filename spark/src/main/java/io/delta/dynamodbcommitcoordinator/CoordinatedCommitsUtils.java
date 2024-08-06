@@ -16,8 +16,8 @@
 
 package io.delta.dynamodbcommitcoordinator;
 
-import org.apache.spark.sql.delta.coordinatedcommits.AbstractMetadata;
-import org.apache.spark.sql.delta.coordinatedcommits.UpdatedActions;
+import io.delta.storage.commit.actions.AbstractMetadata;
+import io.delta.storage.commit.UpdatedActions;
 import org.apache.hadoop.fs.Path;
 
 import java.util.UUID;
@@ -58,8 +58,7 @@ public class CoordinatedCommitsUtils {
     private static String getCoordinator(AbstractMetadata metadata) {
         return metadata
             .getConfiguration()
-            .get(COORDINATED_COMMITS_COORDINATOR_CONF_KEY)
-            .getOrElse(() -> "");
+            .getOrDefault(COORDINATED_COMMITS_COORDINATOR_CONF_KEY, "");
     }
 
     /**

@@ -23,11 +23,12 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException, CommitResponse, UpdatedActions}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -501,9 +502,9 @@ class OptimisticTransactionSuite
               logStore: LogStore,
               hadoopConf: Configuration,
               tablePath: Path,
-              tableConf: Map[String, String],
+              tableConf: java.util.Map[String, String],
               commitVersion: Long,
-              actions: Iterator[String],
+              actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             // Fail all commits except first one
             if (commitVersion == 0) {
@@ -511,11 +512,11 @@ class OptimisticTransactionSuite
                 logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
             }
             commitAttempts += 1
-            throw CommitFailedException(
-              retryable = true,
-              conflict = commitAttempts > initialNonConflictErrors &&
+            throw new CommitFailedException(
+              true,
+              commitAttempts > initialNonConflictErrors &&
                 commitAttempts <= (initialNonConflictErrors + initialConflictErrors),
-              message = "")
+              "")
           }
         }
       }
@@ -557,9 +558,9 @@ class OptimisticTransactionSuite
               logStore: LogStore,
               hadoopConf: Configuration,
               tablePath: Path,
-              tableConf: Map[String, String],
+              tableConf: java.util.Map[String, String],
               commitVersion: Long,
-              actions: Iterator[String],
+              actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             // Fail all commits except first one
             if (commitVersion == 0) {
@@ -868,14 +869,14 @@ class OptimisticTransactionSuite
               logStore: LogStore,
               hadoopConf: Configuration,
               tablePath: Path,
-              tableConf: Map[String, String],
+              tableConf: java.util.Map[String, String],
               commitVersion: Long,
-              actions: Iterator[String],
+              actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             if (updatedActions.getCommitInfo.asInstanceOf[CommitInfo].operation
                 == DeltaOperations.OP_RESTORE) {
               deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
-              throw CommitFailedException(retryable = true, conflict, message = "")
+              throw new CommitFailedException(true, conflict, "")
             }
             super.commit(
               logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)

@@ -192,6 +192,19 @@ object IdentityColumn extends DeltaLogging {
       )
     }
   }
+  /**
+   * Returns a copy of `schemaToCopy` in which the high water marks of the identity columns have
+   * been merged with the corresponding high water marks of `schemaWithHighWaterMarksToMerge`.
+   */
+  def copySchemaWithMergedHighWaterMarks(
+      schemaToCopy: StructType, schemaWithHighWaterMarksToMerge: StructType): StructType = {
+    val newHighWatermarks = getIdentityColumns(schemaWithHighWaterMarksToMerge).flatMap { f =>
+      val info = getIdentityInfo(f)
+      info.highWaterMark.map(waterMark => DeltaColumnMapping.getPhysicalName(f) -> waterMark)
+    }
+    updateSchema(schemaToCopy, newHighWatermarks)
+  }
+
   // Return IDENTITY information of column `field`. Caller must ensure `isIdentityColumn(field)`
   // is true.
   def getIdentityInfo(field: StructField): IdentityInfo = {

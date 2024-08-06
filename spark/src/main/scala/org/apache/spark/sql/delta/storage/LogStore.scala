@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.storage
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import io.delta.storage.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -383,6 +384,50 @@ trait LogStoreProvider {
     val logStoreClassName = getLogStoreConfValue(logStoreClassConfKey, sparkConf)
       .getOrElse(defaultLogStoreClass)
     LogStore.createLogStoreWithClassName(logStoreClassName, sparkConf, hadoopConf)
+  }
+}
+
+class LogStoreInverseAdaptor(val logStoreImpl: LogStore, override val initHadoopConf: Configuration)
+    extends io.delta.storage.LogStore(initHadoopConf) {
+
+  override def read(
+      path: Path,
+      hadoopConf: Configuration): CloseableIterator[String] = {
+    val iter = logStoreImpl.readAsIterator(path, hadoopConf)
+    new CloseableIterator[String] {
+      override def close(): Unit = iter.close
+      override def hasNext: Boolean = iter.hasNext
+      override def next(): String = iter.next()
+    }
+  }
+
+  override def write(
+      path: Path,
+      actions: java.util.Iterator[String],
+      overwrite: java.lang.Boolean,
+      hadoopConf: Configuration): Unit = {
+    logStoreImpl.write(path, actions.asScala, overwrite, hadoopConf)
+  }
+
+  override def listFrom(
+      path: Path,
+      hadoopConf: Configuration): java.util.Iterator[FileStatus] =
+    logStoreImpl.listFrom(path, hadoopConf).asJava
+
+  override def resolvePathOnPhysicalStorage(
+      path: Path,
+      hadoopConf: Configuration): Path =
+    logStoreImpl.resolvePathOnPhysicalStorage(path, hadoopConf)
+
+  override def isPartialWriteVisible(
+      path: Path,
+      hadoopConf: Configuration): java.lang.Boolean =
+    logStoreImpl.isPartialWriteVisible(path, hadoopConf)
+}
+
+object LogStoreInverseAdaptor {
+  def apply(logStoreImpl: LogStore, initHadoopConf: Configuration): LogStoreInverseAdaptor = {
+    new LogStoreInverseAdaptor(logStoreImpl, initHadoopConf)
   }
 }
 

@@ -23,6 +23,7 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -3284,7 +3285,10 @@ abstract class MergeIntoSuiteBase
   }
 
   protected lazy val expectedOpTypes: Set[String] = Set(
-    "delta.dml.merge.findTouchedFiles", "delta.dml.merge.writeAllChanges", "delta.dml.merge")
+    "delta.dml.merge.materializeSource",
+    "delta.dml.merge.findTouchedFiles",
+    "delta.dml.merge.writeAllChanges",
+    "delta.dml.merge")
 
   test("insert only merge - recorded operation") {
     var events: Seq[UsageRecord] = Seq.empty
@@ -3317,7 +3321,9 @@ abstract class MergeIntoSuiteBase
     }.map(_.opType.get.typeName).toSet
 
     assert(opTypes == Set(
-      "delta.dml.merge", "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
+      "delta.dml.merge",
+      "delta.dml.merge.materializeSource",
+      "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
   }
 
   test("recorded operations - write inserts only") {
@@ -3353,9 +3359,29 @@ abstract class MergeIntoSuiteBase
   }
 
   protected lazy val expectedOpTypesInsertOnly: Set[String] = Set(
+    "delta.dml.merge.materializeSource",
     "delta.dml.merge.findTouchedFiles",
     "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
     "delta.dml.merge")
+
+  test("merge execution is recorded with QueryExecutionListener") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: Nil,
+      target = (1, 1) :: (2, 2) :: Nil) { case (sourceName, targetName) =>
+      val plans = withLogicalPlansCaptured(spark, optimizedPlan = false) {
+        executeMerge(
+          tgt = s"$targetName t",
+          src = s"$sourceName s",
+          cond = "s.key = t.key",
+          update(set = "*"))
+      }
+      val mergeCommands = plans.collect {
+        case m: MergeIntoCommand => m
+      }
+      assert(mergeCommands.size === 1,
+        "Merge command wasn't properly recorded by QueryExecutionListener")
+    }
+  }
 }
 
 

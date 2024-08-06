@@ -57,6 +57,7 @@ trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils 
   }
 
   protected override lazy val expectedOpTypes: Set[String] = Set(
+    "delta.dml.merge.materializeSource",
     "delta.dml.merge.findTouchedFiles",
     "delta.dml.merge.writeModifiedRowsOnly",
     "delta.dml.merge.writeDeletionVectors",

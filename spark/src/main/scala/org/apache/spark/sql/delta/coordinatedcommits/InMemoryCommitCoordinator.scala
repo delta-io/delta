@@ -19,11 +19,19 @@ package org.apache.spark.sql.delta.coordinatedcommits
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.storage.LogStore
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{
+  Commit => JCommit,
+  CommitCoordinatorClient,
+  CommitFailedException => JCommitFailedException,
+  CommitResponse,
+  GetCommitsResponse => JGetCommitsResponse
+}
+import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -63,7 +71,7 @@ class InMemoryCommitCoordinator(val batchSize: Long)
     def lastRatifiedCommitVersion: Long = if (!active) -1 else maxCommitVersion
 
     // Map from version to Commit data
-    val commitsMap: mutable.SortedMap[Long, Commit] = mutable.SortedMap.empty
+    val commitsMap: mutable.SortedMap[Long, JCommit] = mutable.SortedMap.empty
     // We maintain maxCommitVersion explicitly since commitsMap might be empty
     // if all commits for a table have been backfilled.
     val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock()
@@ -125,36 +133,39 @@ class InMemoryCommitCoordinator(val batchSize: Long)
       val tableData = perTableMap.get(logPath)
       val expectedVersion = tableData.maxCommitVersion + 1
       if (commitVersion != expectedVersion) {
-        throw CommitFailedException(
-          retryable = commitVersion < expectedVersion,
-          conflict = commitVersion < expectedVersion,
+        throw new JCommitFailedException(
+          commitVersion < expectedVersion,
+          commitVersion < expectedVersion,
           s"Commit version $commitVersion is not valid. Expected version: $expectedVersion.")
       }
 
-      val commit = Commit(commitVersion, commitFile, commitTimestamp)
+      val commit = new JCommit(commitVersion, commitFile, commitTimestamp)
       tableData.commitsMap(commitVersion) = commit
       tableData.updateLastRatifiedCommit(commitVersion)
 
       logInfo(log"Added commit file ${MDC(DeltaLogKeys.PATH, commitFile.getPath)} " +
         log"to commit-coordinator.")
-      CommitResponse(commit)
+      new CommitResponse(commit)
     }
   }
 
   override def getCommits(
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
-      startVersion: Option[Long],
-      endVersion: Option[Long]): GetCommitsResponse = {
-    withReadLock[GetCommitsResponse](logPath) {
+      coordinatedCommitsTableConf: java.util.Map[String, String],
+      startVersion: java.lang.Long,
+      endVersion: java.lang.Long): JGetCommitsResponse = {
+    withReadLock[JGetCommitsResponse](logPath) {
+      val startVersionOpt: Option[Long] = Option(startVersion).map(_.toLong)
+      val endVersionOpt: Option[Long] = Option(endVersion).map(_.toLong)
       val tableData = perTableMap.get(logPath)
-      val effectiveStartVersion = startVersion.getOrElse(0L)
+      val effectiveStartVersion = startVersionOpt.getOrElse(0L)
       // Calculate the end version for the range, or use the last key if endVersion is not provided
-      val effectiveEndVersion = endVersion.getOrElse(
+      val effectiveEndVersion = endVersionOpt.getOrElse(
         tableData.commitsMap.lastOption.map(_._1).getOrElse(effectiveStartVersion))
       val commitsInRange = tableData.commitsMap.range(
         effectiveStartVersion, effectiveEndVersion + 1)
-      GetCommitsResponse(commitsInRange.values.toSeq, tableData.lastRatifiedCommitVersion)
+      new JGetCommitsResponse(
+        commitsInRange.values.toSeq.asJava, tableData.lastRatifiedCommitVersion)
     }
   }
 
@@ -178,7 +189,7 @@ class InMemoryCommitCoordinator(val batchSize: Long)
       logPath: Path,
       currentVersion: Long,
       currentMetadata: AbstractMetadata,
-      currentProtocol: AbstractProtocol): Map[String, String] = {
+      currentProtocol: AbstractProtocol): java.util.Map[String, String] = {
     val newPerTableData = new PerTableData(currentVersion + 1)
     perTableMap.compute(logPath, (_, existingData) => {
       if (existingData != null) {
@@ -196,7 +207,7 @@ class InMemoryCommitCoordinator(val batchSize: Long)
       }
       newPerTableData
     })
-    Map.empty
+    Map.empty[String, String].asJava
   }
 
   def dropTable(logPath: Path): Unit = {

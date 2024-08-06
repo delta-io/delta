@@ -21,8 +21,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -154,12 +156,18 @@ trait CoordinatedCommitsTestUtils
       oldMetadata.configuration +
         (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> defaultCommitsCoordinatorName)
     val newMetadata = oldMetadata.copy(configuration = newMetadataConfiguration)
-    UpdatedActions(commitInfo, newMetadata, Protocol(), oldMetadata, Protocol())
+    new UpdatedActions(commitInfo, newMetadata, Protocol(), oldMetadata, Protocol())
   }
 
   def getUpdatedActionsForNonZerothCommit(commitInfo: CommitInfo): UpdatedActions = {
     val updatedActions = getUpdatedActionsForZerothCommit(commitInfo)
-    updatedActions.copy(oldMetadata = updatedActions.getNewMetadata)
+    new UpdatedActions(
+      updatedActions.getCommitInfo,
+      updatedActions.getNewMetadata,
+      updatedActions.getNewProtocol,
+      updatedActions.getNewMetadata,
+      updatedActions.getOldProtocol
+    )
   }
 }
 
@@ -237,9 +245,9 @@ class TrackingCommitCoordinatorClient(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
+      coordinatedCommitsTableConf: java.util.Map[String, String],
       commitVersion: Long,
-      actions: Iterator[String],
+      actions: java.util.Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
     delegatingCommitCoordinatorClient.commit(
       logStore,
@@ -253,9 +261,9 @@ class TrackingCommitCoordinatorClient(
 
   override def getCommits(
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
-      startVersion: Option[Long],
-      endVersion: Option[Long] = None): GetCommitsResponse = recordOperation("getCommits") {
+      coordinatedCommitsTableConf: java.util.Map[String, String],
+      startVersion: java.lang.Long,
+      endVersion: java.lang.Long): JGetCommitsResponse = recordOperation("getCommits") {
     delegatingCommitCoordinatorClient.getCommits(
       logPath, coordinatedCommitsTableConf, startVersion, endVersion)
   }
@@ -264,9 +272,9 @@ class TrackingCommitCoordinatorClient(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
+      coordinatedCommitsTableConf: java.util.Map[String, String],
       version: Long,
-      lastKnownBackfilledVersion: Option[Long]): Unit = recordOperation("backfillToVersion") {
+      lastKnownBackfilledVersion: java.lang.Long): Unit = recordOperation("backfillToVersion") {
     delegatingCommitCoordinatorClient.backfillToVersion(
       logStore,
       hadoopConf,
@@ -296,10 +304,11 @@ class TrackingCommitCoordinatorClient(
       logPath: Path,
       currentVersion: Long,
       currentMetadata: AbstractMetadata,
-      currentProtocol: AbstractProtocol): Map[String, String] = recordOperation("registerTable") {
-    delegatingCommitCoordinatorClient.registerTable(
-      logPath, currentVersion, currentMetadata, currentProtocol)
-  }
+      currentProtocol: AbstractProtocol): java.util.Map[String, String] =
+    recordOperation("registerTable") {
+      delegatingCommitCoordinatorClient.registerTable(
+        logPath, currentVersion, currentMetadata, currentProtocol)
+    }
 }
 
 /**
