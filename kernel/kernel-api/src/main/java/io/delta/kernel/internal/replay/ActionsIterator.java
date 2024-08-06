@@ -24,7 +24,6 @@ import java.util.stream.Collectors;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Or;
 import io.delta.kernel.expressions.Predicate;
