@@ -45,6 +45,12 @@ object IdentityColumn extends DeltaLogging {
   // When table with IDENTITY columns are written into.
   val opTypeWrite = "delta.identityColumn.write"
 
+  // Return true if `field` is an identity column that allows explicit insert. Caller must ensure
+  // `isIdentityColumn(field)` is true.
+  def allowExplicitInsert(field: StructField): Boolean = {
+    field.metadata.getBoolean(IDENTITY_INFO_ALLOW_EXPLICIT_INSERT)
+  }
+
   // Return all the IDENTITY columns from `schema`.
   def getIdentityColumns(schema: StructType): Seq[StructField] = {
     schema.filter(ColumnWithDefaultExprUtils.isIdentityColumn)
@@ -192,6 +198,47 @@ object IdentityColumn extends DeltaLogging {
       )
     }
   }
+
+  // Calculate the sync'ed IDENTITY high water mark based on actual data and returns a
+  // potentially updated `StructField`.
+  def syncIdentity(field: StructField, df: DataFrame): StructField = {
+    // Round `value` to the next value that follows start and step configuration.
+    def roundToNext(start: Long, step: Long, value: Long): Long = {
+      if (Math.subtractExact(value, start) % step == 0) {
+        value
+      } else {
+        // start + step * ((value - start) / step + 1)
+        Math.addExact(
+          Math.multiplyExact(Math.addExact(Math.subtractExact(value, start) / step, 1), step),
+          start)
+      }
+    }
+
+    assert(ColumnWithDefaultExprUtils.isIdentityColumn(field))
+    // Run a query to get the actual high water mark (max or min value of the IDENTITY column) from
+    // the actual data.
+    val info = getIdentityInfo(field)
+    val positiveStep = info.step > 0
+    val expr = if (positiveStep) max(field.name) else min(field.name)
+    val resultRow = df.select(expr).collect().head
+
+    if (!resultRow.isNullAt(0)) {
+      val result = resultRow.getLong(0)
+      val isBeforeStart = if (positiveStep) result < info.start else result > info.start
+      val newHighWaterMark = roundToNext(info.start, info.step, result)
+      if (isBeforeStart || info.highWaterMark.contains(newHighWaterMark)) {
+        field
+      } else {
+        val newMetadata = new MetadataBuilder().withMetadata(field.metadata)
+          .putLong(IDENTITY_INFO_HIGHWATERMARK, newHighWaterMark)
+          .build()
+        field.copy(metadata = newMetadata)
+      }
+    } else {
+      field
+    }
+  }
+
   /**
    * Returns a copy of `schemaToCopy` in which the high water marks of the identity columns have
    * been merged with the corresponding high water marks of `schemaWithHighWaterMarksToMerge`.

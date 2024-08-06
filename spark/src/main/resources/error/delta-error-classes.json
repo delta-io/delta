@@ -1163,6 +1163,18 @@
     },
     "sqlState" : "KD00E"
   },
+  "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY is only supported by Delta."
+    ],
+    "sqlState" : "0AKDD"
+  },
+  "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY cannot be called on non IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
   "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP" : {
     "message" : [
       "IDENTITY column step cannot be 0."

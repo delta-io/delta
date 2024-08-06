@@ -2453,6 +2453,18 @@ trait DeltaErrorsBase
     )
   }
 
+  def identityColumnAlterNonIdentityColumnError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnAlterNonDeltaFormatError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT",
+      messageParameters = Array.empty)
+  }
+
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,
