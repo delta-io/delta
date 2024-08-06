@@ -24,6 +24,9 @@ import java.util.stream.Collectors;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.And;
+import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.Or;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -186,17 +189,28 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
         long checkpointVersion = checkpointVersion(file.getPath());
 
+        // If the read schema contains Add/Remove files, we should always read the sidecar file
+        // actions from the checkpoint manifest regardless of the checkpoint predicate.
+        Optional<Predicate> checkpointPredicateIncludingSidecars;
+        if (schemaContainsAddOrRemoveFiles) {
+            Predicate containsSidecarPredicate =
+                    new Predicate("IS_NOT_NULL", new Column(LogReplay.SIDECAR_FIELD_NAME));
+            checkpointPredicateIncludingSidecars =
+                    checkpointPredicate.map(p -> new Or(p, containsSidecarPredicate));
+        } else {
+            checkpointPredicateIncludingSidecars = checkpointPredicate;
+        }
         final CloseableIterator<ColumnarBatch> topLevelIter;
         if (fileName.endsWith(".parquet")) {
             topLevelIter = engine.getParquetHandler().readParquetFiles(
                     singletonCloseableIterator(file),
                     modifiedReadSchema,
-                    checkpointPredicate);
+                    checkpointPredicateIncludingSidecars);
         } else if (fileName.endsWith(".json")) {
             topLevelIter = engine.getJsonHandler().readJsonFiles(
                     singletonCloseableIterator(file),
                     modifiedReadSchema,
-                    checkpointPredicate);
+                    checkpointPredicateIncludingSidecars);
         } else {
             throw new IOException("Unrecognized top level v2 checkpoint file format: " + fileName);
         }
@@ -237,7 +251,6 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
         // Sidecars will exist in schema. Extract sidecar files, then remove sidecar files from
         // batch output.
-        List<DeltaLogFile> outputFiles = new ArrayList<>();
         int sidecarIndex =
                 columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
         ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
