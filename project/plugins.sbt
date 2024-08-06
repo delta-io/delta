@@ -53,3 +53,5 @@ addSbtPlugin("software.purpledragon" % "sbt-checkstyle-plugin" % "4.0.1")
 dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "9.3"
 
 addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.7")
+
+addSbtPlugin("com.lightbend.sbt" % "sbt-java-formatter" % "0.8.0")
