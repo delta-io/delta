@@ -23,6 +23,7 @@ import os
 from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
+from pyspark.errors.exceptions.captured import UnsupportedOperationException
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
@@ -1022,6 +1023,14 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.addColumn("a", "int", generatedAlwaysAs=1)  # type: ignore[arg-type]
 
+        # bad generatedAlwaysAs - column data type must be Long
+        with self.assertRaises(UnsupportedOperationException):
+            builder.addColumn(
+                "a",
+                "int",
+                generatedAlwaysAs=IdentityGenerator()
+            )  # type: ignore[arg-type]
+
         # bad generatedAlwaysAs - step can't be 0
         with self.assertRaises(ValueError):
             builder.addColumn(
@@ -1045,6 +1054,14 @@ class DeltaTableTestsMixin:
                 "a",
                 "bigint",
                 generatedByDefaultAs=""
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - column data type must be Long
+        with self.assertRaises(UnsupportedOperationException):
+            builder.addColumn(
+                "a",
+                "int",
+                generatedByDefaultAs=IdentityGenerator()
             )  # type: ignore[arg-type]
 
         # bad generatedByDefaultAs - step can't be 0
