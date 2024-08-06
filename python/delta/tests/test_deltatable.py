@@ -1023,7 +1023,7 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.addColumn("a", "int", generatedAlwaysAs=1)  # type: ignore[arg-type]
 
-        # bad generatedAlwaysAs - column data type must be Long
+        # bad generatedAlwaysAs - identity column data type must be Long
         with self.assertRaises(UnsupportedOperationException):
             builder.addColumn(
                 "a",
@@ -1056,7 +1056,7 @@ class DeltaTableTestsMixin:
                 generatedByDefaultAs=""
             )  # type: ignore[arg-type]
 
-        # bad generatedByDefaultAs - column data type must be Long
+        # bad generatedByDefaultAs - identity column data type must be Long
         with self.assertRaises(UnsupportedOperationException):
             builder.addColumn(
                 "a",
