@@ -1471,7 +1471,7 @@ the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
 We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
 time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
-3. Delete all [delta log entries](#delta-log-entries and [checkpoint files](#checkpoints) before the
+3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the
 `cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
 startVersion <= `cutOffCheckpoint`'s version.
 4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
