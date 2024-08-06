@@ -886,6 +886,82 @@ trait DeltaSQLConfBase {
         .checkValue(_ > 0, "partSize has to be positive")
         .createOptional
 
+  /////////////////////////////////
+  // File Materialization Tracker
+  /////////////////////////////////
+
+  val DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED =
+    buildConf("command.fileMaterializationLimit.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, tracks the file metadata materialized on the driver and restricts the
+          |number of files materialized on the driver to be within the global file
+          |materialization limit.
+       """.stripMargin
+      )
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_COMMAND_FILE_MATERIALIZATION_LIMIT =
+    buildStaticConf("command.fileMaterializationLimit.softMax")
+      .internal()
+      .doc(
+        s"""
+           |The soft limit for the total number of file metadata that can be materialized at once on
+           |the driver. This config will take effect only when
+           |${DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED.key} is enabled.
+        """.stripMargin
+      )
+      .intConf
+      .checkValue(_ >= 0, "'command.fileMaterializationLimit.softMax' must be positive")
+      .createWithDefault(10000000)
+
+  ////////////////////////
+  // BACKFILL
+  ////////////////////////
+
+  val DELTA_ROW_TRACKING_BACKFILL_ENABLED =
+    buildConf("rowTracking.backfill.enabled")
+      .internal()
+      .doc("Whether Row Tracking backfill can be performed.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
+    buildConf("rowTracking.backfill.maxNumBatchesInParallel")
+      .internal()
+      .doc("The maximum number of backfill batches (commits) that can run at the same time " +
+        "from a single RowTrackingBackfillCommand.")
+      .intConf
+      .checkValue(_ > 0, "'backfill.maxNumBatchesInParallel' must be positive.")
+      .createWithDefault(1)
+
+  val DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
+    buildConf("backfill.maxNumBatchesInParallel")
+      .internal()
+      .doc("The maximum number of backfill batches (commits) that can run at the same time " +
+        "from a single BackfillCommand.")
+      .fallbackConf(DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL)
+
+  val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT =
+    buildConf("rowTracking.backfill.maxNumFiles")
+      .internal()
+      .doc("The maximum number of files to include in a single commit when running " +
+        "RowTrackingBackfillCommand. The default maximum aims to keep every " +
+        "delta log entry below 100mb.")
+      .intConf
+      .checkValue(_ > 0, "'backfill.maxNumFiles' must be positive.")
+      .createWithDefault(22000)
+
+  val DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT =
+    buildConf("backfill.maxNumFiles")
+      .internal()
+      .doc("The maximum number of files to include in a single commit when running " +
+        "BackfillCommand. The default maximum aims to keep every " +
+        "delta log entry below 100mb.")
+      .fallbackConf(DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT)
+
   ////////////////////////////////////
   // Checkpoint V2 Specific Configs
   ////////////////////////////////////

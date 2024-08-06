@@ -27,11 +27,12 @@ import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTr
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
-import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TrackingCommitCoordinatorClient, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.FileNames.{checksumFile, unsafeDeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.storage.commit.CommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 import org.scalatest.Tag

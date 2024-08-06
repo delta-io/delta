@@ -176,6 +176,22 @@ public class TableConfig<T> {
             );
 
     /**
+     * Table property that enables modifying the table in accordance with the
+     * Delta-Iceberg Compatibility V2 protocol.
+     *
+     * @see <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-iceberg-compatibility-v2">
+     * Delta-Iceberg Compatibility V2 Protocol</a>
+     */
+    public static final TableConfig<Boolean> ICEBERG_COMPAT_V2_ENABLED =
+            new TableConfig<>(
+                    "delta.enableIcebergCompatV2",
+                    "false",
+                    (engineOpt, v) -> Boolean.valueOf(v),
+                    value -> true,
+                    "needs to be a boolean."
+            );
+
+    /**
      * All the valid properties that can be set on the table.
      */
     private static final Map<String, TableConfig<?>> VALID_PROPERTIES = Collections.unmodifiableMap(
@@ -189,6 +205,7 @@ public class TableConfig<T> {
                 addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
                 addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
                 addConfig(this, COLUMN_MAPPING_MODE);
+                addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
             }}
     );
 

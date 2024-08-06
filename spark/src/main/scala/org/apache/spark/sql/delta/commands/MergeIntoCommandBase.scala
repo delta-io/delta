@@ -213,6 +213,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       createMetric(sc, "number of target partitions to which files were added"),
     "executionTimeMs" ->
       createTimingMetric(sc, "time taken to execute the entire operation"),
+    "materializeSourceTimeMs" ->
+      createTimingMetric(sc, "time taken to materialize source (or determine it's not needed)"),
     "scanTimeMs" ->
       createTimingMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" ->
@@ -229,8 +231,9 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
    */
   protected def collectMergeStats(
       deltaTxn: OptimisticTransaction,
-      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
-    : MergeStats = {
+      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason,
+      commitVersion: Option[Long],
+      numRecordsStats: NumRecordsStats): MergeStats = {
     val stats = MergeStats.fromMergeSQLMetrics(
       metrics,
       condition,
@@ -238,7 +241,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       notMatchedClauses,
       notMatchedBySourceClauses,
       isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty,
-      performedSecondSourceScan = performedSecondSourceScan)
+      performedSecondSourceScan = performedSecondSourceScan,
+      commitVersion = commitVersion,
+      numRecordsStats = numRecordsStats
+    )
     stats.copy(
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))
@@ -401,8 +407,13 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
         newDesc.foreach { d => sc.setJobDescription(d) }
         val r = thunk
         val timeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
-        if (sqlMetricName != null && timeTakenMs > 0) {
-          metrics(sqlMetricName) += timeTakenMs
+        if (sqlMetricName != null) {
+          if (timeTakenMs > 0) {
+            metrics(sqlMetricName) += timeTakenMs
+          } else if (metrics(sqlMetricName).isZero) {
+            // Make it always at least 1ms if it ran, to distinguish whether it ran or not.
+            metrics(sqlMetricName) += 1
+          }
         }
         r
       } finally {
@@ -443,6 +454,21 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
         throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
       }
     }
+  }
+
+  override protected def prepareMergeSource(
+      spark: SparkSession,
+      source: LogicalPlan,
+      condition: Expression,
+      matchedClauses: Seq[DeltaMergeIntoMatchedClause],
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
+      isInsertOnly: Boolean
+    ): Unit = recordMergeOperation(
+      extraOpType = "materializeSource",
+      status = "MERGE operation - materialize source",
+      sqlMetricName = "materializeSourceTimeMs") {
+    super.prepareMergeSource(
+      spark, source, condition, matchedClauses, notMatchedClauses, isInsertOnly)
   }
 }
 

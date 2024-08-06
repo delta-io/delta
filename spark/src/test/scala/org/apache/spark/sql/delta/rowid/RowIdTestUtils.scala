@@ -20,10 +20,14 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo}
+import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.commands.backfill.{BackfillBatchStats, BackfillCommandStats}
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.BlockMetaData
 
@@ -232,5 +236,82 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
 
   def checkRowTrackingMarkedAsPreservedForCommit(log: DeltaLog)(operation: => Unit): Unit = {
     assert(rowTrackingMarkedAsPreservedForCommit(log)(operation))
+  }
+
+  /**
+   * Capture backfill related metrics for basic validation.
+   */
+  def validateSuccessfulBackfillMetrics(
+      expectedNumSuccessfulBatches: Int,
+      nameOfTriggeringOperation: String = DeltaOperations.OP_SET_TBLPROPERTIES)
+      (testBlock: => Unit): Unit = {
+    val backfillUsageRecords = Log4jUsageLogger.track {
+      testBlock
+    }.filter(_.metric == "tahoeEvent")
+
+    val backfillRecords = backfillUsageRecords
+      .filter(_.tags.get("opType").contains(DeltaUsageLogsOpTypes.BACKFILL_COMMAND))
+    assert(backfillRecords.size === 1, "Row Tracking Backfill should have " +
+      "only been executed once.")
+
+    val backfillStats = JsonUtils.fromJson[BackfillCommandStats](backfillRecords.head.blob)
+    assert(backfillStats.wasSuccessful)
+    assert(backfillStats.numFailedBatches === 0)
+    assert(backfillStats.totalExecutionTimeMs > 0)
+    val expectedMaxNumBatchesInParallel =
+      spark.conf.get(DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL)
+    assert(backfillStats.maxNumBatchesInParallel === expectedMaxNumBatchesInParallel)
+    assert(backfillStats.numSuccessfulBatches === expectedNumSuccessfulBatches)
+    assert(backfillStats.nameOfTriggeringOperation === nameOfTriggeringOperation)
+
+    val parentTxnId = backfillStats.transactionId
+
+    val backfillBatchRecords = backfillUsageRecords
+      .filter(_.tags.get("opType").contains(DeltaUsageLogsOpTypes.BACKFILL_BATCH))
+    val backfillBatchStats = backfillBatchRecords.map { backfillBatchRecord =>
+      JsonUtils.fromJson[BackfillBatchStats](backfillBatchRecord.blob)
+    }
+    // Sanity check that the individual child commits were successful.
+    backfillBatchStats.foreach { backfillBatchStat =>
+      assert(backfillBatchStat.wasSuccessful)
+      assert(backfillBatchStat.totalExecutionTimeInMs > 0)
+      assert(backfillBatchStat.initialNumFiles > 0)
+      assert(backfillBatchStat.parentTransactionId === parentTxnId)
+    }
+  }
+
+  /**
+   * This triggers backfill on the test table in this suite by calling the user-facing syntax
+   * `ALTER TABLE t SET TBLPROPERTIES()`. We check for proper protocol upgrade (if any) and
+   * that the table has valid row IDs afterwards.
+   */
+  def triggerBackfillOnTestTableUsingAlterTable(
+      targetTableName: String,
+      numRowsInTable: Int,
+      log: DeltaLog): Unit = {
+    val prevMinReaderVersion = log.update().protocol.minReaderVersion
+    val prevMinWriterVersion = log.update().protocol.minWriterVersion
+
+    val rowIdPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
+
+    spark.sql(s"ALTER TABLE $targetTableName SET TBLPROPERTIES ('$rowIdPropertyKey'=true)")
+
+    // Check the protocol upgrade is as expected. We should only bump the minWriterVersion if
+    // necessary and add the table feature support for row IDs.
+    val snapshot = log.update()
+    val newProtocol = snapshot.protocol
+    assert(newProtocol.isFeatureSupported(RowTrackingFeature))
+    assert(newProtocol.minReaderVersion === prevMinReaderVersion,
+      "The reader version does not need to be upgraded")
+    val expectedMinWriterVersion = Math.max(
+      prevMinWriterVersion, TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+    assert(newProtocol.minWriterVersion === expectedMinWriterVersion)
+
+    // Tables should have the table property enabled at the end of ALTER TABLE command.
+    assert(RowId.isEnabled(newProtocol, snapshot.metadata))
+    val highWaterMarkBefore = -1L
+    assertRowIdsAreValid(log)
+    assertRowIdsAreLargerThanValue(log, highWaterMarkBefore)
+    assertHighWatermarkIsCorrectAfterUpdate(log, highWaterMarkBefore, numRowsInTable)
   }
 }
