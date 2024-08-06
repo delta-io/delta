@@ -50,24 +50,42 @@ class DeltaRelation(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
     SCAN_FIELD_NUMBER: builtins.int
+    DESCRIBE_HISTORY_FIELD_NUMBER: builtins.int
     @property
     def scan(self) -> global___Scan: ...
+    @property
+    def describe_history(self) -> global___DescribeHistory: ...
     def __init__(
         self,
         *,
         scan: global___Scan | None = ...,
+        describe_history: global___DescribeHistory | None = ...,
     ) -> None: ...
     def HasField(
         self,
-        field_name: typing_extensions.Literal["relation_type", b"relation_type", "scan", b"scan"],
+        field_name: typing_extensions.Literal[
+            "describe_history",
+            b"describe_history",
+            "relation_type",
+            b"relation_type",
+            "scan",
+            b"scan",
+        ],
     ) -> builtins.bool: ...
     def ClearField(
         self,
-        field_name: typing_extensions.Literal["relation_type", b"relation_type", "scan", b"scan"],
+        field_name: typing_extensions.Literal[
+            "describe_history",
+            b"describe_history",
+            "relation_type",
+            b"relation_type",
+            "scan",
+            b"scan",
+        ],
     ) -> None: ...
     def WhichOneof(
         self, oneof_group: typing_extensions.Literal["relation_type", b"relation_type"]
-    ) -> typing_extensions.Literal["scan"] | None: ...
+    ) -> typing_extensions.Literal["scan", "describe_history"] | None: ...
 
 global___DeltaRelation = DeltaRelation
 
@@ -91,3 +109,26 @@ class Scan(google.protobuf.message.Message):
     def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
 
 global___Scan = Scan
+
+class DescribeHistory(google.protobuf.message.Message):
+    """Relation containing information of the latest commits on a Delta table.
+    The information is in reverse chronological order.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to read the history of."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["table", b"table"]
+    ) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
+
+global___DescribeHistory = DescribeHistory

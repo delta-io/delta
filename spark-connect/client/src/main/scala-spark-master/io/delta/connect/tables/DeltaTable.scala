@@ -216,4 +216,38 @@ object DeltaTable {
     val df = sparkSession.newDataFrame(_.mergeFrom(sparkRelation))
     new DeltaTable(df, table)
   }
+
+  private def executeHistory(limit: Option[Int]): DataFrame = {
+    val describeHistory = proto.DescribeHistory
+      .newBuilder()
+      .setTable(table)
+    val relation = proto.DeltaRelation.newBuilder().setDescribeHistory(describeHistory).build()
+    val extension = com.google.protobuf.Any.pack(relation)
+    val df = sparkSession.newDataFrame(_.setExtension(extension))
+    limit match {
+      case Some(limit) => df.limit(limit)
+      case None => df
+    }
+  }
+
+  /**
+   * Get the information of the latest `limit` commits on this table as a Spark DataFrame.
+   * The information is in reverse chronological order.
+   *
+   * @param limit The number of previous commands to get history for
+   * @since 4.0.0
+   */
+  def history(limit: Int): DataFrame = {
+    executeHistory(Some(limit))
+  }
+
+  /**
+   * Get the information available commits on this table as a Spark DataFrame.
+   * The information is in reverse chronological order.
+   *
+   * @since 4.0.0
+   */
+  def history(): DataFrame = {
+    executeHistory(limit = None)
+  }
 }

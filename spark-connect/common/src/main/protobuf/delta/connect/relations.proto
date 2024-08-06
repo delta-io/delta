@@ -27,11 +27,19 @@ option java_package = "io.delta.connect.proto";
 message DeltaRelation {
   oneof relation_type {
     Scan scan = 1;
+    DescribeHistory describe_history = 2;
   }
 }
 
 // Relation that reads from a Delta table.
 message Scan {
   // (Required) The Delta table to scan.
+  DeltaTable table = 1;
+}
+
+// Relation containing information of the latest commits on a Delta table.
+// The information is in reverse chronological order.
+message DescribeHistory {
+  // (Required) The Delta table to read the history of.
   DeltaTable table = 1;
 }

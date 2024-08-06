@@ -50,4 +50,20 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
       )
     }
   }
+
+  test("history") {
+    val session = spark
+    import session.implicits._
+
+    withTempDir { dir =>
+      Seq(1, 2, 3).toDF().write.format("delta").save(dir.getAbsolutePath)
+      Seq(4, 5).toDF().write.format("delta").mode("append").save(dir.getAbsolutePath)
+
+      val table = DeltaTable.forPath(spark, dir.getAbsolutePath)
+      checkAnswer(
+        table.history().select("version"),
+        Seq(Row(0L), Row(1L))
+      )
+    }
+  }
 }

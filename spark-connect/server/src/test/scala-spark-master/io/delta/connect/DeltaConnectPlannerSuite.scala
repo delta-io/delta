@@ -102,4 +102,25 @@ class DeltaConnectPlannerSuite
       comparePlans(result, expected)
     }
   }
+
+  test("history") {
+    withTable("table") {
+      DeltaTable.create(spark).tableName(identifier = "table").execute()
+
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setDescribeHistory(
+            proto.DescribeHistory.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName("table"))
+          )
+      )
+
+      val result = new SparkConnectPlanner(createDummySessionHolder(spark)).transformRelation(input)
+      result match {
+        case DescribeDeltaHistory(_: ResolvedTable, None, _, _, _) =>
+        case other => fail(s"Unexpected plan: $other")
+      }
+    }
+  }
 }
