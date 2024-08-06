@@ -198,8 +198,8 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
         // version 4: Update
         val backfillCommitVersion = 2L
         withRowTrackingEnabled(enabled = false) {
-          logConsole(s"Table content: ${spark.table(targetTableName)}")
           withTable(targetTableName) {
+            logConsole(s"Table content: ${spark.table(targetTableName)}")
             writeTestTable(
               targetTableName, isPartitioned, lastModifiedVersion = backfillCommitVersion)
 
