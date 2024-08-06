@@ -120,7 +120,7 @@ class DeltaConnectPlannerSuite
 
       val result = new SparkConnectPlanner(createDummySessionHolder(spark)).transformRelation(input)
       result match {
-        case DescribeDeltaHistory(_: ResolvedTable, None, _, _, _) =>
+        case DescribeDeltaHistory(_: ResolvedTable, None, _) =>
         case other => fail(s"Unexpected plan: $other")
       }
     }
