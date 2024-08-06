@@ -2017,9 +2017,13 @@ class DeltaColumnMappingSuite extends QueryTest
         // Stream read from source table
         val streamDf = spark.readStream.format("delta").table(t1)
         // Should not contain column mapping metadata
-        assert(streamDf.schema.forall(_.metadata.isEmpty))
+        assert(streamDf.schema.forall(_.metadata.json == "{}"))
 
         // Create and write to another table
+        // The streaming create-table path is what currently leaks the column mapping metadata
+        // into the target table. If it was writing to an existing table via DeltaSink, it would not
+        // leak because we pruned the column mapping metadata in [[ImplicitMetadataOperations]] when
+        // we update the target metadata.
         val q = streamDf.writeStream
           .partitionBy("b")
           .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
@@ -2030,7 +2034,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
         // Check target table Delta log
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(t2))
-        assert(deltaLog.update().metadata.schema.forall(_.metadata.isEmpty))
+        assert(deltaLog.update().metadata.schema.forall(_.metadata.json == "{}"))
         assert(deltaLog.update().metadata.columnMappingMode == NoMapping)
 
         // Check target table data
