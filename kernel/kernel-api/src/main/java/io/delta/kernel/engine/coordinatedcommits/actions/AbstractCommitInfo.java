@@ -19,18 +19,15 @@ package io.delta.kernel.engine.coordinatedcommits.actions;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Interface for objects that represents the base information for a commit.
- * Commits need to provide an in-commit timestamp. This timestamp is used
- * to specify the exact time the commit happened and determines the target
- * version for time-based time travel queries.
+ * Interface for objects that represents the base information for a commit. Commits need to provide
+ * an in-commit timestamp. This timestamp is used to specify the exact time the commit happened and
+ * determines the target version for time-based time travel queries.
  *
  * @since 3.3.0
  */
 @Evolving
 public interface AbstractCommitInfo {
 
-    /**
-     * Get the timestamp of the commit as millis after the epoch.
-     */
-    long getCommitTimestamp();
+  /** Get the timestamp of the commit as millis after the epoch. */
+  long getCommitTimestamp();
 }

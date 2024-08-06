@@ -17,45 +17,33 @@ package io.delta.kernel;
 
 /**
  * An operation that can be performed on a Delta table.
- * <p>
- * An operation is tracked as the first line in commit info action inside the Delta Log
- * It also shows up when {@code DESCRIBE HISTORY} on the table is executed.
+ *
+ * <p>An operation is tracked as the first line in commit info action inside the Delta Log It also
+ * shows up when {@code DESCRIBE HISTORY} on the table is executed.
  */
 public enum Operation {
 
-    /**
-     * Recorded when the table is created.
-     */
-    CREATE_TABLE("CREATE TABLE"),
+  /** Recorded when the table is created. */
+  CREATE_TABLE("CREATE TABLE"),
 
-    /**
-     * Recorded during batch inserts.
-     */
-    WRITE("WRITE"),
+  /** Recorded during batch inserts. */
+  WRITE("WRITE"),
 
-    /**
-     * Recorded during streaming inserts.
-     */
-    STREAMING_UPDATE("STREAMING UPDATE"),
+  /** Recorded during streaming inserts. */
+  STREAMING_UPDATE("STREAMING UPDATE"),
 
-    /**
-     * For any operation that doesn't fit the above categories.
-     */
-    MANUAL_UPDATE("Manual Update");
+  /** For any operation that doesn't fit the above categories. */
+  MANUAL_UPDATE("Manual Update");
 
-    /**
-     * Actual value that will be recorded in the transaction log
-     */
-    private final String description;
+  /** Actual value that will be recorded in the transaction log */
+  private final String description;
 
-    Operation(String description) {
-        this.description = description;
-    }
+  Operation(String description) {
+    this.description = description;
+  }
 
-    /**
-     * Returns the string that will be recorded in the transaction log.
-     */
-    public String getDescription() {
-        return description;
-    }
+  /** Returns the string that will be recorded in the transaction log. */
+  public String getDescription() {
+    return description;
+  }
 }

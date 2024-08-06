@@ -28,27 +28,27 @@ import io.delta.kernel.types.StructType;
 @Evolving
 public interface Snapshot {
 
-    /**
-     * Get the version of this snapshot in the table.
-     *
-     * @param engine {@link Engine} instance to use in Delta Kernel.
-     * @return version of this snapshot in the Delta table
-     */
-    long getVersion(Engine engine);
+  /**
+   * Get the version of this snapshot in the table.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return version of this snapshot in the Delta table
+   */
+  long getVersion(Engine engine);
 
-    /**
-     * Get the schema of the table at this snapshot.
-     *
-     * @param engine {@link Engine} instance to use in Delta Kernel.
-     * @return Schema of the Delta table at this snapshot.
-     */
-    StructType getSchema(Engine engine);
+  /**
+   * Get the schema of the table at this snapshot.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return Schema of the Delta table at this snapshot.
+   */
+  StructType getSchema(Engine engine);
 
-    /**
-     * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
-     *
-     * @param engine {@link Engine} instance to use in Delta Kernel.
-     * @return an instance of {@link ScanBuilder}
-     */
-    ScanBuilder getScanBuilder(Engine engine);
+  /**
+   * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return an instance of {@link ScanBuilder}
+   */
+  ScanBuilder getScanBuilder(Engine engine);
 }

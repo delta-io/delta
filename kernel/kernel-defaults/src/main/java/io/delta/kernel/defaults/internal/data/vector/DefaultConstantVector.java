@@ -17,11 +17,10 @@ package io.delta.kernel.defaults.internal.data.vector;
 
 import io.delta.kernel.types.DataType;
 
-public class DefaultConstantVector
-    extends DefaultGenericVector {
+public class DefaultConstantVector extends DefaultGenericVector {
 
-    public DefaultConstantVector(DataType dataType, int numRows, Object value) {
-        // TODO: Validate datatype and value object type
-        super(numRows, dataType, (rowId) -> value);
-    }
+  public DefaultConstantVector(DataType dataType, int numRows, Object value) {
+    // TODO: Validate datatype and value object type
+    super(numRows, dataType, (rowId) -> value);
+  }
 }

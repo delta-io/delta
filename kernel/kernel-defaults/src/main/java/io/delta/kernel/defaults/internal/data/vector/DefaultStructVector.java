@@ -15,49 +15,40 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
-import java.util.Optional;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import java.util.Optional;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+/** {@link io.delta.kernel.data.ColumnVector} implementation for struct type data. */
+public class DefaultStructVector extends AbstractColumnVector {
+  private final ColumnVector[] memberVectors;
 
-/**
- * {@link io.delta.kernel.data.ColumnVector} implementation for struct type data.
- */
-public class DefaultStructVector
-    extends AbstractColumnVector {
-    private final ColumnVector[] memberVectors;
+  /**
+   * Create an instance of {@link ColumnVector} for {@code struct} type.
+   *
+   * @param size number of elements in the vector.
+   * @param dataType {@code struct} datatype definition.
+   * @param nullability Optional array of nullability value for each element in the vector. All
+   *     values in the vector are considered non-null when parameter is empty.
+   * @param memberVectors column vectors for each member of the struct.
+   */
+  public DefaultStructVector(
+      int size, DataType dataType, Optional<boolean[]> nullability, ColumnVector[] memberVectors) {
+    super(size, dataType, nullability);
+    checkArgument(dataType instanceof StructType, "not a struct type");
+    StructType structType = (StructType) dataType;
+    checkArgument(
+        structType.length() == memberVectors.length,
+        "expected a one column vector for each member");
+    this.memberVectors = memberVectors;
+  }
 
-    /**
-     * Create an instance of {@link ColumnVector} for {@code struct} type.
-     *
-     * @param size          number of elements in the vector.
-     * @param dataType      {@code struct} datatype definition.
-     * @param nullability   Optional array of nullability value for each element in the vector.
-     *                      All values in the vector are considered non-null when parameter is
-     *                      empty.
-     * @param memberVectors column vectors for each member of the struct.
-     */
-    public DefaultStructVector(
-        int size,
-        DataType dataType,
-        Optional<boolean[]> nullability,
-        ColumnVector[] memberVectors) {
-        super(size, dataType, nullability);
-        checkArgument(dataType instanceof StructType, "not a struct type");
-        StructType structType = (StructType) dataType;
-        checkArgument(
-            structType.length() == memberVectors.length,
-            "expected a one column vector for each member");
-        this.memberVectors = memberVectors;
-    }
-
-    @Override
-    public ColumnVector getChild(int ordinal) {
-        checkArgument(
-            ordinal >= 0 && ordinal < memberVectors.length, "Invalid ordinal " + ordinal);
-        return memberVectors[ordinal];
-    }
+  @Override
+  public ColumnVector getChild(int ordinal) {
+    checkArgument(ordinal >= 0 && ordinal < memberVectors.length, "Invalid ordinal " + ordinal);
+    return memberVectors[ordinal];
+  }
 }
