@@ -23,26 +23,52 @@ import org.apache.spark.util.Utils
 
 trait DeltaSQLTestUtils extends SQLTestUtils {
   /**
-   * Generate a temporary directory path without creating the actual directory, which is then
-   * passed to `f` and will be deleted after `f` returns.
-   *
-   * This method is copied over from [[SQLTestUtils]] of Apache Spark.
+   * Override the temp dir/path creation methods from [[SQLTestUtils]] to:
+   * 1. Drop the call to `waitForTasksToFinish` which is a source of flakiness due to timeouts
+   *    without clear benefits.
+   * 2. Allow creating paths with special characters for better test coverage.
+   */
+  override protected def withTempDir(f: File => Unit): Unit = {
+    withTempDir(prefix = "spark")(f)
+  }
+
+  override protected def withTempPaths(numPaths: Int)(f: Seq[File] => Unit): Unit = {
+    withTempPaths(numPaths, prefix = "spark")(f)
+  }
+
+  override def withTempPath(f: File => Unit): Unit = {
+    withTempPath(prefix = "spark")(f)
+  }
+
+  /**
+   * Creates a temporary directory, which is then passed to `f` and will be deleted after `f`
+   * returns.
    */
   def withTempDir(prefix: String)(f: File => Unit): Unit = {
     val path = Utils.createTempDir(namePrefix = prefix)
-    // delete the auto-created directory, otherwise some Delta tests will fail
-    // with PATH_ALREADY_EXISTS error.
+    try f(path) finally Utils.deleteRecursively(path)
+  }
+
+  /**
+   * Generates a temporary directory path without creating the actual directory, which is then
+   * passed to `f` and will be deleted after `f` returns.
+   */
+  def withTempPath(prefix: String)(f: File => Unit): Unit = {
+    val path = Utils.createTempDir(namePrefix = prefix)
     path.delete()
     try f(path) finally Utils.deleteRecursively(path)
   }
 
   /**
-   * Generate a temporary directory path without creating the actual directory, which is then
-   * passed to `f` and will be deleted after `f` returns.
-   *
-   * This method is copied over from [[SQLTestUtils]] of Apache Spark.
+   * Generates the specified number of temporary directory paths without creating the actual
+   * directories, which are then passed to `f` and will be deleted after `f` returns.
    */
-  def withTempPath(prefix: String)(f: File => Unit): Unit = {
-    withTempDir(prefix)(f)
+  protected def withTempPaths(numPaths: Int, prefix: String)(f: Seq[File] => Unit): Unit = {
+    val files =
+      Seq.fill[File](numPaths)(Utils.createTempDir(namePrefix = prefix).getCanonicalFile)
+    files.foreach(_.delete())
+    try f(files) finally {
+      files.foreach(Utils.deleteRecursively)
+    }
   }
 }

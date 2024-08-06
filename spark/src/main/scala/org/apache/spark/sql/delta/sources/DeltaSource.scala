@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
@@ -34,6 +35,7 @@ import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
 import org.apache.hadoop.fs.FileStatus
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
@@ -189,13 +191,14 @@ trait DeltaSourceBase extends Source
               // Fallback for backward compat only, this should technically not be triggered
               .getOrElse {
                 val config = snapshotAtSourceInit.metadata.configuration
-                logWarning(s"Using snapshot's table configuration: $config")
+                logWarning(log"Using snapshot's table configuration: " +
+                  log"${MDC(DeltaLogKeys.CONFIG, config)}")
                 config
               }
           )
         val protocol: Protocol = customMetadata.protocol.getOrElse {
           val protocol = snapshotAtSourceInit.protocol
-          logWarning(s"Using snapshot's protocol: $protocol")
+          logWarning(log"Using snapshot's protocol: ${MDC(DeltaLogKeys.PROTOCOL, protocol)}")
           protocol
         }
         // The following are not important in stream reading
@@ -257,7 +260,9 @@ trait DeltaSourceBase extends Source
     val offset = latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
     lastOffsetForTriggerAvailableNow = offset
     lastOffsetForTriggerAvailableNow.foreach { lastOffset =>
-      logInfo(s"lastOffset for Trigger.AvailableNow has set to ${lastOffset.json}")
+
+    logInfo(log"lastOffset for Trigger.AvailableNow has set to " +
+      log"${MDC(DeltaLogKeys.OFFSET, lastOffset.json)}")
     }
   }
 
@@ -326,9 +331,13 @@ trait DeltaSourceBase extends Source
         val (result, duration) = Utils.timeTakenMs {
           createDataFrame(filteredIndexedFiles)
         }
-        logInfo(s"Getting dataFrame for delta_log_path=${deltaLog.logPath} with " +
-          s"startVersion=$startVersion, startIndex=$startIndex, " +
-          s"isInitialSnapshot=$isInitialSnapshot, endOffset=$endOffset took timeMs=$duration ms")
+        logInfo(log"Getting dataFrame for delta_log_path=" +
+          log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+          log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
+          log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
+          log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
+          log"endOffset=${MDC(DeltaLogKeys.END_INDEX, endOffset)} took timeMs=" +
+          log"${MDC(DeltaLogKeys.DURATION, duration)} ms")
         result
       } finally {
         fileActionsIter.close()
@@ -731,7 +740,7 @@ case class DeltaSource(
   protected var initialState: DeltaSourceSnapshot = null
   protected var initialStateVersion: Long = -1L
 
-  logInfo(s"Filters being pushed down: $filters")
+  logInfo(log"Filters being pushed down: ${MDC(DeltaLogKeys.FILTER, filters)}")
 
   /**
    * Get the changes starting from (startVersion, startIndex). The start point should not be
@@ -811,9 +820,12 @@ case class DeltaSource(
         }
       iter
     }
-    logInfo(s"Getting file changes for delta_log_path=${deltaLog.logPath} with " +
-      s"fromVersion=$fromVersion, fromIndex=$fromIndex, isInitialSnapshot=$isInitialSnapshot " +
-      s"took timeMs=$duration ms")
+    logInfo(log"Getting file changes for delta_log_path=" +
+      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, " +
+      log"fromIndex=${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
+      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} " +
+      log"took timeMs=${MDC(DeltaLogKeys.DURATION, duration)} ms")
     result
   }
 

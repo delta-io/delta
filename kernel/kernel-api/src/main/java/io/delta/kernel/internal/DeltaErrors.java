@@ -15,8 +15,10 @@
  */
 package io.delta.kernel.internal;
 
+import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.function.Supplier;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
@@ -220,5 +222,39 @@ public final class DeltaErrors {
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
+    }
+
+    // We use the `Supplier` interface to avoid silently wrapping any checked exceptions
+    public static <T> T wrapEngineException(
+        Supplier<T> f, String msgString, Object... args) {
+        try {
+            return f.get();
+        } catch (KernelException e) {
+            // Let any KernelExceptions fall through (even though these generally shouldn't
+            // originate from the engine implementation there are some edge cases such as
+            // deserializeStructType)
+            throw e;
+        } catch (RuntimeException e) {
+            throw new KernelEngineException(String.format(msgString, args), e);
+        }
+    }
+
+    // Functional interface for a fx that throws an `IOException` (but no other checked exceptions)
+    public interface SupplierWithIOException<T> {
+        T get() throws IOException;
+    }
+
+    public static <T> T wrapEngineExceptionThrowsIO(
+        SupplierWithIOException<T> f, String msgString, Object... args) throws IOException {
+        try {
+            return f.get();
+        } catch (KernelException e) {
+            // Let any KernelExceptions fall through (even though these generally shouldn't
+            // originate from the engine implementation there are some edge cases such as
+            // deserializeStructType)
+            throw e;
+        } catch (RuntimeException e) {
+            throw new KernelEngineException(String.format(msgString, args), e);
+        }
     }
 }

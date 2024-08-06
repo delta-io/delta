@@ -18,13 +18,16 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.util.{Failure, Success, Try}
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.metering.{DeltaLogging, LogThrottler}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedLeafNode, UnresolvedTable}
@@ -197,6 +200,30 @@ object DeltaTableUtils extends PredicateHelper
 
   /** Finds the root of a Delta table given a path if it exists. */
   def findDeltaTableRoot(fs: FileSystem, path: Path): Option[Path] = {
+    findDeltaTableRoot(
+      fs,
+      path,
+      throwOnError = SparkSession.active.conf.get(DeltaSQLConf.DELTA_IS_DELTA_TABLE_THROW_ON_ERROR))
+  }
+
+  /** Finds the root of a Delta table given a path if it exists. */
+  private[delta] def findDeltaTableRoot(
+      fs: FileSystem,
+      path: Path,
+      throwOnError: Boolean): Option[Path] = {
+    if (throwOnError) {
+      findDeltaTableRootThrowOnError(fs, path)
+    } else {
+      findDeltaTableRootNoExceptions(fs, path)
+    }
+  }
+
+  /**
+   * Finds the root of a Delta table given a path if it exists.
+   *
+   * Does not throw any exceptions, but returns `None` when uncertain (old behaviour).
+   */
+  private def findDeltaTableRootNoExceptions(fs: FileSystem, path: Path): Option[Path] = {
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {
@@ -208,6 +235,56 @@ object DeltaTableUtils extends PredicateHelper
     }
     None
   }
+
+  /**
+   * Finds the root of a Delta table given a path if it exists.
+   *
+   * If there are errors and no root could be found, throw the first error (new behaviour)
+   */
+  private def findDeltaTableRootThrowOnError(fs: FileSystem, path: Path): Option[Path] = {
+    var firstError: Option[Throwable] = None
+    // Return `None` if `firstError` is empty, throw `firstError` otherwise.
+    def noneOrError(): Option[Path] = {
+      firstError match {
+        case Some(ex) =>
+          throw ex
+        case None =>
+          None
+      }
+    }
+    var currentPath = path
+    while (currentPath != null && currentPath.getName != "_delta_log" &&
+        currentPath.getName != "_samples") {
+      val deltaLogPath = safeConcatPaths(currentPath, "_delta_log")
+      try {
+        if (fs.exists(deltaLogPath)) {
+          return Option(currentPath)
+        }
+      } catch {
+        case NonFatal(ex) if currentPath == path =>
+          // Store errors for the first path, but keep going up the hierarchy,
+          // in case the error at this level does not matter and the delta log is found at a parent.
+          firstError = Some(ex)
+        case NonFatal(ex) =>
+          // If we find errors higher up the path we either treat it as a non-Delta table or
+          // return the error we found at the original path, if any.
+          // This gives us best-effort detection of delta logs in the hierarchy, but with more
+          // useful error messages when access was actually missing.
+          logThrottler.throttledWithSkippedLogMessage { skippedStr =>
+            logWarning(log"Access error while exploring path hierarchy for a delta log."
+                + log"original path=${MDC(DeltaLogKeys.PATH, path)}, "
+                + log"path with error=${MDC(DeltaLogKeys.PATH2, currentPath)}."
+                + skippedStr,
+              ex)
+          }
+          return noneOrError()
+      }
+      currentPath = currentPath.getParent
+    }
+    noneOrError()
+  }
+
+  private val logThrottler = new LogThrottler()
 
   /** Whether a path should be hidden for delta-related file operations, such as Vacuum and Fsck. */
   def isHiddenDirectory(partitionColumnNames: Seq[String], pathName: String): Boolean = {

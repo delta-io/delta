@@ -72,7 +72,7 @@ trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils {
       path: Seq[String] = Seq.empty): Metadata =
     new MetadataBuilder()
       .putMetadataArray(
-        "delta.typeChanges", Array(TypeChange(version, from, to, path).toMetadata))
+        "delta.typeChanges", Array(TypeChange(Some(version), from, to, path).toMetadata))
       .build()
 
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
@@ -124,7 +124,10 @@ trait TypeWideningDropFeatureTestMixin
 
   /** Expected outcome of dropping the type widening table feature. */
   object ExpectedOutcome extends Enumeration {
-    val SUCCESS, FAIL_CURRENT_VERSION_USES_FEATURE, FAIL_HISTORICAL_VERSION_USES_FEATURE = Value
+    val SUCCESS,
+    FAIL_CURRENT_VERSION_USES_FEATURE,
+    FAIL_HISTORICAL_VERSION_USES_FEATURE,
+    FAIL_FEATURE_NOT_PRESENT = Value
   }
 
   /**
@@ -133,14 +136,14 @@ trait TypeWideningDropFeatureTestMixin
    * files all contain the expected type for specified columns.
    */
   def dropTableFeature(
+      feature: TableFeature = TypeWideningPreviewTableFeature,
       expectedOutcome: ExpectedOutcome.Value,
       expectedNumFilesRewritten: Long,
       expectedColumnTypes: Map[String, DataType]): Unit = {
     val snapshot = deltaLog.update()
     // Need to directly call ALTER TABLE command to pass our deltaLog with manual clock.
-    val dropFeature = AlterTableDropFeatureDeltaCommand(
-      DeltaTableV2(spark, deltaLog.dataPath),
-      TypeWideningTableFeature.name)
+    val dropFeature =
+      AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), feature.name)
 
     expectedOutcome match {
       case ExpectedOutcome.SUCCESS =>
@@ -150,7 +153,7 @@ trait TypeWideningDropFeatureTestMixin
           exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
           errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
-            "feature" -> TypeWideningTableFeature.name,
+            "feature" -> feature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
             "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
               .fromMetaData(snapshot.metadata).toString,
@@ -163,7 +166,7 @@ trait TypeWideningDropFeatureTestMixin
           exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
           errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
           parameters = Map(
-            "feature" -> TypeWideningTableFeature.name,
+            "feature" -> feature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
             "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
               .fromMetaData(snapshot.metadata).toString,
@@ -171,13 +174,22 @@ trait TypeWideningDropFeatureTestMixin
               DeltaConfigs.TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
                 .fromMetaData(snapshot.metadata).toString)
         )
+      case ExpectedOutcome.FAIL_FEATURE_NOT_PRESENT =>
+        checkError(
+          exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
+          errorClass = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
+          parameters = Map("feature" -> feature.name)
+        )
+    }
+
+    if (expectedOutcome != ExpectedOutcome.FAIL_FEATURE_NOT_PRESENT) {
+      assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
     }
 
     // Check the number of files rewritten.
     assert(getNumRemoveFilesSinceVersion(snapshot.version + 1) === expectedNumFilesRewritten,
       s"Expected $expectedNumFilesRewritten file(s) to be rewritten but found " +
         s"${getNumRemoveFilesSinceVersion(snapshot.version + 1)} rewritten file(s).")
-    assert(!TypeWideningMetadata.containsTypeWideningMetadata(deltaLog.update().schema))
 
     // Check that all files now contain the expected data types.
     expectedColumnTypes.foreach { case (colName, expectedType) =>

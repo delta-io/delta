@@ -44,6 +44,7 @@ import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
 import static io.delta.kernel.internal.fs.Path.getName;
@@ -177,10 +178,15 @@ public class SnapshotManager {
         try (CreateCheckpointIterator checkpointDataIter =
                      snapshot.getCreateCheckpointIterator(engine)) {
             // Write the iterator actions to the checkpoint using the Parquet handler
-            engine.getParquetHandler()
-                    .writeParquetFileAtomically(
-                            checkpointPath.toString(),
-                            checkpointDataIter);
+            wrapEngineExceptionThrowsIO(
+                () -> {
+                    engine.getParquetHandler()
+                        .writeParquetFileAtomically(checkpointPath.toString(), checkpointDataIter);
+                    return null;
+                },
+                "Writing checkpoint file %s",
+                checkpointPath.toString()
+            );
 
             logger.info("{}: Checkpoint file is written for version: {}", tablePath, version);
 
@@ -228,9 +234,13 @@ public class SnapshotManager {
             long startVersion)
             throws IOException {
         logger.debug("{}: startVersion: {}", tablePath, startVersion);
-        return engine
-            .getFileSystemClient()
-            .listFrom(FileNames.listingPrefix(logPath, startVersion));
+        return wrapEngineExceptionThrowsIO(
+            () -> engine
+                .getFileSystemClient()
+                .listFrom(FileNames.listingPrefix(logPath, startVersion)),
+            "Listing from %s",
+            FileNames.listingPrefix(logPath, startVersion)
+        );
     }
 
     /**

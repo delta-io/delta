@@ -20,11 +20,13 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 
 import org.apache.spark.SparkException
+import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.FileSourceOptions
@@ -110,15 +112,17 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
             attempt == spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS)
           handleExceptionDuringAttempt(ex, isLastAttempt, deltaLog) match {
             case RetryHandling.Retry =>
-              logInfo(s"Retrying MERGE with materialized source. Attempt $attempt failed.")
+              logInfo(log"Retrying MERGE with materialized source. Attempt " +
+                log"${MDC(DeltaLogKeys.ATTEMPT, attempt)} failed.")
               doRetry = true
               attempt += 1
             case RetryHandling.ExhaustedRetries =>
-              logError(s"Exhausted retries after $attempt attempts in MERGE with" +
-                s" materialized source. Logging latest exception.", ex)
+              logError(log"Exhausted retries after ${MDC(DeltaLogKeys.ATTEMPT, attempt)}" +
+                log" attempts in MERGE with materialized source. Logging latest exception.", ex)
               throw DeltaErrors.sourceMaterializationFailedRepeatedlyInMerge
             case RetryHandling.RethrowException =>
-              logError(s"Fatal error in MERGE with materialized source in attempt $attempt.", ex)
+              logError(log"Fatal error in MERGE with materialized source in " +
+                log"attempt ${MDC(DeltaLogKeys.ATTEMPT, attempt)}", ex)
               throw ex
           }
       } finally {
@@ -336,8 +340,11 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     val storageLevel = StorageLevel.fromString(
       if (attempt == 1) {
         spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL)
+      } else if (attempt == 2) {
+        // If it failed the first time, potentially use a different storage level on retry. The
+        // first retry has its own conf to allow gradually increasing the replication level.
+        spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_FIRST_RETRY)
       } else {
-        // If it failed the first time, potentially use a different storage level on retry.
         spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY)
       }
     )

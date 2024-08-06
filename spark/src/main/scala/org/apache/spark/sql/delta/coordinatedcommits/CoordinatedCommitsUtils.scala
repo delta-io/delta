@@ -16,17 +16,22 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFile}
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.actions.AbstractMetadata
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.util.Utils
 
@@ -41,7 +46,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       startVersion: Long,
       versionToLoad: Option[Long],
-      isAsyncRequest: Boolean): GetCommitsResponse = {
+      isAsyncRequest: Boolean): JGetCommitsResponse = {
     recordFrameProfile("DeltaLog", s"CommitCoordinatorClient.getCommits.async=$isAsyncRequest") {
       val startTimeMs = System.currentTimeMillis()
       def recordEvent(additionalData: Map[String, Any]): Unit = {
@@ -149,7 +154,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       actions: Iterator[String],
       uuid: String): FileStatus = {
     val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuid))
-    logStore.write(commitPath, actions, overwrite = false, hadoopConf)
+    logStore.write(commitPath, actions.asJava, false, hadoopConf)
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
 
@@ -201,7 +206,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       deltaConfig: DeltaConfig[T]): T = {
     val conf = abstractMetadata.getConfiguration
     for (key <- deltaConfig.key +: deltaConfig.alternateKeys) {
-      conf.get(key).map { value => return deltaConfig.fromString(value) }
+      Option(conf.get(key)).map { value => return deltaConfig.fromString(value) }
     }
     deltaConfig.fromString(deltaConfig.defaultValue)
   }
@@ -230,23 +235,21 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       abstractMetadata, DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF)
   }
 
+  val TABLE_PROPERTY_CONFS = Seq(
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME,
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF,
+    DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF)
+
   /**
    * The main table properties used to instantiate a TableCommitCoordinatorClient.
    */
-  val TABLE_PROPERTY_KEYS: Seq[String] = Seq(
-    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key,
-    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key,
-    DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key)
+  val TABLE_PROPERTY_KEYS: Seq[String] = TABLE_PROPERTY_CONFS.map(_.key)
 
   /**
    * Returns true if any CoordinatedCommits-related table properties is present in the metadata.
    */
   def tablePropertiesPresent(metadata: Metadata): Boolean = {
-    val coordinatedCommitsProperties = Seq(
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key,
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key,
-      DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key)
-    coordinatedCommitsProperties.exists(metadata.configuration.contains)
+    TABLE_PROPERTY_KEYS.exists(metadata.configuration.contains)
   }
 
   /**
@@ -293,11 +296,12 @@ object CoordinatedCommitsUtils extends DeltaLogging {
           actionsIter,
           overwrite,
           hadoopConf)
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} backfilled to path" +
-          s" ${backfilledFilePath.toString}.")
+        logInfo(log"Delta file ${MDC(DeltaLogKeys.PATH, unbackfilledDeltaFile.getPath.toString)} " +
+          log"backfilled to path ${MDC(DeltaLogKeys.PATH2, backfilledFilePath.toString)}.")
       } else {
         numAlreadyBackfilledFiles += 1
-        logInfo(s"Delta file ${unbackfilledDeltaFile.getPath.toString} already backfilled.")
+        logInfo(log"Delta file ${MDC(DeltaLogKeys.PATH, unbackfilledDeltaFile.getPath.toString)} " +
+          log"already backfilled.")
       }
     }
     recordDeltaEvent(

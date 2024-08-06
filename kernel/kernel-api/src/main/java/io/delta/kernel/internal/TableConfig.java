@@ -15,16 +15,26 @@
  */
 package io.delta.kernel.internal;
 
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
-import java.util.function.Function;
+import java.io.IOException;
+import java.util.*;
+import java.util.function.BiFunction;
 import java.util.function.Predicate;
 
+import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.util.IntervalParserUtils;
+import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
+import static io.delta.kernel.internal.util.InternalUtils.getSingularElement;
+import static io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Represents the table properties. Also provides methods to access the property values
@@ -47,7 +57,7 @@ public class TableConfig<T> {
     public static final TableConfig<Long> TOMBSTONE_RETENTION = new TableConfig<>(
             "delta.deletedFileRetentionDuration",
             "interval 1 week",
-            IntervalParserUtils::safeParseIntervalAsMillis,
+            (engineOpt, v) -> IntervalParserUtils.safeParseIntervalAsMillis(v),
             value -> value >= 0,
             "needs to be provided as a calendar interval such as '2 weeks'. Months" +
                     " and years are not accepted. You may specify '365 days' for a year instead."
@@ -60,32 +70,155 @@ public class TableConfig<T> {
     public static final TableConfig<Integer> CHECKPOINT_INTERVAL = new TableConfig<>(
             "delta.checkpointInterval",
             "10",
-            Integer::valueOf,
+            (engineOpt, v) -> Integer.valueOf(v),
             value -> value > 0,
             "needs to be a positive integer."
     );
 
     /**
+     * This table property is used to track the enablement of the {@code inCommitTimestamps}.
+     * <p>
+     * When enabled, commit metadata includes a monotonically increasing timestamp that allows for
+     * reliable TIMESTAMP AS OF time travel even if filesystem operations change a commit file's
+     * modification timestamp.
+     */
+    public static final TableConfig<Boolean> IN_COMMIT_TIMESTAMPS_ENABLED = new TableConfig<>(
+            "delta.enableInCommitTimestamps-preview",
+            "false", /* default values */
+            (engineOpt, v) -> Boolean.valueOf(v),
+            value -> true,
+            "needs to be a boolean."
+    );
+
+    /**
+     * This table property is used to track the version of the table at which
+     * {@code inCommitTimestamps} were enabled.
+     */
+    public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION =
+            new TableConfig<>(
+                    "delta.inCommitTimestampEnablementVersion-preview",
+                    null, /* default values */
+                    (engineOpt, v) -> Optional.ofNullable(v).map(Long::valueOf),
+                    value -> true,
+                    "needs to be a long."
+            );
+
+    /**
+     * This table property is used to track the timestamp at which {@code inCommitTimestamps} were
+     * enabled. More specifically, it is the {@code inCommitTimestamps} of the commit with the
+     * version specified in {@link #IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION}.
+     */
+    public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP =
+            new TableConfig<>(
+                    "delta.inCommitTimestampEnablementTimestamp-preview",
+                    null, /* default values */
+                    (engineOpt, v) -> Optional.ofNullable(v).map(Long::valueOf),
+                    value -> true,
+                    "needs to be a long."
+            );
+
+    /*
+     * This table property is used to track the commit-coordinator name for this table. If this
+     * property is not set, the table will be considered as file system table and commits will be
+     * done via atomically publishing the commit file.
+     */
+    public static final TableConfig<Optional<String>> COORDINATED_COMMITS_COORDINATOR_NAME =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.commitCoordinator-preview",
+                    null, /* default values */
+                    (engineOpt, v) -> Optional.ofNullable(v),
+                    value -> true,
+                    "The commit-coordinator name for this table. This is used to determine " +
+                            "which implementation of commit-coordinator to use when committing " +
+                            "to this table. If this property is not set, the table will be " +
+                            "considered as file system table and commits will be done via " +
+                            "atomically publishing the commit file."
+            );
+
+    /*
+     * This table property is used to track the configuration properties for the commit coordinator
+     * which is needed to build the commit coordinator client.
+     */
+    public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_COORDINATOR_CONF =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.commitCoordinatorConf-preview",
+                    null, /* default values */
+                    TableConfig::parseJSONKeyValueMap,
+                    value -> true,
+                    "A string-to-string map of configuration properties for the" +
+                            " coordinated commits-coordinator."
+            );
+
+    /*
+     * This property is used by the commit coordinator to uniquely identify and manage the table
+     * internally.
+     */
+    public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_TABLE_CONF =
+            new TableConfig<>(
+                    "delta.coordinatedCommits.tableConf-preview",
+                    null, /* default values */
+                    TableConfig::parseJSONKeyValueMap,
+                    value -> true,
+                    "A string-to-string map of configuration properties for" +
+                            "  describing the table to commit-coordinator."
+            );
+
+    /**
+     * This table property is used to control the column mapping mode.
+     */
+    public static final TableConfig<ColumnMappingMode> COLUMN_MAPPING_MODE =
+            new TableConfig<>(
+                    "delta.columnMapping.mode",
+                    "none", /* default values */
+                    (engineOpt, v) -> ColumnMappingMode.fromTableConfig(v),
+                    value -> true,
+                    "Needs to be one of none, id, name."
+            );
+
+    /**
+     * Table property that enables modifying the table in accordance with the
+     * Delta-Iceberg Compatibility V2 protocol.
+     *
+     * @see <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-iceberg-compatibility-v2">
+     * Delta-Iceberg Compatibility V2 Protocol</a>
+     */
+    public static final TableConfig<Boolean> ICEBERG_COMPAT_V2_ENABLED =
+            new TableConfig<>(
+                    "delta.enableIcebergCompatV2",
+                    "false",
+                    (engineOpt, v) -> Boolean.valueOf(v),
+                    value -> true,
+                    "needs to be a boolean."
+            );
+
+    /**
      * All the valid properties that can be set on the table.
      */
-    private static final HashMap<String, TableConfig> validProperties = new HashMap<>();
+    private static final Map<String, TableConfig<?>> VALID_PROPERTIES = Collections.unmodifiableMap(
+            new HashMap<String, TableConfig<?>>() {{
+                addConfig(this, TOMBSTONE_RETENTION);
+                addConfig(this, CHECKPOINT_INTERVAL);
+                addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
+                addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
+                addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
+                addConfig(this, COORDINATED_COMMITS_COORDINATOR_NAME);
+                addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
+                addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
+                addConfig(this, COLUMN_MAPPING_MODE);
+                addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
+            }}
+    );
+
     private final String key;
     private final String defaultValue;
-    private final Function<String, T> fromString;
+    private final BiFunction<Engine, String, T> fromString;
     private final Predicate<T> validator;
     private final String helpMessage;
-
-    static {
-        validProperties.put(
-                TOMBSTONE_RETENTION.getKey().toLowerCase(Locale.ROOT), TOMBSTONE_RETENTION);
-        validProperties.put(
-                CHECKPOINT_INTERVAL.getKey().toLowerCase(Locale.ROOT), CHECKPOINT_INTERVAL);
-    }
 
     private TableConfig(
             String key,
             String defaultValue,
-            Function<String, T> fromString,
+            BiFunction<Engine, String, T> fromString,
             Predicate<T> validator,
             String helpMessage) {
         this.key = key;
@@ -98,13 +231,14 @@ public class TableConfig<T> {
     /**
      * Returns the value of the table property from the given metadata.
      *
+     * @param engine {@link Engine} instance.
      * @param metadata the table metadata
      * @return the value of the table property
      */
-    public T fromMetadata(Metadata metadata) {
+    public T fromMetadata(Engine engine, Metadata metadata) {
         String value = metadata.getConfiguration().getOrDefault(key, defaultValue);
-        validate(value);
-        return fromString.apply(value);
+        validate(engine, value);
+        return fromString.apply(engine, value);
     }
 
     /**
@@ -125,15 +259,16 @@ public class TableConfig<T> {
      * @throws InvalidConfigurationValueException if any of the properties are invalid
      * @throws UnknownConfigurationException if any of the properties are unknown
      */
-    public static Map<String, String> validateProperties(Map<String, String> configurations) {
+    public static Map<String, String> validateProperties(
+            Engine engine, Map<String, String> configurations) {
         Map<String, String> validatedConfigurations = new HashMap<>();
         for (Map.Entry<String, String> kv : configurations.entrySet()) {
             String key = kv.getKey().toLowerCase(Locale.ROOT);
             String value = kv.getValue();
             if (key.startsWith("delta.")) {
-                TableConfig tableConfig = validProperties.get(key);
+                TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
                 if (tableConfig != null) {
-                    tableConfig.validate(value);
+                    tableConfig.validate(engine, value);
                     validatedConfigurations.put(tableConfig.getKey(), value);
                 } else {
                     throw DeltaErrors.unknownConfigurationException(key);
@@ -145,10 +280,52 @@ public class TableConfig<T> {
         return validatedConfigurations;
     }
 
-    private void validate(String value) {
-        T parsedValue = fromString.apply(value);
+    public static Boolean isICTEnabled(Engine engine, Metadata metadata) {
+        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(engine, metadata);
+    }
+
+    /**
+     * Parses the given JSON string into a map of key-value pairs.
+     * <p>
+     * The JSON string should be in the format:
+     * <pre>{@code {"key1": "value1", "key2": "value2", ...}}</pre>
+     * where both keys and values are strings.
+     *
+     * @param engine the {@link Engine} instance used for parsing
+     * @param jsonString The JSON string to parse
+     * @return A map containing the key-value pairs extracted from the JSON string
+     */
+    protected static Map<String, String> parseJSONKeyValueMap(Engine engine, String jsonString) {
+        if (jsonString == null) {
+            return Collections.emptyMap();
+        }
+        // By adding the top-level key "config", the schema is fixed with a single column "config"
+        // of type MapType(StringType, StringType). In this way, we can parse the JSON string into
+        // MapType(StringType, StringType) using existing engine.getJsonHandler().parseJson API.
+        StructType schema = new StructType()
+                .add("config", new MapType(StringType.STRING, StringType.STRING, true));
+        try (CloseableIterator<Row> batchRows = engine.getJsonHandler().parseJson(
+                singletonStringColumnVector(String.format("{\"config\": %s}", jsonString)),
+                schema,
+                Optional.empty()).getRows()) {
+            Row row = getSingularElement(batchRows)
+                    .orElseThrow(() -> new IllegalStateException(
+                            String.format("Unable to parse %s", jsonString)));
+            checkArgument(!row.isNullAt(0));
+            return VectorUtils.toJavaMap(row.getMap(0));
+        } catch (IOException e) {
+            throw new KernelException(e);
+        }
+    }
+
+    private void validate(Engine engine, String value) {
+        T parsedValue = fromString.apply(engine, value);
         if (!validator.test(parsedValue)) {
             throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
         }
+    }
+
+    private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
+        configs.put(config.getKey().toLowerCase(Locale.ROOT), config);
     }
 }

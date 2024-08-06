@@ -33,7 +33,7 @@ import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.internal.deletionvectors.DeletionVectorUtils;
 import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
-import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
 
@@ -212,13 +212,13 @@ public interface Scan {
                     );
 
                 // Change back to logical schema
-                String columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
+                ColumnMappingMode columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
                 switch (columnMappingMode) {
-                    case ColumnMapping.COLUMN_MAPPING_MODE_NAME:
-                    case ColumnMapping.COLUMN_MAPPING_MODE_ID:
+                    case NAME: // fall through
+                    case ID:
                         nextDataBatch = nextDataBatch.withNewSchema(logicalReadSchema);
                         break;
-                    case ColumnMapping.COLUMN_MAPPING_MODE_NONE:
+                    case NONE:
                         break;
                     default:
                         throw new UnsupportedOperationException(

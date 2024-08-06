@@ -31,12 +31,16 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
@@ -111,16 +115,40 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         boolean isNewTable = snapshot.getVersion(engine) < 0;
         validate(engine, snapshot, isNewTable);
 
-        Metadata  metadata = snapshot.getMetadata();
         boolean shouldUpdateMetadata = false;
+        boolean shouldUpdateProtocol = false;
+        Metadata metadata = snapshot.getMetadata();
+        Protocol protocol = snapshot.getProtocol();
         if (tableProperties.isPresent()) {
             Map<String, String> validatedProperties =
-                    TableConfig.validateProperties(tableProperties.get());
+                    TableConfig.validateProperties(engine, tableProperties.get());
             Map<String, String> newProperties =
                     metadata.filterOutUnchangedProperties(validatedProperties);
+
+            ColumnMapping.verifyColumnMappingChange(
+                    metadata.getConfiguration(), newProperties, isNewTable);
+
             if (!newProperties.isEmpty()) {
                 shouldUpdateMetadata = true;
                 metadata = metadata.withNewConfiguration(newProperties);
+            }
+
+            Set<String> newWriterFeatures =
+                    TableFeatures.extractAutomaticallyEnabledWriterFeatures(
+                            engine, metadata, protocol);
+            if (!newWriterFeatures.isEmpty()) {
+                logger.info("Automatically enabling writer features: {}", newWriterFeatures);
+                shouldUpdateProtocol = true;
+                List<String> oldWriterFeatures = protocol.getWriterFeatures();
+                protocol = protocol.withNewWriterFeatures(newWriterFeatures);
+                List<String> curWriterFeatures = protocol.getWriterFeatures();
+                checkArgument(
+                        !Objects.equals(oldWriterFeatures, curWriterFeatures));
+                TableFeatures.validateWriteSupportedTable(
+                        protocol,
+                        metadata,
+                        metadata.getSchema(),
+                        table.getPath(engine));
             }
         }
 
@@ -131,10 +159,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 snapshot,
                 engineInfo,
                 operation,
-                snapshot.getProtocol(),
+                protocol,
                 metadata,
                 setTxnOpt,
-                shouldUpdateMetadata);
+                shouldUpdateMetadata,
+                shouldUpdateProtocol,
+                table.getClock());
     }
 
     /**
@@ -164,7 +194,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             }
         } else {
             // New table verify the given schema and partition columns
-            SchemaUtils.validateSchema(schema.get(), false /* isColumnMappingEnabled */);
+            ColumnMappingMode mappingMode = ColumnMapping.getColumnMappingMode(
+                    tableProperties.orElse(Collections.emptyMap()));
+
+            SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
             SchemaUtils.validatePartitionColumns(
                     schema.get(), partitionColumns.orElse(Collections.emptyList()));
         }
@@ -184,6 +217,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     private class InitialSnapshot extends SnapshotImpl {
         InitialSnapshot(Path dataPath, LogReplay logReplay, Metadata metadata, Protocol protocol) {
             super(dataPath, LogSegment.empty(table.getLogPath()), logReplay, protocol, metadata);
+        }
+
+        @Override
+        public long getTimestamp(Engine engine) {
+            return -1L;
         }
     }
 
@@ -224,7 +262,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 schema.get(), /* schema */
                 stringArrayValue(partitionColumnsCasePreserving), /* partitionColumns */
                 Optional.of(currentTimeMillis), /* createdTime */
-                stringStringMapValue(Collections.emptyMap())
+                stringStringMapValue(Collections.emptyMap()) /* configuration */
         );
     }
 

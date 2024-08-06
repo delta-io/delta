@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.Timestamp
 
+import scala.collection.JavaConverters._
 import scala.concurrent.duration.Duration
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
@@ -1016,7 +1017,7 @@ class InCommitTimestampWithCoordinatedCommitsSuite
       val unbackfilledCommits =
         tableCommitCoordinatorClient
           .getCommits(Some(1))
-          .getCommits
+          .getCommits.asScala
           .map { commit => DeltaHistoryManager.Commit(commit.getVersion, commit.getCommitTimestamp)}
       val commits = (Seq(commit0) ++ unbackfilledCommits).toList
       // Search for the exact timestamp.

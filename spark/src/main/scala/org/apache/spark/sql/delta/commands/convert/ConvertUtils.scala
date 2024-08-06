@@ -95,10 +95,10 @@ trait ConvertUtilsBase extends DeltaLogging {
       }
     } catch {
       case e: ClassNotFoundException =>
-        logError(s"Failed to find Iceberg class", e)
+        logError("Failed to find Iceberg class", e)
         throw DeltaErrors.icebergClassMissing(spark.sparkContext.getConf, e)
       case e: InvocationTargetException =>
-        logError(s"Got error when creating an Iceberg Converter", e)
+        logError("Got error when creating an Iceberg Converter", e)
         // The better error is within the cause
         throw ExceptionUtils.getRootCause(e)
     }

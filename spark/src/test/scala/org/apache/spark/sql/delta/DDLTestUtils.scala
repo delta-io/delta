@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -114,7 +114,11 @@ case class IdentityColumnSpec(
   }
 }
 
-trait DDLTestUtils extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+trait DDLTestUtils
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaSQLTestUtils
+  with DeltaSQLCommandTest {
   protected object DDLType extends Enumeration {
     val CREATE, REPLACE, CREATE_OR_REPLACE = Value
   }

@@ -20,12 +20,13 @@ import java.io.{BufferedReader, File, InputStreamReader, IOException}
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
+import scala.collection.JavaConverters._
 import scala.language.postfixOps
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, TrackingCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -505,13 +506,17 @@ class DeltaLogSuite extends QueryTest
         // file.
         val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
           "tracking-in-memory", Map.empty[String, String], spark)
-        val commitResponse = oc.getCommits(deltaLog.logPath, Map.empty, Some(2))
+        val commitResponse = oc.getCommits(
+          deltaLog.logPath, Map.empty[String, String].asJava, 2, null)
         if (!commitResponse.getCommits.isEmpty) {
-          val path = commitResponse.getCommits.last.getFileStatus.getPath
+          val path = commitResponse.getCommits.asScala.last.getFileStatus.getPath
           fs.delete(path, true)
         }
         // Also deletes it from in-memory commit coordinator.
-        oc.asInstanceOf[TrackingCommitCoordinatorClient].removeCommitTestOnly(deltaLog.logPath, 2)
+        oc.asInstanceOf[TrackingCommitCoordinatorClient]
+          .delegatingCommitCoordinatorClient
+          .asInstanceOf[InMemoryCommitCoordinator]
+          .removeCommitTestOnly(deltaLog.logPath, 2)
       }
 
       // Should show up to 20
@@ -528,7 +533,16 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-
+      if (coordinatedCommitsEnabledInTests) {
+        val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
+          "tracking-in-memory",
+          Map.empty[String, String],
+          spark)
+        oc.asInstanceOf[TrackingCommitCoordinatorClient]
+          .delegatingCommitCoordinatorClient
+          .asInstanceOf[InMemoryCommitCoordinator]
+          .removeCommitTestOnly(deltaLog.logPath, 1)
+      }
       checkAnswer(
         spark.read.format("delta").load(path),
         spark.range(10).toDF()
@@ -605,9 +619,10 @@ class DeltaLogSuite extends QueryTest
         // file.
         val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
           "tracking-in-memory", Map.empty[String, String], spark)
-        val commitResponse = oc.getCommits(log.logPath, Map.empty, Some(1))
+        val commitResponse = oc.getCommits(
+          log.logPath, Map.empty[String, String].asJava, 1, null)
         if (!commitResponse.getCommits.isEmpty) {
-          commitFilePath = commitResponse.getCommits.head.getFileStatus.getPath
+          commitFilePath = commitResponse.getCommits.asScala.head.getFileStatus.getPath
         }
       }
       val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())

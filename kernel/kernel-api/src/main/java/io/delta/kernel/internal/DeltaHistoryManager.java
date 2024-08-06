@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.*;
 
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.fs.Path.getName;
 
 public final class DeltaHistoryManager {
@@ -173,9 +175,14 @@ public final class DeltaHistoryManager {
             long startVersion) throws TableNotFoundException {
         Path tablePath = logPath.getParent();
         try {
-            CloseableIterator<FileStatus> files = engine
-                .getFileSystemClient()
-                .listFrom(FileNames.listingPrefix(logPath, startVersion));
+            CloseableIterator<FileStatus> files = wrapEngineExceptionThrowsIO(
+                () -> engine
+                    .getFileSystemClient()
+                    .listFrom(FileNames.listingPrefix(logPath, startVersion)),
+                "Listing files in the delta log starting from %s",
+                FileNames.listingPrefix(logPath, startVersion)
+            );
+
             if (!files.hasNext()) {
                 // We treat an empty directory as table not found
                 throw new TableNotFoundException(tablePath.toString());
@@ -184,7 +191,7 @@ public final class DeltaHistoryManager {
         } catch (FileNotFoundException e) {
             throw new TableNotFoundException(tablePath.toString());
         } catch (IOException io) {
-            throw new RuntimeException("Failed to list the files in delta log", io);
+            throw new UncheckedIOException("Failed to list the files in delta log", io);
         }
     }
 

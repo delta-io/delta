@@ -26,6 +26,7 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.util.VectorUtils;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
@@ -39,7 +40,11 @@ public class Metadata {
 
         final String schemaJson = requireNonNull(vector.getChild(4), rowId, "schemaString")
             .getString(rowId);
-        StructType schema = engine.getJsonHandler().deserializeStructType(schemaJson);
+        StructType schema = wrapEngineException(
+            () -> engine.getJsonHandler().deserializeStructType(schemaJson),
+            "Parsing the schema from the metadata. Schema JSON:\n%s",
+            schemaJson
+        );
 
         return new Metadata(
             requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
@@ -128,6 +133,44 @@ public class Metadata {
             this.createdTime,
             VectorUtils.stringStringMapValue(newConfiguration)
         );
+    }
+
+    public Metadata withNewSchema(StructType schema) {
+        return new Metadata(
+                this.id,
+                this.name,
+                this.description,
+                this.format,
+                schema.toJson(),
+                schema,
+                this.partitionColumns,
+                this.createdTime,
+                this.configurationMapValue
+        );
+    }
+
+    @Override
+    public String toString() {
+        List<String> partitionColumnsStr = VectorUtils.toJavaList(partitionColumns);
+        StringBuilder sb = new StringBuilder();
+        sb.append("List(");
+        for (String partitionColumn : partitionColumnsStr) {
+            sb.append(partitionColumn).append(", ");
+        }
+        if (sb.substring(sb.length() - 2).equals(", ")) {
+            sb.setLength(sb.length() - 2);  // Remove the last comma and space
+        }
+        sb.append(")");
+        return "Metadata{" +
+                "id='" + id + '\'' +
+                ", name=" + name +
+                ", description=" + description +
+                ", format=" + format +
+                ", schemaString='" + schemaString + '\'' +
+                ", partitionColumns=" + sb +
+                ", createdTime=" + createdTime +
+                ", configuration=" + configuration.get() +
+                '}';
     }
 
     public String getSchemaString() {

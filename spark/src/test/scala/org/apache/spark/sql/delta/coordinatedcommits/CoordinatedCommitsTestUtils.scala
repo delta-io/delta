@@ -21,8 +21,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -32,6 +34,22 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 trait CoordinatedCommitsTestUtils
   extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
+
+  protected val defaultCommitsCoordinatorName = "tracking-in-memory"
+  protected val defaultCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
+
+  def getCoordinatedCommitsDefaultProperties(withICT: Boolean = false): Map[String, String] = {
+    val coordinatedCommitsConfJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
+    val properties = Map(
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> defaultCommitsCoordinatorName,
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key -> coordinatedCommitsConfJson,
+      DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key -> "{}")
+    if (withICT) {
+      properties + (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+    } else {
+      properties
+    }
+  }
 
   /**
    * Runs a specific test with coordinated commits default properties unset.
@@ -60,6 +78,23 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
+  /**
+   * Runs the function `f` with coordinated commits default properties set to what is specified.
+   * Any table created in function `f` will have the `commitCoordinator` property set to the
+   * specified `commitCoordinatorName`.
+   */
+  def withCustomCoordinatedCommitsTableProperties(
+      commitCoordinatorName: String,
+      conf: Map[String, String] = Map("randomConf" -> "randomConfValue"))(f: => Unit): Unit = {
+    withSQLConf(
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
+        commitCoordinatorName,
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
+        JsonUtils.toJson(conf)) {
+      f
+    }
+  }
+
   /** Run the test with different backfill batch sizes: 1, 2, 10 */
   def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
     Seq(1, 2, 10).foreach { backfillBatchSize =>
@@ -83,11 +118,10 @@ trait CoordinatedCommitsTestUtils
       CommitCoordinatorProvider.clearNonDefaultBuilders()
       CommitCoordinatorProvider.registerBuilder(
         TrackingInMemoryCommitCoordinatorBuilder(backfillBatchSize))
-      val coordinatedCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
-      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(coordinatedCommitsCoordinatorConf)
+      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
       withSQLConf(
           DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-            "tracking-in-memory",
+            defaultCommitsCoordinatorName,
           DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
             coordinatedCommitsCoordinatorJson) {
         f
@@ -104,11 +138,10 @@ trait CoordinatedCommitsTestUtils
       f(None)
     }
     testWithDifferentBackfillInterval(testName) { backfillBatchSize =>
-      val coordinatedCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
-      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(coordinatedCommitsCoordinatorConf)
+      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
       withSQLConf(
           DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-            "tracking-in-memory",
+            defaultCommitsCoordinatorName,
           DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
             coordinatedCommitsCoordinatorJson) {
         f(Some(backfillBatchSize))
@@ -121,14 +154,20 @@ trait CoordinatedCommitsTestUtils
       oldMetadata: Metadata = Metadata()): UpdatedActions = {
     val newMetadataConfiguration =
       oldMetadata.configuration +
-        (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> "tracking-in-memory")
+        (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> defaultCommitsCoordinatorName)
     val newMetadata = oldMetadata.copy(configuration = newMetadataConfiguration)
-    UpdatedActions(commitInfo, newMetadata, Protocol(), oldMetadata, Protocol())
+    new UpdatedActions(commitInfo, newMetadata, Protocol(), oldMetadata, Protocol())
   }
 
   def getUpdatedActionsForNonZerothCommit(commitInfo: CommitInfo): UpdatedActions = {
     val updatedActions = getUpdatedActionsForZerothCommit(commitInfo)
-    updatedActions.copy(oldMetadata = updatedActions.getNewMetadata)
+    new UpdatedActions(
+      updatedActions.getCommitInfo,
+      updatedActions.getNewMetadata,
+      updatedActions.getNewProtocol,
+      updatedActions.getNewMetadata,
+      updatedActions.getOldProtocol
+    )
   }
 }
 
@@ -148,6 +187,16 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
   }
 }
 
+case class TrackingGenericInMemoryCommitCoordinatorBuilder(
+    builderName: String, realBuilder: CommitCoordinatorBuilder)
+  extends CommitCoordinatorBuilder {
+  override def getName: String = builderName
+
+  override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+    new TrackingCommitCoordinatorClient(realBuilder.build(spark, conf))
+  }
+}
+
 class PredictableUuidInMemoryCommitCoordinatorClient(batchSize: Long)
   extends InMemoryCommitCoordinator(batchSize) {
 
@@ -164,7 +213,8 @@ object TrackingCommitCoordinatorClient {
   }
 }
 
-class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemoryCommitCoordinator)
+class TrackingCommitCoordinatorClient(
+    val delegatingCommitCoordinatorClient: CommitCoordinatorClient)
   extends CommitCoordinatorClient {
 
   val numCommitsCalled = new AtomicInteger(0)
@@ -195,9 +245,9 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
+      coordinatedCommitsTableConf: java.util.Map[String, String],
       commitVersion: Long,
-      actions: Iterator[String],
+      actions: java.util.Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
     delegatingCommitCoordinatorClient.commit(
       logStore,
@@ -211,27 +261,20 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
 
   override def getCommits(
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
-      startVersion: Option[Long],
-      endVersion: Option[Long] = None): GetCommitsResponse = recordOperation("getCommits") {
+      coordinatedCommitsTableConf: java.util.Map[String, String],
+      startVersion: java.lang.Long,
+      endVersion: java.lang.Long): JGetCommitsResponse = recordOperation("getCommits") {
     delegatingCommitCoordinatorClient.getCommits(
       logPath, coordinatedCommitsTableConf, startVersion, endVersion)
-  }
-
-  def removeCommitTestOnly(
-      logPath: Path,
-      commitVersion: Long
-  ): Unit = {
-    delegatingCommitCoordinatorClient.perTableMap.get(logPath).commitsMap.remove(commitVersion)
   }
 
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
+      coordinatedCommitsTableConf: java.util.Map[String, String],
       version: Long,
-      lastKnownBackfilledVersion: Option[Long]): Unit = recordOperation("backfillToVersion") {
+      lastKnownBackfilledVersion: java.lang.Long): Unit = recordOperation("backfillToVersion") {
     delegatingCommitCoordinatorClient.backfillToVersion(
       logStore,
       hadoopConf,
@@ -241,7 +284,15 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
       lastKnownBackfilledVersion)
   }
 
-  override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
+  override def semanticEquals(other: CommitCoordinatorClient): Boolean = {
+    other match {
+      case otherTracking: TrackingCommitCoordinatorClient =>
+        delegatingCommitCoordinatorClient.semanticEquals(
+          otherTracking.delegatingCommitCoordinatorClient)
+      case _ =>
+        delegatingCommitCoordinatorClient.semanticEquals(other)
+    }
+  }
 
   def reset(): Unit = {
     numCommitsCalled.set(0)
@@ -253,17 +304,21 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
       logPath: Path,
       currentVersion: Long,
       currentMetadata: AbstractMetadata,
-      currentProtocol: AbstractProtocol): Map[String, String] = recordOperation("registerTable") {
-    delegatingCommitCoordinatorClient.registerTable(
-      logPath, currentVersion, currentMetadata, currentProtocol)
-  }
+      currentProtocol: AbstractProtocol): java.util.Map[String, String] =
+    recordOperation("registerTable") {
+      delegatingCommitCoordinatorClient.registerTable(
+        logPath, currentVersion, currentMetadata, currentProtocol)
+    }
 }
 
 /**
  * A helper class which enables coordinated-commits for the test suite based on the given
  * `coordinatedCommitsBackfillBatchSize` conf.
  */
-trait CoordinatedCommitsBaseSuite extends SparkFunSuite with SharedSparkSession {
+trait CoordinatedCommitsBaseSuite
+  extends SparkFunSuite
+  with SharedSparkSession
+  with CoordinatedCommitsTestUtils {
 
   // If this config is not overridden, coordinated commits are disabled.
   def coordinatedCommitsBackfillBatchSize: Option[Int] = None
@@ -272,12 +327,11 @@ trait CoordinatedCommitsBaseSuite extends SparkFunSuite with SharedSparkSession 
 
   override protected def sparkConf: SparkConf = {
     if (coordinatedCommitsBackfillBatchSize.nonEmpty) {
-      val coordinatedCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
-      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(coordinatedCommitsCoordinatorConf)
+      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
       super.sparkConf
         .set(
           DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey,
-          "tracking-in-memory")
+          defaultCommitsCoordinatorName)
         .set(
           DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey,
           coordinatedCommitsCoordinatorJson)
@@ -292,6 +346,7 @@ trait CoordinatedCommitsBaseSuite extends SparkFunSuite with SharedSparkSession 
     coordinatedCommitsBackfillBatchSize.foreach { batchSize =>
       CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(batchSize))
     }
+    DeltaLog.clearCache()
   }
 
   protected def isICTEnabledForNewTables: Boolean = {

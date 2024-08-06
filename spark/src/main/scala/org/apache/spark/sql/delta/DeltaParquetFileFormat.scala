@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAllRowsFilter, KeepMarkedRowsFilter}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
@@ -32,6 +33,7 @@ import org.apache.hadoop.mapreduce.Job
 import org.apache.parquet.hadoop.ParquetOutputFormat
 import org.apache.parquet.hadoop.util.ContextUtil
 
+import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField
@@ -59,7 +61,8 @@ case class DeltaParquetFileFormat(
     optimizationsEnabled: Boolean = true,
     tablePath: Option[String] = None,
     isCDCRead: Boolean = false)
-  extends ParquetFileFormat {
+  extends ParquetFileFormat
+  with LoggingShims {
   // Validate either we have all arguments for DV enabled read or none of them.
   if (hasTablePath) {
     SparkSession.getActiveSession.map { session =>
@@ -262,11 +265,8 @@ case class DeltaParquetFileFormat(
        dataSchema: StructType): OutputWriterFactory = {
     val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
     val conf = ContextUtil.getConfiguration(job)
-    // Always write timestamp as TIMESTAMP_MICROS for Iceberg compat based on Iceberg spec
-    if (IcebergCompatV1.isEnabled(metadata) || IcebergCompatV2.isEnabled(metadata)) {
-      conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
-        SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
-    }
+    conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+      sparkSession.conf.get(DeltaSQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE))
     if (IcebergCompatV2.isEnabled(metadata)) {
       // For Uniform with IcebergCompatV2, we need to write nested field IDs for list and map
       // types to the parquet schema. Spark currently does not support it so we hook in our
@@ -338,7 +338,7 @@ case class DeltaParquetFileFormat(
             s"Unexpected row index filter type: ${unexpectedFilterType}")
         }
         rowIndexFilter.createInstance(
-          DeletionVectorDescriptor.fromJson(dvDescriptorOpt.get.asInstanceOf[String]),
+          DeletionVectorDescriptor.deserializeFromBase64(dvDescriptorOpt.get.asInstanceOf[String]),
           serializableHadoopConf.value,
           tablePath.map(new Path(_)))
       } else if (dvDescriptorOpt.isDefined || filterTypeOpt.isDefined) {
@@ -513,7 +513,7 @@ case class DeltaParquetFileFormat(
       case AlwaysTrue() => Some(AlwaysTrue())
       case AlwaysFalse() => Some(AlwaysFalse())
       case _ =>
-        logError(s"Failed to translate filter $filter")
+        logError(log"Failed to translate filter ${MDC(DeltaLogKeys.FILTER, filter)}")
         None
     }
   }

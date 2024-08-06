@@ -27,12 +27,14 @@ import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.files.SQLMetricsReporting
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.BinPackingUtils
 
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext.SPARK_JOB_GROUP_ID
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedTable}
@@ -458,8 +460,9 @@ class OptimizeExecutor(
           true
         } else {
           val deleted = candidateSetOld -- candidateSetNew
-          logWarning(s"The following compacted files were deleted " +
-            s"during checkpoint ${deleted.mkString(",")}. Aborting the compaction.")
+          logWarning(log"The following compacted files were deleted " +
+            log"during checkpoint ${MDC(DeltaLogKeys.PATHS, deleted.mkString(","))}. " +
+            log"Aborting the compaction.")
           false
         }
       }

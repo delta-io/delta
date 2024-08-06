@@ -16,19 +16,32 @@
 
 package io.delta.kernel.internal;
 
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.Tuple2;
 import static io.delta.kernel.internal.DeltaErrors.*;
 
 /**
  * Contains utility methods related to the Delta table feature support in protocol.
  */
 public class TableFeatures {
+
+    private static final Set<String> SUPPORTED_WRITER_FEATURES =
+            Collections.unmodifiableSet(new HashSet<String>() {{
+                    add("appendOnly");
+                    add("inCommitTimestamp-preview");
+                    add("columnMapping");
+                }});
 
     ////////////////////
     // Helper Methods //
@@ -71,7 +84,8 @@ public class TableFeatures {
      * <ul>
      *     <li>protocol writer version 1.</li>
      *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
-     *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview}
+     *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview},
+     *     {@code columnMapping}
      *     feature enabled.</li>
      * </ul>
      *
@@ -113,6 +127,8 @@ public class TableFeatures {
                             break;
                         case "inCommitTimestamp-preview":
                             break;
+                        case "columnMapping":
+                            break;
                         default:
                             throw unsupportedWriterFeature(tablePath, writerFeature);
                     }
@@ -120,6 +136,96 @@ public class TableFeatures {
                 break;
             default:
                 throw unsupportedWriterProtocol(tablePath, minWriterVersion);
+        }
+    }
+
+    /**
+     * Given the automatically enabled features from Delta table metadata, returns the minimum
+     * required reader and writer version that satisfies all enabled table features in the metadata.
+     *
+     * @param enabledFeatures the automatically enabled features from the Delta table metadata
+     * @return the minimum required reader and writer version that satisfies all enabled table
+     */
+    public static Tuple2<Integer, Integer> minProtocolVersionFromAutomaticallyEnabledFeatures(
+            Set<String> enabledFeatures) {
+
+        int readerVersion = 0;
+        int writerVersion = 0;
+
+        for (String feature : enabledFeatures) {
+            readerVersion = Math.max(readerVersion, getMinReaderVersion(feature));
+            writerVersion = Math.max(writerVersion, getMinWriterVersion(feature));
+        }
+
+        return new Tuple2<>(readerVersion, writerVersion);
+    }
+
+    /**
+     * Extract the writer features that should be enabled automatically based on the metadata which
+     * are not already enabled. For example, the {@code inCommitTimestamp-preview} feature should be
+     * enabled when the delta property name (delta.enableInCommitTimestamps-preview) is set to true
+     * in the metadata if it is not already enabled.
+     *
+     * @param engine the engine to use for IO operations
+     * @param metadata the metadata of the table
+     * @param protocol the protocol of the table
+     * @return the writer features that should be enabled automatically
+     */
+    public static Set<String> extractAutomaticallyEnabledWriterFeatures(
+            Engine engine, Metadata metadata, Protocol protocol) {
+        return TableFeatures.SUPPORTED_WRITER_FEATURES.stream()
+                .filter(f -> metadataRequiresWriterFeatureToBeEnabled(engine, metadata, f))
+                .filter(f -> protocol.getWriterFeatures() == null ||
+                        !protocol.getWriterFeatures().contains(f))
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * Get the minimum reader version required for a feature.
+     *
+     * @param feature the feature
+     * @return the minimum reader version required for the feature
+     */
+    private static int getMinReaderVersion(String feature) {
+        switch (feature) {
+            case "inCommitTimestamp-preview":
+                return 3;
+            default:
+                return 1;
+        }
+    }
+
+    /**
+     * Get the minimum writer version required for a feature.
+     *
+     * @param feature the feature
+     * @return the minimum writer version required for the feature
+     */
+    private static int getMinWriterVersion(String feature) {
+        switch (feature) {
+            case "inCommitTimestamp-preview":
+                return 7;
+            default:
+                return 2;
+        }
+    }
+
+    /**
+     * Determine whether a writer feature must be supported and enabled to satisfy the metadata
+     * requirements.
+     *
+     * @param engine the engine to use for IO operations
+     * @param metadata the table metadata
+     * @param feature the writer feature to check
+     * @return whether the writer feature must be enabled
+     */
+    private static boolean metadataRequiresWriterFeatureToBeEnabled(
+            Engine engine, Metadata metadata, String feature) {
+        switch (feature) {
+            case "inCommitTimestamp-preview":
+                return TableConfig.isICTEnabled(engine, metadata);
+            default:
+                return false;
         }
     }
 

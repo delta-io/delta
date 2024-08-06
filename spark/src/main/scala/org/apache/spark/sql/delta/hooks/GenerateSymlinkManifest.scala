@@ -22,12 +22,14 @@ import java.net.URI
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkEnv
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
@@ -308,9 +310,9 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
         }.collect().toSet
       }
 
-    logInfo(s"Generated manifest partitions for $deltaLogDataPath " +
-      s"[${newManifestPartitionRelativePaths.size}]:\n\t" +
-      newManifestPartitionRelativePaths.mkString("\n\t"))
+    logInfo(log"Generated manifest partitions for ${MDC(DeltaLogKeys.PATH, deltaLogDataPath)} " +
+      log"[${MDC(DeltaLogKeys.NUM_PARTITIONS, newManifestPartitionRelativePaths.size)}]:\n\t" +
+      log"${MDC(DeltaLogKeys.PATHS, newManifestPartitionRelativePaths.mkString("\n\t"))}")
 
     newManifestPartitionRelativePaths
   }
@@ -334,8 +336,9 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       fs.delete(absPathToDelete, true)
     }
 
-    logInfo(s"Deleted manifest partitions [${partitionRelativePathsToDelete.size}]:\n\t" +
-      partitionRelativePathsToDelete.mkString("\n\t"))
+    logInfo(log"Deleted manifest partitions [" +
+      log"${MDC(DeltaLogKeys.NUM_FILES, partitionRelativePathsToDelete.size)}]:\n\t" +
+      log"${MDC(DeltaLogKeys.PATHS, partitionRelativePathsToDelete.mkString("\n\t"))}")
   }
 
   /**

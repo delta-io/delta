@@ -24,15 +24,18 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMod
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -92,7 +95,7 @@ object SchemaUtils extends DeltaLogging {
   def findAnyTypeRecursively(dt: DataType)(f: DataType => Boolean): Option[DataType] = dt match {
     case s: StructType =>
       Some(s).filter(f).orElse(s.fields
-          .find(field => findAnyTypeRecursively(field.dataType)(f).nonEmpty).map(_.dataType))
+          .flatMap(field => findAnyTypeRecursively(field.dataType)(f)).find(_ => true))
     case a: ArrayType =>
       Some(a).filter(f).orElse(findAnyTypeRecursively(a.elementType)(f))
     case m: MapType =>
@@ -153,6 +156,26 @@ object SchemaUtils extends DeltaLogging {
       if (f.dataType.isInstanceOf[NullType]) None else Some(generateSelectExpr(f, Nil))
     }
     df.select(selectExprs: _*)
+  }
+
+  /**
+   * Converts StringType to CHAR/VARCHAR if that is the true type as per the metadata
+   * and also strips this metadata from fields.
+   */
+  def getRawSchemaWithoutCharVarcharMetadata(schema: StructType): StructType = {
+    val fields = schema.map { field =>
+      val rawField = CharVarcharUtils.getRawType(field.metadata)
+        .map(dt => field.copy(dataType = dt))
+        .getOrElse(field)
+      val throwAwayAttrRef = AttributeReference(
+        rawField.name,
+        rawField.dataType,
+        nullable = rawField.nullable,
+        rawField.metadata)()
+      val cleanedMetadata = CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
+      rawField.copy(metadata = cleanedMetadata)
+    }
+    StructType(fields)
   }
 
   /**
@@ -1396,7 +1419,8 @@ def normalizeColumnNamesInDataType(
       }
     } catch {
       case NonFatal(e) =>
-        logWarning(s"Failed to log undefined types for table ${deltaLog.logPath}", e)
+        logWarning(log"Failed to log undefined types for table " +
+          log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}", e)
     }
   }
 }
