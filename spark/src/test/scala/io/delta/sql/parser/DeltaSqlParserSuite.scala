@@ -324,32 +324,32 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
       val parser = new DeltaSqlParser(null)
       dryRunString += ";"
       assert(parser.parsePlan("FSCK REPAIR TABLE delta.`/path/to/tbl`" + dryRunString) ===
-      FsckRepairTableCommand(UnresolvedTable(Seq("delta", "/path/to/tbl"), "FSCK", None),
+      FsckRepairTableCommand(UnresolvedTable(Seq("delta", "/path/to/tbl"), "FSCK"),
           dryRun))
       assert(parser.parsePlan("FSCK REPAIR TABLE `/path/to/tbl`" + dryRunString) ===
-      FsckRepairTableCommand(UnresolvedTable(Seq("/path/to/tbl"), "FSCK", None),
+      FsckRepairTableCommand(UnresolvedTable(Seq("/path/to/tbl"), "FSCK"),
           dryRun))
       assert(parser.parsePlan("FSCK REPAIR TABLE tbl" + dryRunString) ===
-        FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+        FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
 
       assert(parser.parsePlan("FSCK REPAIR TABLE tbl_${system:spark.testing}" + dryRunString) ===
-        FsckRepairTableCommand(UnresolvedTable(Seq("tbl_true"), "FSCK", None), dryRun))
+        FsckRepairTableCommand(UnresolvedTable(Seq("tbl_true"), "FSCK"), dryRun))
 
       withSQLConf("tbl_var" -> "tbl") {
         assert(parser.parsePlan("FSCK REPAIR TABLE ${tbl_var}" + dryRunString) ===
-          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
 
         assert(parser.parsePlan("FSCK REPAIR TABLE ${spark:tbl_var}" + dryRunString) ===
-          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
 
         assert(parser.parsePlan("FSCK REPAIR TABLE ${sparkconf:tbl_var}" + dryRunString) ===
-          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
 
         assert(parser.parsePlan("FSCK REPAIR TABLE ${hiveconf:tbl_var}" + dryRunString) ===
-          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
 
         assert(parser.parsePlan("FSCK REPAIR TABLE ${hivevar:tbl_var}" + dryRunString) ===
-          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
       }
     }
   }
@@ -363,9 +363,9 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
       // Use the new keywords in table name
       assert(parser.parsePlan("FSCK REPAIR TABLE fsck" + dryRunString) ===
-        FsckRepairTableCommand(UnresolvedTable(Seq("fsck"), "FSCK", None), dryRun))
+        FsckRepairTableCommand(UnresolvedTable(Seq("fsck"), "FSCK"), dryRun))
       assert(parser.parsePlan("FSCK REPAIR TABLE repair" + dryRunString) ===
-        FsckRepairTableCommand(UnresolvedTable(Seq("repair"), "FSCK", None), dryRun))
+        FsckRepairTableCommand(UnresolvedTable(Seq("repair"), "FSCK"), dryRun))
     }
   }
 
