@@ -554,15 +554,6 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
 
-  val COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION =
-    buildConf("coordinatedCommits.ignoreMissingCoordinatorImplementation")
-      .internal()
-      .doc("When enabled, reads will not fail if the commit coordinator implementation " +
-        "is missing. Writes will still fail and reads will just rely on backfilled commits. " +
-        "This also means that reads can be stale.")
-      .booleanConf
-      .createWithDefault(true)
-
   val PARQUET_OUTPUT_TIMESTAMP_TYPE =
     buildConf("parquet.outputTimestampType")
       .doc(

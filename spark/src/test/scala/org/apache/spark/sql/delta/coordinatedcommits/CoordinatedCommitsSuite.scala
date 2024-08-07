@@ -22,8 +22,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import com.databricks.spark.util.Log4jUsageLogger
-import com.databricks.spark.util.UsageRecord
-import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CommitCoordinatorGetCommitsFailedException
 import org.apache.spark.sql.delta.CoordinatedCommitType._
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
@@ -1113,85 +1112,6 @@ class CoordinatedCommitsSuite
       val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredUsageLogs.head.blob)
       assert(usageObj("numUnbackfilledFiles").asInstanceOf[Int] === 3)
       assert(usageObj("numAlreadyBackfilledFiles").asInstanceOf[Int] === 0)
-    }
-  }
-
-  for (ignoreMissingCCImpl <- BOOLEAN_DOMAIN)
-  test(s"missing coordinator implementation [ignoreMissingCCImpl = $ignoreMissingCCImpl]") {
-    CommitCoordinatorProvider.clearNonDefaultBuilders()
-    CommitCoordinatorProvider.registerBuilder(
-      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getAbsolutePath
-      Seq(0).toDF.write.format("delta").save(tablePath)
-      (1 to 3).foreach { v =>
-        Seq(v).toDF.write.mode("append").format("delta").save(tablePath)
-      }
-      // The table has 3 backfilled commits [0, 1, 2] and 1 unbackfilled commit [3]
-      CommitCoordinatorProvider.clearNonDefaultBuilders()
-
-      def getUsageLogsAndEnsurePresenceOfMissingCCImplLog(
-          expectedFailIfImplUnavailable: Boolean)(f: => Unit): Seq[UsageRecord] = {
-        val usageLogs = Log4jUsageLogger.track {
-          f
-        }
-        val filteredLogs = filterUsageRecords(
-          usageLogs, CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_MISSING_IMPLEMENTATION)
-        assert(filteredLogs.nonEmpty)
-        val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredLogs.head.blob)
-        assert(usageObj("commitCoordinatorName") === "tracking-in-memory")
-        assert(usageObj("registeredCommitCoordinators") ===
-          CommitCoordinatorProvider.getRegisteredCoordinatorNames.mkString(", "))
-        assert(usageObj("failIfImplUnavailable") === expectedFailIfImplUnavailable.toString)
-        usageLogs
-      }
-      withSQLConf(
-        DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION.key ->
-          ignoreMissingCCImpl.toString) {
-        DeltaLog.clearCache()
-        if (!ignoreMissingCCImpl) {
-          getUsageLogsAndEnsurePresenceOfMissingCCImplLog(expectedFailIfImplUnavailable = true) {
-            val e = intercept[IllegalArgumentException] {
-              DeltaLog.forTable(spark, tablePath)
-            }
-            assert(e.getMessage.contains("Unknown commit-coordinator"))
-          }
-        } else {
-          val deltaLog = DeltaLog.forTable(spark, tablePath)
-          assert(deltaLog.snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-          // This will create a stale deltaLog as the commit-coordinator is missing.
-          assert(deltaLog.snapshot.version === 2L)
-          DeltaLog.clearCache()
-          getUsageLogsAndEnsurePresenceOfMissingCCImplLog(expectedFailIfImplUnavailable = false) {
-            checkAnswer(spark.read.format("delta").load(tablePath), Seq(0, 1, 2).toDF())
-          }
-          // Writes and checkpoints should still fail.
-          val createCheckpointFn = () => (deltaLog.checkpoint())
-          val writeDataFn =
-            () => Seq(4).toDF.write.format("delta").mode("append").save(tablePath)
-          for (tableMutationFn <- Seq(createCheckpointFn, writeDataFn)) {
-            DeltaLog.clearCache()
-            val usageLogs = Log4jUsageLogger.track {
-              val e = intercept[DeltaUnsupportedOperationException] {
-                tableMutationFn()
-              }
-              checkError(e,
-                errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
-                sqlState = "0AKDC",
-                parameters = Map("coordinatorName" -> "tracking-in-memory")
-              )
-              assert(e.getMessage.contains(
-                "no implementation of this coordinator is available in the current environment"))
-            }
-            val filteredLogs = filterUsageRecords(
-              usageLogs,
-              CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_MISSING_IMPLEMENTATION_WRITE)
-            val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredLogs.head.blob)
-            assert(usageObj("commitCoordinatorName") === "tracking-in-memory")
-            assert(usageObj("readVersion") === "2")
-          }
-        }
-      }
     }
   }
 

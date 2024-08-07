@@ -3204,19 +3204,6 @@ trait DeltaErrorsSuiteBase
         startWith = true
       )
     }
-    {
-      val e = intercept[DeltaUnsupportedOperationException] {
-        throw DeltaErrors.unsupportedWritesWithMissingCoordinators("test")
-      }
-      checkErrorMessage(
-        e,
-        Some("DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR"),
-        Some("0AKDC"),
-        Some("You are trying to perform writes on a table which has been registered with " +
-          "the commit coordinator test"),
-        startWith = true
-      )
-    }
   }
 }
 
