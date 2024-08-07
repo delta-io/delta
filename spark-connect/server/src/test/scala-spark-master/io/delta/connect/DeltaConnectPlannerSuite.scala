@@ -26,10 +26,13 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
 import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
+import org.apache.spark.sql.delta.DeltaHistory
 import org.apache.spark.sql.delta.commands.DescribeDeltaHistory
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -120,7 +123,7 @@ class DeltaConnectPlannerSuite
 
       val result = new SparkConnectPlanner(createDummySessionHolder(spark)).transformRelation(input)
       result match {
-        case DescribeDeltaHistory(_: ResolvedTable, None, _) =>
+        case LocalRelation(ExpressionEncoder[DeltaHistory]().schema) =>
         case other => fail(s"Unexpected plan: $other")
       }
     }
