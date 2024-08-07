@@ -70,6 +70,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
+  private lazy val isUnityCatalog: Boolean = {
+    val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
+    delegateField.setAccessible(true)
+    delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.connectors")
+  }
+
   /**
    * Creates a Delta table
    *
@@ -181,7 +187,21 @@ class DeltaCatalog extends DelegatingCatalogExtension
       operation.mode,
       writer,
       operation,
-      tableByPath = isByPath).run(spark)
+      tableByPath = isByPath,
+      // We should invoke the Spark catalog plugin API to create the table, to
+      // respect third party catalogs. Note: only handle CREATE TABLE for now, we
+      // should support CTAS later.
+      // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
+      //       Before this bug is fixed, we should only call the catalog plugin API to create tables
+      //       if UC is enabled to replace `V2SessionCatalog`.
+      createTableFunc = if (isUnityCatalog && sourceQuery.isEmpty) {
+        Some(v1Table => {
+          val t = V1Table(v1Table)
+          super.createTable(ident, t.columns(), t.partitioning, t.properties)
+        })
+      } else {
+        None
+      }).run(spark)
 
     loadTable(ident)
   }
