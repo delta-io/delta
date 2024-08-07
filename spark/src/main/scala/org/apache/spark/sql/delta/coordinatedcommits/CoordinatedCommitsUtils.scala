@@ -154,7 +154,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       actions: Iterator[String],
       uuid: String): FileStatus = {
     val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuid))
-    logStore.write(commitPath, actions.asJava, false, hadoopConf)
+    logStore.write(commitPath, actions.asJava, true, hadoopConf)
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
 
