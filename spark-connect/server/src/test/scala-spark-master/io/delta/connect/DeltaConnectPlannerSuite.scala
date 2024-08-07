@@ -123,7 +123,7 @@ class DeltaConnectPlannerSuite
 
       val result = new SparkConnectPlanner(createDummySessionHolder(spark)).transformRelation(input)
       result match {
-        case LocalRelation(ExpressionEncoder[DeltaHistory]().schema) =>
+        case lr: LocalRelation if lr.schema == ExpressionEncoder[DeltaHistory]().schema =>
         case other => fail(s"Unexpected plan: $other")
       }
     }
