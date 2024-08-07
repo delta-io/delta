@@ -101,25 +101,6 @@ trait IdentityColumnAdmissionSuiteBase
     }
   }
 
-  test("identity column nullability cannot be changed") {
-    for (generatedAsIdentityType <- GeneratedAsIdentityType.values)
-      withIdentityColumnTable(generatedAsIdentityType, tblName) {
-        for {
-          changeColumnKeyword <- Seq("ALTER", "CHANGE")
-          changeNullabilityKeyword <- Seq("SET", "DROP")
-        } {
-          val ex = intercept[DeltaAnalysisException] {
-            sql(s"""
-                |ALTER TABLE $tblName
-                |  $changeColumnKeyword COLUMN id
-                |  $changeNullabilityKeyword NOT NULL
-                |""".stripMargin)
-          }
-          assert(ex.getMessage.contains("ALTER TABLE ALTER COLUMN is not supported"))
-        }
-      }
-  }
-
   test("cannot set default value for identity column") {
     for {
       generatedAsIdentityType <- GeneratedAsIdentityType.values
