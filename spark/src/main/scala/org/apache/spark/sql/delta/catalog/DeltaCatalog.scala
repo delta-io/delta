@@ -107,6 +107,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }.toMap
     val (partitionColumns, maybeBucketSpec, maybeClusterBySpec) = convertTransforms(partitions)
     validateClusterBySpec(maybeClusterBySpec, schema)
+    // Check partition columns are not IDENTITY columns.
+    partitionColumns.foreach { colName =>
+      if (ColumnWithDefaultExprUtils.isIdentityColumn(schema(colName))) {
+        throw DeltaErrors.identityColumnPartitionNotSupported(colName)
+      }
+    }
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
@@ -692,6 +698,22 @@ class DeltaCatalog extends DelegatingCatalogExtension
             }
             field -> None
           })
+        }
+
+        // Any ColumnChange not explicitly on the allowlist is blocked from making changes on
+        // Identity Columns
+        val disallowedColumnChangesOnIdentityColumns = columnChanges.filterNot {
+            case _: UpdateColumnComment | _: UpdateColumnPosition | _: RenameColumn
+                 | _: SyncIdentity => true
+            case _ => false
+        }
+        disallowedColumnChangesOnIdentityColumns.foreach {
+          case change: ColumnChange =>
+            val field = change.fieldNames()
+            val (existingField, _) = getColumn(field)
+            if (ColumnWithDefaultExprUtils.isIdentityColumn(existingField)) {
+              throw DeltaErrors.identityColumnAlterColumnNotSupported()
+            }
         }
 
         columnChanges.foreach {

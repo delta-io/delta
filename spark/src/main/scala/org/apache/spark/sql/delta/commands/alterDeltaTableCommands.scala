@@ -893,6 +893,10 @@ case class AlterTableReplaceColumnsDeltaCommand(
       val metadata = txn.metadata
       val existingSchema = metadata.schema
 
+      if (ColumnWithDefaultExprUtils.hasIdentityColumn(table.initialSnapshot.schema)) {
+        throw DeltaErrors.identityColumnReplaceColumnsNotSupported()
+      }
+
       val resolver = sparkSession.sessionState.conf.resolver
       val changingSchema = StructType(columns)
 
