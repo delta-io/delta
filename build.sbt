@@ -458,7 +458,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test"
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
     ),
     // Generate the package object to provide the version information in runtime.
     Compile / sourceGenerators += Def.task {
@@ -525,6 +526,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
+      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
     ),
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings

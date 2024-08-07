@@ -34,7 +34,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
@@ -63,8 +62,8 @@ public class CommitInfo {
             return null;
         }
 
-        ColumnVector[] children = new ColumnVector[7];
-        for (int i = 0; i < 7; i++) {
+        ColumnVector[] children = new ColumnVector[6];
+        for (int i = 0; i < 6; i++) {
             children[i] = vector.getChild(i);
         }
 
@@ -74,10 +73,9 @@ public class CommitInfo {
                 children[1].isNullAt(rowId) ? null : children[1].getLong(rowId),
                 children[2].isNullAt(rowId) ? null : children[2].getString(rowId),
                 children[3].isNullAt(rowId) ? null : children[3].getString(rowId),
-                children[4].isNullAt(rowId) ? Collections.emptyMap() :
-                        VectorUtils.toJavaMap(children[4].getMap(rowId)),
-                children[5].isNullAt(rowId) ? null : children[5].getBoolean(rowId),
-                children[6].isNullAt(rowId) ? null : children[6].getString(rowId)
+                Collections.emptyMap(), // TODO: Add support for operationParameters
+                children[4].isNullAt(rowId) ? null : children[4].getBoolean(rowId),
+                children[5].isNullAt(rowId) ? null : children[5].getString(rowId)
         );
     }
 
@@ -86,8 +84,6 @@ public class CommitInfo {
             .add("timestamp", LongType.LONG)
             .add("engineInfo", StringType.STRING)
             .add("operation", StringType.STRING)
-            .add("operationParameters",
-                    new MapType(StringType.STRING, StringType.STRING, true /* nullable */))
             .add("isBlindAppend", BooleanType.BOOLEAN, true /* nullable */)
             .add("txnId", StringType.STRING);
 

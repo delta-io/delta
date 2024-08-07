@@ -235,6 +235,21 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     batches.map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
   }
 
+  def generateDefinedData(schema: StructType, data: Seq[Int]): Seq[FilteredColumnarBatch] = {
+
+    var batches = Seq.empty[ColumnarBatch]
+    for (_ <- 0 until 1) {
+      var vectors = Seq.empty[ColumnVector]
+      schema.fields().forEach { field =>
+        val colType = field.getDataType
+        val vector = testDefinedColumnVector(data.size, colType, data)
+        vectors = vectors :+ vector
+      }
+      batches = batches :+ new DefaultColumnarBatch(data.size, schema, vectors.toArray)
+    }
+    batches.map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
+  }
+
   def createWriteTxnBuilder(table: Table): TransactionBuilder = {
     table.createTransactionBuilder(defaultEngine, testEngineInfo, Operation.WRITE)
   }

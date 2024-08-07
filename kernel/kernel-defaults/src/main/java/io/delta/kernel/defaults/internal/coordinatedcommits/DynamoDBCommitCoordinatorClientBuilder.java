@@ -14,23 +14,26 @@
  * limitations under the License.
  */
 
-package io.delta.dynamodbcommitcoordinator;
+package io.delta.kernel.defaults.internal.coordinatedcommits;
+
+import java.io.IOException;
+import java.util.Map;
 
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
-import org.apache.spark.sql.delta.coordinatedcommits.CommitCoordinatorBuilder;
-import org.apache.spark.sql.delta.coordinatedcommits.CommitCoordinatorClient;
-import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import io.delta.storage.commit.CommitCoordinatorClient;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.sql.SparkSession;
-import scala.collection.immutable.Map;
 
-import java.io.IOException;
-
-public class DynamoDBCommitCoordinatorClientBuilder implements CommitCoordinatorBuilder {
+public class DynamoDBCommitCoordinatorClientBuilder extends CommitCoordinatorBuilder {
 
     private final long BACKFILL_BATCH_SIZE = 10L;
+    private final Configuration initHadoopConf;
+
+    public DynamoDBCommitCoordinatorClientBuilder(Configuration initHadoopConf) {
+        super(initHadoopConf);
+        this.initHadoopConf = initHadoopConf;
+    }
 
     @Override
     public String getName() {
@@ -50,26 +53,24 @@ public class DynamoDBCommitCoordinatorClientBuilder implements CommitCoordinator
     private static final String DYNAMO_DB_ENDPOINT_KEY = "dynamoDBEndpoint";
 
     @Override
-    public CommitCoordinatorClient build(SparkSession spark, Map<String, String> conf) {
-        String coordinatedCommitsTableName = conf.get(COORDINATED_COMMITS_TABLE_NAME_KEY).getOrElse(() -> {
+    public CommitCoordinatorClient build(Map<String, String> conf) {
+        String coordinatedCommitsTableName = conf.get(COORDINATED_COMMITS_TABLE_NAME_KEY);
+        if (coordinatedCommitsTableName == null) {
             throw new RuntimeException(COORDINATED_COMMITS_TABLE_NAME_KEY + " not found");
-        });
-        String dynamoDBEndpoint = conf.get(DYNAMO_DB_ENDPOINT_KEY).getOrElse(() -> {
+        }
+        String dynamoDBEndpoint = conf.get(DYNAMO_DB_ENDPOINT_KEY);
+        if (dynamoDBEndpoint == null) {
             throw new RuntimeException(DYNAMO_DB_ENDPOINT_KEY + " not found");
-        });
-        String awsCredentialsProviderName =
-                spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_AWS_CREDENTIALS_PROVIDER_NAME());
-        int readCapacityUnits = Integer.parseInt(
-                spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_READ_CAPACITY_UNITS().key()));
-        int writeCapacityUnits = Integer.parseInt(
-                spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_WRITE_CAPACITY_UNITS().key()));
-        boolean skipPathCheck = Boolean.parseBoolean(
-                spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK().key()));
+        }
+        String awsCredentialsProviderName = "com.amazonaws.auth.DefaultAWSCredentialsProviderChain";
+        int readCapacityUnits = 5;
+        int writeCapacityUnits = 5;
+        boolean skipPathCheck = false;
         try {
             AmazonDynamoDB ddbClient = createAmazonDDBClient(
                     dynamoDBEndpoint,
                     awsCredentialsProviderName,
-                    spark.sessionState().newHadoopConf()
+                    initHadoopConf
             );
             return getDynamoDBCommitCoordinatorClient(
                     coordinatedCommitsTableName,

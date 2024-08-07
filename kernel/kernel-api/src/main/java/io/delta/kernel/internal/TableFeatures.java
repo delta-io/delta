@@ -128,6 +128,12 @@ public class TableFeatures {
                             break;
                         case "coordinatedCommits-preview":
                             break;
+                        case "vacuumProtocolCheck":
+                            break;
+                        case "invariants":
+                            break;
+                        case "deletionVectors":
+                            break;
                         default:
                             throw unsupportedWriterFeature(tablePath, writerFeature);
                     }

@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# Run the sbt command and filter the logging output
+build/sbt kernelDefaults/"testOnly *.$1" | grep -vE "^\[info\]|\[warn\]|\[debug\]|\[error\]|^\[success\]|\[trace\]|ERROR| at|NullPointerException|Java|java|scala|Native|CodeCache|bounds|total_blobs|compilation|SLF4J"
+

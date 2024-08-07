@@ -661,6 +661,134 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
     })
   }
 
+  test("dynamodb") {
+    val config = Map(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("dynamodb") ->
+        classOf[DynamoDBCommitCoordinatorClientBuilder].getName)
+    testWithCoordinatorCommits(config, {
+      (_, engine) =>
+        val tablePath = "/tmp/test/test1"
+        spark.conf.set(
+          "spark.databricks.delta.properties.defaults.coordinatedCommits.commitCoordinator-preview",
+          "dynamodb")
+        spark.conf.set(
+          "spark.databricks.delta.properties.defaults." +
+            "coordinatedCommits.commitCoordinatorConf-preview",
+          OBJ_MAPPER.writeValueAsString(
+            Map(
+              "dynamoDBTableName" -> "test_ddb_cs_table_delta-oss-ddb-cs-run110",
+              "dynamoDBEndpoint" -> "dynamodb.us-west-2.amazonaws.com").asJava))
+        spark.sql(s"CREATE TABLE delta.`$tablePath` (id INT) USING delta")
+        spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (0), (1)")
+
+        val table = Table.forPath(engine, tablePath)
+        val snapshot1 = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        val metadata = snapshot1.getMetadata
+        assert(TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetadata(engine, metadata) ===
+          Optional.of("dynamodb"))
+        assert(snapshot1.getVersion(engine) === 1L)
+        val result1 = readSnapshot(snapshot1, snapshot1.getSchema(engine), null, null, engine)
+        checkAnswer(result1, (0 to 1).map(TestRow(_)))
+
+        val schema = snapshot1.getSchema(engine)
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          schema,
+          data = Seq(Map.empty[String, Literal] -> generateDefinedData(schema, Seq.range(2, 3))))
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          schema,
+          data = Seq(Map.empty[String, Literal] -> generateDefinedData(schema, Seq.range(3, 5))))
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          schema,
+          data = Seq(Map.empty[String, Literal] -> generateDefinedData(schema, Seq.range(5, 8))))
+
+        val expectedAnswer2 = (0 to 2).map(TestRow(_))
+        val snapshot2 = table.getSnapshotAsOfVersion(engine, 2L)
+        checkAnswer(
+          readSnapshot(snapshot2, snapshot2.getSchema(engine), null, null, engine), expectedAnswer2)
+        val expectedAnswer3 = (0 to 4).map(TestRow(_))
+        val snapshot3 = table.getSnapshotAsOfVersion(engine, 3L)
+        checkAnswer(
+          readSnapshot(snapshot3, snapshot3.getSchema(engine), null, null, engine), expectedAnswer3)
+        val expectedAnswer4 = (0 to 7).map(TestRow(_))
+        val snapshot4 = table.getLatestSnapshot(engine)
+        val result4 = readSnapshot(snapshot4, snapshot4.getSchema(engine), null, null, engine)
+        checkAnswer(result4, expectedAnswer4)
+    })
+  }
+
+  test("dynamodb with spark table") {
+    val config = Map(
+      CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("dynamodb") ->
+        classOf[DynamoDBCommitCoordinatorClientBuilder].getName,
+      "fs.s3a.access.key" -> "your-access-key",
+      "fs.s3a.secret.key" -> "your-secret-key",
+    )
+    testWithCoordinatorCommits(config, {
+      (_, engine) =>
+
+        val tablePath = "s3a://delta-kernel-coordinated-commits/demotable3"
+
+        val table = Table.forPath(engine, tablePath)
+        val snapshot1 = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        val metadata = snapshot1.getMetadata
+        assert(TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetadata(engine, metadata) ===
+          Optional.of("dynamodb"))
+        assert(snapshot1.getVersion(engine) === 1L)
+        val result1 = readSnapshot(snapshot1, snapshot1.getSchema(engine), null, null, engine)
+        checkAnswer(result1, (0 to 1).map(TestRow(_)))
+
+        val schema = snapshot1.getSchema(engine)
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          schema,
+          data = Seq(Map.empty[String, Literal] -> generateDefinedData(schema, Seq.range(2, 3))))
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          schema,
+          data = Seq(Map.empty[String, Literal] -> generateDefinedData(schema, Seq.range(3, 5))))
+
+        appendData(
+          engine,
+          tablePath,
+          isNewTable = false,
+          schema,
+          data = Seq(Map.empty[String, Literal] -> generateDefinedData(schema, Seq.range(5, 8))))
+
+        val expectedAnswer2 = (0 to 2).map(TestRow(_))
+        val snapshot2 = table.getSnapshotAsOfVersion(engine, 2L)
+        checkAnswer(
+          readSnapshot(snapshot2, snapshot2.getSchema(engine), null, null, engine), expectedAnswer2)
+
+        val expectedAnswer3 = (0 to 4).map(TestRow(_))
+        val snapshot3 = table.getSnapshotAsOfVersion(engine, 3L)
+        checkAnswer(
+          readSnapshot(snapshot3, snapshot3.getSchema(engine), null, null, engine), expectedAnswer3)
+
+        val expectedAnswer4 = (0 to 7).map(TestRow(_))
+        val snapshot4 = table.getLatestSnapshot(engine)
+        checkAnswer(
+          readSnapshot(snapshot4, snapshot4.getSchema(engine), null, null, engine), expectedAnswer4)
+    })
+  }
+
   def getCommitVersions(dir: File): Array[Long] = {
     dir
       .listFiles()

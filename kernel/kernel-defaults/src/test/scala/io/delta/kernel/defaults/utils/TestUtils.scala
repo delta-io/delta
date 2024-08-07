@@ -132,6 +132,8 @@ trait TestUtils extends Assertions with SQLHelper {
         set("delta.kernel.default.parquet.reader.batch-size", "20");
         set("delta.kernel.default.json.reader.batch-size", "20");
         set("delta.kernel.default.parquet.writer.targetMaxFileSize", "20");
+        set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+        set("fs.s3a.path.style.access", "true")
       }
     })
     withTempDir { dir => f(dir.getAbsolutePath, engine) }
@@ -559,6 +561,50 @@ trait TestUtils extends Assertions with SQLHelper {
         testColumnValue(dataType, rowId).asInstanceOf[Short]
 
       override def getInt(rowId: Int): Int = testColumnValue(dataType, rowId).asInstanceOf[Int]
+
+      override def getLong(rowId: Int): Long = testColumnValue(dataType, rowId).asInstanceOf[Long]
+
+      override def getFloat(rowId: Int): Float =
+        testColumnValue(dataType, rowId).asInstanceOf[Float]
+
+      override def getDouble(rowId: Int): Double =
+        testColumnValue(dataType, rowId).asInstanceOf[Double]
+
+      override def getBinary(rowId: Int): Array[Byte] =
+        testColumnValue(dataType, rowId).asInstanceOf[Array[Byte]]
+
+      override def getString(rowId: Int): String =
+        testColumnValue(dataType, rowId).asInstanceOf[String]
+
+      override def getDecimal(rowId: Int): BigDecimalJ =
+        testColumnValue(dataType, rowId).asInstanceOf[BigDecimalJ]
+    }
+  }
+
+  /**
+   * Utility method to generate a [[dataType]] column vector of given size.
+   * The nullability of rows is determined by the [[testIsNullValue(dataType, rowId)]].
+   * The row values are determined by [[testColumnValue(dataType, rowId)]].
+   */
+  def testDefinedColumnVector(size: Int, dataType: DataType, data: Seq[Int]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = dataType
+
+      override def getSize: Int = size
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = rowId >= data.size
+
+      override def getBoolean(rowId: Int): Boolean =
+        testColumnValue(dataType, rowId).asInstanceOf[Boolean]
+
+      override def getByte(rowId: Int): Byte = testColumnValue(dataType, rowId).asInstanceOf[Byte]
+
+      override def getShort(rowId: Int): Short =
+        testColumnValue(dataType, rowId).asInstanceOf[Short]
+
+      override def getInt(rowId: Int): Int = data(rowId)
 
       override def getLong(rowId: Int): Long = testColumnValue(dataType, rowId).asInstanceOf[Long]
 
