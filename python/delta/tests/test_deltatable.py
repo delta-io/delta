@@ -23,7 +23,7 @@ import os
 from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
-from pyspark.errors.exceptions.captured import UnsupportedOperationException
+from pyspark.errors.exceptions.base import UnsupportedOperationException
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
@@ -1010,10 +1010,13 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.addColumn("a", 1)  # type: ignore[arg-type]
 
-        # bad column datatype - can't be pared
+        # bad column datatype - can't be parsed
         with self.assertRaises(ParseException):
             builder.addColumn("a", "1")
             builder.execute()
+
+        # reset the builder
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
 
         # bad comment
         with self.assertRaises(TypeError):
