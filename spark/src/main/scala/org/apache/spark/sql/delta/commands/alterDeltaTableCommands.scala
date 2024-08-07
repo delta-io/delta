@@ -167,7 +167,13 @@ case class AlterTableSetPropertiesDeltaCommand(
 
       txn.updateMetadata(newMetadata)
 
-      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
+      // Tag if the metadata update is _only_ for enabling row tracking. This allows for
+      // an optimization where we can safely not fail concurrent txns from the metadata update.
+      var tags = Map.empty[String, String]
+      if (enableRowTracking && configuration.size == 1) {
+        tags += (DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+      }
+      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration), tags)
 
       Seq.empty[Row]
     }
