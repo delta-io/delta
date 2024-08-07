@@ -1,3 +1,19 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.sql.delta
 
 import java.io.{File, FileNotFoundException}
@@ -131,16 +147,14 @@ class DeltaFsckSuite extends QueryTest
       var allFiles = snapshot.allFilesViaStateReconstruction.collect()
 
       // Make sure the files exist in the Delta Log
-      val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete => fileToDelete.toString.contains(file.path)))
+      val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete =>
+        fileToDelete.toString.contains(file.path)))
       assert(existingFilesCount == 3)
-      
       // Delete parquet files
       filesToDelete.foreach(fs.delete(_, true))
-      
 
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(tablePath)
-        
       // Fix the table
       spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
 
@@ -150,7 +164,6 @@ class DeltaFsckSuite extends QueryTest
       snapshot = deltaLog.update()
       allFiles = snapshot.allFilesViaStateReconstruction.collect()
       assert(allFiles.forall(file => filesToDelete.forall(!_.toString.contains(file))))
-
     }
   }
 
@@ -163,7 +176,7 @@ class DeltaFsckSuite extends QueryTest
         .saveAsTable(tbl)
       val inputFiles = spark.read.format("delta")
                                   .table(tbl).inputFiles
-      
+
       // Remove the middle file
       val indexToDelete = inputFiles.length / 2
 
@@ -189,7 +202,7 @@ class DeltaFsckSuite extends QueryTest
       // Make sure the removed file is not referenced in the delta log anymore
       val snapshot = deltaLog.update()
       val referencedFiles = snapshot.allFilesViaStateReconstruction.collect()
-      val fileExists = referencedFiles.exists(file => fileToDelete.toString.contains(file.path)) 
+      val fileExists = referencedFiles.exists(file => fileToDelete.toString.contains(file.path))
       assert(!fileExists)
       assert(referencedFiles.length == inputFiles.length - 1)
     }
@@ -227,19 +240,19 @@ class DeltaFsckSuite extends QueryTest
 
       // Delete a parquet file
       fs.delete(fileToDelete, true)
-      
+
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(tablePath)
 
       // Fix the table
       spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
-      
+
       checkTableIsBroken(tablePath, false)
 
       // Make sure the removed file is not referenced in the delta log anymore
       snapshot = deltaLog.update()
       allFiles = snapshot.allFilesViaStateReconstruction.collect()
-      val fileExists = allFiles.exists(file => fileToDelete.toString.contains(file.path)) 
+      val fileExists = allFiles.exists(file => fileToDelete.toString.contains(file.path))
       assert(!fileExists)
     }
   }
@@ -249,7 +262,8 @@ class DeltaFsckSuite extends QueryTest
       val directory = new File(dir, "test")
       val tablePath = directory.getCanonicalPath
       // Create the original table
-      spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT, Col3 STRING) USING DELTA PARTITIONED BY (Col1, Col2);")
+      spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT, Col3 STRING) "
+        + "USING DELTA PARTITIONED BY (Col1, Col2);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(7, 2, 1, 'ABCF');")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(0, 1, 2, 'AD');")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(2, 5, 0, 'ABC');")
@@ -266,15 +280,17 @@ class DeltaFsckSuite extends QueryTest
       spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 4, 7, 'BACC');")
       spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 5, 1, 'BBC');")
       spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(1, 9, 1, 'BBC');")
-            
+
       // Remove 4 parquet files
       val inputFiles = spark.read.format("delta")
                                   .load(newTablePath).inputFiles
-      val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 3, inputFiles.length / 2, inputFiles.length - 1)
+      val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 3,
+        inputFiles.length / 2,
+        inputFiles.length - 1)
 
       val filesToDelete: Seq[Path] = indicesToDelete.map(index => new Path(inputFiles(index)))
       val clonedDataPath = new Path(newTablePath)
-      
+
       // scalastyle:off deltahadoopconfiguration
       val fs = clonedDataPath.getFileSystem(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
@@ -283,29 +299,32 @@ class DeltaFsckSuite extends QueryTest
       val deltaLog = DeltaLog.forTable(spark, newTablePath.toString)
       var snapshot = deltaLog.snapshot
       var allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      var allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path, StandardCharsets.UTF_8.toString))
+      var allFiles = allFilesEncoded.map(file =>
+        URLDecoder.decode(file.path, StandardCharsets.UTF_8.toString))
 
       // Make sure the files exist in the Delta Log
-      val existingFilesBefore = allFiles.map(file => filesToDelete.map(fileToDelete => fileToDelete.toString.contains(file)).count(_ == true))
+      val existingFilesBefore = allFiles.map(file => filesToDelete.map(fileToDelete =>
+        fileToDelete.toString.contains(file)).count(_ == true))
       assert(existingFilesBefore.count(_ == 1) == 4)
 
       // Delete parquet files
       for (file <- filesToDelete) {
         fs.delete(file, true)
       }
-      
+
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(newTablePath)
-        
+
       // Fix the table
       val output = spark.sql(s"FSCK REPAIR TABLE delta.`${newTablePath}`;")
       assert(output.count() == 4)
-      
+
       checkTableIsBroken(newTablePath, false)
       // Make sure the removed files are not referenced in the delta log anymore
       snapshot = deltaLog.update()
       allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path, StandardCharsets.UTF_8.toString))
+      allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
+        StandardCharsets.UTF_8.toString))
       assert(allFiles.forall(file => filesToDelete.forall(!_.toString.contains(file))))
       // Make sure no files are missing
       val outputDryRun = spark.sql(s"FSCK REPAIR TABLE delta.`${newTablePath}` DRY RUN;")
@@ -321,7 +340,8 @@ class DeltaFsckSuite extends QueryTest
       spark.conf.set("spark.databricks.delta.retentionDurationCheck.enabled", "false")
 
       // Create the original table
-      spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT, Col3 STRING) USING DELTA PARTITIONED BY (Col1, Col2);")
+      spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT, Col3 STRING) "
+        + "USING DELTA PARTITIONED BY (Col1, Col2);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(7, 2, 1, 'ABCF');")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(0, 1, 2, 'AD');")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(2, 5, 0, 'ABC');")
@@ -336,7 +356,7 @@ class DeltaFsckSuite extends QueryTest
       withSQLConf(("spark.sql.files.ignoreMissingFiles", "true")) {
       spark.sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 3;")
       }
-      
+
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(tablePath)
 
@@ -352,7 +372,7 @@ class DeltaFsckSuite extends QueryTest
       withTempDir { dir =>
         val directory = new File(dir, "test")
         val tablePath = directory.getCanonicalPath
-        
+
         // Create a table in multiple files
         spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT) USING DELTA;")
         spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1);")
@@ -381,15 +401,16 @@ class DeltaFsckSuite extends QueryTest
         var allFiles = snapshot.allFilesViaStateReconstruction.collect()
 
         // Make sure the files exist in the Delta Log
-        val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete => fileToDelete.toString.contains(file.path)))
+        val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete =>
+          fileToDelete.toString.contains(file.path)))
         assert(existingFilesCount == 3)
         // Delete parquet files
         filesToDelete.foreach(fs.delete(_, true))
-        
+
         // Make sure the table is corrupted before fsck
         checkTableIsBroken(tablePath)
 
-        val events = com.databricks.spark.util.Log4jUsageLogger.track {          
+        val events = com.databricks.spark.util.Log4jUsageLogger.track {
           // Fix the table
           assert(spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}` DRY RUN;").count() == 2)
         }
@@ -398,9 +419,8 @@ class DeltaFsckSuite extends QueryTest
             event.tags.get("opType") === Some("delta.fsck.stats")})
         assert(fsckStatsRecords.length === 1)
         JsonUtils.mapper.readValue[Option[Map[String, Any]]](fsckStatsRecords.head.blob) match {
-          case Some(map: Map[String, Any]) => {
+          case Some(map: Map[String, Any]) =>
             assert(map.get("numMissingFiles").map(_.asInstanceOf[Int]) === Some(3))
-          }
         }
         // Make sure the table is corrupted after fsck dry run
         checkTableIsBroken(tablePath)
@@ -441,17 +461,17 @@ class DeltaFsckSuite extends QueryTest
       var allFiles = snapshot.allFilesViaStateReconstruction.collect()
 
       // Make sure the files exist in the Delta Log
-      val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete => fileToDelete.toString.contains(file.path)))
+      val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete =>
+        fileToDelete.toString.contains(file.path)))
       assert(existingFilesCount == 3)
 
       val allFilesStrings: Seq[Path] = allFiles.map(path => new Path(path.path))
-      
-      val notDeletedFiles = allFiles.map(_.path).filter(f => filesToDelete.forall(!_.toString.contains(f)))
+      val notDeletedFiles = allFiles.map(_.path).filter(f =>
+        filesToDelete.forall(!_.toString.contains(f)))
       filesToDelete.foreach(fs.delete(_, true))
 
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(tablePath)
-        
       // Fix the table
       spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
 
@@ -475,7 +495,7 @@ class DeltaFsckSuite extends QueryTest
         .save(tablePath.toString)
 
       val inputFiles = spark.read.format("delta")
-                                  .load(tablePath).inputFiles
+        .load(tablePath).inputFiles
       val indexToDelete: Int = inputFiles.length / 2
       val fileToDelete = new Path(inputFiles(indexToDelete))
       val dataPath = new Path(tablePath)
@@ -488,9 +508,9 @@ class DeltaFsckSuite extends QueryTest
       val logPath = DeltaLog.forTable(spark, tablePath.toString).logPath;
       val fileIterator = fs.listFiles(logPath, false)
       val filesAndDirs: Array[FileStatus] = Iterator.continually(fileIterator)
-                                                    .takeWhile(_.hasNext)
-                                                    .map(_.next)
-                                                    .toArray
+        .takeWhile(_.hasNext)
+        .map(_.next)
+        .toArray
 
       val lastDeltaLogPath = filesAndDirs.filter(_.getPath.getName.endsWith(".json"))
       val numLogsBefore = lastDeltaLogPath.length
@@ -501,12 +521,12 @@ class DeltaFsckSuite extends QueryTest
       val allFilesBefore = snapshot.allFilesViaStateReconstruction.collect()
 
       // Make sure the file exists in the Delta Log
-      val filesToDeleteBEfore = allFilesBefore.map(file => fileToDelete.toString.contains(file.path))
+      val filesToDeleteBEfore = allFilesBefore.map(file =>
+        fileToDelete.toString.contains(file.path))
       assert(filesToDeleteBEfore.count(_ == true) == 1)
 
       // Delete a parquet file
       fs.delete(fileToDelete, true)
-      
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(tablePath)
 
@@ -516,7 +536,8 @@ class DeltaFsckSuite extends QueryTest
       // Make sure the removed file is not referenced in the delta log anymore
       snapshot = deltaLog.update()
       val allFilesAfter = snapshot.allFilesViaStateReconstruction.collect()
-      val existingFilesAfter = allFilesAfter.map(file => fileToDelete.toString.contains(file.path))
+      val existingFilesAfter = allFilesAfter.map(file =>
+        fileToDelete.toString.contains(file.path))
 
       // The file is still present in the delta log
       assert(existingFilesAfter.count(_ == true) == 1)
@@ -526,9 +547,9 @@ class DeltaFsckSuite extends QueryTest
 
       val fileIteratorAfter = fs.listFiles(logPath, false)
       val filesAndDirsAfter: Array[FileStatus] = Iterator.continually(fileIteratorAfter)
-                                                    .takeWhile(_.hasNext)
-                                                    .map(_.next)
-                                                    .toArray
+        .takeWhile(_.hasNext)
+        .map(_.next)
+        .toArray
       val lastDeltaLogPathAfter = filesAndDirsAfter.filter(_.getPath.getName.endsWith(".json"))
       val numLogsAfter = lastDeltaLogPathAfter.length
 
@@ -544,7 +565,8 @@ class DeltaFsckSuite extends QueryTest
       val tablePath = directory.getCanonicalPath
 
       // Create a table in multiple files
-      spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT) USING DELTA PARTITIONED BY (Col1, Col2);")
+      spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT) "
+        + "USING DELTA PARTITIONED BY (Col1, Col2);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1, 1, 2);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1, 2, 3);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1, 3, 1);")
@@ -569,14 +591,12 @@ class DeltaFsckSuite extends QueryTest
       val deltaLog = DeltaLog.forTable(spark, tablePath.toString)
       val snapshot = deltaLog.snapshot
       val allFiles = snapshot.allFilesViaStateReconstruction.collect()
-
       // Make sure the files exist in the Delta Log
-      val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete => fileToDelete.toString.contains(file.path)))
+      val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete =>
+        fileToDelete.toString.contains(file.path)))
       assert(existingFilesCount == 3)
-
       // Delete parquet files
       filesToDelete.foreach(fs.delete(_, true))
-      
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(tablePath)
 
@@ -589,12 +609,10 @@ class DeltaFsckSuite extends QueryTest
     }
   }
 
-  
   test("FSCK verify output") {
     withTempDir { dir =>
       val directory = new File(dir, "test")
       val tablePath = directory.getCanonicalPath
-
       // Create a table in multiple files
       spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT) USING DELTA;")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1);")
@@ -604,39 +622,30 @@ class DeltaFsckSuite extends QueryTest
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(5);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(6);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(7);")
-
       val inputFiles = spark.read.format("delta")
                                   .load(tablePath).inputFiles
-
       // Remove 3 files
       val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 2, inputFiles.length - 1)
       val filesToDelete: Seq[Path] = indicesToDelete.map(index => new Path(inputFiles(index)))
       var dataPath = new Path(tablePath)
-
       // scalastyle:off deltahadoopconfiguration
       val fs = dataPath.getFileSystem(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
-
       // Get the files referenced within the Delta Log
       val deltaLog = DeltaLog.forTable(spark, tablePath.toString)
       val snapshot = deltaLog.snapshot
       val allFiles = snapshot.allFilesViaStateReconstruction.collect()
-
       // Make sure the files exist in the Delta Log
-      val existingFilesCount = allFiles.count(file => filesToDelete.exists(fileToDelete => fileToDelete.toString.contains(file.path)))
+      val existingFilesCount = allFiles.count(file =>
+        filesToDelete.exists(fileToDelete => fileToDelete.toString.contains(file.path)))
       assert(existingFilesCount == 3)
-
       // Delete parquet files
       filesToDelete.foreach(fs.delete(_, true))
-      
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(tablePath)
-        
       // Fix the table
       val output = spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
-      
       checkTableIsBroken(tablePath, false)
-
       // Make sure the output rows are correct
       checkAnswer(output, filesToDelete.map(file => Row(file.toString.split("/").last, true)))
     }
@@ -648,7 +657,8 @@ class DeltaFsckSuite extends QueryTest
       val tablePath = directory.getCanonicalPath
 
       // Create a table in multiple files
-      spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT) USING DELTA PARTITIONED BY (Col1, Col2);")
+      spark.sql(s"CREATE TABLE delta.`$tablePath` "
+        + "(Id INT, Col1 INT, Col2 INT) USING DELTA PARTITIONED BY (Col1, Col2);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1, 1, 2);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(2, 2, 3);")
       spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(0, 3, 1);")
@@ -667,22 +677,15 @@ class DeltaFsckSuite extends QueryTest
 
       // Delete files in the partition path
       val fileToDelete = new Path(s"$tablePath/Col1=3/Col2=1")
-
       // Delete parquet files
       fs.delete(fileToDelete, true)
-      
       // Make sure the table is corrupted before fsck
       checkTableIsBroken(tablePath)
-
       // Make sure two of the files were deleted
       val fsckOutput = spark.sql(s"FSCK REPAIR TABLE delta.`$tablePath`;")
-
       assert(fsckOutput.count() == 2)
       checkTableIsBroken(tablePath, false)
-
-
       // Make sure that both of the deleted files contain the partition path
-      
       for (row <- fsckOutput.collect) {
         assert(row.getString(0).contains("Col1=3/Col2=1"))
       }
@@ -698,38 +701,28 @@ class DeltaFsckSuite extends QueryTest
           .write
           .format("delta")
           .save(tablePath.toString)
-
         val inputFiles = spark.read.format("delta")
                                     .load(tablePath).inputFiles
-
         // Remove a file
         val indexToDelete = inputFiles.length / 2
-
         val fileToDelete = new Path(inputFiles(indexToDelete))
         val dataPath = new Path(tablePath)
-
         // scalastyle:off deltahadoopconfiguration
         val fs = dataPath.getFileSystem(spark.sessionState.newHadoopConf())
         // scalastyle:on deltahadoopconfiguration
-
         // Delete a parquet file
         fs.delete(fileToDelete, true)
-        
         checkTableIsBroken(tablePath)
-
         // Fix the table
         spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
-
         import io.delta.tables.DeltaTable
         val actualOperationMetricsAndName = DeltaTable.forPath(spark, tablePath)
           .history(1)
           .select("operationMetrics", "operation")
           .head
-
         val actualOperationMetrics = actualOperationMetricsAndName
           .getMap(0)
           .asInstanceOf[Map[String, String]]
-
         // Test that the metric exists.
         Seq(
           "numFilesScanned",
@@ -737,7 +730,6 @@ class DeltaFsckSuite extends QueryTest
           "executionTimeMs"
         ).foreach(metric => {
           assert(actualOperationMetrics.get(metric).isDefined)})
-
         val operationName = actualOperationMetricsAndName(1).asInstanceOf[String]
         assert(operationName === DeltaOperations.FSCK_OPERATION_NAME)
         checkTableIsBroken(tablePath, false)
@@ -750,7 +742,8 @@ test("FSCK special characters test") {
     var tblName = s"test"
     withSQLConf("spark.sql.valid.characters.in.table.name" -> " ") {
       // Create the original table
-      spark.sql(s"CREATE TABLE `$tblName` (Id INT, Col1 INT, Col2 INT, Col3 STRING) USING DELTA PARTITIONED BY (Col1, Col2);")
+      spark.sql(s"CREATE TABLE `$tblName` "
+        + "(Id INT, Col1 INT, Col2 INT, Col3 STRING) USING DELTA PARTITIONED BY (Col1, Col2);")
       spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(7, 2, 1, 'ABCF');")
       spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(0, 1, 2, 'AD');")
       spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 5, 0, 'ABC');")
@@ -770,10 +763,12 @@ test("FSCK special characters test") {
       // Remove 4 parquet files
       val inputFiles = spark.read.format("delta")
                                   .load(newTablePath).inputFiles
-      val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 3, inputFiles.length / 2, inputFiles.length - 1)
+      val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 3,
+      inputFiles.length / 2,
+      inputFiles.length - 1)
       val filesToDelete: Seq[Path] = indicesToDelete.map(index => new Path(inputFiles(index)))
       val clonedDataPath = new Path(newTablePath)
-      
+
       // scalastyle:off deltahadoopconfiguration
       val fs = clonedDataPath.getFileSystem(spark.sessionState.newHadoopConf())
       // scalastyle:on deltahadoopconfiguration
@@ -782,9 +777,11 @@ test("FSCK special characters test") {
       val deltaLog = DeltaLog.forTable(spark, newTablePath.toString)
       var snapshot = deltaLog.snapshot
       var allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      var allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path, StandardCharsets.UTF_8.toString))
+      var allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
+        StandardCharsets.UTF_8.toString))
       // Make sure the files exist in the Delta Log
-      val existingFilesBefore = allFiles.map(file => filesToDelete.map(fileToDelete => fileToDelete.toString.contains(file)).count(_ == true))
+      val existingFilesBefore = allFiles.map(file => filesToDelete.map(fileToDelete =>
+        fileToDelete.toString.contains(file)).count(_ == true))
       assert(existingFilesBefore.count(_ == 1) == 4)
       // Delete parquet files
       for (file <- filesToDelete) {
@@ -799,7 +796,8 @@ test("FSCK special characters test") {
       // Make sure the removed files are not referenced in the delta log anymore
       snapshot = deltaLog.update()
       allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path, StandardCharsets.UTF_8.toString))
+      allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
+        StandardCharsets.UTF_8.toString))
       assert(allFiles.forall(file => filesToDelete.forall(!_.toString.contains(file))))
     }
   }
@@ -848,7 +846,7 @@ test("FSCK ignore non-404 errors in DRY RUN mode") {
       val fs = dataPath.getFileSystem(spark.sessionState.newHadoopConf())
       val logPath = deltaLog.logPath
       // scalastyle:on deltahadoopconfiguration
-      
+
       val versionNumBefore = deltaLog.update().version
       // Delete parquet files
       filesToDelete.foreach(fs.delete(_, true))
@@ -867,10 +865,10 @@ test("FSCK ignore non-404 errors in DRY RUN mode") {
       ThreadUtils.awaitResult(futureB, Duration.Inf)
       assert(e.getCause.getMessage.contains("DELTA_CONCURRENT_DELETE_DELETE"))
       checkTableIsBroken(tablePath, false)
-      // Make sure only the deleted files were removed
       val snapshot = deltaLog.update()
       val allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      val allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path, StandardCharsets.UTF_8.toString))
+      val allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
+        StandardCharsets.UTF_8.toString))
       assert(allFiles.forall(file => filesToDelete.forall(!_.toString.contains(file))))
       val versionNumAfter = snapshot.version
       // Make sure the number of delta logs is updated by 1

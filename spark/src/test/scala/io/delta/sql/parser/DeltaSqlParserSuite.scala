@@ -321,39 +321,39 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
   for (dryRun <- Seq(true, false)) {
     var dryRunString = if (dryRun) " DRY RUN" else ""
     test("FSCK command is parsed as expected" + dryRunString) {
-        val parser = new DeltaSqlParser(null)
-        dryRunString += ";"
-        assert(parser.parsePlan("FSCK REPAIR TABLE delta.`/path/to/tbl`" + dryRunString) ===
-        FsckRepairTableCommand(UnresolvedTable(Seq("delta", "/path/to/tbl"), "FSCK", None),
-            dryRun))
-        assert(parser.parsePlan("FSCK REPAIR TABLE `/path/to/tbl`" + dryRunString) ===
-        FsckRepairTableCommand(UnresolvedTable(Seq("/path/to/tbl"), "FSCK", None),
-            dryRun))
-        assert(parser.parsePlan("FSCK REPAIR TABLE tbl" + dryRunString) ===
+      val parser = new DeltaSqlParser(null)
+      dryRunString += ";"
+      assert(parser.parsePlan("FSCK REPAIR TABLE delta.`/path/to/tbl`" + dryRunString) ===
+      FsckRepairTableCommand(UnresolvedTable(Seq("delta", "/path/to/tbl"), "FSCK", None),
+          dryRun))
+      assert(parser.parsePlan("FSCK REPAIR TABLE `/path/to/tbl`" + dryRunString) ===
+      FsckRepairTableCommand(UnresolvedTable(Seq("/path/to/tbl"), "FSCK", None),
+          dryRun))
+      assert(parser.parsePlan("FSCK REPAIR TABLE tbl" + dryRunString) ===
+        FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+
+      assert(parser.parsePlan("FSCK REPAIR TABLE tbl_${system:spark.testing}" + dryRunString) ===
+        FsckRepairTableCommand(UnresolvedTable(Seq("tbl_true"), "FSCK", None), dryRun))
+
+      withSQLConf("tbl_var" -> "tbl") {
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${tbl_var}" + dryRunString) ===
           FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
-        
-        assert(parser.parsePlan("FSCK REPAIR TABLE tbl_${system:spark.testing}" + dryRunString) ===
-          FsckRepairTableCommand(UnresolvedTable(Seq("tbl_true"), "FSCK", None), dryRun))
 
-        withSQLConf("tbl_var" -> "tbl") {
-          assert(parser.parsePlan("FSCK REPAIR TABLE ${tbl_var}" + dryRunString) ===
-            FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${spark:tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
 
-          assert(parser.parsePlan("FSCK REPAIR TABLE ${spark:tbl_var}" + dryRunString) ===
-            FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${sparkconf:tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
 
-          assert(parser.parsePlan("FSCK REPAIR TABLE ${sparkconf:tbl_var}" + dryRunString) ===
-            FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${hiveconf:tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
 
-          assert(parser.parsePlan("FSCK REPAIR TABLE ${hiveconf:tbl_var}" + dryRunString) ===
-            FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
-
-          assert(parser.parsePlan("FSCK REPAIR TABLE ${hivevar:tbl_var}" + dryRunString) ===
-            FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${hivevar:tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK", None), dryRun))
       }
     }
   }
-  
+
   Seq(true, false).foreach { dryRun =>
     var dryRunString = if (dryRun) " DRY RUN" else ""
     test("FSCK command new tokens are non-reserved keywords" + dryRunString) {
