@@ -448,9 +448,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent commit,
   // then it will be detected as a conflict and the transaction will anyway fail.
   private[delta] val readSnapshotTableCommitCoordinatorClientOpt:
-    Option[TableCommitCoordinatorClient] = {
-      snapshot.tableCommitCoordinatorClientOpt
-  }
+    Option[TableCommitCoordinatorClient] = snapshot.getTableCommitCoordinatorForWrites
 
   /**
    * Generates a timestamp which is greater than the commit timestamp
@@ -1613,16 +1611,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   def createCoordinatedCommitsStats(): CoordinatedCommitsStats = {
-    val (coordinatedCommitsType, metadataToUse) = snapshot.tableCommitCoordinatorClientOpt match {
-      case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
-        (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
-      case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
-        (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
-      case Some(_) =>                                                        // CC commit
-        (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
-      case None =>                                                           // FS commit
-        (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
-    }
+    val (coordinatedCommitsType, metadataToUse) =
+      readSnapshotTableCommitCoordinatorClientOpt match {
+        case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
+          (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
+        case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
+          (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
+        case Some(_) =>                                                        // CC commit
+          (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
+        case None =>                                                           // FS commit
+          (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
+      }
     CoordinatedCommitsStats(
       coordinatedCommitsType.toString,
       metadataToUse.coordinatedCommitsCoordinatorName.getOrElse(""),
@@ -1669,8 +1668,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       CoordinatedCommitsUtils.getCoordinatedCommitsConfs(snapshot.metadata)
     var newCoordinatedCommitsTableConf: Option[Map[String, String]] = None
     if (finalMetadata.configuration != snapshot.metadata.configuration || snapshot.version == -1L) {
-      val newCommitCoordinatorClientOpt =
-        CoordinatedCommitsUtils.getCommitCoordinatorClient(spark, finalMetadata, finalProtocol)
+      val newCommitCoordinatorClientOpt = CoordinatedCommitsUtils.getCommitCoordinatorClient(
+        spark, deltaLog, finalMetadata, finalProtocol, failIfImplUnavailable = true)
       (newCommitCoordinatorClientOpt, readSnapshotTableCommitCoordinatorClientOpt) match {
         case (Some(newCommitCoordinatorClient), None) =>
           // FS -> CC conversion
