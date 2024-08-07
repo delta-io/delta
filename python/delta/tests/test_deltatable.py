@@ -914,10 +914,10 @@ class DeltaTableTestsMixin:
 
     def test_verify_paritionedBy_compatibility(self) -> None:
         try:
-            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+            from pyspark.sql.column import _to_seq  # type: ignore[import-not-found]
         except ImportError:
             # Spark 4
-            from pyspark.sql.classic.column import _to_seq  # type: ignore[attr-defined]
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[no-redef]
 
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
