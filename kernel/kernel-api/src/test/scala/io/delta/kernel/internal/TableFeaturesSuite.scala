@@ -68,7 +68,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     checkSupported(createTestProtocol(minWriterVersion = 7))
   }
 
-  Seq("appendOnly", "inCommitTimestamp-preview", "columnMapping")
+  Seq("appendOnly", "inCommitTimestamp-preview", "columnMapping", "vacuumProtocolCheck")
     .foreach { supportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
       checkSupported(createTestProtocol(minWriterVersion = 7, supportedWriterFeature))
@@ -77,8 +77,8 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   Seq("invariants", "checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
       "identityColumns", "deletionVectors", "rowTracking", "timestampNtz",
-      "domainMetadata", "v2Checkpoint", "icebergCompatV1", "icebergCompatV2", "clustering",
-      "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
+      "domainMetadata", "v2Checkpoint", "icebergCompatV1", "icebergCompatV2", "clustering")
+    .foreach { unsupportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
       checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
     }

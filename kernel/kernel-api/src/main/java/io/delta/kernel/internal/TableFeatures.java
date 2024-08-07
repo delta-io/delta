@@ -85,7 +85,7 @@ public class TableFeatures {
      *     <li>protocol writer version 1.</li>
      *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
      *     <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview},
-     *     {@code columnMapping}
+     *     {@code columnMapping} and {@code vacuumProtocolCheck}
      *     feature enabled.</li>
      * </ul>
      *
@@ -128,6 +128,8 @@ public class TableFeatures {
                         case "inCommitTimestamp-preview":
                             break;
                         case "columnMapping":
+                            break;
+                        case "vacuumProtocolCheck":
                             break;
                         default:
                             throw unsupportedWriterFeature(tablePath, writerFeature);
