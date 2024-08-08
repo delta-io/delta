@@ -31,6 +31,8 @@ import io.delta.kernel.internal.DataWriteContextImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import static io.delta.kernel.internal.DeltaErrors.dataSchemaMismatch;
 import static io.delta.kernel.internal.DeltaErrors.partitionColumnMissingInData;
 import static io.delta.kernel.internal.TransactionImpl.getStatisticsColumns;
@@ -124,24 +126,24 @@ public interface Transaction {
         StructType tableSchema = getLogicalSchema(engine, transactionState);
         List<String> partitionColNames = getPartitionColumnsList(transactionState);
         validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
+        // TODO: sanitize the data schema to be same case sensitive as the table schema.
 
         // TODO: add support for:
         // - enforcing the constraints
         // - generating the default value columns
         // - generating the generated columns
 
-        // Remove the partition columns from the data as they are already part of file metadata
-        // and are not needed in the data files. TODO: once we start supporting uniform complaint
-        // tables, we may conditionally skip this step.
-
-        // TODO: set the correct schema once writing into column mapping enabled table is supported.
         String tablePath = getTablePath(transactionState);
         return dataIter.map(
                 filteredBatch -> {
                     ColumnarBatch data = filteredBatch.getData();
-                    if (!data.getSchema().equals(tableSchema)) {
+                    if (!data.getSchema().equivalent(tableSchema)) {
                         throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
                     }
+
+                    // Step 1: Remove the partition columns from the data as they are already part
+                    // of file metadata and are not needed in the data files. TODO: once we start
+                    // supporting uniform complaint tables, we may conditionally skip this step.
                     for (String partitionColName : partitionColNames) {
                         int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
                         if (partitionColIndex < 0) {
@@ -149,6 +151,22 @@ public interface Transaction {
                         }
                         data = data.withDeletedColumnAt(partitionColIndex);
                     }
+
+                    // Step 2: If the table has column mapping enabled, change the schema of the
+                    // data to the physical schema of the table.
+                    ColumnMappingMode columnMappingMode =
+                            getColumnMappingMode(engine, transactionState);
+
+                    switch (columnMappingMode) {
+                        case NONE:
+                            break; // no-op
+                        case ID: // fall through
+                        case NAME:
+                            StructType physicalDataSchema = ColumnMapping.convertToPhysicalSchema(
+                                    data.getSchema(), tableSchema, columnMappingMode);
+                            data = data.withNewSchema(physicalDataSchema);
+                    }
+
                     return new FilteredColumnarBatch(data, filteredBatch.getSelectionVector());
                 }
         );

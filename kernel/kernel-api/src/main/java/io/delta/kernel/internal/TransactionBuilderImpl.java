@@ -119,7 +119,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         boolean shouldUpdateProtocol = false;
         Metadata metadata = snapshot.getMetadata();
         Protocol protocol = snapshot.getProtocol();
+
+        addTestTableProperties();
         if (tableProperties.isPresent()) {
+
             Map<String, String> validatedProperties =
                     TableConfig.validateProperties(engine, tableProperties.get());
             Map<String, String> newProperties =
@@ -272,5 +275,39 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 DEFAULT_WRITE_VERSION,
                 null /* readerFeatures */,
                 null /* writerFeatures */);
+    }
+
+    /**
+     * Utility methods adds the test table properties to the given properties. This helps in
+     * repeating a single test suite with different table properties.
+     * <p>
+     * E.g. we have a test suite for inserting into a non-column mapping mode. We can repeat the
+     * same tests in a new suite with column mapping mode enabled by adding column mapping related
+     * properties for every transaction that is built.
+     * <p>
+     * It relies on the Java asserts to ensure that it is not called in production and production
+     * code is not affected by this method.
+     * <p>
+     */
+    private void addTestTableProperties() {
+        boolean assertsEnabled = false;
+        assert assertsEnabled = true; // Value will be set to true when Java asserts are enabled.
+
+        if (assertsEnabled) {
+            Map<String, String> newTableProperties = tableProperties.orElse(new HashMap<>());
+            System.getProperties().forEach((key, value) -> {
+                String testPropSuffix = "delta.test.";
+                if (key.toString().startsWith(testPropSuffix)) {
+                    // remove the `delta.test.` prefix from the property name
+                    String prop = key.toString().substring(testPropSuffix.length());
+                    if (!newTableProperties.containsKey(prop)) {
+                        newTableProperties.put(prop, value.toString());
+                    }
+                }
+            });
+            if (!newTableProperties.isEmpty()) {
+                tableProperties = Optional.of(newTableProperties);
+            }
+        }
     }
 }
