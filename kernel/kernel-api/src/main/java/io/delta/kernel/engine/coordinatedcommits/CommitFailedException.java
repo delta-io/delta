@@ -29,36 +29,36 @@ import io.delta.kernel.annotation.Evolving;
  *  |   yes     |   yes     | physical conflict (allowed to rebase and retry)                 |
  *  </pre>
  *
- *  @since 3.3.0
+ * @since 3.3.0
  */
 @Evolving
 public class CommitFailedException extends Exception {
 
-    private final boolean retryable;
+  private final boolean retryable;
 
-    private final boolean conflict;
+  private final boolean conflict;
 
-    public CommitFailedException(boolean retryable, boolean conflict, String message) {
-        super(message);
-        this.retryable = retryable;
-        this.conflict = conflict;
-    }
+  public CommitFailedException(boolean retryable, boolean conflict, String message) {
+    super(message);
+    this.retryable = retryable;
+    this.conflict = conflict;
+  }
 
-    /**
-     * Returns whether the commit attempt can be retried.
-     *
-     * @return whether the commit attempt can be retried.
-     */
-    public boolean getRetryable() {
-        return retryable;
-    }
+  /**
+   * Returns whether the commit attempt can be retried.
+   *
+   * @return whether the commit attempt can be retried.
+   */
+  public boolean getRetryable() {
+    return retryable;
+  }
 
-    /**
-     * Returns whether the commit failed due to a conflict.
-     *
-     * @return whether the commit failed due to a conflict.
-     */
-    public boolean getConflict() {
-        return conflict;
-    }
+  /**
+   * Returns whether the commit failed due to a conflict.
+   *
+   * @return whether the commit failed due to a conflict.
+   */
+  public boolean getConflict() {
+    return conflict;
+  }
 }

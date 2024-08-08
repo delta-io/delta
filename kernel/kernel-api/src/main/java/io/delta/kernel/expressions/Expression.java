@@ -15,9 +15,8 @@
  */
 package io.delta.kernel.expressions;
 
-import java.util.List;
-
 import io.delta.kernel.annotation.Evolving;
+import java.util.List;
 
 /**
  * Base interface for all Kernel expressions.
@@ -26,8 +25,6 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public interface Expression {
-    /**
-     * @return a list of expressions that are input to this expression.
-     */
-    List<Expression> getChildren();
+  /** @return a list of expressions that are input to this expression. */
+  List<Expression> getChildren();
 }

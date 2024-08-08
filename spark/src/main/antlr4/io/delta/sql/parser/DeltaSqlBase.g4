@@ -93,6 +93,8 @@ statement
         DROP FEATURE featureName=featureNameValue (TRUNCATE HISTORY)?   #alterTableDropFeature
     | ALTER TABLE table=qualifiedName
         (clusterBySpec | CLUSTER BY NONE)                               #alterTableClusterBy
+    | ALTER TABLE table=qualifiedName
+        (ALTER | CHANGE) COLUMN? column=qualifiedName SYNC IDENTITY     #alterTableSyncIdentity
     | OPTIMIZE (path=STRING | table=qualifiedName)
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
@@ -238,6 +240,7 @@ nonReserved
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
+    | IDENTITY | SYNC | COLUMN | CHANGE
     | REORG | APPLY | PURGE | UPGRADE | UNIFORM | ICEBERG_COMPAT_VERSION
     | RESTORE | AS | OF | FSCK | REPAIR
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
@@ -253,9 +256,11 @@ ALTER: 'ALTER';
 APPLY: 'APPLY';
 AS: 'AS';
 BY: 'BY';
+CHANGE: 'CHANGE';
 CHECK: 'CHECK';
 CLONE: 'CLONE';
 CLUSTER: 'CLUSTER';
+COLUMN: 'COLUMN';
 COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
@@ -277,6 +282,7 @@ GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
 ICEBERG_COMPAT_VERSION: 'ICEBERG_COMPAT_VERSION';
+IDENTITY: 'IDENTITY';
 IF: 'IF';
 INVENTORY: 'INVENTORY';
 LEFT_PAREN: '(';
@@ -300,6 +306,7 @@ RETAIN: 'RETAIN';
 RIGHT_PAREN: ')';
 RUN: 'RUN';
 SHALLOW: 'SHALLOW';
+SYNC: 'SYNC';
 SYSTEM_TIME: 'SYSTEM_TIME';
 SYSTEM_VERSION: 'SYSTEM_VERSION';
 TABLE: 'TABLE';

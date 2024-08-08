@@ -155,6 +155,8 @@ private[delta] class ConflictChecker(
 
   protected lazy val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
+  protected def recordSkippedPhase(phase: String): Unit = timingStats += phase -> 0
+
   /**
    * This function checks conflict of the `initialCurrentTransactionInfo` against the
    * `winningCommitVersion` and returns an updated [[CurrentTransactionInfo]] that represents
@@ -340,9 +342,31 @@ private[delta] class ConflictChecker(
   }
 
   /**
+   * If the winning commit only does row tracking enablement (i.e. set the table property to
+   * true and assigns materialized row tracking column names), we can safely allow the metadata
+   * update not to fail the current txn if we copy over the table property, materialized column
+   * name assignments and correctly tag the current commit as not preserving row tracking data. It
+   * is not possible to preserve row tracking data prior to the table property being set to true
+   * since there is no guarantee of row tracking data being available on all rows.
+   */
+  protected def tryResolveRowTrackingEnablementOnlyMetadataUpdateConflict(): Boolean = {
+    if (RowTracking.canResolveMetadataUpdateConflict(
+        currentTransactionInfo, winningCommitSummary)) {
+      currentTransactionInfo = RowTracking.resolveRowTrackingEnablementOnlyMetadataUpdateConflict(
+        currentTransactionInfo, winningCommitSummary)
+      return true
+    }
+    false
+  }
+
+  /**
    * Check if the committed transaction has changed metadata.
    */
   protected def checkNoMetadataUpdates(): Unit = {
+    if (tryResolveRowTrackingEnablementOnlyMetadataUpdateConflict()) {
+      return
+    }
+
     // Fail if the metadata is different than what the txn read.
     if (winningCommitSummary.metadataUpdates.nonEmpty) {
       throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
@@ -451,10 +475,32 @@ private[delta] class ConflictChecker(
   }
 
   /**
+   * RowTrackingBackfill does not do any data change. If backfill is the winning commit, the
+   * current transaction does not need to read its AddFiles -- the exact same AddFiles have
+   * already been read. If the current commit is backfill, it doesn't need to read the AddFiles
+   * added by the winning transaction. Any winning transaction seen by backfill will commit base
+   * row IDs and default row commit versions, since backfill is only done after table feature
+   * support is added. Removing duplicate AddFiles is handled in
+   * [[resolveRowTrackingBackfillConflicts]].
+   */
+  protected def skipCheckedAppendsIfExistsRowTrackingBackfillTransaction(): Boolean = {
+    if (winningCommitSummary.isRowTrackingBackfillTxn ||
+        currentTransactionInfo.isRowTrackingBackfillTxn) {
+      recordSkippedPhase("checked-appends")
+      return true
+    }
+    false
+  }
+
+  /**
    * Check if the new files added by the already committed transactions should have been read by
    * the current transaction.
    */
   protected def checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn(): Unit = {
+    if (skipCheckedAppendsIfExistsRowTrackingBackfillTransaction()) {
+      return
+    }
+
     recordTime("checked-appends") {
       // Fail if new files have been added that the txn should have read.
       val addedFilesToCheckForConflicts = isolationLevel match {

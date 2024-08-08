@@ -18,11 +18,18 @@ package io.delta.kernel.annotation;
 import java.lang.annotation.*;
 
 /**
- * APIs that are meant to evolve towards becoming stable APIs, but are not stable APIs yet.
- * Evolving interfaces can change from one feature release to another release (i.e. 3.0 to 3.1).
+ * APIs that are meant to evolve towards becoming stable APIs, but are not stable APIs yet. Evolving
+ * interfaces can change from one feature release to another release (i.e. 3.0 to 3.1).
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target({ElementType.TYPE, ElementType.FIELD, ElementType.METHOD, ElementType.PARAMETER,
-    ElementType.CONSTRUCTOR, ElementType.LOCAL_VARIABLE, ElementType.PACKAGE})
+@Target({
+  ElementType.TYPE,
+  ElementType.FIELD,
+  ElementType.METHOD,
+  ElementType.PARAMETER,
+  ElementType.CONSTRUCTOR,
+  ElementType.LOCAL_VARIABLE,
+  ElementType.PACKAGE
+})
 public @interface Evolving {}

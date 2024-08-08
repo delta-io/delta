@@ -66,14 +66,32 @@ object CommitCoordinatorProvider {
     }
   }
 
-  /** Returns a [[CommitCoordinatorClient]] for the given `name`, `conf`, and `spark` */
+  /**
+   * Returns a [[CommitCoordinatorClient]] for the given `name`, `conf`, and `spark`.
+   * If the commit-coordinator with the given name is not registered, an exception is thrown.
+   */
   def getCommitCoordinatorClient(
       name: String,
       conf: Map[String, String],
       spark: SparkSession): CommitCoordinatorClient = synchronized {
-    nameToBuilderMapping.get(name).map(_.build(spark, conf)).getOrElse {
+    getCommitCoordinatorClientOpt(name, conf, spark).getOrElse {
       throw new IllegalArgumentException(s"Unknown commit-coordinator: $name")
     }
+  }
+
+  /**
+   * Returns a [[CommitCoordinatorClient]] for the given `name`, `conf`, and `spark`.
+   * Returns None if the commit-coordinator with the given name is not registered.
+   */
+  def getCommitCoordinatorClientOpt(
+      name: String,
+      conf: Map[String, String],
+      spark: SparkSession): Option[CommitCoordinatorClient] = synchronized {
+    nameToBuilderMapping.get(name).map(_.build(spark, conf))
+  }
+
+  def getRegisteredCoordinatorNames: Seq[String] = synchronized {
+    nameToBuilderMapping.keys.toSeq
   }
 
   // Visible only for UTs

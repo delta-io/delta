@@ -15,116 +15,116 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
-import java.util.List;
-import java.util.Locale;
+import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
+import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static java.util.stream.Collectors.joining;
 
 import io.delta.kernel.expressions.*;
-import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
-import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
+import java.util.List;
+import java.util.Locale;
 
 /**
- * Interface to allow visiting an expression tree and implementing handling for each
- * specific expression type.
+ * Interface to allow visiting an expression tree and implementing handling for each specific
+ * expression type.
  *
  * @param <R> Return type of result of visit expression methods.
  */
 abstract class ExpressionVisitor<R> {
 
-    abstract R visitAnd(And and);
+  abstract R visitAnd(And and);
 
-    abstract R visitOr(Or or);
+  abstract R visitOr(Or or);
 
-    abstract R visitAlwaysTrue(AlwaysTrue alwaysTrue);
+  abstract R visitAlwaysTrue(AlwaysTrue alwaysTrue);
 
-    abstract R visitAlwaysFalse(AlwaysFalse alwaysFalse);
+  abstract R visitAlwaysFalse(AlwaysFalse alwaysFalse);
 
-    abstract R visitComparator(Predicate predicate);
+  abstract R visitComparator(Predicate predicate);
 
-    abstract R visitLiteral(Literal literal);
+  abstract R visitLiteral(Literal literal);
 
-    abstract R visitColumn(Column column);
+  abstract R visitColumn(Column column);
 
-    abstract R visitCast(ImplicitCastExpression cast);
+  abstract R visitCast(ImplicitCastExpression cast);
 
-    abstract R visitPartitionValue(PartitionValueExpression partitionValue);
+  abstract R visitPartitionValue(PartitionValueExpression partitionValue);
 
-    abstract R visitElementAt(ScalarExpression elementAt);
+  abstract R visitElementAt(ScalarExpression elementAt);
 
-    abstract R visitNot(Predicate predicate);
+  abstract R visitNot(Predicate predicate);
 
-    abstract R visitIsNotNull(Predicate predicate);
+  abstract R visitIsNotNull(Predicate predicate);
 
-    abstract R visitIsNull(Predicate predicate);
+  abstract R visitIsNull(Predicate predicate);
 
-    abstract R visitCoalesce(ScalarExpression ifNull);
+  abstract R visitCoalesce(ScalarExpression ifNull);
 
-    abstract R visitLike(Predicate predicate);
+  abstract R visitLike(Predicate predicate);
 
-    final R visit(Expression expression) {
-        if (expression instanceof PartitionValueExpression) {
-            return visitPartitionValue((PartitionValueExpression) expression);
-        } else if (expression instanceof ScalarExpression) {
-            return visitScalarExpression((ScalarExpression) expression);
-        } else if (expression instanceof Literal) {
-            return visitLiteral((Literal) expression);
-        } else if (expression instanceof Column) {
-            return visitColumn((Column) expression);
-        } else if (expression instanceof ImplicitCastExpression) {
-            return visitCast((ImplicitCastExpression) expression);
-        }
+  final R visit(Expression expression) {
+    if (expression instanceof PartitionValueExpression) {
+      return visitPartitionValue((PartitionValueExpression) expression);
+    } else if (expression instanceof ScalarExpression) {
+      return visitScalarExpression((ScalarExpression) expression);
+    } else if (expression instanceof Literal) {
+      return visitLiteral((Literal) expression);
+    } else if (expression instanceof Column) {
+      return visitColumn((Column) expression);
+    } else if (expression instanceof ImplicitCastExpression) {
+      return visitCast((ImplicitCastExpression) expression);
+    }
 
+    throw new UnsupportedOperationException(
+        String.format("Expression %s is not supported.", expression));
+  }
+
+  private R visitScalarExpression(ScalarExpression expression) {
+    List<Expression> children = expression.getChildren();
+    String name = expression.getName().toUpperCase(Locale.ENGLISH);
+    switch (name) {
+      case "ALWAYS_TRUE":
+        return visitAlwaysTrue(ALWAYS_TRUE);
+      case "ALWAYS_FALSE":
+        return visitAlwaysFalse(ALWAYS_FALSE);
+      case "AND":
+        return visitAnd(new And(elemAsPredicate(children, 0), elemAsPredicate(children, 1)));
+      case "OR":
+        return visitOr(new Or(elemAsPredicate(children, 0), elemAsPredicate(children, 1)));
+      case "=":
+      case "<":
+      case "<=":
+      case ">":
+      case ">=":
+        return visitComparator(new Predicate(name, children));
+      case "ELEMENT_AT":
+        return visitElementAt(expression);
+      case "NOT":
+        return visitNot(new Predicate(name, children));
+      case "IS_NOT_NULL":
+        return visitIsNotNull(new Predicate(name, children));
+      case "IS_NULL":
+        return visitIsNull(new Predicate(name, children));
+      case "COALESCE":
+        return visitCoalesce(expression);
+      case "LIKE":
+        return visitLike(new Predicate(name, children));
+      default:
         throw new UnsupportedOperationException(
-            String.format("Expression %s is not supported.", expression));
+            String.format("Scalar expression `%s` is not supported.", name));
     }
+  }
 
-    private R visitScalarExpression(ScalarExpression expression) {
-        List<Expression> children = expression.getChildren();
-        String name = expression.getName().toUpperCase(Locale.ENGLISH);
-        switch (name) {
-            case "ALWAYS_TRUE":
-                return visitAlwaysTrue(ALWAYS_TRUE);
-            case "ALWAYS_FALSE":
-                return visitAlwaysFalse(ALWAYS_FALSE);
-            case "AND":
-                return visitAnd(
-                    new And(elemAsPredicate(children, 0), elemAsPredicate(children, 1)));
-            case "OR":
-                return visitOr(new Or(elemAsPredicate(children, 0), elemAsPredicate(children, 1)));
-            case "=":
-            case "<":
-            case "<=":
-            case ">":
-            case ">=":
-                return visitComparator(new Predicate(name, children));
-            case "ELEMENT_AT":
-                return visitElementAt(expression);
-            case "NOT":
-                return visitNot(new Predicate(name, children));
-            case "IS_NOT_NULL":
-                return visitIsNotNull(new Predicate(name, children));
-            case "IS_NULL":
-                return visitIsNull(new Predicate(name, children));
-            case "COALESCE":
-                return visitCoalesce(expression);
-            case "LIKE":
-                return visitLike(new Predicate(name, children));
-            default:
-                throw new UnsupportedOperationException(
-                    String.format("Scalar expression `%s` is not supported.", name));
-        }
+  private static Predicate elemAsPredicate(List<Expression> expressions, int index) {
+    if (expressions.size() <= index) {
+      throw new RuntimeException(
+          String.format(
+              "Trying to access invalid entry (%d) in list %s",
+              index, expressions.stream().map(Object::toString).collect(joining(","))));
     }
-
-    private static Predicate elemAsPredicate(List<Expression> expressions, int index) {
-        if (expressions.size() <= index) {
-            throw new RuntimeException(
-                    String.format("Trying to access invalid entry (%d) in list %s", index,
-                            expressions.stream().map(Object::toString).collect(joining(","))));
-        }
-        Expression elemExpression = expressions.get(index);
-        if (!(elemExpression instanceof Predicate)) {
-            throw new RuntimeException("Expected a predicate, but got " + elemExpression);
-        }
-        return (Predicate) expressions.get(index);
+    Expression elemExpression = expressions.get(index);
+    if (!(elemExpression instanceof Predicate)) {
+      throw new RuntimeException("Expected a predicate, but got " + elemExpression);
     }
+    return (Predicate) expressions.get(index);
+  }
 }
