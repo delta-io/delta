@@ -53,14 +53,9 @@ case class RowTrackingBackfillCommand(
       spark, txn, fileMaterializationTracker, maxNumBatchesInParallel, backfillStats)
   }
 
-  override def filesToBackfill(txn: OptimisticTransaction): Dataset[AddFile] = {
+  override def filesToBackfill(txn: OptimisticTransaction): Dataset[AddFile] =
     // Get a new snapshot after the protocol upgrade.
-    val res = RowTrackingBackfillExecutor.getCandidateFilesToBackfill(deltaLog.update())
-    logConsole(s"RowTrackingBackfillCommand.filesToBackfill - 1: ${res.showString(10)}")
-    logConsole(s"RowTrackingBackfillCommand.filesToBackfill - 2: ${res.showString(12)}")
-    logConsole(s"RowTrackingBackfillCommand.filesToBackfill - 3: ${res.showString(20)}")
-    res
-  }
+    RowTrackingBackfillExecutor.getCandidateFilesToBackfill(deltaLog.update())
 
   override def opType: String = "delta.rowTracking.backfill"
 

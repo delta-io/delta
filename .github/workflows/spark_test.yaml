@@ -78,8 +78,6 @@ jobs:
       - name: Run Scala/Java and Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |
-          TEST_PARALLELISM_COUNT=1 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/testOnly *RowTrackingUpdateCDFSuite
-          TEST_PARALLELISM_COUNT=1 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/testOnly *RowTrackingDeleteSuite
           TEST_PARALLELISM_COUNT=1 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
           TEST_PARALLELISM_COUNT=1 pipenv run python run-tests.py --group spark
         if: steps.git-diff.outputs.diff
