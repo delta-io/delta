@@ -22,6 +22,7 @@ import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.connect.ConnectProtoUtils
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 
 /**
@@ -69,7 +70,8 @@ class DeltaTable private[tables](
       .setTable(table)
     val relation = proto.DeltaRelation.newBuilder().setDescribeHistory(describeHistory).build()
     val extension = com.google.protobuf.Any.pack(relation)
-    val df = sparkSession.newDataFrame(extension.toByteArray.toSeq)
+    val df = sparkSession
+      .newDataFrame(ConnectProtoUtils.parseRelationWithRecursionLimit(extension.toByteArray, 1024))
     limit match {
       case Some(limit) => df.limit(limit)
       case None => df
