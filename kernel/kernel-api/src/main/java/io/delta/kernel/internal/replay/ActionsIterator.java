@@ -27,9 +27,7 @@ import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.expressions.Column;
-import io.delta.kernel.expressions.Or;
-import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
@@ -192,9 +190,9 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
     Optional<Predicate> checkpointPredicateIncludingSidecars;
     if (schemaContainsAddOrRemoveFiles) {
       Predicate containsSidecarPredicate =
-              new Predicate("IS_NOT_NULL", new Column(LogReplay.SIDECAR_FIELD_NAME));
+          new Predicate("IS_NOT_NULL", new Column(LogReplay.SIDECAR_FIELD_NAME));
       checkpointPredicateIncludingSidecars =
-              checkpointPredicate.map(p -> new Or(p, containsSidecarPredicate));
+          checkpointPredicate.map(p -> new Or(p, containsSidecarPredicate));
     } else {
       checkpointPredicateIncludingSidecars = checkpointPredicate;
     }
