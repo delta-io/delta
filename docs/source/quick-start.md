@@ -18,13 +18,13 @@ Follow these instructions to set up <Delta> with Spark. You can run the steps in
 
 #. Run as a project: Set up a Maven or SBT project (Scala or Java) with <Delta>, copy the code snippets into a source file, and run the project. Alternatively, you can use the [examples provided in the Github repository](https://github.com/delta-io/delta/tree/master/examples).
 
-.. important:: For all of the following instructions, make sure to install the correct version of Spark or PySpark that is compatible with <Delta> `3.1.0`. See the [release compatibility matrix](releases.md) for details.
+.. important:: For all of the following instructions, make sure to install the correct version of Spark or PySpark that is compatible with <Delta> `3.2.0`. See the [release compatibility matrix](releases.md) for details.
 
 ### Prerequisite: set up Java
 
 As mentioned in the official <AS> installation instructions [here](https://spark.apache.org/docs/latest/index.html#downloading), make sure you have a valid Java version installed (8, 11, or 17) and that Java is configured correctly on your system using either the system `PATH` or `JAVA_HOME` environmental variable.
 
-Windows users should follow the instructions in this [blog](https://phoenixnap.com/kb/install-spark-on-windows-10), making sure to use the correct version of <AS> that is compatible with <Delta> `3.1.0`.
+Windows users should follow the instructions in this [blog](https://phoenixnap.com/kb/install-spark-on-windows-10), making sure to use the correct version of <AS> that is compatible with <Delta> `3.2.0`.
 
 ### Set up interactive shell
 
@@ -35,7 +35,7 @@ To use <Delta> interactively within the Spark SQL, Scala, or Python shell, you n
 Download the [compatible version](releases.md) of <AS> by following instructions from [Downloading Spark](https://spark.apache.org/downloads.html), either using `pip` or by downloading and extracting the archive and running `spark-sql` in the extracted directory.
 
 ```bash
-bin/spark-sql --packages io.delta:delta-spark_2.12:3.1.0 --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
+bin/spark-sql --packages io.delta:delta-spark_2.12:3.2.0 --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
 ```
 
 #### PySpark Shell
@@ -49,7 +49,7 @@ bin/spark-sql --packages io.delta:delta-spark_2.12:3.1.0 --conf "spark.sql.exten
 #. Run PySpark with the <Delta> package and additional configurations:
 
    ```bash
-   pyspark --packages io.delta:delta-spark_2.12:3.1.0 --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
+   pyspark --packages io.delta:delta-spark_2.12:3.2.0 --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
    ```
 
 #### Spark Scala Shell
@@ -57,7 +57,7 @@ bin/spark-sql --packages io.delta:delta-spark_2.12:3.1.0 --conf "spark.sql.exten
 Download the [compatible version](releases.md) of <AS> by following instructions from [Downloading Spark](https://spark.apache.org/downloads.html), either using `pip` or by downloading and extracting the archive and running `spark-shell` in the extracted directory.
 
 ```bash
-bin/spark-shell --packages io.delta:delta-spark_2.12:3.1.0 --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
+bin/spark-shell --packages io.delta:delta-spark_2.12:3.2.0 --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
 ```
 
 ### Set up project
@@ -72,7 +72,7 @@ You include <Delta> in your Maven project by adding it as a dependency in your P
 <dependency>
   <groupId>io.delta</groupId>
   <artifactId>delta-spark_2.12</artifactId>
-  <version>3.1.0</version>
+  <version>3.2.0</version>
 </dependency>
 ```
 
@@ -81,12 +81,12 @@ You include <Delta> in your Maven project by adding it as a dependency in your P
 You include <Delta> in your SBT project by adding the following line to your `build.sbt` file:
 
 ```scala
-libraryDependencies += "io.delta" %% "delta-spark" % "3.1.0"
+libraryDependencies += "io.delta" %% "delta-spark" % "3.2.0"
 ```
 
 #### Python
 
-To set up a Python project (for example, for unit testing), you can install <Delta> using `pip install delta-spark==3.1.0` and then configure the SparkSession with the `configure_spark_with_delta_pip()` utility function in <Delta>.
+To set up a Python project (for example, for unit testing), you can install <Delta> using `pip install delta-spark==3.2.0` and then configure the SparkSession with the `configure_spark_with_delta_pip()` utility function in <Delta>.
 
 ```python
 import pyspark
