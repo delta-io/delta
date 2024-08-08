@@ -48,12 +48,7 @@ trait UniversalFormatSuiteUtilsBase
     }
   }
 
-  override def executeSql(sqlStr: String): DataFrame = {
-    write(sqlStr)
-    // return a null reference here to fulfill
-    // override requirement
-    null
-  }
+  override def executeSql(sqlStr: String): DataFrame = write(sqlStr)
 
   override protected val allReaderWriterVersions: Seq[(Int, Int)] = (1 to 3)
     .flatMap { r => (1 to 7).filter(_ != 6).map(w => (r, w)) }

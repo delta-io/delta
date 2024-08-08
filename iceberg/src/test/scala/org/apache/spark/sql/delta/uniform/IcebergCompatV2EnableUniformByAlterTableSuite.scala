@@ -39,10 +39,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite
     }
   }
 
-  override def executeSql(sqlStr: String): DataFrame = {
-    write(sqlStr)
-    null
-  }
+  override def executeSql(sqlStr: String): DataFrame = write(sqlStr)
 
   override def assertUniFormIcebergProtocolAndProperties(id: String): Unit = {
     val snapshot = DeltaLog.forTable(spark, new TableIdentifier(id)).update()
