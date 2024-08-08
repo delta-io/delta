@@ -38,6 +38,10 @@ public enum Operation {
      */
     STREAMING_UPDATE("STREAMING UPDATE"),
 
+    UPGRADE_SCHEMA("UPGRADE SCHEMA"),
+    COMPACT("COMPACT"),
+    VACUUM("UPGRADE SCHEMA"),
+
     /**
      * For any operation that doesn't fit the above categories.
      */
