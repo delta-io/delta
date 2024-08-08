@@ -24,7 +24,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class UnknownConfigurationException extends KernelException {
-    public UnknownConfigurationException(String confKey) {
-        super(String.format("Unknown configuration was specified: %s", confKey));
-    }
+  public UnknownConfigurationException(String confKey) {
+    super(String.format("Unknown configuration was specified: %s", confKey));
+  }
 }

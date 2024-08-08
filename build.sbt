@@ -156,6 +156,11 @@ lazy val commonSettings = Seq(
   unidocSourceFilePatterns := Nil,
 )
 
+// enforce java code style
+def javafmtCheckSettings() = Seq(
+  (Compile / compile) := ((Compile / compile) dependsOn (Compile / javafmtCheckAll)).value
+)
+
 /**
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
  *       setting macro.
@@ -558,6 +563,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    javafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
@@ -614,6 +620,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    javafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,

@@ -15,35 +15,33 @@
  */
 package io.delta.kernel.internal.data;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-
-/**
- * A {@link Row} abstraction for a struct type column vector and a specific {@code rowId}.
- */
+/** A {@link Row} abstraction for a struct type column vector and a specific {@code rowId}. */
 public class StructRow extends ChildVectorBasedRow {
 
-    public static StructRow fromStructVector(ColumnVector columnVector, int rowId) {
-        checkArgument(columnVector.getDataType() instanceof StructType);
-        if (columnVector.isNullAt(rowId)) {
-            return null;
-        } else {
-            return new StructRow(columnVector, rowId, (StructType) columnVector.getDataType());
-        }
+  public static StructRow fromStructVector(ColumnVector columnVector, int rowId) {
+    checkArgument(columnVector.getDataType() instanceof StructType);
+    if (columnVector.isNullAt(rowId)) {
+      return null;
+    } else {
+      return new StructRow(columnVector, rowId, (StructType) columnVector.getDataType());
     }
+  }
 
-    private final ColumnVector structVector;
+  private final ColumnVector structVector;
 
-    private StructRow(ColumnVector structVector, int rowId, StructType schema) {
-        super(rowId, schema);
-        this.structVector = structVector;
-    }
+  private StructRow(ColumnVector structVector, int rowId, StructType schema) {
+    super(rowId, schema);
+    this.structVector = structVector;
+  }
 
-    @Override
-    protected ColumnVector getChild(int ordinal) {
-        return structVector.getChild(ordinal);
-    }
+  @Override
+  protected ColumnVector getChild(int ordinal) {
+    return structVector.getChild(ordinal);
+  }
 }

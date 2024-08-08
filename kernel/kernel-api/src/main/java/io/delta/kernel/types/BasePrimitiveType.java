@@ -19,84 +19,80 @@ import java.util.*;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-/**
- * Base class for all primitive types {@link DataType}.
- */
+/** Base class for all primitive types {@link DataType}. */
 public abstract class BasePrimitiveType extends DataType {
-    /**
-     * Create a primitive type {@link DataType}
-     *
-     * @param primitiveTypeName Primitive type name.
-     * @return {@link DataType} for given primitive type name
-     */
-    public static DataType createPrimitive(String primitiveTypeName) {
-        return Optional.ofNullable(nameToPrimitiveTypeMap.get().get(primitiveTypeName))
-            .orElseThrow(
-                () -> new IllegalArgumentException("Unknown primitive type " + primitiveTypeName));
+  /**
+   * Create a primitive type {@link DataType}
+   *
+   * @param primitiveTypeName Primitive type name.
+   * @return {@link DataType} for given primitive type name
+   */
+  public static DataType createPrimitive(String primitiveTypeName) {
+    return Optional.ofNullable(nameToPrimitiveTypeMap.get().get(primitiveTypeName))
+        .orElseThrow(
+            () -> new IllegalArgumentException("Unknown primitive type " + primitiveTypeName));
+  }
+
+  /** Is the given type name a primitive type? */
+  public static boolean isPrimitiveType(String typeName) {
+    return nameToPrimitiveTypeMap.get().containsKey(typeName);
+  }
+
+  /** For testing only */
+  public static List<DataType> getAllPrimitiveTypes() {
+    return nameToPrimitiveTypeMap.get().values().stream().collect(Collectors.toList());
+  }
+
+  private static final Supplier<Map<String, DataType>> nameToPrimitiveTypeMap =
+      () ->
+          Collections.unmodifiableMap(
+              new HashMap<String, DataType>() {
+                {
+                  put("boolean", BooleanType.BOOLEAN);
+                  put("byte", ByteType.BYTE);
+                  put("short", ShortType.SHORT);
+                  put("integer", IntegerType.INTEGER);
+                  put("long", LongType.LONG);
+                  put("float", FloatType.FLOAT);
+                  put("double", DoubleType.DOUBLE);
+                  put("date", DateType.DATE);
+                  put("timestamp", TimestampType.TIMESTAMP);
+                  put("timestamp_ntz", TimestampNTZType.TIMESTAMP_NTZ);
+                  put("binary", BinaryType.BINARY);
+                  put("string", StringType.STRING);
+                }
+              });
+
+  private final String primitiveTypeName;
+
+  protected BasePrimitiveType(String primitiveTypeName) {
+    this.primitiveTypeName = primitiveTypeName;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
     }
-
-    /**
-     * Is the given type name a primitive type?
-     */
-    public static boolean isPrimitiveType(String typeName) {
-        return nameToPrimitiveTypeMap.get().containsKey(typeName);
+    if (o == null || getClass() != o.getClass()) {
+      return false;
     }
+    BasePrimitiveType that = (BasePrimitiveType) o;
+    return primitiveTypeName.equals(that.primitiveTypeName);
+  }
 
-    /**
-     * For testing only
-     */
-    public static List<DataType> getAllPrimitiveTypes() {
-        return nameToPrimitiveTypeMap.get().values().stream().collect(Collectors.toList());
-    }
+  @Override
+  public int hashCode() {
+    return Objects.hash(primitiveTypeName);
+  }
 
-    private static final Supplier<Map<String, DataType>> nameToPrimitiveTypeMap = () ->
-        Collections.unmodifiableMap(new HashMap<String, DataType>() {
-            {
-                put("boolean", BooleanType.BOOLEAN);
-                put("byte", ByteType.BYTE);
-                put("short", ShortType.SHORT);
-                put("integer", IntegerType.INTEGER);
-                put("long", LongType.LONG);
-                put("float", FloatType.FLOAT);
-                put("double", DoubleType.DOUBLE);
-                put("date", DateType.DATE);
-                put("timestamp", TimestampType.TIMESTAMP);
-                put("timestamp_ntz", TimestampNTZType.TIMESTAMP_NTZ);
-                put("binary", BinaryType.BINARY);
-                put("string", StringType.STRING);
-            }
-        });
+  @Override
+  public String toString() {
+    return primitiveTypeName;
+  }
 
-    private final String primitiveTypeName;
-
-    protected BasePrimitiveType(String primitiveTypeName) {
-        this.primitiveTypeName = primitiveTypeName;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-        BasePrimitiveType that = (BasePrimitiveType) o;
-        return primitiveTypeName.equals(that.primitiveTypeName);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(primitiveTypeName);
-    }
-
-    @Override
-    public String toString() {
-        return primitiveTypeName;
-    }
-
-    @Override
-    public String toJson() {
-        return String.format("\"%s\"", primitiveTypeName);
-    }
+  @Override
+  public String toJson() {
+    return String.format("\"%s\"", primitiveTypeName);
+  }
 }

@@ -15,24 +15,26 @@
  */
 package io.delta.kernel.exceptions;
 
-
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Thrown when the protocol of the Delta table has changed between the time of transaction start
- * and the time of commit.
+ * Thrown when the protocol of the Delta table has changed between the time of transaction start and
+ * the time of commit.
  *
  * @since 3.2.0
  */
 @Evolving
 public class ProtocolChangedException extends ConcurrentWriteException {
-    private static final String helpfulMsgForNewTables = " This happens when multiple writers " +
-            "are writing to an empty directory. Creating the table ahead of time will avoid this " +
-            "conflict.";
+  private static final String helpfulMsgForNewTables =
+      " This happens when multiple writers "
+          + "are writing to an empty directory. Creating the table ahead of time will avoid this "
+          + "conflict.";
 
-    public ProtocolChangedException(long attemptVersion) {
-        super(String.format("Transaction has encountered a conflict and can not be committed. " +
-                "Query needs to be re-executed using the latest version of the table.%s",
-                attemptVersion == 0 ? helpfulMsgForNewTables : ""));
-    }
+  public ProtocolChangedException(long attemptVersion) {
+    super(
+        String.format(
+            "Transaction has encountered a conflict and can not be committed. "
+                + "Query needs to be re-executed using the latest version of the table.%s",
+            attemptVersion == 0 ? helpfulMsgForNewTables : ""));
+  }
 }
