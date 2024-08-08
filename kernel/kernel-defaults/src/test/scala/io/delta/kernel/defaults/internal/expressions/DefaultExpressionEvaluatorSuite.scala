@@ -559,7 +559,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "<=" -> Seq(true, false, true, null, null, null),
       ">" -> Seq(false, true, false, null, null, null),
       ">=" -> Seq(false, true, true, null, null, null),
-      "=" -> Seq(false, false, true, null, null, null)
+      "=" -> Seq(false, false, true, null, null, null),
+      "<=>" -> Seq(false, false, true, false, false, true)
     )
 
     literals.foreach {

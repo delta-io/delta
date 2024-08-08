@@ -96,6 +96,7 @@ abstract class ExpressionVisitor<R> {
             case "<=":
             case ">":
             case ">=":
+            case "<=>":
                 return visitComparator(new Predicate(name, children));
             case "ELEMENT_AT":
                 return visitElementAt(expression);

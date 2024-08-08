@@ -102,13 +102,13 @@ class DefaultExpressionUtils {
     }
 
     /**
-     * Utility method to create a column vector that lazily evaluate the
-     * comparator ex. (ie. ==, >=, <=......) for left and right
-     * column vector according to the natural ordering of numbers
-     * <p>
-     * Only primitive data types are supported.
+     * Utility method for getting value comparator
+     * @param left
+     * @param right
+     * @param booleanComparator
+     * @return
      */
-    static ColumnVector comparatorVector(
+    static IntPredicate getComparator(
             ColumnVector left,
             ColumnVector right,
             IntPredicate booleanComparator) {
@@ -156,7 +156,22 @@ class DefaultExpressionUtils {
         } else {
             throw new UnsupportedOperationException(dataType + " can not be compared.");
         }
+        return vectorValueComparator;
+    }
 
+    /**
+     * Utility method to create a column vector that lazily evaluate the
+     * comparator ex. (ie. ==, >=, <=......) for left and right
+     * column vector according to the natural ordering of numbers
+     * <p>
+     * Only primitive data types are supported.
+     */
+    static ColumnVector comparatorVector(
+            ColumnVector left,
+            ColumnVector right,
+            IntPredicate booleanComparator) {
+        IntPredicate vectorValueComparator = getComparator(
+                left, right, booleanComparator);
         return new ColumnVector() {
 
             @Override
@@ -188,6 +203,67 @@ class DefaultExpressionUtils {
             }
         };
     }
+
+    /**
+     * Utility method to create a null safe column vector that lazily evaluate the
+     * comparator ex. (ie. <=>) for left and right
+     * column vector according to the natural ordering of numbers
+     * <p>
+     * Only primitive data types are supported.
+     */
+    static ColumnVector nullSafeComparatorVector(
+            ColumnVector left,
+            ColumnVector right,
+            IntPredicate booleanComparator) {
+        IntPredicate vectorValueComparator = getComparator(
+                left, right, booleanComparator);
+        return new ColumnVector() {
+            @Override
+            public DataType getDataType() {
+                return BooleanType.BOOLEAN;
+            }
+
+            @Override
+            public void close() {
+                Utils.closeCloseables(left, right);
+            }
+
+            @Override
+            public int getSize() {
+                return left.getSize();
+            }
+
+            @Override
+            public boolean isNullAt(int rowId) {
+                // Nullsafe comparator can never return null
+                return false;
+            }
+
+            /**
+             * Null safe comparator follows the truth table in Comparison Operators
+             *     part of following link
+             * https://spark.apache.org/docs/latest/sql-ref-null-semantics.html
+             *
+             * If either left or right is null, return false
+             * If both left and right is null, return true
+             * else compare the non null value of left and right
+             *
+             * @param rowId
+             * @return
+             */
+            @Override
+            public boolean getBoolean(int rowId) {
+                if (left.isNullAt(rowId) && right.isNullAt(rowId)) {
+                    return true;
+                } else if (left.isNullAt(rowId) || right.isNullAt(rowId)) {
+                    return false;
+                }
+                return vectorValueComparator.test(rowId);
+            }
+        };
+    }
+
+
 
     static Expression childAt(Expression expression, int index) {
         return expression.getChildren().get(index);

@@ -146,6 +146,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                 case ">=":
                 case "<":
                 case "<=":
+                case "<=>":
                     return new ExpressionTransformResult(
                         transformBinaryComparator(predicate),
                         BooleanType.BOOLEAN);
@@ -446,6 +447,11 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                             argResults.leftResult,
                             argResults.rightResult,
                             (compareResult) -> (compareResult <= 0));
+                case "<=>":
+                    return nullSafeComparatorVector(
+                            argResults.leftResult,
+                            argResults.rightResult,
+                            (compareResult) -> (compareResult == 0));
                 default:
                     // We should never reach this based on the ExpressionVisitor
                     throw new IllegalStateException(
