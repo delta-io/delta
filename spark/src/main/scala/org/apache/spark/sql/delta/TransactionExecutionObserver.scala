@@ -42,6 +42,14 @@ trait ChainableExecutionObserver[O] {
  */
 trait TransactionExecutionObserver
   extends ChainableExecutionObserver[TransactionExecutionObserver] {
+
+  /**
+   * Create a child instance of this observer for use in [[OptimisticTransactionImpl.split()]].
+   *
+   * It's up to each observer type what state new child needs to hold.
+   */
+  def createChild(): TransactionExecutionObserver
+
   /*
    * This is called outside the transaction object,
    * since it wraps its creation.
@@ -106,4 +114,9 @@ object NoOpTransactionExecutionObserver extends TransactionExecutionObserver {
   override def transactionCommitted(): Unit = ()
 
   override def transactionAborted(): Unit = ()
+
+  override def createChild(): TransactionExecutionObserver = {
+    // This mimics the original behaviour of this code.
+    TransactionExecutionObserver.getObserver
+  }
 }

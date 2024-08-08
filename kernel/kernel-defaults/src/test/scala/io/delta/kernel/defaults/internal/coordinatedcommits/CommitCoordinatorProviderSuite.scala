@@ -159,7 +159,7 @@ protected trait TestCommitCoordinatorClientBase extends CommitCoordinatorClient 
     version: Long,
     lastKnownBackfilledVersion: lang.Long): Unit = {}
 
-  override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean = this == other
+  override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
 }
 
 // Test 1
@@ -200,7 +200,7 @@ class Builder2(hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoo
 // Test 3
 // Commit Coordinator Client with semanticEquals implemented for testing
 class TestCommitCoordinatorClient3(val key: String) extends TestCommitCoordinatorClientBase {
-  override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean =
+  override def semanticEquals(other: CommitCoordinatorClient): Boolean =
     other.isInstanceOf[TestCommitCoordinatorClient3] &&
       other.asInstanceOf[TestCommitCoordinatorClient3].key == key
 }

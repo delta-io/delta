@@ -26,18 +26,18 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class CommitResponse {
 
-    private final Commit commit;
+  private final Commit commit;
 
-    public CommitResponse(Commit commit) {
-        this.commit = commit;
-    }
+  public CommitResponse(Commit commit) {
+    this.commit = commit;
+  }
 
-    /**
-     * Get the commit object.
-     *
-     * @return the commit object.
-     */
-    public Commit getCommit() {
-        return commit;
-    }
+  /**
+   * Get the commit object.
+   *
+   * @return the commit object.
+   */
+  public Commit getCommit() {
+    return commit;
+  }
 }

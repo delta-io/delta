@@ -18,15 +18,16 @@ package io.delta.kernel.exceptions;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Thrown when the metadata of the Delta table has changed between the time of transaction start
- * and the time of commit.
+ * Thrown when the metadata of the Delta table has changed between the time of transaction start and
+ * the time of commit.
  *
  * @since 3.2.0
  */
 @Evolving
 public class MetadataChangedException extends ConcurrentWriteException {
-    public MetadataChangedException() {
-        super("The metadata of the Delta table has been changed by a concurrent update. " +
-                "Please try the operation again.");
-    }
+  public MetadataChangedException() {
+    super(
+        "The metadata of the Delta table has been changed by a concurrent update. "
+            + "Please try the operation again.");
+  }
 }

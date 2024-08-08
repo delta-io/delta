@@ -125,10 +125,15 @@ case class DeleteCommand(
           return Seq.empty
         }
 
-        val deleteActions = performDelete(sparkSession, deltaLog, txn)
-        txn.commitIfNeeded(actions = deleteActions,
+        val (deleteActions, deleteMetrics) = performDelete(sparkSession, deltaLog, txn)
+        val commitVersion = txn.commitIfNeeded(
+          actions = deleteActions,
           op = DeltaOperations.Delete(condition.toSeq),
           tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
+        recordDeltaEvent(
+          deltaLog,
+          "delta.dml.delete.stats",
+          data = deleteMetrics.copy(commitVersion = commitVersion))
       }
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.
@@ -149,7 +154,7 @@ case class DeleteCommand(
   def performDelete(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
-      txn: OptimisticTransaction): Seq[Action] = {
+      txn: OptimisticTransaction): (Seq[Action], DeleteMetric) = {
     import org.apache.spark.sql.delta.implicits._
 
     var numRemovedFiles: Long = 0
@@ -386,10 +391,8 @@ case class DeleteCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
     sendDriverMetrics(sparkSession, metrics)
 
-    recordDeltaEvent(
-      deltaLog,
-      "delta.dml.delete.stats",
-      data = DeleteMetric(
+    val numRecordsStats = NumRecordsStats.fromActions(deleteActions)
+    val deleteMetric = DeleteMetric(
         condition = condition.map(_.sql).getOrElse("true"),
         numFilesTotal,
         numFilesAfterSkipping,
@@ -413,14 +416,16 @@ case class DeleteCommand(
         rewriteTimeMs,
         numDeletionVectorsAdded,
         numDeletionVectorsRemoved,
-        numDeletionVectorsUpdated)
-    )
+        numDeletionVectorsUpdated,
+        numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+        numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved)
 
-    if (deleteActions.nonEmpty) {
+    val actionsToCommit = if (deleteActions.nonEmpty) {
       createSetTransaction(sparkSession, deltaLog).toSeq ++ deleteActions
     } else {
       Seq.empty
     }
+    (actionsToCommit, deleteMetric)
   }
 
   /**
@@ -541,5 +546,12 @@ case class DeleteMetric(
     rewriteTimeMs: Long,
     numDeletionVectorsAdded: Long,
     numDeletionVectorsRemoved: Long,
-    numDeletionVectorsUpdated: Long
+    numDeletionVectorsUpdated: Long,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None,
+    isWriteCommand: Boolean = false,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long] = None
 )

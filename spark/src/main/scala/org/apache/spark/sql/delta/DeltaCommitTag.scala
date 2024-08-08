@@ -89,4 +89,23 @@ object DeltaCommitTag {
 
     override def mergeTyped(left: Boolean, right: Boolean): Boolean = left && right
   }
+
+  /**
+   * Tag to indicate whether the commit only does row tracking enablement in its metadata update.
+   * Used to allow some concurrent txns not to fail on metadata update.
+   */
+  case object RowTrackingEnablementOnlyTag extends BooleanCommitTag {
+    override val key = "rowTrackingEnablementOnly"
+
+    override def mergeTyped(left: Boolean, right: Boolean): Boolean = left && right
+  }
+
+  /**
+   * Returns the tagKey value in the CommitInfo, if it exists.
+   */
+  def getTagValueFromCommitInfo(commitInfo: Option[CommitInfo], tagKey: String): Option[String] = {
+    commitInfo.flatMap { ci =>
+      ci.tags.flatMap(_.get(tagKey))
+    }
+  }
 }

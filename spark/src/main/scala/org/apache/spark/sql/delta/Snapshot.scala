@@ -21,7 +21,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.spark.sql.util.ScalaExtensions._
+import io.delta.storage.commit.CommitCoordinatorClient
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
@@ -231,14 +232,47 @@ class Snapshot(
 
   /**
    * [[CommitCoordinatorClient]] for the given delta table as of this snapshot.
-   * - This must be present when coordinated commits is enabled.
+   * - This should not be None when a coordinator has been configured for this table. However, if
+   *   the configured coordinator implementation has not been registered, this will be None. In such
+   *   cases, the user will see potentially stale reads for the table. For strict enforcement of
+   *   coordinated commits, the user can set the configuration
+   *   [[DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION]] to false.
    * - This must be None when coordinated commits is disabled.
    */
   val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = {
-    initializeTableCommitCoordinator()
+    val failIfImplUnavailable =
+      !spark.conf.get(DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION)
+    CoordinatedCommitsUtils.getTableCommitCoordinator(
+      spark,
+      deltaLog,
+      this,
+      failIfImplUnavailable
+    )
   }
-  protected def initializeTableCommitCoordinator(): Option[TableCommitCoordinatorClient] = {
-    CoordinatedCommitsUtils.getTableCommitCoordinator(spark, this)
+
+  /**
+   * Returns the [[TableCommitCoordinatorClient]] that should be used for any type of mutation
+   * operation on the table. This includes, data writes, backfills etc.
+   * This method will throw an error if the configured coordinator could not be instantiated.
+   * @return [[TableCommitCoordinatorClient]] if the table is configured for coordinated commits,
+   *         None if the table is not configured for coordinated commits.
+   */
+  def getTableCommitCoordinatorForWrites: Option[TableCommitCoordinatorClient] = {
+    val coordinatorOpt = tableCommitCoordinatorClientOpt
+      val coordinatorName =
+        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata)
+      if (coordinatorName.isDefined && coordinatorOpt.isEmpty) {
+        recordDeltaEvent(
+          deltaLog,
+          CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_MISSING_IMPLEMENTATION_WRITE,
+          data = Map(
+            "commitCoordinatorName" -> coordinatorName.get,
+            "readVersion" -> version.toString
+          )
+        )
+        throw DeltaErrors.unsupportedWritesWithMissingCoordinators(coordinatorName.get)
+      }
+      coordinatorOpt
   }
 
   /** Number of columns to collect stats on for data skipping */
@@ -485,7 +519,7 @@ class Snapshot(
    *   if the delta file for the current version is not found after backfilling.
    */
   def ensureCommitFilesBackfilled(): Unit = {
-    val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
+    val tableCommitCoordinatorClient = getTableCommitCoordinatorForWrites.getOrElse {
       return
     }
     val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
@@ -600,6 +634,10 @@ class InitialSnapshot(
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
 
   // The [[InitialSnapshot]] is not backed by any external commit-coordinator.
-  override def initializeTableCommitCoordinator(): Option[TableCommitCoordinatorClient] = None
+  override val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = None
+
+  // Commit 0 cannot be performed through a commit coordinator.
+  override def getTableCommitCoordinatorForWrites: Option[TableCommitCoordinatorClient] = None
+
   override def timestamp: Long = -1L
 }

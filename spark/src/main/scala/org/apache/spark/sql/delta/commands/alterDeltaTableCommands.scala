@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -119,8 +120,12 @@ case class AlterTableSetPropertiesDeltaCommand(
       configuration(rowTrackingPropertyKey).toBoolean
 
     if (enableRowTracking) {
-      // TODO(longvu-db): This will be removed once we support backfill.
-      throw new UnsupportedOperationException("Cannot enable Row IDs on an existing table.")
+      // If we're enabling row tracking on an existing table, we need to complete a backfill process
+      // prior to updating the table metadata.
+      RowTrackingBackfillCommand(
+        deltaLog,
+        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
+        table.catalogTable).run(sparkSession)
     }
     val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
     val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")
@@ -162,7 +167,13 @@ case class AlterTableSetPropertiesDeltaCommand(
 
       txn.updateMetadata(newMetadata)
 
-      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
+      // Tag if the metadata update is _only_ for enabling row tracking. This allows for
+      // an optimization where we can safely not fail concurrent txns from the metadata update.
+      var tags = Map.empty[String, String]
+      if (enableRowTracking && configuration.size == 1) {
+        tags += (DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+      }
+      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration), tags)
 
       Seq.empty[Row]
     }
@@ -619,6 +630,13 @@ case class AlterTableChangeColumnDeltaCommand(
           verifyColumnChange(sparkSession, oldColumnForVerification, resolver, txn)
 
           val newField = {
+            if (syncIdentity) {
+              assert(oldColumn == newColumn)
+              val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+              val field = IdentityColumn.syncIdentity(newColumn, df)
+              txn.readWholeTable()
+              field
+            } else {
               // Take the name, comment, nullability and data type from newField
               // It's crucial to keep the old column's metadata, which may contain column mapping
               // metadata.
@@ -635,6 +653,7 @@ case class AlterTableChangeColumnDeltaCommand(
                   dataType =
                     SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
                   nullable = newColumn.nullable)
+            }
           }
 
           // Replace existing field with new field
@@ -879,6 +898,10 @@ case class AlterTableReplaceColumnsDeltaCommand(
 
       val metadata = txn.metadata
       val existingSchema = metadata.schema
+
+      if (ColumnWithDefaultExprUtils.hasIdentityColumn(table.initialSnapshot.schema)) {
+        throw DeltaErrors.identityColumnReplaceColumnsNotSupported()
+      }
 
       val resolver = sparkSession.sessionState.conf.resolver
       val changingSchema = StructType(columns)

@@ -309,9 +309,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   test("evaluate expression: like") {
     val col1 = stringVector(Seq[String](
-      "one", "two", "three", "four", null, null, "seven", "eight"))
+      null, "one", "two", "three", "four", null, null, "seven", "eight"))
     val col2 = stringVector(Seq[String](
-      "one", "Two", "thr%", "four%", "f", null, null, "%ght"))
+      null, "one", "Two", "thr%", "four%", "f", null, null, "%ght"))
     val schema = new StructType()
       .add("col1", StringType.STRING)
       .add("col2", StringType.STRING)
@@ -332,25 +332,25 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkLike(
       input,
       like(new Column("col1"), new Column("col2")),
-      Seq[BooleanJ](true, false, true, true, null, null, null, true))
+      Seq[BooleanJ](null, true, false, true, true, null, null, null, true))
 
     // check column expression against literal
     checkLike(
       input,
       like(new Column("col1"), Literal.ofString("t%")),
-      Seq[BooleanJ](false, true, true, false, null, null, false, false))
+      Seq[BooleanJ](null, false, true, true, false, null, null, false, false))
 
     // ends with checks
     checkLike(
       input,
       like(new Column("col1"), Literal.ofString("%t")),
-      Seq[BooleanJ](false, false, false, false, null, null, false, true))
+      Seq[BooleanJ](null, false, false, false, false, null, null, false, true))
 
     // contains checks
     checkLike(
       input,
       like(new Column("col1"), Literal.ofString("%t%")),
-      Seq[BooleanJ](false, true, true, false, null, null, false, true))
+      Seq[BooleanJ](null, false, true, true, false, null, null, false, true))
 
     val dummyInput = new DefaultColumnarBatch(1,
         new StructType().add("dummy", StringType.STRING),

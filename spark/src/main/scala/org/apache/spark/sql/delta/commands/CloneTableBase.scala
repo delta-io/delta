@@ -311,10 +311,14 @@ abstract class CloneTableBase(
     }
 
     // Coordinated Commit configurations are never copied over to the target table.
-    clonedMetadata = clonedMetadata.copy(configuration =
-      clonedMetadata.configuration.filterKeys(
-        !CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_)).toMap)
-    clonedMetadata
+    val filteredConfiguration = clonedMetadata.configuration
+      .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
+      .toMap
+    val clonedSchema =
+      IdentityColumn.copySchemaWithMergedHighWaterMarks(
+        schemaToCopy = clonedMetadata.schema,
+        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema)
+    clonedMetadata.copy(configuration = filteredConfiguration, schemaString = clonedSchema.json)
   }
 
   /**

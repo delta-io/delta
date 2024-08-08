@@ -19,11 +19,10 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{Column, QueryTest}
 import org.apache.spark.sql.catalyst.dsl.expressions.DslExpression
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
-import org.apache.spark.sql.catalyst.expressions.ScalarSubquery
-import org.apache.spark.sql.functions.{col, rand, udf}
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, Rand, ScalarSubquery}
+import org.apache.spark.sql.functions.{col, udf}
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
@@ -39,7 +38,7 @@ class ConflictCheckerPredicateEliminationUnitSuite
   val simpleExpressionB: Expression = (col("b") === "test").expr
 
   val deterministicExpression: Expression = (col("c") > 5L).expr
-  val nonDeterministicExpression: Expression = (col("c") > rand()).expr
+  val nonDeterministicExpression: Expression = (col("c") > new Column(Rand(0))).expr
   lazy val deterministicSubquery: Expression = {
     val df = spark.sql("SELECT 5")
     df.collect()

@@ -2453,6 +2453,18 @@ trait DeltaErrorsBase
     )
   }
 
+  def identityColumnAlterNonIdentityColumnError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnAlterNonDeltaFormatError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT",
+      messageParameters = Array.empty)
+  }
+
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,
@@ -2462,6 +2474,36 @@ trait DeltaErrorsBase
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
       messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
     )
+  }
+
+  def identityColumnExplicitInsertNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED",
+      messageParameters = Array(colName))
+  }
+
+  def identityColumnAlterColumnNotSupported(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnReplaceColumnsNotSupported(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_REPLACE_COLUMN_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnPartitionNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_PARTITION_NOT_SUPPORTED",
+      messageParameters = Array(colName))
+  }
+
+  def identityColumnUpdateNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_UPDATE_NOT_SUPPORTED",
+      messageParameters = Array(colName))
   }
 
   def activeSparkSessionNotFound(): Throwable = {
@@ -3416,6 +3458,12 @@ trait DeltaErrorsBase
           .map(_.columnNames.map(_.toString))
           .getOrElse(Seq.empty)
           .mkString(", ")))
+  }
+
+  def unsupportedWritesWithMissingCoordinators(coordinatorName: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+      messageParameters = Array(coordinatorName))
   }
 }
 
