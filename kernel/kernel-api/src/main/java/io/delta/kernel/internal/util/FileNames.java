@@ -18,6 +18,9 @@ package io.delta.kernel.internal.util;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import io.delta.kernel.internal.fs.Path;
@@ -28,6 +31,10 @@ public final class FileNames {
 
     private static final Pattern DELTA_FILE_PATTERN =
         Pattern.compile("\\d+\\.json");
+
+    // Example: 00000000000000000001.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.json
+    private static final Pattern UUID_DELTA_FILE_REGEX =
+            Pattern.compile("(\\d+)\\.([^\\.]+)\\.json");
 
     private static final Pattern CHECKPOINT_FILE_PATTERN =
         Pattern.compile(
@@ -43,6 +50,9 @@ public final class FileNames {
         Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
 
     public static final String SIDECAR_DIRECTORY = "_sidecars";
+
+    /** The subdirectory in which to store the unbackfilled commit files. */
+    private static final String COMMIT_SUBDIR = "_commits";
 
     /**
      * Returns the delta (json format) path for a given delta file.
@@ -161,7 +171,9 @@ public final class FileNames {
 
 
     public static boolean isCommitFile(String fileName) {
-        return DELTA_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
+        String filename = new Path(fileName).getName();
+        return DELTA_FILE_PATTERN.matcher(filename).matches() ||
+                UUID_DELTA_FILE_REGEX.matcher(filename).matches();
     }
 
     /**
@@ -181,6 +193,62 @@ public final class FileNames {
             throw new IllegalArgumentException(
                 String.format("Unexpected file type found in transaction log: %s", path)
             );
+        }
+    }
+
+    /** Returns path to the sidecar directory */
+    public static Path commitDirPath(Path logPath) {
+        return new Path(logPath, COMMIT_SUBDIR);
+    }
+
+    /**
+     * Returns the un-backfilled uuid formatted delta (json format) path for a given version.
+     *
+     * @param logPath The root path of the delta log.
+     * @param version The version of the delta file.
+     * @return The path to the un-backfilled delta file: logPath/_commits/version.uuid.json
+     */
+    public static Path unbackfilledDeltaFile(
+            Path logPath, long version, Optional<String> uuidString) {
+        Path basePath = commitDirPath(logPath);
+        String uuid = uuidString.orElse(UUID.randomUUID().toString());
+        return new Path(basePath, String.format("%020d.%s.json", version, uuid));
+    }
+
+    public static Optional<PathVersionUuid> getUnbackfilledDeltaFile(Path path) {
+        // If parent is _commits dir, then match against uuid commit file.
+        if (path.getParent().getName().equals(COMMIT_SUBDIR)) {
+            Matcher matcher = UUID_DELTA_FILE_REGEX.matcher(path.getName());
+            if (matcher.matches()) {
+                long version = Long.parseLong(matcher.group(1));
+                String uuidString = matcher.group(2);
+                return Optional.of(new PathVersionUuid(path, version, uuidString));
+            }
+        }
+        return Optional.empty();
+    }
+
+    public static class PathVersionUuid {
+        private final Path path;
+        private final long version;
+        private final String uuidString;
+
+        public PathVersionUuid(Path path, long version, String uuidString) {
+            this.path = path;
+            this.version = version;
+            this.uuidString = uuidString;
+        }
+
+        public Path getPath() {
+            return path;
+        }
+
+        public long getVersion() {
+            return version;
+        }
+
+        public String getUuidString() {
+            return uuidString;
         }
     }
 }

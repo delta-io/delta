@@ -15,12 +15,15 @@
  */
 package io.delta.kernel.internal;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.FileStatus;
 
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
@@ -29,7 +32,9 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
+import io.delta.kernel.internal.snapshot.TableCommitCoordinatorClientHandler;
+import io.delta.kernel.internal.util.FileNames;
+import static io.delta.kernel.internal.TableConfig.*;
 
 /**
  * Implementation of {@link Snapshot}.
@@ -143,7 +148,7 @@ public class SnapshotImpl implements Snapshot {
         if (TableConfig.isICTEnabled(engine, metadata)) {
             if (!inCommitTimestampOpt.isPresent()) {
                 Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(
-                        engine, logPath, logSegment.version);
+                        engine, getDeltaFile(), logSegment.version);
                 inCommitTimestampOpt = Optional.of(CommitInfo.getRequiredInCommitTimestamp(
                         commitInfoOpt,
                         String.valueOf(logSegment.version),
@@ -153,5 +158,38 @@ public class SnapshotImpl implements Snapshot {
         } else {
             return logSegment.lastCommitTimestamp;
         }
+    }
+
+    /**
+     * Returns the commit coordinator client handler based on the table metadata in this
+     * snapshot.
+     *
+     * @param engine the engine to use for IO operations
+     * @return the commit coordinator client handler for this snapshot or empty if the metadata
+     *  is not configured to use the commit coordinator.
+     */
+    public Optional<TableCommitCoordinatorClientHandler> getTableCommitCoordinatorClientHandlerOpt(
+            Engine engine) {
+        return COORDINATED_COMMITS_COORDINATOR_NAME.fromMetadata(engine, metadata)
+                .map(commitCoordinatorStr -> engine.getCommitCoordinatorClientHandler(
+                        commitCoordinatorStr,
+                        COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(engine, metadata)))
+                .map(handler -> new TableCommitCoordinatorClientHandler(
+                        handler,
+                        logPath.toString(),
+                        COORDINATED_COMMITS_TABLE_CONF.fromMetadata(engine, metadata)));
+    }
+
+    private String getDeltaFile() {
+        Map<Long, String> uuids = new HashMap<>();
+        for (FileStatus delta : logSegment.deltas) {
+            FileNames.getUnbackfilledDeltaFile(new Path(delta.getPath())).ifPresent(
+                pathVersionUuid -> uuids.put(
+                        pathVersionUuid.getVersion(), pathVersionUuid.getUuidString()));
+        }
+        return Optional.ofNullable(uuids.get(version))
+                .map(uuid -> FileNames.unbackfilledDeltaFile(
+                        logPath, version, Optional.of(uuid)).toString())
+                .orElseGet(() -> FileNames.deltaFile(logPath, version));
     }
 }
