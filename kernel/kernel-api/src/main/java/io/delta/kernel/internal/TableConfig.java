@@ -85,7 +85,7 @@ public class TableConfig<T> {
    */
   public static final TableConfig<Boolean> IN_COMMIT_TIMESTAMPS_ENABLED =
       new TableConfig<>(
-          "delta.enableInCommitTimestamps-preview",
+          "delta.enableInCommitTimestamps",
           "false", /* default values */
           (engineOpt, v) -> Boolean.valueOf(v),
           value -> true,
@@ -97,7 +97,7 @@ public class TableConfig<T> {
    */
   public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION =
       new TableConfig<>(
-          "delta.inCommitTimestampEnablementVersion-preview",
+          "delta.inCommitTimestampEnablementVersion",
           null, /* default values */
           (engineOpt, v) -> Optional.ofNullable(v).map(Long::valueOf),
           value -> true,
@@ -110,7 +110,7 @@ public class TableConfig<T> {
    */
   public static final TableConfig<Optional<Long>> IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP =
       new TableConfig<>(
-          "delta.inCommitTimestampEnablementTimestamp-preview",
+          "delta.inCommitTimestampEnablementTimestamp",
           null, /* default values */
           (engineOpt, v) -> Optional.ofNullable(v).map(Long::valueOf),
           value -> true,

@@ -38,7 +38,7 @@ public class TableFeatures {
           new HashSet<String>() {
             {
               add("appendOnly");
-              add("inCommitTimestamp-preview");
+              add("inCommitTimestamp");
               add("columnMapping");
             }
           });
@@ -84,7 +84,7 @@ public class TableFeatures {
    * <ul>
    *   <li>protocol writer version 1.
    *   <li>protocol writer version 2 only with appendOnly feature enabled.
-   *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp-preview},
+   *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp},
    *       {@code columnMapping} feature enabled.
    * </ul>
    *
@@ -121,7 +121,7 @@ public class TableFeatures {
               // Only supported writer features as of today in Kernel
             case "appendOnly":
               break;
-            case "inCommitTimestamp-preview":
+            case "inCommitTimestamp":
               break;
             case "columnMapping":
               break;
@@ -158,8 +158,8 @@ public class TableFeatures {
 
   /**
    * Extract the writer features that should be enabled automatically based on the metadata which
-   * are not already enabled. For example, the {@code inCommitTimestamp-preview} feature should be
-   * enabled when the delta property name (delta.enableInCommitTimestamps-preview) is set to true in
+   * are not already enabled. For example, the {@code inCommitTimestamp} feature should be
+   * enabled when the delta property name (delta.enableInCommitTimestamps) is set to true in
    * the metadata if it is not already enabled.
    *
    * @param engine the engine to use for IO operations
@@ -184,7 +184,7 @@ public class TableFeatures {
    */
   private static int getMinReaderVersion(String feature) {
     switch (feature) {
-      case "inCommitTimestamp-preview":
+      case "inCommitTimestamp":
         return 3;
       default:
         return 1;
@@ -199,7 +199,7 @@ public class TableFeatures {
    */
   private static int getMinWriterVersion(String feature) {
     switch (feature) {
-      case "inCommitTimestamp-preview":
+      case "inCommitTimestamp":
         return 7;
       default:
         return 2;
@@ -218,7 +218,7 @@ public class TableFeatures {
   private static boolean metadataRequiresWriterFeatureToBeEnabled(
       Engine engine, Metadata metadata, String feature) {
     switch (feature) {
-      case "inCommitTimestamp-preview":
+      case "inCommitTimestamp":
         return TableConfig.isICTEnabled(engine, metadata);
       default:
         return false;

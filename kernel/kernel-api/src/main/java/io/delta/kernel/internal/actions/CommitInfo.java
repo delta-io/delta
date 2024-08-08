@@ -177,7 +177,7 @@ public class CommitInfo {
                 new InvalidTableException(
                     dataPath.toString(),
                     String.format(
-                        "This table has the feature inCommitTimestamp-preview "
+                        "This table has the feature inCommitTimestamp "
                             + "enabled which requires the presence of the CommitInfo action "
                             + "in every commit. However, the CommitInfo action is "
                             + "missing from commit version %s.",
@@ -187,7 +187,7 @@ public class CommitInfo {
             new InvalidTableException(
                 dataPath.toString(),
                 String.format(
-                    "This table has the feature inCommitTimestamp-preview "
+                    "This table has the feature inCommitTimestamp "
                         + "enabled which requires the presence of inCommitTimestamp in the "
                         + "CommitInfo action. However, this field has not "
                         + "been set in commit version %s.",
