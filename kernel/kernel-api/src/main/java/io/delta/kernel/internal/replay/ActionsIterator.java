@@ -209,7 +209,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .readParquetFiles(
                           singletonCloseableIterator(file),
                           finalModifiedReadSchema,
-                              checkpointPredicateIncludingSidecars),
+                          checkpointPredicateIncludingSidecars),
               "Reading parquet log file `%s` with readSchema=%s and predicate=%s",
               file,
               modifiedReadSchema,
