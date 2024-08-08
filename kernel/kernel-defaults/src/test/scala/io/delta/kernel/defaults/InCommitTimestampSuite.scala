@@ -189,7 +189,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
           Optional.empty())
       assert(columnarBatches.hasNext)
       val rows = columnarBatches.next().getRows
-      val commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, 0)
+      val commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, FileNames.deltaFile(logPath, 0), 0)
       assert(commitInfoOpt.isPresent)
       val commitInfo = commitInfoOpt.get
       commitInfo.setInCommitTimestamp(Optional.empty())
@@ -412,7 +412,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
    */
   private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Option[Long] = {
     val logPath = new Path(table.getPath(engine), "_delta_log")
-    val commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, version)
+    val commitInfoOpt = CommitInfo.getCommitInfoOpt(
+      engine, FileNames.deltaFile(logPath, version), version)
     if (commitInfoOpt.isPresent && commitInfoOpt.get.getInCommitTimestamp.isPresent) {
       Some(commitInfoOpt.get.getInCommitTimestamp.get)
     } else {

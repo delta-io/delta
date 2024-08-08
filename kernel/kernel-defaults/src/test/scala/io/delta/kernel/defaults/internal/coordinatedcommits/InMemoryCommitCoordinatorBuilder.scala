@@ -33,8 +33,8 @@ import org.apache.hadoop.conf.Configuration
  */
 class InMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
   extends CommitCoordinatorBuilder(hadoopConf) {
-  val BATCH_SIZE_CONF_KEY = "delta.kernel.default.coordinatedCommits.inMemoryCoordinator.batchSize"
-  private val batchSize = hadoopConf.getLong(BATCH_SIZE_CONF_KEY, 1)
+  private val batchSize =
+    hadoopConf.getLong(InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY, 1)
 
   /** Name of the commit-coordinator */
   override def getName: String = "in-memory"
@@ -44,7 +44,7 @@ class InMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
     if (InMemoryCommitCoordinatorBuilder.batchSizeMap.containsKey(batchSize)) {
       InMemoryCommitCoordinatorBuilder.batchSizeMap.get(batchSize)
     } else {
-      val coordinator = new InMemoryCommitCoordinator(batchSize)
+      val coordinator = new PredictableUuidInMemoryCommitCoordinatorClient(batchSize)
       InMemoryCommitCoordinatorBuilder.batchSizeMap.put(batchSize, coordinator)
       coordinator
     }
@@ -57,11 +57,22 @@ class InMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
  * checking the state of the instances in UTs.
  */
 object InMemoryCommitCoordinatorBuilder {
+  val BATCH_SIZE_CONF_KEY = "delta.kernel.default.coordinatedCommits.inMemoryCoordinator.batchSize"
   val batchSizeMap: util.Map[Long, InMemoryCommitCoordinator] =
     new util.HashMap[Long, InMemoryCommitCoordinator]()
 
   // Visible only for UTs
   private[defaults] def clearInMemoryInstances(): Unit = {
     batchSizeMap.clear()
+  }
+}
+
+class PredictableUuidInMemoryCommitCoordinatorClient(batchSize: Long)
+  extends InMemoryCommitCoordinator(batchSize) {
+
+  var nextUuidSuffix = 1L
+  override def generateUUID(): String = {
+    nextUuidSuffix += 1
+    s"uuid-${nextUuidSuffix - 1}"
   }
 }
