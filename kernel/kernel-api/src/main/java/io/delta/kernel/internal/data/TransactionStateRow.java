@@ -29,7 +29,7 @@ import io.delta.kernel.internal.util.VectorUtils;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 
 public class TransactionStateRow extends GenericRow {
-    private static final StructType SCHEMA = new StructType()
+    public static final StructType SCHEMA = new StructType()
             .add("logicalSchemaString", StringType.STRING)
             .add("partitionColumns", new ArrayType(StringType.STRING, false))
             .add("tablePath", StringType.STRING);
