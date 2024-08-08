@@ -1051,11 +1051,11 @@ class DeltaTableTestsMixin:
 
         # bad generatedByDefaultAs - argument type must be IdentityGenerator
         with self.assertRaises(TypeError):
-            builder.addColumn(
+            builder.addColumn(  # type: ignore[arg-type]
                 "a",
                 "bigint",
                 generatedByDefaultAs=""
-            )  # type: ignore[arg-type]
+            )
 
         # bad generatedByDefaultAs - identity column data type must be Long
         with self.assertRaises(UnsupportedOperationException):
