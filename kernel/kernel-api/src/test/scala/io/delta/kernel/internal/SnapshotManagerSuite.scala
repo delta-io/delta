@@ -755,7 +755,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     // corrupt incomplete multi-part checkpoint
     val corruptedCheckpointStatuses = FileNames.checkpointFileWithParts(logPath, 10, 5).asScala
       .map(p => FileStatus.of(p.toString, 10, 10))
-      .take(4)
+      .take(4).toSeq
     val deltas = deltaFileStatuses(10L to 13L)
     testExpectedError[InvalidTableException](
       corruptedCheckpointStatuses ++ deltas,
@@ -804,7 +804,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     // _last_checkpoint refers to incomplete multi-part checkpoint
     val corruptedCheckpointStatuses = FileNames.checkpointFileWithParts(logPath, 20, 5).asScala
       .map(p => FileStatus.of(p.toString, 10, 10))
-      .take(4)
+      .take(4).toSeq
     testExpectedError[RuntimeException](
       files = corruptedCheckpointStatuses ++ deltaFileStatuses(10L to 20L) ++
         singularCheckpointFileStatuses(Seq(10L)),

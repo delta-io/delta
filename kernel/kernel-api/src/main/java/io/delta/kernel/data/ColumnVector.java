@@ -176,6 +176,14 @@ public interface ColumnVector extends AutoCloseable {
     }
 
     /**
+     * Return the variant value located at {@code rowId}. Returns null if the slot for {@code rowId}
+     * is null
+     */
+    default VariantValue getVariant(int rowId) {
+        throw new UnsupportedOperationException("Invalid value request for data type");
+    }
+
+    /**
      * Get the child vector associated with the given ordinal. This method is applicable only to the
      * {@code struct} type columns.
      *

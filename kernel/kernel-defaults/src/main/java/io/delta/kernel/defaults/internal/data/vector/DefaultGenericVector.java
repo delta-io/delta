@@ -172,6 +172,13 @@ public class DefaultGenericVector implements ColumnVector {
                 (rowId) -> (Row) rowIdToValueAccessor.apply(rowId));
     }
 
+    @Override
+    public VariantValue getVariant(int rowId) {
+        assertValidRowId(rowId);
+        throwIfUnsafeAccess(VariantType.class, "variant");
+        return (VariantValue) rowIdToValueAccessor.apply(rowId);
+    }
+
     private void throwIfUnsafeAccess( Class<? extends DataType> expDataType, String accessType) {
         if (!expDataType.isAssignableFrom(dataType.getClass())) {
             String msg = String.format(

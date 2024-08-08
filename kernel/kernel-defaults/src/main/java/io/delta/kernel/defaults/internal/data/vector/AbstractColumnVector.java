@@ -22,6 +22,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.types.DataType;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -76,6 +77,10 @@ public abstract class AbstractColumnVector
             return false; // if there is no-nullability vector, every value is a non-null value
         }
         return nullability.get()[rowId];
+    }
+
+    public Optional<boolean[]> getNullability() {
+        return nullability;
     }
 
     @Override
@@ -136,6 +141,11 @@ public abstract class AbstractColumnVector
     @Override
     public ArrayValue getArray(int rowId) {
         throw unsupportedDataAccessException("array");
+    }
+
+    @Override
+    public VariantValue getVariant(int rowId) {
+        throw unsupportedDataAccessException("variant");
     }
 
     // TODO no need to override these here; update default implementations in `ColumnVector`

@@ -61,6 +61,8 @@ abstract class ExpressionVisitor<R> {
 
     abstract R visitLike(Predicate predicate);
 
+    abstract R visitVariantCoalesce(ScalarExpression variantCoalesce);
+
     final R visit(Expression expression) {
         if (expression instanceof PartitionValueExpression) {
             return visitPartitionValue((PartitionValueExpression) expression);
@@ -109,6 +111,8 @@ abstract class ExpressionVisitor<R> {
                 return visitCoalesce(expression);
             case "LIKE":
                 return visitLike(new Predicate(name, children));
+            case "VARIANT_COALESCE":
+                return visitVariantCoalesce(expression);
             default:
                 throw new UnsupportedOperationException(
                     String.format("Scalar expression `%s` is not supported.", name));

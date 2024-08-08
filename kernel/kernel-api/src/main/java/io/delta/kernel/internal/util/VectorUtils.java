@@ -205,6 +205,8 @@ public final class VectorUtils {
             return toJavaList(columnVector.getArray(rowId));
         } else if (dataType instanceof MapType) {
             return toJavaMap(columnVector.getMap(rowId));
+        } else if (dataType instanceof VariantType) {
+            return columnVector.getVariant(rowId);
         } else {
             throw new UnsupportedOperationException("unsupported data type");
         }

@@ -59,6 +59,9 @@ spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
+kernelDefaults / sparkVersion := getSparkVersion()
+storage / sparkVersion := getSparkVersion()
+goldenTables / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -157,6 +160,25 @@ lazy val commonSettings = Seq(
 )
 
 /**
+ * Java-/Scala-/Uni-Doc settings aren't working yet against Spark Master.
+    1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
+       generating delta-spark unidoc compiles delta-iceberg
+    2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
+       issue above.
+ */
+def crossSparkUniDocSettings(): Seq[Setting[_]] = getSparkVersion() match {
+  case LATEST_RELEASED_SPARK_VERSION => Seq(
+    // Java-/Scala-/Uni-Doc Settings
+    scalacOptions ++= Seq(
+      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
+    ),
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
+  )
+
+  case SPARK_MASTER_VERSION => Seq()
+}
+
+/**
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
  *       setting macro.
  */
@@ -170,12 +192,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
     Antlr4 / antlr4Version := "4.9.3",
-
-    // Java-/Scala-/Uni-Doc Settings
-    scalacOptions ++= Seq(
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
-    ),
-    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
 
   case SPARK_MASTER_VERSION => Seq(
@@ -200,13 +216,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
     )
-
-    // Java-/Scala-/Uni-Doc Settings
-    // This isn't working yet against Spark Master.
-    // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
-    //    generating delta-spark unidoc compiles delta-iceberg
-    // 2) delta-spark unidoc fails to compile. spark 3.5 is on its classpath. likely due to iceberg
-    //    issue above.
   )
 }
 
@@ -234,6 +243,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     name := "delta-connect-common",
     commonSettings,
     crossSparkSettings(),
+    crossSparkUniDocSettings(),
     releaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
@@ -381,6 +391,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
       emptyValue = ()
     ).value,
     crossSparkSettings(),
+    crossSparkUniDocSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
 
@@ -409,6 +420,7 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
+    crossSparkUniDocSettings(),
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -559,6 +571,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     scalaStyleSettings,
     javaOnlyReleaseSettings,
     Test / javaOptions ++= Seq("-ea"),
+    crossSparkSettings(),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
@@ -615,6 +628,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     scalaStyleSettings,
     javaOnlyReleaseSettings,
     Test / javaOptions ++= Seq("-ea"),
+    crossSparkSettings(),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
@@ -631,10 +645,10 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
 
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
     ),
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings
@@ -650,6 +664,8 @@ lazy val storage = (project in file("storage"))
     name := "delta-storage",
     commonSettings,
     javaOnlyReleaseSettings,
+    crossSparkSettings(),
+
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
@@ -1349,14 +1365,15 @@ lazy val goldenTables = (project in file("connectors/golden-tables"))
     name := "golden-tables",
     commonSettings,
     skipReleaseSettings,
+    crossSparkSettings(),
     libraryDependencies ++= Seq(
       // Test Dependencies
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests"
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests"
     )
   )
 

@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
 import static java.lang.String.format;
 
 import org.apache.parquet.schema.*;
-import org.apache.parquet.schema.LogicalTypeAnnotation.DecimalLogicalTypeAnnotation;
+import org.apache.parquet.schema.LogicalTypeAnnotation.*;
 import org.apache.parquet.schema.Type.Repetition;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit.MICROS;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.decimalType;
@@ -155,6 +155,125 @@ class ParquetSchemaUtils {
                     getFieldId(structField)));
         }
         return new MessageType("Default Kernel Schema", types);
+    }
+
+    /**
+     * Convert the given Parquet data type to a Kernel data type.
+     *
+     * TODO(r.chen): Test this function.
+     *
+     * @param type Parquet type object
+     * @return {@link DataType} representing the Parquet type in Kernel.
+     */
+    public static DataType toKernelType(Type type) {
+        if (type.isPrimitive()) {
+            PrimitiveType pt = type.asPrimitiveType();
+
+            if (pt.getOriginalType() == OriginalType.DECIMAL) {
+                DecimalLogicalTypeAnnotation dlta =
+                        (DecimalLogicalTypeAnnotation) pt.getLogicalTypeAnnotation();
+                return new DecimalType(dlta.getPrecision(), dlta.getScale());
+            } else if (pt.getPrimitiveTypeName() == BOOLEAN) {
+                return BooleanType.BOOLEAN;
+            } else if (pt.getPrimitiveTypeName() == INT32) {
+                if (pt.getOriginalType() == OriginalType.INT_8) {
+                    return ByteType.BYTE;
+                } else if (pt.getOriginalType() == OriginalType.INT_16) {
+                    return ShortType.SHORT;
+                } else if (pt.getLogicalTypeAnnotation() == LogicalTypeAnnotation.dateType()) {
+                    return DateType.DATE;
+                }
+                return IntegerType.INTEGER;
+            } else if (pt.getPrimitiveTypeName() == INT64) {
+                if (pt.getOriginalType() == OriginalType.TIMESTAMP_MICROS) {
+                    TimestampLogicalTypeAnnotation tlta =
+                        (TimestampLogicalTypeAnnotation) pt.getLogicalTypeAnnotation();
+                    return tlta.isAdjustedToUTC() ?
+                        TimestampType.TIMESTAMP : TimestampNTZType.TIMESTAMP_NTZ;
+                }
+                return LongType.LONG;
+            } else if (pt.getPrimitiveTypeName() == FLOAT) {
+                return FloatType.FLOAT;
+            } else if (pt.getPrimitiveTypeName() == DOUBLE) {
+                return DoubleType.DOUBLE;
+            } else if (pt.getPrimitiveTypeName() == BINARY) {
+                if (pt.getLogicalTypeAnnotation() == LogicalTypeAnnotation.stringType()) {
+                    return StringType.STRING;
+                } else {
+                    return BinaryType.BINARY;
+                }
+            } else {
+                throw new UnsupportedOperationException(
+                    "Converting the given Parquet data type to Kernel is not supported: " + type);
+            }
+        } else {
+            if (type.getLogicalTypeAnnotation() == LogicalTypeAnnotation.listType()) {
+                // Parquet's message type includes an additional group type between the array
+                // and the child element type. For example:
+                // optional group array_map_v (LIST) {
+                //     // The "list" field is between the array and child map type.
+                //     repeated group list {
+                //         optional group element (MAP) {
+                //             repeated group key_value {
+                //                 required binary key (STRING);
+                //                 required group value {
+                //                     required binary value;
+                //                     required binary metadata;
+                //                 }
+                //             }
+                //         }
+                //     }
+                // }
+                GroupType gt = (GroupType) ((GroupType) type).getType(0);
+                Type childType = gt.getType(0);
+                return new ArrayType(
+                    toKernelType(childType), childType.getRepetition() == OPTIONAL);
+            } else if (type.getLogicalTypeAnnotation() == LogicalTypeAnnotation.mapType()) {
+                // Parquet's message type includes an additional group type between the map type
+                // and the key and value types. For example:
+                // optional group array_map_v (LIST) {
+                //     repeated group list {
+                //         optional group element (MAP) {
+                //             // The "key_value" field is between the map and child types.
+                //             repeated group key_value {
+                //                 required binary key (STRING);
+                //                 required group value {
+                //                     required binary value;
+                //                     required binary metadata;
+                //                 }
+                //             }
+                //         }
+                //     }
+                // }
+                GroupType keyValueGroup = (GroupType) ((GroupType) type).getType(0);
+                Type keyType = keyValueGroup.getType(0);
+                Type valueType = keyValueGroup.getType(1);
+                return new MapType(
+                    toKernelType(keyType),
+                    toKernelType(valueType),
+                    valueType.getRepetition() == OPTIONAL
+                );
+            } else {
+                List<StructField> kernelFields = new ArrayList<>();
+                GroupType gt = (GroupType) type;
+                for (Type parquetType : gt.getFields()) {
+                    FieldMetadata.Builder metadataBuilder = FieldMetadata.builder();
+                    if (type.getId() != null) {
+                        metadataBuilder.putLong(
+                            ColumnMapping.PARQUET_FIELD_ID_KEY,
+                            (long) (type.getId().intValue())
+                        );
+                    }
+                    kernelFields.add(new StructField(
+                        parquetType.getName(),
+                        toKernelType(parquetType),
+                        parquetType.getRepetition() == OPTIONAL,
+                        metadataBuilder.build()
+                    ));
+                }
+                return new StructType(kernelFields);
+            }
+        }
     }
 
     private static List<Type> pruneFields(

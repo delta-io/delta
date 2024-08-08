@@ -117,4 +117,10 @@ public interface Row {
      * Throws error if the column at given ordinal is not of map type,
      */
     MapValue getMap(int ordinal);
+
+    /**
+     * Return variant value of the column located at the given ordinal.
+     * Throws error if the column at given ordinal is not of variant type.
+     */
+    VariantValue getVariant(int ordinal);
 }

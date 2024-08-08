@@ -23,8 +23,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 
 import io.delta.kernel.internal.InternalScanFileUtils;
@@ -36,6 +35,7 @@ import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.VariantUtils;
 
 /**
  * Represents a scan of a Delta table.
@@ -113,6 +113,45 @@ public interface Scan {
      * @return Scan state in {@link Row} format.
      */
     Row getScanState(Engine engine);
+
+    /**
+     * Uses the physical parquet schema provided by the engine to construct the physical parquet
+     * read schema.
+     *
+     * For example, a read shcmea like "struct<v: variant>" is transformed into
+     * "struct<v: struct<value: binary, metadata:binary>>".
+     */
+    static StructType getParquetPhysicalReadSchema(
+            StructType parquetSchema,
+            StructType readSchema) {
+        // Uses the physical parquet schema to transform a read schema like "struct<v: variant>"
+        // into "struct<v: struct<value: binary, metadata:binary>>".
+        StructType parquetSchemaToRead = new StructType();
+        for (StructField field : readSchema.fields()) {
+            DataType physicalDataType;
+            if (field.getDataType() instanceof VariantType ||
+                field.getDataType() instanceof StructType ||
+                field.getDataType() instanceof MapType ||
+                field.getDataType() instanceof ArrayType) {
+                // TODO(r.chen): Get rid of the O(n^2) lookup.
+                StructField parquetField = parquetSchema.get(field.getName());
+                physicalDataType =
+                    getParquetPhysicalType(parquetField.getDataType(), field.getDataType());
+            } else {
+                physicalDataType = field.getDataType();
+            }
+
+            // TODO(r.chen): Should we add in metadata that the field "isVariant"?
+            // What would this mean for array<array<variant>> for instance?
+            parquetSchemaToRead = parquetSchemaToRead.add(new StructField(
+                field.getName(),
+                physicalDataType,
+                field.isNullable(),
+                field.getMetadata()
+            ));
+        }
+        return parquetSchemaToRead;
+    }
 
     /**
      * Transform the physical data read from the table data file into the logical data that expected
@@ -202,6 +241,16 @@ public interface Scan {
                     nextDataBatch = nextDataBatch.withDeletedColumnAt(rowIndexOrdinal);
                 }
 
+                // Transform physical variant columns (struct of binaries) into logical variant
+                // columns.
+                if (ScanStateRow.getVariantFeatureEnabled(scanState)) {
+                    nextDataBatch = VariantUtils.withVariantColumns(
+                        engine.getExpressionHandler(),
+                        nextDataBatch,
+                        physicalReadSchema
+                    );
+                }
+
                 // Add partition columns
                 nextDataBatch =
                     PartitionUtils.withPartitionColumns(
@@ -228,5 +277,52 @@ public interface Scan {
                 return new FilteredColumnarBatch(nextDataBatch, selectionVector);
             }
         };
+    }
+
+    /**
+     * If necessary, converts the read schema data type to the parquet data type.
+     * Currently only used to convert "variant" to "struct<value: binary, metadata: binary>".
+     *
+     * TODO(r.chen): Figure out how to make this private or reorganize this later.
+     */
+    static DataType getParquetPhysicalType(DataType parquetType, DataType schemaType) {
+        if (schemaType instanceof VariantType) {
+            return parquetType;
+        } else if (schemaType instanceof StructType) {
+            StructType readStructType = (StructType) schemaType;
+            StructType parquetStructType = (StructType) parquetType;
+            assert readStructType.length() == parquetStructType.length();
+
+            StructType res = new StructType();
+            for (int i = 0; i < readStructType.length(); i++) {
+                res = res.add(
+                    readStructType.at(i).getName(),
+                    getParquetPhysicalType(
+                        parquetStructType.at(i).getDataType(),
+                        readStructType.at(i).getDataType()),
+                    readStructType.at(i).isNullable(),
+                    readStructType.at(i).getMetadata()
+                );
+            }
+            return res;
+        } else if (schemaType instanceof MapType) {
+            MapType readMapType = (MapType) schemaType;
+            MapType parquetMapType = (MapType) parquetType;
+            return new MapType(
+                getParquetPhysicalType(parquetMapType.getKeyType(), readMapType.getKeyType()),
+                getParquetPhysicalType(parquetMapType.getValueType(), readMapType.getValueType()),
+                readMapType.isValueContainsNull());
+        } else if (schemaType instanceof ArrayType) {
+            ArrayType readArrayType = (ArrayType) schemaType;
+            ArrayType parquetArrayType = (ArrayType) parquetType;
+            return new ArrayType(
+                getParquetPhysicalType(
+                    parquetArrayType.getElementType(),
+                    readArrayType.getElementType()),
+                readArrayType.containsNull()
+            );
+        }
+
+        return schemaType;
     }
 }

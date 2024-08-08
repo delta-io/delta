@@ -43,6 +43,7 @@ public class ScanStateRow extends GenericRow {
         .add("partitionColumns", new ArrayType(StringType.STRING, false))
         .add("minReaderVersion", IntegerType.INTEGER)
         .add("minWriterVersion", IntegerType.INTEGER)
+        .add("variantFeatureEnabled", BooleanType.BOOLEAN)
         .add("tablePath", StringType.STRING);
 
     private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
@@ -66,6 +67,10 @@ public class ScanStateRow extends GenericRow {
         valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
         valueMap.put(COL_NAME_TO_ORDINAL.get("minReaderVersion"), protocol.getMinReaderVersion());
         valueMap.put(COL_NAME_TO_ORDINAL.get("minWriterVersion"), protocol.getMinWriterVersion());
+        valueMap.put(
+            COL_NAME_TO_ORDINAL.get("variantFeatureEnabled"),
+            protocol.getReaderFeatures().contains("variantType-preview")
+        );
         valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
         return new ScanStateRow(valueMap);
     }
@@ -156,5 +161,16 @@ public class ScanStateRow extends GenericRow {
             "Parsing the schema from the scan state. Schema JSON:\n%s",
             serializedSchema
         );
+    }
+
+    /**
+     * Get whether the "variantType" table feature is enabled from scan state {@link Row} returned
+     * by {@link Scan#getScanState(Engine)}
+     *
+     * @param scanState Scan state {@link Row}
+     * @return Boolean indicating whether "variantType" is enabled.
+     */
+    public static Boolean getVariantFeatureEnabled(Row scanState) {
+        return scanState.getBoolean(COL_NAME_TO_ORDINAL.get("variantFeatureEnabled"));
     }
 }

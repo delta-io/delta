@@ -105,6 +105,22 @@ public interface ColumnarBatch {
     }
 
     /**
+     * Return a copy of this {@link ColumnarBatch} with the column at given {@code ordinal}
+     * replaced with {@code newVector} and the schema field at given {@code ordinal} replaced
+     * with {@code newColumnSchema}.
+     *
+     * @param ordinal Ordinal of the column vector to replace.
+     * @param newColumnSchema The schema field of the new column.
+     * @param newVector New column vector that will replace the column vector at the given
+     *                  {@code ordinal}.
+     * @return {@link ColumnarBatch} with a new column vector at the given ordinal.
+     */
+    default ColumnarBatch withReplacedColumnVector(int ordinal, StructField newColumnSchema,
+                                                   ColumnVector newVector) {
+        throw new UnsupportedOperationException("Not yet implemented!");
+    }
+
+    /**
      * @return iterator of {@link Row}s in this batch
      */
     default CloseableIterator<Row> getRows() {
