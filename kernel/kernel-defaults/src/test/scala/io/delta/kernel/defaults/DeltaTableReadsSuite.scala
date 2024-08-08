@@ -371,7 +371,12 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           TestRow(i.toString, TestRow(i)), // nested_struct
           Seq(i, i + 1), // array_of_prims
           Seq(Seq(i, i + 1), Seq(i + 2, i + 3)), // array_of_arrays
-          Seq(TestRow(i.longValue()), null), // array_of_structs
+          Seq(Map(i -> Seq(2, 3), i + 1 -> Seq(4, 5))), // array_of_map_of_arrays
+          Seq(TestRow(i), TestRow(i)), // array_of_structs
+          TestRow( // struct_of_arrays_maps_of_structs
+            Seq(i, i + 1),
+            Map(Seq(i, i + 1) -> TestRow(i + 2))
+          ),
           Map(
             i -> (i + 1).longValue(),
             (i + 2) -> (i + 3).longValue()
@@ -384,29 +389,13 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
               i.longValue() -> val1,
               (i + 1).longValue() -> val2
             ) // map_of_arrays
-          }
+          },
+          Map( // map_of_maps
+            i.toLong -> Map(i -> i),
+            (i + 1).toLong -> Map(i + 2 -> i)
+          )
         )
-      } ++ (TestRow(
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null
-      ) :: Nil)
+      } ++ Seq(TestRow(Seq.fill(22)(null): _*)) // all nulls row, 22 columns
 
       checkTable(
         path = path,
