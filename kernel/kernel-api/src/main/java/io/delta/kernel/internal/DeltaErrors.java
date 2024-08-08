@@ -219,6 +219,10 @@ public final class DeltaErrors {
         return new InvalidConfigurationValueException(key, value, helpMessage);
     }
 
+    public static KernelException concurrentWriteException() {
+        return new ConcurrentWriteException();
+    }
+
     /* ------------------------ HELPER METHODS ----------------------------- */
     private static String formatTimestamp(long millisSinceEpochUTC) {
         return new Timestamp(millisSinceEpochUTC).toInstant().toString();
