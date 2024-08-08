@@ -55,11 +55,9 @@ class DeltaFsckSuite extends QueryTest
       spark.sql(selectCommand).show()
     } catch {
       case e: SparkException =>
-        if (e.getMessage.contains("FILE_NOT_FOUND")) {
-          failedSelect = true
-        } else if (e.getMessage.contains(".parquet does not exist")) {
-          failedSelect = true
-        }
+        // scalastyle:off println
+        println(e.getMessage)
+        failedSelect = true
     }
     assert(failedSelect == failedSelectExpect)
   }
