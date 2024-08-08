@@ -47,7 +47,7 @@ class DeltaConnectPlannerSuite
   }
 
   private def createSparkRelation(relation: proto.DeltaRelation.Builder): spark_proto.Relation = {
-    spark_proto.Relation.newBuilder().setExtension(org.sparkproject.com.google.protobuf.Any.pack(relation.build())).build()
+    spark_proto.Relation.newBuilder().setExtension(com.google.protobuf.Any.pack(relation.build())).build()
   }
 
   def createDummySessionHolder(session: SparkSession): SessionHolder = {
