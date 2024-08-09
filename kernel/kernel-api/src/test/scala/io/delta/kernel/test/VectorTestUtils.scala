@@ -15,10 +15,11 @@
  */
 package io.delta.kernel.test
 
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
 import io.delta.kernel.data.{ColumnVector, MapValue}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
+
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
 import scala.collection.JavaConverters._
 
 trait VectorTestUtils {
@@ -34,6 +35,21 @@ trait VectorTestUtils {
       override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getBoolean(rowId: Int): Boolean = values(rowId)
+    }
+  }
+
+  protected def timestampVector(values: Seq[Long]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = TimestampType.TIMESTAMP
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == -1
+
+      // Values are stored as Longs representing milliseconds since epoch
+      override def getLong(rowId: Int): Long = values(rowId)
     }
   }
 
