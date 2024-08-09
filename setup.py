@@ -13,7 +13,7 @@ def get_version_from_sbt():
         version = fp.read().strip()
     return version.split('"')[1]
 
-
+# revert the usage of use_spark_master and instead add 4.0 to mima settings :(
 VERSION = get_version_from_sbt()
 use_spark_master = os.getenv("USE_SPARK_MASTER") or False
 

@@ -197,6 +197,7 @@ if __name__ == "__main__":
     # For versions 4.0+ run Delta Connect tests as well
     if use_spark_master:
         run_delta_connect_codegen_python(root_dir)
+        sbt_path = path.join(root_dir, path.join("build", "sbt"))
         run_cmd([sbt_path, "clean", "spark/connectServer"], stream_output=True)
         # TODO: In the future, find a way to get these
         # packages locally instead of downloading from Maven.
