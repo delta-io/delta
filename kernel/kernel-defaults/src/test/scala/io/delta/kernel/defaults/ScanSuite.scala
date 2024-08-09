@@ -35,7 +35,7 @@ import io.delta.kernel.engine.{JsonHandler, ParquetHandler, Engine}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.types.StructType
+import io.delta.kernel.types._
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
@@ -1587,6 +1587,38 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           ).build()
       )
     }
+  }
+
+  test("read scan files with variant") {
+    val path = getTestResourceFilePath("spark-variant-delta")
+    val snapshot = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
+    val snapshotSchema = snapshot.getSchema(defaultEngine)
+
+    val expectedSchema = new StructType()
+      .add("id", LongType.LONG, true)
+      .add("v", VariantType.VARIANT, true)
+      .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
+      .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
+      .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
+      .add(
+        "array_of_struct_of_variants",
+        new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
+        true
+      )
+      .add(
+        "struct_of_array_of_variants",
+        new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
+        true
+      )
+      .add("partitionKey", LongType.LONG, true)
+
+    assert(snapshotSchema == expectedSchema)
+
+    val scan = snapshot.getScanBuilder(defaultEngine).build()
+    val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+
+    // The golden table has two files.
+    assert(scanFiles.next().getRows().toSeq.length == 2)
   }
 }
 
