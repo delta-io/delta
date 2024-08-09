@@ -15,10 +15,12 @@
  */
 package io.delta.kernel.internal;
 
+import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.engine.CommitCoordinatorClientHandler;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
@@ -27,6 +29,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.TableCommitCoordinatorClientHandler;
 import io.delta.kernel.types.StructType;
 import java.util.Optional;
 
@@ -139,5 +142,29 @@ public class SnapshotImpl implements Snapshot {
     } else {
       return logSegment.lastCommitTimestamp;
     }
+  }
+
+  /**
+   * Returns the commit coordinator client handler based on the table metadata in this snapshot.
+   *
+   * @param engine the engine to use for IO operations
+   * @return the commit coordinator client handler for this snapshot or empty if the metadata is not
+   *     configured to use the commit coordinator.
+   */
+  public Optional<TableCommitCoordinatorClientHandler> getTableCommitCoordinatorClientHandlerOpt(
+      Engine engine) {
+    return COORDINATED_COMMITS_COORDINATOR_NAME
+        .fromMetadata(engine, metadata)
+        .map(
+            commitCoordinatorStr -> {
+              CommitCoordinatorClientHandler handler =
+                  engine.getCommitCoordinatorClientHandler(
+                      commitCoordinatorStr,
+                      COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(engine, metadata));
+              return new TableCommitCoordinatorClientHandler(
+                  handler,
+                  logPath.toString(),
+                  COORDINATED_COMMITS_TABLE_CONF.fromMetadata(engine, metadata));
+            });
   }
 }
