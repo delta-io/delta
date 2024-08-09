@@ -30,4 +30,8 @@ public final class ListUtils {
         list.stream().collect(Collectors.partitioningBy(predicate));
     return new Tuple2<>(partitionMap.get(true), partitionMap.get(false));
   }
+
+  public static <T> T last(List<T> list) {
+    return list.get(list.size() - 1);
+  }
 }
