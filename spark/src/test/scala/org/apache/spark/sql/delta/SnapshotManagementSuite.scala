@@ -260,22 +260,35 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
     }
   }
 
-  test("should throw a clear exception when checkpoint exists but its corresponding delta file " +
-    "doesn't exist") {
-    withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
-      val staleLog = DeltaLog.forTable(spark, path)
-      DeltaLog.clearCache()
+  BOOLEAN_DOMAIN.foreach { deleteUnbackfilledDeltas =>
+    test(
+      "should throw a clear exception when checkpoint exists but its corresponding delta file " +
+        s"doesn't exist, deleteUnbackfilledDeltas: $deleteUnbackfilledDeltas") {
+      withTempDir { tempDir =>
+        val path = tempDir.getCanonicalPath
+        val staleLog = DeltaLog.forTable(spark, path)
+        DeltaLog.clearCache()
 
-      spark.range(10).write.format("delta").save(path)
-      DeltaLog.forTable(spark, path).checkpoint()
-      // Delete delta files
-      new File(tempDir, "_delta_log").listFiles().filter(_.getName.endsWith(".json"))
-        .foreach(_.delete())
-      val e = intercept[IllegalStateException] {
-        staleLog.update()
+        spark.range(10).write.format("delta").save(path)
+        spark.range(10).write.format("delta").mode("append").save(path)
+        DeltaLog.forTable(spark, path).checkpoint()
+        // Delete delta file at version 1
+        new File(tempDir, "_delta_log")
+          .listFiles()
+          .filter(_.getName.endsWith("1.json"))
+          .foreach(_.delete())
+        if (deleteUnbackfilledDeltas) {
+          new File(new File(tempDir, "_delta_log"), "_commits")
+            .listFiles()
+            .filter(_.getName.endsWith("1.json"))
+            .foreach(_.delete())
+        }
+        val e = intercept[Exception] {
+          staleLog.update()
+        }
+        assert(e.isInstanceOf[IllegalStateException], e)
+        assert(e.getMessage.contains("Could not find any delta files for version 1"))
       }
-      assert(e.getMessage.contains("Could not find any delta files for version 0"))
     }
   }
 
