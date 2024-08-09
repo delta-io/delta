@@ -198,7 +198,7 @@ if __name__ == "__main__":
     if use_spark_master:
         run_delta_connect_codegen_python(root_dir)
         sbt_path = path.join(root_dir, path.join("build", "sbt"))
-        run_cmd([sbt_path, "clean", "connectServer/publishM2"], stream_output=True)
+        run_cmd([sbt_path, "-DsparkVersion=master", "connectCommon/publishM2", "connectServer/publishM2"], stream_output=True)
         # TODO: In the future, find a way to get these
         # packages locally instead of downloading from Maven.
         delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
