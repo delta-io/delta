@@ -17,6 +17,7 @@ package io.delta.kernel.defaults.internal.parquet;
 
 import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readDataFileStatistics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Collections.emptyMap;
 import static java.util.Objects.requireNonNull;
 import static org.apache.parquet.hadoop.ParquetOutputFormat.*;
 
@@ -144,10 +145,14 @@ public class ParquetFileWriter {
 
         Path filePath = generateNextFilePath();
         assert batchWriteSupport != null : "batchWriteSupport is not initialized";
+        long currentFileRowCount = 0; // tracks the number of rows written to the current file
         try (ParquetWriter<Integer> writer = createWriter(filePath, batchWriteSupport)) {
           boolean maxFileSizeReached;
           do {
-            consumeNextRow(writer);
+            if (consumeNextRow(writer)) {
+              // If the row was written, increment the row count
+              currentFileRowCount++;
+            }
             // If we are writing a single file, then don't need to check for the current
             // file size. Otherwise see if the current file size reached the target file
             // size.
@@ -158,7 +163,8 @@ public class ParquetFileWriter {
           throw new UncheckedIOException("Failed to write the Parquet file: " + filePath, e);
         }
 
-        return Optional.of(constructDataFileStatus(filePath.toString(), dataSchema));
+        return Optional.of(
+            constructDataFileStatus(filePath.toString(), dataSchema, currentFileRowCount));
       }
 
       /**
@@ -203,8 +209,10 @@ public class ParquetFileWriter {
       /**
        * Consume the next row of data to write. If the row is selected, write it. Otherwise, skip
        * it. At the end move the cursor to the next row.
+       *
+       * @return true if the row was written, false if it was skipped
        */
-      void consumeNextRow(ParquetWriter<Integer> writer) throws IOException {
+      boolean consumeNextRow(ParquetWriter<Integer> writer) throws IOException {
         Optional<ColumnVector> selectionVector = currentBatch.getSelectionVector();
         boolean isRowSelected =
             !selectionVector.isPresent()
@@ -215,6 +223,7 @@ public class ParquetFileWriter {
           writer.write(currentBatchCursor);
         }
         currentBatchCursor++;
+        return isRowSelected;
       }
 
       /**
@@ -362,18 +371,31 @@ public class ParquetFileWriter {
    *
    * <p>Potential improvement in future to directly compute the statistics while writing the file if
    * this becomes a sufficiently large part of the write operation time.
+   *
+   * @param path the path of the file
+   * @param dataSchema the schema of the data in the file
+   * @param numRows the number of rows in the file. If no column stats are required, this is used to
+   *     construct the {@link DataFileStatistics}. Otherwise, the stats are read from the file.
+   * @return the {@link DataFileStatus} for the file
    */
-  private DataFileStatus constructDataFileStatus(String path, StructType dataSchema) {
+  private DataFileStatus constructDataFileStatus(String path, StructType dataSchema, long numRows) {
     try {
       // Get the FileStatus to figure out the file size and modification time
       Path hadoopPath = new Path(path);
       FileStatus fileStatus = hadoopPath.getFileSystem(configuration).getFileStatus(hadoopPath);
       Path resolvedPath = fileStatus.getPath();
 
-      DataFileStatistics stats =
-          (statsColumns.isEmpty())
-              ? null
-              : readDataFileStatistics(resolvedPath, configuration, dataSchema, statsColumns);
+      DataFileStatistics stats;
+      if (statsColumns.isEmpty()) {
+        stats =
+            new DataFileStatistics(
+                numRows,
+                emptyMap() /* minValues */,
+                emptyMap() /* maxValues */,
+                emptyMap() /* nullCounts */);
+      } else {
+        stats = readDataFileStatistics(resolvedPath, configuration, dataSchema, statsColumns);
+      }
 
       return new DataFileStatus(
           resolvedPath.toString(),

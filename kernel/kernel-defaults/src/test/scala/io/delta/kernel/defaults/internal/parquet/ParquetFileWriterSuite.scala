@@ -332,8 +332,6 @@ class ParquetFileWriterSuite extends AnyFunSuite
     statsColumns: Seq[Column],
     expStatsColCount: Int): Unit = {
 
-    if (statsColumns.isEmpty) return
-
     val actualStatsOutput = actualFileStatuses
       .map { fileStatus =>
         // validate there are no more the expected number of stats columns
@@ -345,8 +343,6 @@ class ParquetFileWriterSuite extends AnyFunSuite
         // Convert to TestRow for comparison with the actual values computing using Spark.
         fileStatus.toTestRow(statsColumns)
       }
-
-    if (expStatsColCount == 0) return
 
     // Use spark to fetch the stats from the parquet files use them as the expected statistics
     // Compare them with the actual stats returned by the Kernel's Parquet writer.
