@@ -69,9 +69,9 @@ class DeltaTable private[tables](
       .newBuilder()
       .setTable(table)
     val relation = proto.DeltaRelation.newBuilder().setDescribeHistory(describeHistory).build()
-    val extension = com.google.protobuf.Any.pack(relation)
-    val df = sparkSession
-      .newDataFrame(ConnectProtoUtils.parseRelationWithRecursionLimit(extension.toByteArray, 1024))
+    val extension = org.sparkproject.com.google.protobuf.Any
+      .pack(relation.asInstanceOf[org.sparkproject.com.google.protobuf.Message])
+    val df = sparkSession.newDataFrame(_.setExtension(extension))
     limit match {
       case Some(limit) => df.limit(limit)
       case None => df

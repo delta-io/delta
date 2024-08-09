@@ -16,6 +16,7 @@
 
 package io.delta.tables
 
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.test.DeltaQueryTest
 
 class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
@@ -55,7 +56,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     val session = spark
     import session.implicits._
 
-    withTempDir { dir =>
+    withTempPath { dir =>
       Seq(1, 2, 3).toDF().write.format("delta").save(dir.getAbsolutePath)
       Seq(4, 5).toDF().write.format("delta").mode("append").save(dir.getAbsolutePath)
 
