@@ -40,6 +40,9 @@ import org.apache.spark.sql.test.{SharedSparkSession, TestSparkSession}
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
+import java.time.{OffsetTime, ZoneOffset}
+import java.util.TimeZone
+
 class DeltaInsertIntoSQLSuite
   extends DeltaInsertIntoTestsWithTempViews(
     supportsDynamicOverwrite = true,
@@ -1028,6 +1031,193 @@ abstract class DeltaInsertIntoTests(
         doInsert(t1, df)
       }
       verifyTable(t1, Seq((1L, "a", "mango")).toDF("id", "data", "fruit"))
+    }
+  }
+
+  test("insertInto: UTC timestamp partition values round trip across different session TZ") {
+    val t1 = "utc_timestamp_partitioned_values"
+    withTable(t1) {
+      withTimeZone("UTC")
+      {
+        sql(s"CREATE TABLE $t1 (data int, ts timestamp) USING delta PARTITIONED BY (ts)")
+        sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15T04:00:00UTC')")
+        sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-15T4:00:00UTC+8')")
+        sql(s"INSERT INTO $t1 VALUES (3, timestamp'2024-06-15T5:00:00 UTC+01:00')")
+        sql(s"INSERT INTO $t1 VALUES (4, timestamp'2024-06-16T5:00:00.123456UTC')")
+        sql(s"INSERT INTO $t1 VALUES (5, timestamp'1903-12-28T5:00:00')")
+      }
+
+      withTimeZone("GMT-8") {
+        val allFiles = DeltaLog.forTable(spark, TableIdentifier(t1)).unsafeVolatileSnapshot.allFiles
+        checkAnswer(
+          allFiles.select("partitionValues").orderBy("modificationTime"),
+          Seq(
+            Row(Map("ts" -> "2024-06-15T04:00:00.000000Z")),
+            Row(Map("ts" -> "2024-06-14T20:00:00.000000Z")),
+            Row(Map("ts" -> "2024-06-15T04:00:00.000000Z")),
+            Row(Map("ts" -> "2024-06-16T05:00:00.123456Z")),
+            Row(Map("ts" -> "1903-12-28T05:00:00.000000Z"))
+          ))
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T4:00:00UTC+8'"),
+          Seq(Row(2)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-14T20:00:00UTC-08'"),
+          Seq(Row(1), Row(3)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'1903-12-27T21:00:00UTC-08'"),
+          Seq(Row(5)))
+
+        checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(4)))
+      }
+    }
+  }
+
+  test("insertInto: Non-UTC and UTC partition values round trip same session TZ") {
+    val t1 = "utc_timestamp_partitioned_values"
+    withTable(t1) {
+      withTimeZone("GMT-8") {
+        sql(s"CREATE TABLE $t1 (data int, ts timestamp) USING delta PARTITIONED BY (ts)")
+        sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15T4:00:00UTC')")
+        sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-15T4:00:00UTC+8')")
+      }
+
+      withTimeZone("GMT-8") {
+        withSQLConf(DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key -> "false") {
+          sql(s"INSERT INTO $t1 VALUES (3, timestamp'2024-06-15T5:00:00 UTC+01:00')")
+          sql(s"INSERT INTO $t1 VALUES (4, timestamp'1903-12-28T5:00:00')")
+        }
+
+        val allFiles = DeltaLog.forTable(spark, TableIdentifier(t1)).unsafeVolatileSnapshot.allFiles
+        checkAnswer(
+          allFiles.select("partitionValues").orderBy("modificationTime"),
+          Seq(Row(Map("ts" -> "2024-06-15T04:00:00.000000Z")),
+            Row(Map("ts" -> "2024-06-14T20:00:00.000000Z")),
+            Row(Map("ts" -> "2024-06-14 20:00:00")),
+            Row(Map("ts" -> "1903-12-28 05:00:00"))
+          ))
+      }
+
+      withTimeZone("GMT-8") {
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T4:00:00UTC+8'"),
+          Seq(Row(2)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-14T20:00:00'"),
+          Seq(Row(1), Row(3)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'1903-12-28T05:00:00'"),
+          Seq(Row(4)))
+
+        checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(3)))
+      }
+    }
+  }
+
+  test("insertInto: Timestamp No Timezone round trips across timezones") {
+    val t1 = "timestamp_ntz"
+    withTable(t1) {
+      withTimeZone("GMT-8") {
+        sql(s"CREATE TABLE $t1 (data int, ts timestamp_ntz) USING delta PARTITIONED BY (ts)")
+        sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15T4:00:00')")
+        sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-16T5:00:00')")
+        sql(s"INSERT INTO $t1 VALUES (3, timestamp'1903-12-28T5:00:00')")
+
+        val allFiles = DeltaLog.forTable(spark, TableIdentifier(t1)).unsafeVolatileSnapshot.allFiles
+        checkAnswer(
+          allFiles.select("partitionValues").orderBy("modificationTime"),
+          Seq(Row(Map("ts" -> "2024-06-15 04:00:00")),
+            Row(Map("ts" -> "2024-06-16 05:00:00")),
+            Row(Map("ts" -> "1903-12-28 05:00:00"))
+          ))
+      }
+
+      withSQLConf("spark.sql.session.timeZone" -> "UTC-03:00") {
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T4:00:00'"),
+          Seq(Row(1)))
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-16T05:00:00'"),
+          Seq(Row(2)))
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'1903-12-28T05:00:00'"),
+          Seq(Row(3)))
+        checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(3)))
+      }
+    }
+  }
+
+  test("insertInto: Timestamp round trips across same session time zone: UTC normalized") {
+    val t1 = "utc_timestamp_partitioned_values"
+
+    withTimeZone("GMT-8") {
+      sql(s"CREATE TABLE $t1 (data int, ts timestamp) USING delta PARTITIONED BY (ts)")
+      sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15 04:00:00UTC')")
+      sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-15T4:00:00UTC+8')")
+      sql(s"INSERT INTO $t1 VALUES (3, timestamp'2024-06-15T5:00:00 UTC+01:00')")
+      val allFiles = DeltaLog.forTable(spark, TableIdentifier(t1)).unsafeVolatileSnapshot.allFiles
+
+      checkAnswer(
+        allFiles.select("partitionValues").orderBy("modificationTime"),
+        Seq(Row(Map("ts" -> "2024-06-15T04:00:00.000000Z")),
+          Row(Map("ts" -> "2024-06-14T20:00:00.000000Z")),
+          Row(Map("ts" -> "2024-06-15T04:00:00.000000Z"))
+        ))
+
+      checkAnswer(
+        sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T04:00:00UTC'"),
+        Seq(Row(1), Row(3)))
+
+      checkAnswer(
+        sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-14T20:00:00UTC'"),
+        Seq(Row(2)))
+
+      checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(2)))
+    }
+  }
+
+  test("insertInto: Timestamp round trips across same session time zone: session time normalized") {
+    val t1 = "utc_timestamp_partitioned_values"
+
+    withTimeZone("UTC") {
+      withSQLConf(DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key -> "false") {
+        sql(s"CREATE TABLE $t1 (data int, ts timestamp) USING delta PARTITIONED BY (ts)")
+        sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15 04:00:00UTC+08:00')")
+        sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-15T4:00:00UTC-08:00')")
+        sql(s"INSERT INTO $t1 VALUES (3, timestamp'2024-06-15T5:00:00UTC+09:00')")
+        val allFiles = DeltaLog.forTable(spark, TableIdentifier(t1)).unsafeVolatileSnapshot.allFiles
+
+        checkAnswer(
+          allFiles.select("partitionValues").orderBy("modificationTime"),
+          Seq(Row(Map("ts" -> "2024-06-14 20:00:00")),
+            Row(Map("ts" -> "2024-06-15 12:00:00")),
+            Row(Map("ts" -> "2024-06-14 20:00:00"))
+          ))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-14T20:00:00'"),
+          Seq(Row(1), Row(3)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T12:00:00'"),
+          Seq(Row(2)))
+
+        checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(2)))
+      }
+    }
+  }
+
+  private def withTimeZone(zone: String)(f: => Unit): Unit = {
+    val currentDefault = TimeZone.getDefault
+    try {
+      TimeZone.setDefault( TimeZone.getTimeZone(zone))
+      f
+    } finally {
+      TimeZone.setDefault(currentDefault)
     }
   }
 

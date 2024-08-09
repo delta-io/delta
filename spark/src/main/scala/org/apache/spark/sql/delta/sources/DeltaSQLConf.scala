@@ -2025,6 +2025,18 @@ trait DeltaSQLConfBase {
       .doc("If true, post-commit hooks will by default throw an exception when they fail.")
       .booleanConf
       .createWithDefault(Utils.isTesting)
+
+  ///////////
+  // UTC TIMESTAMP PARTITION VALUES
+  ///////////////////
+  val UTC_TIMESTAMP_PARTITION_VALUES = buildConf("write.utcTimestampPartitionValues")
+    .internal()
+    .doc(
+      """
+        | If true, write UTC normalized timestamp partition values to Delta Log.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

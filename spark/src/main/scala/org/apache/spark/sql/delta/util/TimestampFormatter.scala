@@ -39,10 +39,9 @@ package org.apache.spark.sql.delta.util
 
 import java.text.ParseException
 import java.time._
-import java.time.format.DateTimeParseException
+import java.time.format.{DateTimeFormatter, DateTimeFormatterBuilder, DateTimeParseException}
 import java.time.temporal.TemporalQueries
 import java.util.{Locale, TimeZone}
-
 import org.apache.spark.sql.delta.util.DateTimeUtils.instantToMicros
 
 /**
@@ -67,7 +66,7 @@ sealed trait TimestampFormatter extends Serializable {
 
 class Iso8601TimestampFormatter(
     pattern: String,
-    timeZone: TimeZone,
+    timeZone: ZoneId,
     locale: Locale) extends TimestampFormatter with DateTimeFormatterHelper {
   @transient
   protected lazy val formatter = getOrCreateFormatter(pattern, locale)
@@ -75,7 +74,7 @@ class Iso8601TimestampFormatter(
   private def toInstant(s: String): Instant = {
     val temporalAccessor = formatter.parse(s)
     if (temporalAccessor.query(TemporalQueries.offset()) == null) {
-      toInstantWithZoneId(temporalAccessor, timeZone.toZoneId)
+      toInstantWithZoneId(temporalAccessor, timeZone)
     } else {
       Instant.from(temporalAccessor)
     }
@@ -85,7 +84,7 @@ class Iso8601TimestampFormatter(
 
   override def format(us: Long): String = {
     val instant = DateTimeUtils.microsToInstant(us)
-    formatter.withZone(timeZone.toZoneId).format(instant)
+    formatter.withZone(timeZone).format(instant)
   }
 }
 
@@ -98,7 +97,7 @@ class Iso8601TimestampFormatter(
  * @param timeZone the time zone in which the formatter parses or format timestamps
  */
 class FractionTimestampFormatter(timeZone: TimeZone)
-  extends Iso8601TimestampFormatter("", timeZone, TimestampFormatter.defaultLocale) {
+  extends Iso8601TimestampFormatter("", timeZone.toZoneId, TimestampFormatter.defaultLocale) {
 
   @transient
   override protected lazy val formatter = DateTimeFormatterHelper.fractionFormatter
@@ -108,8 +107,12 @@ object TimestampFormatter {
   val defaultPattern: String = "yyyy-MM-dd HH:mm:ss"
   val defaultLocale: Locale = Locale.US
 
+  def apply(format: String, zoneId: ZoneId): TimestampFormatter = {
+    new Iso8601TimestampFormatter(format, zoneId, defaultLocale)
+  }
+
   def apply(format: String, timeZone: TimeZone, locale: Locale): TimestampFormatter = {
-    new Iso8601TimestampFormatter(format, timeZone, locale)
+    new Iso8601TimestampFormatter(format, timeZone.toZoneId, locale)
   }
 
   def apply(format: String, timeZone: TimeZone): TimestampFormatter = {

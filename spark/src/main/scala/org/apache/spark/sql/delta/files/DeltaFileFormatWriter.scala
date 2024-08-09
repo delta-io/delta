@@ -272,7 +272,8 @@ object DeltaFileFormatWriter extends LoggingShims {
             sparkAttemptNumber = taskContext.taskAttemptId().toInt & Integer.MAX_VALUE,
             committer,
             iterator = iter,
-            concurrentOutputWriterSpec = concurrentOutputWriterSpec
+            concurrentOutputWriterSpec = concurrentOutputWriterSpec,
+            partitionColumns
           )
         },
         rddWithNonEmptyPartitions.partitions.indices,
@@ -377,6 +378,14 @@ object DeltaFileFormatWriter extends LoggingShims {
     }
   }
 
+   class PartitionedTaskAttemptContextImpl(
+       conf: Configuration,
+       taskId: TaskAttemptID,
+       partitionAttributes: Seq[Attribute])
+     extends TaskAttemptContextImpl(conf, taskId) {
+     val partitionAttr: Seq[Attribute] = partitionAttributes
+  }
+
   /** Writes data out in a single Spark task. */
   private def executeTask(
       description: WriteJobDescription,
@@ -386,7 +395,8 @@ object DeltaFileFormatWriter extends LoggingShims {
       sparkAttemptNumber: Int,
       committer: FileCommitProtocol,
       iterator: Iterator[InternalRow],
-      concurrentOutputWriterSpec: Option[ConcurrentOutputWriterSpec]): WriteTaskResult = {
+      concurrentOutputWriterSpec: Option[ConcurrentOutputWriterSpec],
+      partitionCols: Seq[Attribute]): WriteTaskResult = {
 
     val jobId = SparkHadoopWriterUtils.createJobID(jobTrackerID, sparkStageId)
     val taskId = new TaskID(jobId, TaskType.MAP, sparkPartitionId)
@@ -402,7 +412,11 @@ object DeltaFileFormatWriter extends LoggingShims {
       hadoopConf.setBoolean("mapreduce.task.ismap", true)
       hadoopConf.setInt("mapreduce.task.partition", 0)
 
-      new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+      if (partitionCols.isEmpty) {
+        new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+      } else {
+        new PartitionedTaskAttemptContextImpl(hadoopConf, taskAttemptId, partitionCols)
+      }
     }
 
     committer.setupTask(taskAttemptContext)
