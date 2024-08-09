@@ -2808,12 +2808,6 @@
     ],
     "sqlState" : "42807"
   },
-  "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR" : {
-    "message" : [
-      "You are trying to perform writes on a table which has been registered with the commit coordinator <coordinatorName>. However, no implementation of this coordinator is available in the current environment and writes without coordinators are not allowed."
-    ],
-    "sqlState" : "0AKDC"
-  },
   "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION" : {
     "message" : [
       "Cannot cast <fromCatalog> to <toCatalog>. All nested columns must match."

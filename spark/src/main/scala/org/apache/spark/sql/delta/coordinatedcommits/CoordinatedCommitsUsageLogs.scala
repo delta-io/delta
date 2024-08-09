@@ -43,13 +43,4 @@ object CoordinatedCommitsUsageLogs {
   // (i.e. getCommits) shows an unexpected gap.
   val FS_COMMIT_COORDINATOR_LISTING_UNEXPECTED_GAPS =
     s"$PREFIX.listDeltaAndCheckpointFiles.unexpectedGapsInResults"
-
-  // Usage log emitted when a requested Commit Coordinator implementation is missing
-  val COMMIT_COORDINATOR_MISSING_IMPLEMENTATION =
-    s"$PREFIX.commitCoordinator.missingImplementation"
-
-  // Usage log emitted when a client attempts to write to a CC table even though the
-  // commit coordinator implementation is missing.
-  val COMMIT_COORDINATOR_MISSING_IMPLEMENTATION_WRITE =
-    s"$PREFIX.commitCoordinator.missingImplementationWrite"
 }
