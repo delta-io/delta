@@ -15,7 +15,14 @@
  */
 package io.delta.kernel.data;
 
-/** Abstraction to represent a single Variant value in a {@link ColumnVector}. */
+import io.delta.kernel.annotation.Evolving;
+
+/**
+ * Abstraction to represent a single Variant value in a {@link ColumnVector}.
+ *
+ * @since 4.0.0
+ */
+@Evolving
 public interface VariantValue {
   byte[] getValue();
 
