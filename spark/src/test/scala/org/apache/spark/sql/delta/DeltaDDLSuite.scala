@@ -258,13 +258,13 @@ abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
       withTable("delta_test") {
         sql(s"""
                |CREATE TABLE delta_test
-               |(x struct<a: LONG, b: String NOT NULL>, y LONG)
+               |(x struct<a: LONG, b: String NOT NULL> NOT NULL, y LONG)
                |USING delta
                |OPTIONS('path'='${dir.getCanonicalPath}')""".stripMargin)
         val expectedSchema = new StructType()
           .add("x", new StructType().
             add("a", LongType, nullable = true)
-            .add("b", StringType, nullable = false))
+            .add("b", StringType, nullable = false), nullable = false)
           .add("y", LongType, nullable = true)
         assert(spark.table("delta_test").schema === expectedSchema)
 

@@ -190,7 +190,7 @@ class InvariantEnforcementSuite extends QueryTest
     val schema = new StructType()
       .add("top", new StructType()
         .add("key", StringType, nullable = false)
-        .add("value", IntegerType))
+        .add("value", IntegerType), nullable = false)
     testBatchWriteRejection(
       NotNull(Seq("key")),
       schema,
@@ -201,8 +201,19 @@ class InvariantEnforcementSuite extends QueryTest
       NotNull(Seq("key")),
       schema,
       spark.createDataFrame(Seq(Row(Row("a", 1)), Row(null)).asJava, schema.asNullable),
-      "top.key"
+      "top"
     )
+  }
+
+  testQuietly("allow non-nullable nested column with nullable parent") {
+    val schema = new StructType()
+      .add("top", new StructType()
+        .add("key", StringType, nullable = false)
+        .add("value", IntegerType))
+    tableWithSchema(schema) { path =>
+      spark.createDataFrame(Seq(Row(Row("a", 1)), Row(Row(null, null))).asJava, schema.asNullable)
+          .write.mode("append").format("delta").save(path)
+    }
   }
 
   testQuietly("reject non-nullable array column") {
@@ -506,9 +517,16 @@ class InvariantEnforcementSuite extends QueryTest
   testUnenforcedNestedConstraints(
     "not null within nested array",
     schemaString =
-      "s struct<n:int NOT NULL, arr:array<struct<name:string,mailbox:string NOT NULL>> NOT NULL>",
+      "s struct<n:int NOT NULL, arr:array<struct<name:string,mailbox:string NOT NULL>> NOT NULL>" +
+      " NOT NULL",
     expectedError = "The element type of the field s.arr contains a NOT NULL constraint.",
     data = Row(Row(1, Seq(Row("myName", null)))))
+
+  testUnenforcedNestedConstraints(
+    "not null within nullable struct",
+    schemaString = "nested struct<name:string,mailbox:string NOT NULL>",
+    expectedError = "The structField type of the field nested contains a NOT NULL constraint.",
+    data = Row(Row("myName", null)))
 
 
   // Helper function to construct the full test name as "RuntimeRepalceable: func"

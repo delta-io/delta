@@ -57,17 +57,25 @@ object SchemaUtils extends DeltaLogging {
    * @param checkComplexTypes While `StructType` is also a complex type, since we're returning
    *                          StructFields, we definitely recurse into StructTypes. This flag
    *                          defines whether we should recurse into ArrayType and MapType.
+   * @param stopEagerly Whether to stop recursion when the function returns false.
    */
   def filterRecursively(
       schema: StructType,
-      checkComplexTypes: Boolean)(f: StructField => Boolean): Seq[(Seq[String], StructField)] = {
+      checkComplexTypes: Boolean,
+      stopEagerly: Boolean = false)(f: StructField => Boolean): Seq[(Seq[String], StructField)] = {
     def recurseIntoComplexTypes(
         complexType: DataType,
         columnStack: Seq[String]): Seq[(Seq[String], StructField)] = complexType match {
       case s: StructType =>
         s.fields.flatMap { sf =>
-          val includeLevel = if (f(sf)) Seq((columnStack, sf)) else Nil
-          includeLevel ++ recurseIntoComplexTypes(sf.dataType, columnStack :+ sf.name)
+          val include = f(sf)
+          val recurse = if (include || !stopEagerly) {
+            recurseIntoComplexTypes(sf.dataType, columnStack :+ sf.name)
+          } else {
+            Nil
+          }
+          val includeLevel = if (include) Seq((columnStack, sf)) else Nil
+          includeLevel ++ recurse
         }
       case a: ArrayType if checkComplexTypes =>
         recurseIntoComplexTypes(a.elementType, columnStack :+ "element")
@@ -1231,7 +1239,20 @@ def normalizeColumnNamesInDataType(
           MapType(nullableKeyType, nullableValueType, containsNull),
           nullable,
           metadata)
-
+      case f @ StructField(name, StructType(structFields), true, metadata) =>
+        val nonNullableChild = structFields.find(!_.nullable)
+        if (nonNullableChild.isDefined && !allowUnenforceableNotNulls) {
+          throw DeltaErrors.nestedNotNullConstraint(
+            prettyFieldName(path :+ f.name), nonNullableChild.get.dataType,
+              nestType = "structField")
+        } else {
+          StructField(
+            name,
+            StructType(structFields.map(_.copy(nullable = true))),
+            true,
+            metadata
+          )
+        }
       case s: StructField => s
     }
 
