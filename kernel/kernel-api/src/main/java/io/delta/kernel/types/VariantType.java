@@ -19,7 +19,11 @@ import io.delta.kernel.annotation.Evolving;
 
 /**
  * A logical variant type.
- * @since 4.0.0
+ *
+ * The RFC for the variant data type can be found at
+ * https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md.
+ *
+ * @since 3.3.0
  */
 @Evolving
 public class VariantType extends BasePrimitiveType {
