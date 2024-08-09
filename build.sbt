@@ -782,22 +782,17 @@ lazy val iceberg = (project in file("iceberg"))
         // - delta-storage will bring in classes: io/delta/storage
         // - delta-spark will bring in classes: io/delta/exceptions/, io/delta/implicits,
         //   io/delta/package, io/delta/sql, io/delta/tables,
-        println(s"Discarding class: io/delta/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("com", "databricks", xs @ _*) =>
         // delta-spark will bring in com/databricks/spark/util
-        println(s"Discarding class: com/databricks/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("org", "apache", "spark", xs @ _*)
         if !deltaIcebergSparkIncludePrefixes.exists { prefix =>
           s"org/apache/spark/${xs.mkString("/")}".startsWith(prefix) } =>
-        println(s"Discarding class: org/apache/spark/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("scoverage", xs @ _*) =>
-        println(s"Discarding class: scoverage/${xs.mkString("/")}")
         MergeStrategy.discard
       case x =>
-        println(s"Including class: $x")
         (assembly / assemblyMergeStrategy).value(x)
     },
     assemblyPackageScala / assembleArtifact := false
