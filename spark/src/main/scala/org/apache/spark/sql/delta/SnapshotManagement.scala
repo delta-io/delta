@@ -1101,7 +1101,9 @@ trait SnapshotManagement { self: DeltaLog =>
       isAsync: Boolean): Snapshot = {
     segmentOpt.map { segment =>
       if (previousSnapshotOpt.exists(_.logSegment == segment)) {
-        previousSnapshotOpt.get
+        val previousSnapshot = previousSnapshotOpt.get
+        previousSnapshot.updateLastKnownBackfilledVersion(segment.lastBackfilledVersionInSegment)
+        previousSnapshot
       } else {
         val newSnapshot = createSnapshot(
           initSegment = segment,
@@ -1415,11 +1417,39 @@ case class LogSegment(
     obj match {
       case other: LogSegment =>
         version == other.version &&
-          lastCommitFileModificationTimestamp == other.lastCommitFileModificationTimestamp &&
-          logPath == other.logPath && checkpointProvider.version == other.checkpointProvider.version
+          logPath == other.logPath &&
+          checkpointProvider.version == other.checkpointProvider.version &&
+          lastMatchingBackfilledCommitIsEqual(other)
       case _ => false
     }
   }
+
+  private def lastMatchingBackfilledCommitIsEqual(other: LogSegment): Boolean = {
+    def fileStatusEquals(fileStatus1: FileStatus, fileStatus2: FileStatus): Boolean = {
+      fileStatus1.getPath == fileStatus2.getPath &&
+        fileStatus1.getLen == fileStatus2.getLen &&
+        fileStatus1.getModificationTime == fileStatus2.getModificationTime
+    }
+
+    val backfilledPrefixThis = deltas.takeWhile(isBackfilledDeltaFile)
+    val backfilledPrefixOther = other.deltas.takeWhile(isBackfilledDeltaFile)
+    val sizeToAnalyze = math.min(backfilledPrefixThis.size, backfilledPrefixOther.size)
+    val backfilledPrefixThisStripped = backfilledPrefixThis.take(sizeToAnalyze)
+    val backfilledPrefixOtherStripped = backfilledPrefixOther.take(sizeToAnalyze)
+    backfilledPrefixThisStripped.zip(backfilledPrefixOtherStripped)
+      .forall { case (delta1, delta2) => fileStatusEquals(delta1, delta2) } &&
+      checkpointProvider.topLevelFiles.size == other.checkpointProvider.topLevelFiles.size &&
+      checkpointProvider.topLevelFiles.zip(other.checkpointProvider.topLevelFiles).forall {
+        case (cp1, cp2) => fileStatusEquals(cp1, cp2)
+      }
+  }
+
+  private[delta] lazy val lastBackfilledVersionInSegment =
+    // This works if the last backfilled file is a minor-compaction, because
+    // FileNames.getFileVersion returns the minor-compaction end version,
+    // which correctly initializes the lastBackfilledVersionInSegment.
+    CoordinatedCommitsUtils.getLastBackfilledFile(deltas).map(getFileVersion)
+      .getOrElse(checkpointProvider.version)
 }
 
 /** Exception thrown When [[TableCommitCoordinatorClient.getCommits]] fails due to any reason. */
