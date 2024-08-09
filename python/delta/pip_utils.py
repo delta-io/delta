@@ -20,8 +20,7 @@ from pyspark.sql import SparkSession
 
 def configure_spark_with_delta_pip(
     spark_session_builder: SparkSession.Builder,
-    extra_packages: Optional[List[str]] = None
-) -> SparkSession.Builder:
+    extra_packages: Optional[List[str]] = None) -> SparkSession.Builder:
     """
     Utility function to configure a SparkSession builder such that the generated SparkSession
     will automatically download the required Delta Lake JARs from Maven. This function is
@@ -74,7 +73,12 @@ See the online documentation for the correct usage of this function.
         '''
         raise Exception(msg) from e
 
-    scala_version = "2.12"
+    if int(delta_version.split(".")[0]) >= 4:
+        # For Delta 4.0+ (thus Spark 4.0+) Scala 2.12 is not supported
+        scala_version = "2.13"
+    else:
+        scala_version = "2.12"
+
     maven_artifact = f"io.delta:delta-spark_{scala_version}:{delta_version}"
 
     extra_packages = extra_packages if extra_packages is not None else []

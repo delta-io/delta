@@ -71,6 +71,7 @@ for f in `find gen/proto/python/delta/connect -name "*.py*"`; do
   if [[ $f == *_pb2.py || $f == *_pb2_grpc.py ]]; then
     sed \
       -e "s/DESCRIPTOR, 'delta.connect/DESCRIPTOR, 'delta.connect.proto/g" \
+      -e 's/from delta.connect import/from delta.connect.proto import/g' \
       $f > $f.tmp
     mv $f.tmp $f
   elif [[ $f == *.pyi ]]; then
