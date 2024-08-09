@@ -414,38 +414,6 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
 trait VacuumCommandImpl extends DeltaCommand {
 
-  private val supportedFsForLogging = Seq(
-    "wasbs", "wasbss", "abfs", "abfss", "adl", "gs", "file", "hdfs"
-  )
-
-  /**
-   * Returns whether we should record vacuum metrics in the delta log.
-   */
-  private def shouldLogVacuum(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      hadoopConf: Configuration,
-      path: Path): Boolean = {
-    val logVacuumConf = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED)
-
-    if (logVacuumConf.nonEmpty) {
-      return logVacuumConf.get
-    }
-
-    val logStore = deltaLog.store
-
-    try {
-      val rawResolvedUri: URI = logStore.resolvePathOnPhysicalStorage(path, hadoopConf).toUri
-      val scheme = rawResolvedUri.getScheme
-      supportedFsForLogging.contains(scheme)
-    } catch {
-      case _: UnsupportedOperationException =>
-        logWarning("Vacuum event logging" +
-          " not enabled on this file system because we cannot detect your cloud storage type.")
-        false
-    }
-  }
-
   /**
    * Record Vacuum specific metrics in the commit log at the START of vacuum.
    *
@@ -473,7 +441,9 @@ trait VacuumCommandImpl extends DeltaCommand {
       )
 
     // We perform an empty commit in order to record information about the Vacuum
-    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), path)) {
+    val logEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED)
+    // Unless explicitly disabled, vacuum logging is enabled by default
+    if (logEnabled.getOrElse(true)) {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
       val txn = deltaLog.startTransaction()
@@ -511,7 +481,9 @@ trait VacuumCommandImpl extends DeltaCommand {
       commandMetrics: Map[String, SQLMetric],
       filesDeleted: Option[Long] = None,
       dirCounts: Option[Long] = None): Unit = {
-    if (shouldLogVacuum(spark, deltaLog, deltaLog.newDeltaHadoopConf(), path)) {
+    val logEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED)
+    // Unless explicitly disabled, vacuum logging is enabled by default
+    if (logEnabled.getOrElse(true)) {
       val txn = deltaLog.startTransaction()
       val status = if (filesDeleted.isEmpty && dirCounts.isEmpty) { "FAILED" } else { "COMPLETED" }
       if (filesDeleted.nonEmpty && dirCounts.nonEmpty) {
