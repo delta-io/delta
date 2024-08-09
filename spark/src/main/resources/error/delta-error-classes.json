@@ -380,7 +380,7 @@
   },
   "DELTA_CLONE_MUST_OVERRIDE_ALL_COORDINATED_COMMITS_CONFS" : {
     "message" : [
-      "During CLONE, either all coordinated commits configurations i.e.\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\" must be overridden or none of them."
+      "During CLONE, either all coordinated commits configurations i.e.\"delta.coordinatedCommits.commitCoordinator\", \"delta.coordinatedCommits.commitCoordinatorConf\" must be overridden or none of them."
     ],
     "sqlState" : "42616"
   },
