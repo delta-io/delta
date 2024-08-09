@@ -16,6 +16,7 @@
 
 package io.delta.sharing.spark
 
+import org.apache.spark.sql.delta.DeltaExcludedBySparkVersionTestMixinShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -23,20 +24,14 @@ import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.types.{
-  DateType,
-  IntegerType,
-  LongType,
-  StringType,
-  StructType,
-  TimestampType
-}
+import org.apache.spark.sql.types._
 
 trait DeltaSharingDataSourceDeltaSuiteBase
     extends QueryTest
     with DeltaSQLCommandTest
     with DeltaSharingTestSparkUtils
-    with DeltaSharingDataSourceDeltaTestUtils {
+    with DeltaSharingDataSourceDeltaTestUtils
+    with DeltaExcludedBySparkVersionTestMixinShims {
 
   override def beforeEach(): Unit = {
     spark.sessionState.conf.setConfString(
@@ -1369,6 +1364,47 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             testReadInlineDV(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
             testReadInlineDVCdf(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
           }
+        }
+      }
+    }
+  }
+
+  testSparkMasterOnly("basic variant test") {
+    withTempDir { tempDir =>
+      val deltaTableName = "variant_table"
+      withTable(deltaTableName) {
+        spark.range(0, 10)
+          .selectExpr("parse_json(cast(id as string)) v")
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .saveAsTable(deltaTableName)
+
+        val sharedTableName = "shared_table_variant"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        val expectedSchema: StructType = new StructType()
+          .add("v", VariantType)
+
+        val expected = spark.read.format("delta").table(deltaTableName)
+
+        def test(tablePath: String): Unit = {
+          assert(
+            expectedSchema == spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+              .schema
+          )
+          val df =
+            spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+          checkAnswer(df, expected)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
         }
       }
     }
