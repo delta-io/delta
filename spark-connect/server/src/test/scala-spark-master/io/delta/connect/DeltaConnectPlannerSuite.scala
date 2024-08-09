@@ -25,10 +25,15 @@ import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.ResolvedTable
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
 import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
+import org.apache.spark.sql.delta.DeltaHistory
+import org.apache.spark.sql.delta.commands.DescribeDeltaHistory
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 class DeltaConnectPlannerSuite
@@ -42,7 +47,7 @@ class DeltaConnectPlannerSuite
   }
 
   private def createSparkRelation(relation: proto.DeltaRelation.Builder): spark_proto.Relation = {
-    spark_proto.Relation.newBuilder().setExtension(protobuf.Any.pack(relation.build())).build()
+    spark_proto.Relation.newBuilder().setExtension(com.google.protobuf.Any.pack(relation.build())).build()
   }
 
   def createDummySessionHolder(session: SparkSession): SessionHolder = {
@@ -100,6 +105,27 @@ class DeltaConnectPlannerSuite
         .transformRelation(input)
       val expected = DeltaTable.forPath(spark, dir.getAbsolutePath).toDF.queryExecution.analyzed
       comparePlans(result, expected)
+    }
+  }
+
+  test("history") {
+    withTable("table") {
+      DeltaTable.create(spark).tableName(identifier = "table").execute()
+
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setDescribeHistory(
+            proto.DescribeHistory.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName("table"))
+          )
+      )
+
+      val result = new SparkConnectPlanner(createDummySessionHolder(spark)).transformRelation(input)
+      result match {
+        case lr: LocalRelation if lr.schema == ExpressionEncoder[DeltaHistory]().schema =>
+        case other => fail(s"Unexpected plan: $other")
+      }
     }
   }
 }

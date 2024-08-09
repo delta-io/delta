@@ -57,6 +57,8 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
     relation.getRelationTypeCase match {
       case proto.DeltaRelation.RelationTypeCase.SCAN =>
         transformScan(planner.session, relation.getScan)
+      case proto.DeltaRelation.RelationTypeCase.DESCRIBE_HISTORY =>
+        transformDescribeHistory(planner.session, relation.getDescribeHistory)
       case _ =>
         throw InvalidPlanInput(s"Unknown DeltaRelation ${relation.getRelationTypeCase}")
     }
@@ -65,6 +67,12 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   private def transformScan(spark: SparkSession, scan: proto.Scan): LogicalPlan = {
     val deltaTable = transformDeltaTable(spark, scan.getTable)
     deltaTable.toDF.queryExecution.analyzed
+  }
+
+  private def transformDescribeHistory(
+      spark: SparkSession, describeHistory: proto.DescribeHistory): LogicalPlan = {
+    val deltaTable = transformDeltaTable(spark, describeHistory.getTable)
+    deltaTable.history().queryExecution.analyzed
   }
 }
 

@@ -22,6 +22,7 @@ import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.connect.ConnectProtoUtils
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 
 /**
@@ -62,6 +63,41 @@ class DeltaTable private[tables](
    * @since 4.0.0
    */
   def toDF: Dataset[Row] = df
+
+  private def executeHistory(limit: Option[Int]): DataFrame = {
+    val describeHistory = proto.DescribeHistory
+      .newBuilder()
+      .setTable(table)
+    val relation = proto.DeltaRelation.newBuilder().setDescribeHistory(describeHistory).build()
+    val extension = org.sparkproject.com.google.protobuf.Any
+      .pack(relation.asInstanceOf[org.sparkproject.com.google.protobuf.Message])
+    val df = sparkSession.newDataFrame(_.setExtension(extension))
+    limit match {
+      case Some(limit) => df.limit(limit)
+      case None => df
+    }
+  }
+
+  /**
+   * Get the information of the latest `limit` commits on this table as a Spark DataFrame.
+   * The information is in reverse chronological order.
+   *
+   * @param limit The number of previous commands to get history for
+   * @since 4.0.0
+   */
+  def history(limit: Int): DataFrame = {
+    executeHistory(Some(limit))
+  }
+
+  /**
+   * Get the information available commits on this table as a Spark DataFrame.
+   * The information is in reverse chronological order.
+   *
+   * @since 4.0.0
+   */
+  def history(): DataFrame = {
+    executeHistory(limit = None)
+  }
 }
 
 /**
