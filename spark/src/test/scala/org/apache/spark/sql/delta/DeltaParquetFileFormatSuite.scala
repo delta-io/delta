@@ -340,12 +340,18 @@ class DeltaParquetTimestampFormatSuite extends DeltaParquetFileFormatSuiteBase {
   }
 
   private def assertDataframe(tempDir: File): Unit = {
-    val readTimestamps =
+    val df =
       spark.read.format("delta")
       .load(tempDir.toString)
+
+    assert(df.schema.fields.length == 1)
+    assert(df.schema.head.dataType == TimestampType)
+
+    val readTimestamps = df
       .sort("eventTimeString")
-      .toLocalIterator().asScala.toList
-    assert(readTimestamps.map(_.getTimestamp(0))== timestamps)
+      .toLocalIterator()
+      .asScala.toList
+    assert(readTimestamps.map(_.getTimestamp(0)) == timestamps)
   }
 
   test("Write Parquet timestamp without any config") {
