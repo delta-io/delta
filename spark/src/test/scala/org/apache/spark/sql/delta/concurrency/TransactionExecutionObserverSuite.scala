@@ -61,11 +61,13 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
           assert(!observer.phases.preparePhase.hasEntered)
           assert(!observer.phases.commitPhase.hasEntered)
           assert(!observer.phases.backfillPhase.hasEntered)
+          assert(!observer.phases.postCommitPhase.hasEntered)
 
           // allow things to progress
           observer.phases.preparePhase.entryBarrier.unblock()
           observer.phases.commitPhase.entryBarrier.unblock()
           observer.phases.backfillPhase.entryBarrier.unblock()
+          observer.phases.postCommitPhase.entryBarrier.unblock()
           val removedFiles = txn.snapshot.allFiles.collect().map(_.remove).toSeq
           txn.commit(removedFiles, DeltaOperations.ManualUpdate)
 
@@ -75,6 +77,8 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
           assert(observer.phases.commitPhase.hasLeft)
           assert(observer.phases.backfillPhase.hasEntered)
           assert(observer.phases.backfillPhase.hasLeft)
+          assert(observer.phases.postCommitPhase.hasEntered)
+          assert(observer.phases.postCommitPhase.hasLeft)
         }
       }
       val res = spark.read.format("delta").load(tempPath).collect()
@@ -126,6 +130,10 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
       observer.phases.backfillPhase.entryBarrier.unblock()
       busyWaitFor(observer.phases.backfillPhase.hasEntered, timeout)
       busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+
+      observer.phases.postCommitPhase.entryBarrier.unblock()
+      busyWaitFor(observer.phases.postCommitPhase.hasEntered, timeout)
+      busyWaitFor(observer.phases.postCommitPhase.hasLeft, timeout)
       testThread.join(timeout.toMillis)
       assert(!testThread.isAlive) // should have passed the barrier and completed
 
@@ -155,6 +163,7 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
           observer.phases.preparePhase.entryBarrier.unblock()
           observer.phases.commitPhase.entryBarrier.unblock()
           observer.phases.backfillPhase.entryBarrier.unblock()
+          observer.phases.postCommitPhase.entryBarrier.unblock()
           val removedFiles = txn.snapshot.allFiles.collect().map(_.remove).toSeq
           txn.commit(removedFiles, DeltaOperations.ManualUpdate)
         }
@@ -165,6 +174,7 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
             observer.phases.preparePhase.entryBarrier.unblock()
             observer.phases.commitPhase.entryBarrier.unblock()
             observer.phases.backfillPhase.entryBarrier.unblock()
+            observer.phases.postCommitPhase.entryBarrier.unblock()
             val removedFiles = txn.snapshot.allFiles.collect().map(_.remove).toSeq
             txn.commit(removedFiles, DeltaOperations.ManualUpdate)
           }
@@ -221,6 +231,7 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
       busyWaitFor(observer.phases.preparePhase.hasLeft, timeout)
       assert(!observer.phases.commitPhase.hasEntered)
       assert(!observer.phases.backfillPhase.hasEntered)
+      assert(!observer.phases.postCommitPhase.hasEntered)
 
       assertOperationNotVisible()
 
@@ -228,6 +239,8 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
       busyWaitFor(observer.phases.commitPhase.hasLeft, timeout)
       observer.phases.backfillPhase.entryBarrier.unblock()
       busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+      observer.phases.postCommitPhase.entryBarrier.unblock()
+      busyWaitFor(observer.phases.postCommitPhase.hasLeft, timeout)
       testThread.join(timeout.toMillis)
       assert(!testThread.isAlive) // should have passed the barrier and completed
 
@@ -256,7 +269,7 @@ class TransactionExecutionObserverSuite extends QueryTest with SharedSparkSessio
 
       TransactionExecutionObserver.withObserver(observer) {
         deltaLog.withNewTransaction { txn =>
-          observer.phases.backfillPhase.exitBarrier.unblock()
+          observer.phases.postCommitPhase.exitBarrier.unblock()
           val removedFiles = txn.snapshot.allFiles.collect().map(_.remove).toSeq
           txn.commit(removedFiles, DeltaOperations.ManualUpdate)
         }
