@@ -117,6 +117,10 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
         pass
 
     @unittest.skip("create has not been implemented yet")
+    def test_create_table_with_identity_column(self):
+        pass
+
+    @unittest.skip("create has not been implemented yet")
     def test_delta_table_builder_with_bad_args(self):
         pass
 
