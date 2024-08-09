@@ -22,22 +22,22 @@ import shutil
 from os import path
 
 
-def test(root_dir, package):
-    # Run all of the test under test/python directory, each of them
-    # has main entry point to execute, which is python's unittest testing
+def test(root_dir, code_dir, packages):
+    # Test the codes in the code_dir directory using its "tests" subdirectory,
+    # each of them has main entry point to execute, which is python's unittest testing
     # framework.
     python_root_dir = path.join(root_dir, "python")
-    test_dir = path.join(python_root_dir, path.join("delta", "tests"))
+    test_dir = path.join(python_root_dir, path.join(code_dir, "tests"))
     test_files = [os.path.join(test_dir, f) for f in os.listdir(test_dir)
                   if os.path.isfile(os.path.join(test_dir, f)) and
                   f.endswith(".py") and not f.startswith("_")]
-    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    extra_class_path = path.join(python_root_dir, path.join(code_dir, "testing"))
 
     for test_file in test_files:
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
-                   "--packages", package, test_file]
+                   "--packages", ",".join(packages), test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True)
@@ -53,20 +53,29 @@ def delete_if_exists(path):
         print("Deleted %s " % path)
 
 
-def prepare(root_dir):
+def prepare(root_dir, use_spark_master):
     print("##### Preparing python tests & building packages #####")
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
-    run_cmd([sbt_path, "clean", "publishM2"], stream_output=True)
+    sbt_command = [sbt_path]
+    if use_spark_master:
+        sbt_command = sbt_command + ["-DsparkVersion=master"]
+    # TODO publish connectServer and connectCommon for Spark master
+    run_cmd(sbt_command + ["clean", "spark/publishM2", "storage/publishM2"], stream_output=True)
 
+
+def get_local_package(package_name, use_spark_master):
     # Get current release which is required to be loaded
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-    package = "io.delta:delta-spark_2.12:" + version
-    return package
+
+    if use_spark_master:
+        return f"io.delta:{package_name}_2.13:" + version
+    else:
+        return f"io.delta:{package_name}_2.12:" + version
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
@@ -176,10 +185,25 @@ def run_delta_connect_codegen_python(root_dir):
 if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    package = prepare(root_dir)
+    use_spark_master = os.getenv("USE_SPARK_MASTER") or False
+    prepare(root_dir, use_spark_master)
+    delta_spark_package = get_local_package("delta-spark", use_spark_master)
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
-    run_pypi_packaging_tests(root_dir)
-    run_delta_connect_codegen_python(root_dir)
-    test(root_dir, package)
+    # For Spark master version don't run pypi packing tests since packaging hasn't been updated yet
+    if not use_spark_master:
+        run_pypi_packaging_tests(root_dir)
+    test(root_dir, "delta", [delta_spark_package])
+
+    # For versions 4.0+ run Delta Connect tests as well
+    if use_spark_master:
+        run_delta_connect_codegen_python(root_dir)
+        run_cmd([sbt_path, "clean", "spark/connectServer"], stream_output=True)
+        # TODO: In the future, find a way to get these
+        # packages locally instead of downloading from Maven.
+        delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
+                                  "org.apache.spark:spark-connect_2.13:4.0.0-preview1",
+                                  get_local_package("delta-connect-server", use_spark_master)]
+
+        test(root_dir, path.join("delta", "connect"), delta_connect_packages)
