@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse}
 import io.delta.storage.commit.actions.AbstractMetadata
@@ -291,7 +291,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     snapshot.logSegment.deltas.exists {
       case FileNames.UnbackfilledDeltaFile(_, _, _) => true
       case _ => false
-    }
+    } && !snapshot.allCommitsBackfilled
   }
 
   /**
@@ -345,5 +345,20 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         "numAlreadyBackfilledFiles" -> numAlreadyBackfilledFiles
       )
     )
+  }
+
+  /**
+   * Returns the last backfilled file in the given list of `deltas` if it exists. This could be
+   * 1. A backfilled delta
+   * 2. A minor compaction
+   */
+  def getLastBackfilledFile(deltas: Seq[FileStatus]): Option[FileStatus] = {
+    var maxFile: Option[FileStatus] = None
+    deltas.foreach {
+      case BackfilledDeltaFile(f, _) => maxFile = Some(f)
+      case CompactedDeltaFile(f, _, _) => maxFile = Some(f)
+      case _ => // do nothing
+    }
+    maxFile
   }
 }

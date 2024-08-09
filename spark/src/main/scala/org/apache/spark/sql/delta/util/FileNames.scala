@@ -131,6 +131,9 @@ object FileNames {
   def isUnbackfilledDeltaFile(path: Path): Boolean = UnbackfilledDeltaFile.unapply(path).isDefined
   def isUnbackfilledDeltaFile(file: FileStatus): Boolean = isUnbackfilledDeltaFile(file.getPath)
 
+  def isBackfilledDeltaFile(path: Path): Boolean = BackfilledDeltaFile.unapply(path).isDefined
+  def isBackfilledDeltaFile(file: FileStatus): Boolean = isBackfilledDeltaFile(file.getPath)
+
   def isChecksumFile(path: Path): Boolean = checksumFilePattern.matcher(path.getName).matches()
   def isChecksumFile(file: FileStatus): Boolean = isChecksumFile(file.getPath)
 
@@ -202,7 +205,20 @@ object FileNames {
       checkpointFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
     }
   }
-
+  object BackfilledDeltaFile {
+    def unapply(f: FileStatus): Option[(FileStatus, Long)] =
+      unapply(f.getPath).map { case (_, version) => (f, version) }
+    def unapply(path: Path): Option[(Path, Long)] = {
+      // Don't match files in the _commits sub-directory.
+      if (path.getParent.getName == COMMIT_SUBDIR) {
+        None
+      } else {
+        deltaFileRegex
+          .unapplySeq(path.getName)
+          .map(path -> _.head.toLong)
+      }
+    }
+  }
   object UnbackfilledDeltaFile {
     def unapply(f: FileStatus): Option[(FileStatus, Long, String)] =
       unapply(f.getPath).map { case (_, version, uuidString) => (f, version, uuidString) }
