@@ -16,59 +16,43 @@
 
 package io.delta.kernel.engine.coordinatedcommits.actions;
 
+import io.delta.kernel.annotation.Evolving;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import io.delta.kernel.annotation.Evolving;
-
 /**
- * Interface for metadata actions in Delta. The metadata defines the metadata
- * of the table.
+ * Interface for metadata actions in Delta. The metadata defines the metadata of the table.
  *
  * @since 3.3.0
  */
 @Evolving
 public interface AbstractMetadata {
 
-    /**
-     * A unique table identifier.
-     */
-    String getId();
+  /** A unique table identifier. */
+  String getId();
 
-    /**
-     * User-specified table identifier.
-     */
-    String getName();
+  /** User-specified table identifier. */
+  String getName();
 
-    /**
-     * User-specified table description.
-     */
-    String getDescription();
+  /** User-specified table description. */
+  String getDescription();
 
-    /** The table provider format. */
-    String getProvider();
+  /** The table provider format. */
+  String getProvider();
 
-    /** The format options */
-    Map<String, String> getFormatOptions();
+  /** The format options */
+  Map<String, String> getFormatOptions();
 
-    /**
-     * The table schema in string representation.
-     */
-    String getSchemaString();
+  /** The table schema in string representation. */
+  String getSchemaString();
 
-    /**
-     * List of partition columns.
-     */
-    List<String> getPartitionColumns();
+  /** List of partition columns. */
+  List<String> getPartitionColumns();
 
-    /**
-     * The table properties defined on the table.
-     */
-    Map<String, String> getConfiguration();
+  /** The table properties defined on the table. */
+  Map<String, String> getConfiguration();
 
-    /**
-     * Timestamp for the creation of this metadata.
-     */
-    Optional<Long> getCreatedTime();
+  /** Timestamp for the creation of this metadata. */
+  Optional<Long> getCreatedTime();
 }
