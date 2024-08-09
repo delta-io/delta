@@ -740,7 +740,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean.")
 
   val COORDINATED_COMMITS_COORDINATOR_NAME = buildConfig[Option[String]](
-    "coordinatedCommits.commitCoordinator-preview",
+    "coordinatedCommits.commitCoordinator",
     null,
     v => Option(v),
     _ => true,
@@ -751,14 +751,14 @@ trait DeltaConfigsBase extends DeltaLogging {
       |""".stripMargin)
 
   val COORDINATED_COMMITS_COORDINATOR_CONF = buildConfig[Map[String, String]](
-    "coordinatedCommits.commitCoordinatorConf-preview",
+    "coordinatedCommits.commitCoordinatorConf",
     null,
     v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
     _ => true,
     "A string-to-string map of configuration properties for the coordinated commits-coordinator.")
 
   val COORDINATED_COMMITS_TABLE_CONF = buildConfig[Map[String, String]](
-    "coordinatedCommits.tableConf-preview",
+    "coordinatedCommits.tableConf",
     null,
     v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
     _ => true,

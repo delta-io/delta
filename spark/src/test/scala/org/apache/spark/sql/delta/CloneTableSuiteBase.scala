@@ -954,8 +954,8 @@ trait CloneTableSuiteBase extends QueryTest
           tableProperties = properties)
       }
       assert(e1.getMessage.contains("During CLONE, either all coordinated commits " +
-        "configurations i.e.\"delta.coordinatedCommits.commitCoordinator-preview\", " +
-        "\"delta.coordinatedCommits.commitCoordinatorConf-preview\" must be overridden or none " +
+        "configurations i.e.\"delta.coordinatedCommits.commitCoordinator\", " +
+        "\"delta.coordinatedCommits.commitCoordinatorConf\" must be overridden or none " +
         "of them."))
 
       val e2 = intercept[IllegalArgumentException] {
@@ -970,7 +970,7 @@ trait CloneTableSuiteBase extends QueryTest
           isReplace = true,
           tableProperties = properties)
       }
-      assert(e2.getMessage.contains("Configuration \"delta.coordinatedCommits.tableConf-preview\"" +
+      assert(e2.getMessage.contains("Configuration \"delta.coordinatedCommits.tableConf\"" +
         " cannot be overridden with CLONE command."))
 
       val properties = Map(

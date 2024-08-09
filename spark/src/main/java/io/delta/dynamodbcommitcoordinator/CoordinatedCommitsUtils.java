@@ -31,7 +31,7 @@ public class CoordinatedCommitsUtils {
 
     /** The configuration key for the coordinated commits owner. */
     private static final String COORDINATED_COMMITS_COORDINATOR_CONF_KEY =
-            "delta.coordinatedCommits.commitCoordinator-preview";
+            "delta.coordinatedCommits.commitCoordinator";
 
     /**
      * Creates a new unbackfilled delta file path for the given commit version.

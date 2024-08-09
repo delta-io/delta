@@ -98,7 +98,6 @@ relative_delta_table_path: {relative_delta_table_path}
 print(test_log)
 
 commit_coordinator_property_key = "coordinatedCommits.commitCoordinator"
-property_key_suffix = "-preview"
 
 spark = SparkSession \
     .builder \
@@ -106,8 +105,8 @@ spark = SparkSession \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .config(f"spark.databricks.delta.properties.defaults.{commit_coordinator_property_key}{property_key_suffix}", "dynamodb") \
-    .config(f"spark.databricks.delta.properties.defaults.coordinatedCommits.commitCoordinatorConf{property_key_suffix}", dynamodb_commit_coordinator_conf) \
+    .config(f"spark.databricks.delta.properties.defaults.{commit_coordinator_property_key}", "dynamodb") \
+    .config(f"spark.databricks.delta.properties.defaults.coordinatedCommits.commitCoordinatorConf", dynamodb_commit_coordinator_conf) \
     .config(f"spark.databricks.delta.coordinatedCommits.commitCoordinator.dynamodb.awsCredentialsProviderName", "com.amazonaws.auth.profile.ProfileCredentialsProvider") \
     .getOrCreate()
 
@@ -162,7 +161,7 @@ ddb_table = dynamodb.Table(dynamo_table_name)
 
 def get_dynamo_db_table_entry_id(table_path):
     table_properties = spark.sql(f"DESCRIBE DETAIL delta.`{table_path}`").select("properties").collect()[0][0]
-    table_conf = table_properties.get(f"delta.coordinatedCommits.tableConf{property_key_suffix}", None)
+    table_conf = table_properties.get(f"delta.coordinatedCommits.tableConf", None)
     if table_conf is None:
         return None
     return json.loads(table_conf).get("tableId", None)
@@ -209,7 +208,7 @@ def check_for_delta_file_in_filesystem(delta_table_path, version, is_backfilled,
 def test_downgrades_and_upgrades(delta_table_path, delta_table_version):
     # Downgrade to filesystem based commits should work
     print("===================== Evaluating downgrade to filesystem based commits =====================")
-    spark.sql(f"ALTER TABLE delta.`{delta_table_path}` UNSET TBLPROPERTIES ('delta.{commit_coordinator_property_key}{property_key_suffix}')")
+    spark.sql(f"ALTER TABLE delta.`{delta_table_path}` UNSET TBLPROPERTIES ('delta.{commit_coordinator_property_key}')")
     delta_table_version += 1
 
     perform_insert_and_validate(delta_table_path, 9990)
@@ -222,7 +221,7 @@ def test_downgrades_and_upgrades(delta_table_path, delta_table_version):
 
     # Upgrade to coordinated commits should work
     print("===================== Evaluating upgrade to coordinated commits =====================")
-    spark.sql(f"ALTER TABLE delta.`{delta_table_path}` SET TBLPROPERTIES ('delta.{commit_coordinator_property_key}{property_key_suffix}' = 'dynamodb')")
+    spark.sql(f"ALTER TABLE delta.`{delta_table_path}` SET TBLPROPERTIES ('delta.{commit_coordinator_property_key}' = 'dynamodb')")
     delta_table_version += 1
     check_for_delta_file_in_filesystem(delta_table_path, delta_table_version, is_backfilled=True, should_exist=True)
     # No UUID delta file should have been created for the enablement commit
@@ -250,7 +249,7 @@ print("[SUCCESS] All tests passed for Table 1")
 print("===================== Evaluating Table 2 =====================")
 
 # Table 2 is created with coordinated commits disabled
-spark.conf.unset(f"spark.databricks.delta.properties.defaults.{commit_coordinator_property_key}{property_key_suffix}")
+spark.conf.unset(f"spark.databricks.delta.properties.defaults.{commit_coordinator_property_key}")
 
 spark.sql(f"CREATE table delta.`{delta_table2_path}` (id int, a int) USING DELTA") # commit 0
 table_2_version = 0
@@ -264,7 +263,7 @@ check_for_delta_file_in_filesystem(delta_table2_path, table_2_version, is_backfi
 
 print("===================== Evaluating Upgrade of Table 2 =====================")
 
-spark.sql(f"ALTER TABLE delta.`{delta_table2_path}` SET TBLPROPERTIES ('delta.{commit_coordinator_property_key}{property_key_suffix}' = 'dynamodb')")
+spark.sql(f"ALTER TABLE delta.`{delta_table2_path}` SET TBLPROPERTIES ('delta.{commit_coordinator_property_key}' = 'dynamodb')")
 table_2_version += 1
 
 perform_insert_and_validate(delta_table2_path, 8001)
