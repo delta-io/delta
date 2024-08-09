@@ -20,7 +20,8 @@ from pyspark.sql import SparkSession
 
 def configure_spark_with_delta_pip(
     spark_session_builder: SparkSession.Builder,
-    extra_packages: Optional[List[str]] = None) -> SparkSession.Builder:
+    extra_packages: Optional[List[str]] = None
+) -> SparkSession.Builder:
     """
     Utility function to configure a SparkSession builder such that the generated SparkSession
     will automatically download the required Delta Lake JARs from Maven. This function is
