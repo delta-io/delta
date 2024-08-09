@@ -23,8 +23,8 @@ import io.delta.kernel.engine.Engine;
  * Thrown when concurrent transaction both attempt to update the table with same transaction
  * identifier set through {@link TransactionBuilder#withTransactionId(Engine, String, long)}
  * (String)}.
- * <p>
- * Incremental processing systems (e.g., streaming systems) that track progress using their own
+ *
+ * <p>Incremental processing systems (e.g., streaming systems) that track progress using their own
  * application-specific versions need to record what progress has been made, in order to avoid
  * duplicating data in the face of failures and retries during writes. For more information refer to
  * the Delta protocol section <a
@@ -35,11 +35,12 @@ import io.delta.kernel.engine.Engine;
  */
 @Evolving
 public class ConcurrentTransactionException extends ConcurrentWriteException {
-    private static final String message = "This error occurs when multiple updates are " +
-            "using the same transaction identifier to write into this table.\n" +
-            "Application ID: %s, Attempted version: %s, Latest version in table: %s";
+  private static final String message =
+      "This error occurs when multiple updates are "
+          + "using the same transaction identifier to write into this table.\n"
+          + "Application ID: %s, Attempted version: %s, Latest version in table: %s";
 
-    public ConcurrentTransactionException(String appId, long txnVersion, long lastUpdated) {
-        super(String.format(message, appId, txnVersion, lastUpdated));
-    }
+  public ConcurrentTransactionException(String appId, long txnVersion, long lastUpdated) {
+    super(String.format(message, appId, txnVersion, lastUpdated));
+  }
 }

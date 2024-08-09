@@ -15,20 +15,19 @@
  */
 package io.delta.kernel.defaults
 
-import java.math.{BigDecimal => BigDecimalJ}
-import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
-import io.delta.kernel.expressions.{Column, Expression, Literal, Predicate}
 import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.math.{BigDecimal => BigDecimalJ}
+
 class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
 
   // scalastyle:off sparkimplicits
-  import spark.implicits._
   // scalastyle:on sparkimplicits
 
   // Test golden table containing partition columns of all simple types
@@ -242,11 +241,15 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
       (
         // Filter on just the data column
         // 1637202600123456L in epoch micros for '2021-11-18 02:30:00.123456'
-        predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L)),
+        predicate("OR",
+          predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L)),
+          predicate("=", col("tsNtz"), ofTimestampNtz(1373043660123456L))),
         "",
         9, // expected row count
         // expected remaining filter
-        predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L))
+        predicate("OR",
+          predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L)),
+          predicate("=", col("tsNtz"), ofTimestampNtz(1373043660123456L)))
       )
     ).foreach {
       case (kernelPredicate, sparkPredicate, expectedRowCount, expRemainingFilter) =>

@@ -36,6 +36,8 @@ trait WriteDeltaHMSReadIceberg extends UniFormE2ETest with DeltaSQLCommandTest w
   override protected def sparkConf: SparkConf =
     setupSparkConfWithHMS(super.sparkConf)
       .set(DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED.key, "true")
+      .set(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_ENABLED.key, "true")
+      .set(DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key, "true")
 
   override protected def createReaderSparkSession: SparkSession = createIcebergSparkSession
 }

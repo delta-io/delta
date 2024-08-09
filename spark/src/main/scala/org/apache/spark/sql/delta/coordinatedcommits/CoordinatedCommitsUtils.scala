@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse}
@@ -154,7 +154,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       actions: Iterator[String],
       uuid: String): FileStatus = {
     val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuid))
-    logStore.write(commitPath, actions.asJava, false, hadoopConf)
+    logStore.write(commitPath, actions.asJava, true, hadoopConf)
     commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
   }
 
@@ -165,20 +165,52 @@ object CoordinatedCommitsUtils extends DeltaLogging {
 
   def getCommitCoordinatorClient(
       spark: SparkSession,
+      deltaLog: DeltaLog, // Used for logging
       metadata: Metadata,
-      protocol: Protocol): Option[CommitCoordinatorClient] = {
-    metadata.coordinatedCommitsCoordinatorName.map { commitCoordinatorStr =>
+      protocol: Protocol,
+      failIfImplUnavailable: Boolean): Option[CommitCoordinatorClient] = {
+    metadata.coordinatedCommitsCoordinatorName.flatMap { commitCoordinatorStr =>
       assert(protocol.isFeatureSupported(CoordinatedCommitsTableFeature))
-      CommitCoordinatorProvider.getCommitCoordinatorClient(
-        commitCoordinatorStr, metadata.coordinatedCommitsCoordinatorConf, spark)
+      val coordinatorConf = metadata.coordinatedCommitsCoordinatorConf
+      val coordinatorOpt = CommitCoordinatorProvider.getCommitCoordinatorClientOpt(
+        commitCoordinatorStr, coordinatorConf, spark)
+      if (coordinatorOpt.isEmpty) {
+        recordDeltaEvent(
+          deltaLog,
+          CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_MISSING_IMPLEMENTATION,
+          data = Map(
+            "commitCoordinatorName" -> commitCoordinatorStr,
+            "registeredCommitCoordinators" ->
+              CommitCoordinatorProvider.getRegisteredCoordinatorNames.mkString(", "),
+            "commitCoordinatorConf" -> JsonUtils.toJson(coordinatorConf),
+            "failIfImplUnavailable" -> failIfImplUnavailable.toString
+          )
+        )
+        if (failIfImplUnavailable) {
+          throw new IllegalArgumentException(
+            s"Unknown commit-coordinator: $commitCoordinatorStr")
+        }
+      }
+      coordinatorOpt
     }
   }
 
+  /**
+   * Get the table commit coordinator client from the provided snapshot descriptor.
+   * Returns None if either this is not a coordinated-commits table. Also returns None when
+   * `failIfImplUnavailable` is false and the commit-coordinator implementation is not available.
+   */
   def getTableCommitCoordinator(
       spark: SparkSession,
-      snapshotDescriptor: SnapshotDescriptor): Option[TableCommitCoordinatorClient] = {
+      deltaLog: DeltaLog, // Used for logging
+      snapshotDescriptor: SnapshotDescriptor,
+      failIfImplUnavailable: Boolean): Option[TableCommitCoordinatorClient] = {
     getCommitCoordinatorClient(
-      spark, snapshotDescriptor.metadata, snapshotDescriptor.protocol).map {
+      spark,
+      deltaLog,
+      snapshotDescriptor.metadata,
+      snapshotDescriptor.protocol,
+      failIfImplUnavailable).map {
       commitCoordinator =>
         TableCommitCoordinatorClient(
           commitCoordinator,
@@ -271,7 +303,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * be a gap in the backfilled commit sequence.
    */
   def backfillWhenCoordinatedCommitsDisabled(snapshot: Snapshot): Unit = {
-    if (snapshot.tableCommitCoordinatorClientOpt.nonEmpty) {
+    if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty) {
       // Coordinated commits is enabled on the table. Don't backfill as backfills are managed by
       // commit-coordinators.
       return

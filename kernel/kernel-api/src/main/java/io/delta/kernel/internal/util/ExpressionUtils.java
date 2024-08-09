@@ -15,53 +15,46 @@
  */
 package io.delta.kernel.internal.util;
 
-import java.util.List;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import java.util.List;
 
 public class ExpressionUtils {
-    /**
-     * Return an expression cast as a predicate, throw an error if it is not a predicate
-     */
-    public static Predicate asPredicate(Expression expression) {
-        checkArgument(expression instanceof Predicate,
-            String.format("Expected predicate but got %s", expression));
-        return (Predicate) expression;
-    }
+  /** Return an expression cast as a predicate, throw an error if it is not a predicate */
+  public static Predicate asPredicate(Expression expression) {
+    checkArgument(
+        expression instanceof Predicate,
+        String.format("Expected predicate but got %s", expression));
+    return (Predicate) expression;
+  }
 
-    /**
-     * Utility method to return the left child of the binary input expression
-     */
-    public static Expression getLeft(Expression expression) {
-        List<Expression> children = expression.getChildren();
-        checkArgument(
-            children.size() == 2,
-            format("%s: expected two inputs, but got %s", expression, children.size()));
-        return children.get(0);
-    }
+  /** Utility method to return the left child of the binary input expression */
+  public static Expression getLeft(Expression expression) {
+    List<Expression> children = expression.getChildren();
+    checkArgument(
+        children.size() == 2,
+        format("%s: expected two inputs, but got %s", expression, children.size()));
+    return children.get(0);
+  }
 
-    /**
-     * Utility method to return the right child of the binary input expression
-     */
-    public static Expression getRight(Expression expression) {
-        List<Expression> children = expression.getChildren();
-        checkArgument(
-            children.size() == 2,
-            format("%s: expected two inputs, but got %s", expression, children.size()));
-        return children.get(1);
-    }
+  /** Utility method to return the right child of the binary input expression */
+  public static Expression getRight(Expression expression) {
+    List<Expression> children = expression.getChildren();
+    checkArgument(
+        children.size() == 2,
+        format("%s: expected two inputs, but got %s", expression, children.size()));
+    return children.get(1);
+  }
 
-    /**
-     * Utility method to return the single child of the unary input expression
-     */
-    public static Expression getUnaryChild(Expression expression) {
-        List<Expression> children = expression.getChildren();
-        checkArgument(
-            children.size() == 1,
-            format("%s: expected one inputs, but got %s", expression, children.size()));
-        return children.get(0);
-    }
+  /** Utility method to return the single child of the unary input expression */
+  public static Expression getUnaryChild(Expression expression) {
+    List<Expression> children = expression.getChildren();
+    checkArgument(
+        children.size() == 1,
+        format("%s: expected one inputs, but got %s", expression, children.size()));
+    return children.get(0);
+  }
 }

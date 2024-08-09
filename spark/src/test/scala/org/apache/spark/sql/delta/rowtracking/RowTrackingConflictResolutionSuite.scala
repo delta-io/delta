@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.rowtracking
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaLog, DeltaOperations, DeltaTestUtils, FileMetadataMaterializationTracker, OptimisticTransaction, RowId, RowTrackingFeature}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.actions.{Metadata, RemoveFile}
@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import io.delta.exceptions.MetadataChangedException
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -333,6 +334,82 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       assertRowIdsAreValid(log)
       val allFiles = Seq(file1, file2, file3, file4)
       assert(finalFiles.map(_.path).toSet === allFiles.map(_.path).toSet)
+    }
+  }
+
+  private def addRowTrackingEnabledConfigToMetadata(metadata: Metadata): Metadata = {
+    val newConfigs = metadata.configuration updated
+      (DeltaConfigs.ROW_TRACKING_ENABLED.key, "true")
+    metadata.copy(configuration = newConfigs)
+  }
+
+  private def enableRowTrackingOnlyMetadataUpdate(): Unit = {
+    val txn = deltaLog.startTransaction()
+    val updatedMetadata = addRowTrackingEnabledConfigToMetadata(latestSnapshot.metadata)
+    val tags = Map(DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+    txn.updateMetadata(updatedMetadata)
+    txn.commit(Nil, ManualUpdate, tags)
+  }
+
+  test("RowTrackingEnablementOnly metadata update does not fail transactions "
+      + "that don't do metadata update") {
+    withTestTable {
+      val txn = deltaLog.startTransaction()
+      activateRowTracking()
+      enableRowTrackingOnlyMetadataUpdate()
+
+      val rowTrackingPreserved = rowTrackingMarkedAsPreservedForCommit(deltaLog) {
+        txn.commit(Seq(addFile(path = "file_path")), DeltaOperations.ManualUpdate)
+      }
+
+      assert(!rowTrackingPreserved, "Commits conflicting with a metadata update " +
+          "that enables row tracking only should have row tracking marked as not preserved.")
+
+      assertRowIdsAreValid(deltaLog)
+      assert(RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
+    }
+  }
+
+  test("RowTrackingEnablementOnly metadata update fails transactions "
+      + "that perform a metadata update") {
+    withTestTable {
+      activateRowTracking()
+      val numInitialRecords = 7
+      commitRecords(numInitialRecords)
+
+      val txn = deltaLog.startTransaction()
+      val newConfigs = Map("key" -> "value")
+      val newMetadata = latestSnapshot.metadata.copy(configuration = newConfigs)
+      txn.updateMetadata(newMetadata)
+
+      enableRowTrackingOnlyMetadataUpdate()
+
+      val commitVersionBefore = latestSnapshot.version
+      intercept[MetadataChangedException] {
+        txn.commit(Nil, DeltaOperations.ManualUpdate)
+      }
+      assert(latestSnapshot.version === commitVersionBefore,
+        "the commit should have failed")
+    }
+  }
+
+  test("RowTrackingEnablementOnly metadata update fails another " +
+      "RowTrackingEnablementOnly metadata update") {
+    withTestTable {
+      activateRowTracking()
+      val txn = deltaLog.startTransaction()
+      val newMetadata = addRowTrackingEnabledConfigToMetadata(latestSnapshot.metadata)
+      txn.updateMetadata(newMetadata)
+
+      enableRowTrackingOnlyMetadataUpdate()
+
+      val commitVersionBefore = latestSnapshot.version
+      intercept[MetadataChangedException] {
+        val tags = Map(DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+        txn.commit(Nil, DeltaOperations.ManualUpdate, tags)
+      }
+      assert(latestSnapshot.version === commitVersionBefore,
+        "the commit should have failed")
     }
   }
 }

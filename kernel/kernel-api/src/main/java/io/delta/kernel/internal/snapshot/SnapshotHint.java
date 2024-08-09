@@ -19,29 +19,27 @@ package io.delta.kernel.internal.snapshot;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 
-/**
- * Contains summary information of a {@link io.delta.kernel.Snapshot}.
- */
+/** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
 public class SnapshotHint {
-    private final long version;
-    private final Protocol protocol;
-    private final Metadata metadata;
+  private final long version;
+  private final Protocol protocol;
+  private final Metadata metadata;
 
-    public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
-        this.version = version;
-        this.protocol = protocol;
-        this.metadata = metadata;
-    }
+  public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
+    this.version = version;
+    this.protocol = protocol;
+    this.metadata = metadata;
+  }
 
-    public long getVersion() {
-        return version;
-    }
+  public long getVersion() {
+    return version;
+  }
 
-    public Protocol getProtocol() {
-        return protocol;
-    }
+  public Protocol getProtocol() {
+    return protocol;
+  }
 
-    public Metadata getMetadata() {
-        return metadata;
-    }
+  public Metadata getMetadata() {
+    return metadata;
+  }
 }

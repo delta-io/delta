@@ -16,7 +16,6 @@
 package org.apache.parquet.hadoop;
 
 import java.io.IOException;
-
 import org.apache.parquet.hadoop.api.ReadSupport;
 
 /**
@@ -25,15 +24,14 @@ import org.apache.parquet.hadoop.api.ReadSupport;
  *
  * @param <T>
  */
-public class ParquetRecordReaderWrapper<T>
-        extends InternalParquetRecordReader<T>
-        implements AutoCloseable {
-    public ParquetRecordReaderWrapper(ReadSupport<T> readSupport) {
-        super(readSupport);
-    }
+public class ParquetRecordReaderWrapper<T> extends InternalParquetRecordReader<T>
+    implements AutoCloseable {
+  public ParquetRecordReaderWrapper(ReadSupport<T> readSupport) {
+    super(readSupport);
+  }
 
-    @Override
-    public void close() throws IOException {
-        super.close();
-    }
+  @Override
+  public void close() throws IOException {
+    super.close();
+  }
 }
