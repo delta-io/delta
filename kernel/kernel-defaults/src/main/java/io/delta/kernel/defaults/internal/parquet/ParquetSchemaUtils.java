@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import static io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit.MICROS;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.decimalType;
@@ -28,6 +29,8 @@ import static org.apache.parquet.schema.Types.primitive;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.types.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 import org.apache.parquet.schema.*;
 import org.apache.parquet.schema.LogicalTypeAnnotation.DecimalLogicalTypeAnnotation;
@@ -106,7 +109,7 @@ class ParquetSchemaUtils {
     }
     // Parquet is case-sensitive, but the engine that generated the parquet file may not be.
     // Check for direct match above but if no match found, try case-insensitive match.
-    for (org.apache.parquet.schema.Type type : groupType.getFields()) {
+    for (Type type : groupType.getFields()) {
       if (type.getName().equalsIgnoreCase(columnName)) {
         return type;
       }
@@ -140,8 +143,13 @@ class ParquetSchemaUtils {
    * @return {@link MessageType} representing the schema in Parquet format.
    */
   static MessageType toParquetSchema(StructType structType) {
+    BiFunction<Optional<Integer>, Boolean, Optional<Integer>> fieldIdValidator =
+        createFieldIdValidator(structType);
     List<Type> types = new ArrayList<>();
     for (StructField structField : structType.fields()) {
+      Optional<Integer> fieldId =
+          fieldIdValidator.apply(
+              getFieldId(structField.getMetadata()), false /* isNestedFieldId */);
       types.add(
           toParquetType(
               structField /* nearestAncestor with struct field */,
@@ -149,7 +157,8 @@ class ParquetSchemaUtils {
               structField.getDataType(),
               structField.getName(),
               structField.isNullable() ? OPTIONAL : REQUIRED,
-              getFieldId(structField.getMetadata())));
+              fieldId,
+              fieldIdValidator));
     }
     return new MessageType("DefaultKernelSchema", types);
   }
@@ -186,7 +195,7 @@ class ParquetSchemaUtils {
    * Converts a Delta type {@code dataType} to a Parquet type.
    *
    * @param nearestAncestor The nearest ancestor with a {@link StructField}. This ancestor
-   *     represents the current node or any other node on the path to the current node from root of
+   *     represents the current node or nearest node on the path to the current node from root of
    *     the schema.
    * @param relativePath The relative path to this element from {@code nearestAncestor}. For
    *     example, consider a column type {@code col1 STRUCT(a INT, b STRUCT(c INT, d ARRAY(INT)))}.
@@ -206,7 +215,8 @@ class ParquetSchemaUtils {
       DataType dataType,
       String name,
       Repetition repetition,
-      Optional<Integer> fieldId) {
+      Optional<Integer> fieldId,
+      BiFunction<Optional<Integer>, Boolean, Optional<Integer>> fieldIdValidator) {
     Type type;
     if (dataType instanceof BooleanType) {
       type = primitive(BOOLEAN, repetition).named(name);
@@ -263,11 +273,24 @@ class ParquetSchemaUtils {
               .named(name);
     } else if (dataType instanceof ArrayType) {
       type =
-          toParquetArrayType(nearestAncestor, relativePath, (ArrayType) dataType, name, repetition);
+          toParquetArrayType(
+              nearestAncestor,
+              relativePath,
+              (ArrayType) dataType,
+              name,
+              repetition,
+              fieldIdValidator);
     } else if (dataType instanceof MapType) {
-      type = toParquetMapType(nearestAncestor, relativePath, (MapType) dataType, name, repetition);
+      type =
+          toParquetMapType(
+              nearestAncestor,
+              relativePath,
+              (MapType) dataType,
+              name,
+              repetition,
+              fieldIdValidator);
     } else if (dataType instanceof StructType) {
-      type = toParquetStructType((StructType) dataType, name, repetition);
+      type = toParquetStructType((StructType) dataType, name, repetition, fieldIdValidator);
     } else {
       throw new UnsupportedOperationException(
           "Writing given type data to Parquet is not supported: " + dataType);
@@ -285,11 +308,15 @@ class ParquetSchemaUtils {
       String relativePath,
       ArrayType arrayType,
       String name,
-      Repetition rep) {
+      Repetition rep,
+      BiFunction<Optional<Integer>, Boolean, Optional<Integer>> fieldIdValidator) {
     // We will be supporting the 3-level array structure only. 2-level array structures are
     // a very old legacy versions of Parquet which Kernel doesn't support writing as.
 
     String elementRelativePath = relativePath + ".element";
+    Optional<Integer> fieldId =
+        fieldIdValidator.apply(
+            getNestedFieldId(nearestAncestor, elementRelativePath), true /* isNestedFieldId */);
     return Types.buildGroup(rep)
         .as(LogicalTypeAnnotation.listType())
         .addField(
@@ -301,7 +328,8 @@ class ParquetSchemaUtils {
                         arrayType.getElementType(),
                         "element", /* name */
                         arrayType.containsNull() ? OPTIONAL : REQUIRED,
-                        getNestedFieldId(nearestAncestor, elementRelativePath)))
+                        fieldId,
+                        fieldIdValidator))
                 .named("list"))
         .named(name);
   }
@@ -311,12 +339,19 @@ class ParquetSchemaUtils {
       String relativePath,
       MapType mapType,
       String name,
-      Repetition repetition) {
+      Repetition repetition,
+      BiFunction<Optional<Integer>, Boolean, Optional<Integer>> fieldIdValidator) {
     // We will be supporting the 3-level map structure only. 2-level map structures are
     // a very old legacy versions of Parquet which Kernel doesn't support writing as.
 
     String keyRelativePath = relativePath + ".key";
     String valueRelativePath = relativePath + ".value";
+    Optional<Integer> keyFieldId =
+        fieldIdValidator.apply(
+            getNestedFieldId(nearestAncestor, keyRelativePath), true /* isNestedFieldId */);
+    Optional<Integer> valueFieldId =
+        fieldIdValidator.apply(
+            getNestedFieldId(nearestAncestor, valueRelativePath), true /* isNestedFieldId */);
 
     return Types.buildGroup(repetition)
         .as(LogicalTypeAnnotation.mapType())
@@ -329,7 +364,8 @@ class ParquetSchemaUtils {
                         mapType.getKeyType(),
                         "key", /* name */
                         REQUIRED, /* repetition */
-                        getNestedFieldId(nearestAncestor, keyRelativePath)))
+                        keyFieldId,
+                        fieldIdValidator))
                 .addField(
                     toParquetType(
                         nearestAncestor,
@@ -337,15 +373,21 @@ class ParquetSchemaUtils {
                         mapType.getValueType(),
                         "value", /* name */
                         mapType.isValueContainsNull() ? OPTIONAL : REQUIRED,
-                        getNestedFieldId(nearestAncestor, valueRelativePath)))
+                        valueFieldId,
+                        fieldIdValidator))
                 .named("key_value"))
         .named(name);
   }
 
   private static Type toParquetStructType(
-      StructType structType, String name, Repetition repetition) {
+      StructType structType,
+      String name,
+      Repetition repetition,
+      BiFunction<Optional<Integer>, Boolean, Optional<Integer>> fieldIdValidator) {
     List<Type> fields = new ArrayList<>();
     for (StructField field : structType.fields()) {
+      Optional<Integer> fieldId =
+          fieldIdValidator.apply(getFieldId(field.getMetadata()), false /* isNestedFieldId */);
       fields.add(
           toParquetType(
               field, /* nearestAncestor with struct field */
@@ -353,7 +395,8 @@ class ParquetSchemaUtils {
               field.getDataType(),
               field.getName(),
               field.isNullable() ? OPTIONAL : REQUIRED,
-              getFieldId(field.getMetadata())));
+              fieldId,
+              fieldIdValidator));
     }
     return new GroupType(repetition, name, fields);
   }
@@ -376,5 +419,65 @@ class ParquetSchemaUtils {
     // Field id delta schema metadata is deserialized as long, but the range should always
     // be within integer range.
     return Optional.ofNullable(fieldMetadata.getLong(fieldIdKey)).map(Math::toIntExact);
+  }
+
+  /**
+   * Validator for checking that the field ids in the schema. As any schema visitor goes through the
+   * schema {@link StructType}, the visitor can call this validator to check:
+   *
+   * <ul>
+   *   <li>Field ids should be unique within the schema.
+   *   <li>Field ids should be non-negative.
+   *   <li>All {@link StructField} should have a field id or none should have it
+   *   <li>All nested elements of {@link ArrayType} and {@link MapType} should have the nested field
+   *       id or none of them should have.
+   * </ul>
+   *
+   * @param structType The schema to validate. Used for error messages.
+   * @return A lambda that can be used to validate the field ids. It takes the field id and a
+   *     boolean (true for nested field ids). Since the lamda is stateful, it should be used only
+   *     once for each unique schema and traversal.
+   */
+  private static BiFunction<Optional<Integer>, Boolean, Optional<Integer>> createFieldIdValidator(
+      StructType structType) {
+    Set<Integer> fieldIds = new HashSet<>(); // include nested field ids too.
+    AtomicBoolean seenFieldWithNoId = new AtomicBoolean();
+    AtomicBoolean seenFieldWithId = new AtomicBoolean();
+    AtomicBoolean seenNestedFieldWithId = new AtomicBoolean();
+    AtomicBoolean seemNestedWithWithNoId = new AtomicBoolean();
+
+    return (fieldIdOpt, isNestedFieldId) -> {
+      if (fieldIdOpt.isPresent()) {
+        checkArgument(fieldIdOpt.get() >= 0, "Field id should be non-negative.\n%s", structType);
+        checkArgument(fieldIds.add(fieldIdOpt.get()), "Field id should be unique.\n%s", structType);
+
+        if (isNestedFieldId) {
+          seenNestedFieldWithId.set(true);
+          checkArgument(
+              !seemNestedWithWithNoId.get() && !seenFieldWithNoId.get(),
+              "Some of the fields are missing field ids.\n%s",
+              structType);
+        } else {
+          seenFieldWithId.set(true);
+          checkArgument(
+              !seenFieldWithNoId.get(),
+              "Some of the fields are missing field ids.\n%s",
+              structType);
+        }
+      } else {
+        if (isNestedFieldId) {
+          seemNestedWithWithNoId.set(true);
+          checkArgument(
+              !seenNestedFieldWithId.get() && !seenFieldWithId.get(),
+              "Some of the fields are missing field ids.\n%s",
+              structType);
+        } else {
+          seenFieldWithNoId.set(true);
+          checkArgument(
+              !seenFieldWithId.get(), "Some of the fields are missing field ids.\n%s", structType);
+        }
+      }
+      return fieldIdOpt;
+    };
   }
 }
