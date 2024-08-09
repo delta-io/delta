@@ -1,5 +1,5 @@
 # Linter
-mypy==0.982
+mypy==1.8.0
 flake8==3.9.0
 
 # Code Formatter
