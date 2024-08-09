@@ -502,6 +502,55 @@ trait DeltaSharingDataSourceDeltaSuiteBase
     }
   }
 
+  test("DeltaSharingDataSource able to read data with different filters") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_diff_filter"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "first"), (2, "first")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "second"), (2, "second")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "third"), (2, "third")""")
+
+        val sharedTableName = s"shared_table_filters_diff_filter"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName, limitHint = Some(2))
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+          "true"
+        )
+
+        // The files returned from delta sharing client are the same for these queries.
+        // This is to test the filters are passed correctly to TahoeLogFileIndex for the local delta
+        // log.
+        def testDiffFilter(tablePath: String, tableName: String): Unit = {
+          val df = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+
+          // limit
+          assert(df.limit(2).count() == 2)
+          // full
+          val expectedFull = Seq(
+            Row(1, "first"), Row(1, "second"), Row(1, "third"),
+            Row(2, "first"), Row(2, "second"), Row(2, "third")
+          )
+          checkAnswer(df, expectedFull)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          testDiffFilter(
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName",
+            s"share1.default.$sharedTableName"
+          )
+        }
+      }
+    }
+  }
+
   test("DeltaSharingDataSource able to read data for time travel queries") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_time_travel"

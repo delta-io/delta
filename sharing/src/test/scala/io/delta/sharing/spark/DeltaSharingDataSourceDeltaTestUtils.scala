@@ -343,7 +343,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       timestampAsOf: Option[String] = None,
       inlineDvFormat: Option[RoaringBitmapArrayFormat.Value] = None,
       assertMultipleDvsInOneFile: Boolean = false,
-      reverseFileOrder: Boolean = false): Unit = {
+      reverseFileOrder: Boolean = false,
+      limitHint: Option[Long] = None): Unit = {
     val lines = Seq.newBuilder[String]
     var totalSize = 0L
 
@@ -351,6 +352,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
     val snapshotToUse = getSnapshotToUse(deltaTable, versionAsOf)
     val fileActionsArrayBuffer = ArrayBuffer[model.DeltaSharingFileAction]()
     val dvPathToCount = scala.collection.mutable.Map[String, Int]()
+    var numRecords = 0L
     snapshotToUse.allFiles.collect().foreach { addFile =>
       if (assertMultipleDvsInOneFile) {
         updateDvPathToCount(addFile, dvPathToCount)
@@ -363,14 +365,17 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
         addFile
       }
 
-      val dsAddFile = getDeltaSharingFileActionForAddFile(
-        updatedAdd,
-        sharedTable,
-        snapshotToUse.version,
-        snapshotToUse.timestamp
-      )
-      totalSize = totalSize + addFile.size
-      fileActionsArrayBuffer += dsAddFile
+      if (limitHint.isEmpty || limitHint.map(_ > numRecords).getOrElse(true)) {
+        val dsAddFile = getDeltaSharingFileActionForAddFile(
+          updatedAdd,
+          sharedTable,
+          snapshotToUse.version,
+          snapshotToUse.timestamp
+        )
+        numRecords += addFile.numLogicalRecords.getOrElse(0L)
+        totalSize = totalSize + addFile.size
+        fileActionsArrayBuffer += dsAddFile
+      }
     }
     val fileActionSeq = if (reverseFileOrder) {
       fileActionsArrayBuffer.toSeq.sortWith(deltaSharingFileActionDecreaseOrderFunc)
@@ -437,7 +442,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
         sharedTableName = sharedTable,
         queryType = "getFiles",
         versionAsOf = versionAsOf,
-        timestampAsOf = timestampAsOf
+        timestampAsOf = timestampAsOf,
+        limit = limitHint
       ),
       values = lines.result().toIterator
     )
