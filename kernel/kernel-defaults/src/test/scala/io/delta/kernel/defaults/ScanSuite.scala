@@ -18,12 +18,14 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.expressions._
 import io.delta.kernel.internal.util.InternalUtils
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
+import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types._
@@ -33,7 +35,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
-import org.apache.spark.sql.{Row => SparkRow}
+import org.apache.spark.sql.{DataFrame, Row => SparkRow}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.math.{BigDecimal => JBigDecimal}
@@ -41,6 +43,7 @@ import java.sql.Date
 import java.time.temporal.ChronoUnit
 import java.time.{Instant, OffsetDateTime}
 import java.util.Optional
+import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 
 class ScanSuite extends AnyFunSuite
