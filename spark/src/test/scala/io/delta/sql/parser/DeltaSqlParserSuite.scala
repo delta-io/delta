@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterByTransform
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.{UnresolvedPathBasedDeltaTable, UnresolvedPathBasedTable}
-import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory, OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory, OptimizeTableCommand, DeltaReorgTable, FsckRepairTableCommand}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
@@ -34,6 +34,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.catalyst.plans.logical.{AlterTableDropFeature, CloneTableStatement, CreateTable, CreateTableAsSelect, LogicalPlan, ReplaceTable, ReplaceTableAsSelect, RestoreTableStatement}
 import org.apache.spark.sql.execution.SparkSqlParser
+
 
 class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
@@ -316,6 +317,57 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     }
   }
   // scalastyle:on argcount
+
+  for (dryRun <- Seq(true, false)) {
+    var dryRunString = if (dryRun) " DRY RUN" else ""
+    test("FSCK command is parsed as expected" + dryRunString) {
+      val parser = new DeltaSqlParser(null)
+      dryRunString += ";"
+      assert(parser.parsePlan("FSCK REPAIR TABLE delta.`/path/to/tbl`" + dryRunString) ===
+      FsckRepairTableCommand(UnresolvedTable(Seq("delta", "/path/to/tbl"), "FSCK"),
+          dryRun))
+      assert(parser.parsePlan("FSCK REPAIR TABLE `/path/to/tbl`" + dryRunString) ===
+      FsckRepairTableCommand(UnresolvedTable(Seq("/path/to/tbl"), "FSCK"),
+          dryRun))
+      assert(parser.parsePlan("FSCK REPAIR TABLE tbl" + dryRunString) ===
+        FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
+
+      assert(parser.parsePlan("FSCK REPAIR TABLE tbl_${system:spark.testing}" + dryRunString) ===
+        FsckRepairTableCommand(UnresolvedTable(Seq("tbl_true"), "FSCK"), dryRun))
+
+      withSQLConf("tbl_var" -> "tbl") {
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
+
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${spark:tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
+
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${sparkconf:tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
+
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${hiveconf:tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
+
+        assert(parser.parsePlan("FSCK REPAIR TABLE ${hivevar:tbl_var}" + dryRunString) ===
+          FsckRepairTableCommand(UnresolvedTable(Seq("tbl"), "FSCK"), dryRun))
+      }
+    }
+  }
+
+  Seq(true, false).foreach { dryRun =>
+    var dryRunString = if (dryRun) " DRY RUN" else ""
+    test("FSCK command new tokens are non-reserved keywords" + dryRunString) {
+      // new keywords: FSCK and REPAIR
+      val parser = new DeltaSqlParser(null)
+      dryRunString += ";"
+
+      // Use the new keywords in table name
+      assert(parser.parsePlan("FSCK REPAIR TABLE fsck" + dryRunString) ===
+        FsckRepairTableCommand(UnresolvedTable(Seq("fsck"), "FSCK"), dryRun))
+      assert(parser.parsePlan("FSCK REPAIR TABLE repair" + dryRunString) ===
+        FsckRepairTableCommand(UnresolvedTable(Seq("repair"), "FSCK"), dryRun))
+    }
+  }
 
   test("CLONE command is parsed as expected") {
     val parser = new DeltaSqlParser(null)
