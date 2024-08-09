@@ -158,6 +158,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               val sharedTableName = s"shared_table_simple_" +
                 s"${skippingEnabled}_${sharingConfig}_$deltaConfig"
               prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+              prepareMockedClientAndFileSystemResult(deltaTableName, sharedDeltaTable, limitHint = Some(1))
               prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
               def test(tablePath: String, tableName: String): Unit = {
@@ -329,6 +330,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         // Test for delta format response
         val sharedDeltaTable = "shared_delta_table"
         prepareMockedClientAndFileSystemResult(deltaTableName, sharedDeltaTable)
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedDeltaTable, limitHint = Some(1))
         prepareMockedClientAndFileSystemResult(
           deltaTableName,
           sharedDeltaTable,
@@ -350,6 +352,11 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         prepareMockedClientAndFileSystemResultForParquet(
           deltaTableName,
           sharedParquetTable
+        )
+        prepareMockedClientAndFileSystemResultForParquet(
+          deltaTableName,
+          sharedParquetTable,
+          limitHint = Some(1)
         )
         prepareMockedClientAndFileSystemResultForParquet(
           deltaTableName,

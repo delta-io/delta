@@ -250,7 +250,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
   private[spark] def prepareMockedClientAndFileSystemResultForParquet(
       deltaTable: String,
       sharedTable: String,
-      versionAsOf: Option[Long] = None): Unit = {
+      versionAsOf: Option[Long] = None,
+      limitHint: Option[Long] = None): Unit = {
     val lines = Seq.newBuilder[String]
     var totalSize = 0L
     val clientAddFilesArrayBuffer = ArrayBuffer[ClientAddFile]()
@@ -325,7 +326,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       blockId = TestClientForDeltaFormatSharing.getBlockId(
         sharedTableName = sharedTable,
         queryType = "getFiles",
-        versionAsOf = versionAsOf
+        versionAsOf = versionAsOf,
+        limit = limitHint
       ),
       values = lines.result().toIterator
     )
