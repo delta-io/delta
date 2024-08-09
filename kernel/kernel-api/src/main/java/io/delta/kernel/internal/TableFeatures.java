@@ -84,8 +84,8 @@ public class TableFeatures {
    * <ul>
    *   <li>protocol writer version 1.
    *   <li>protocol writer version 2 only with appendOnly feature enabled.
-   *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp},
-   *       {@code columnMapping} feature enabled.
+   *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp}, {@code
+   *       columnMapping} feature enabled.
    * </ul>
    *
    * @param protocol Table protocol
@@ -158,9 +158,9 @@ public class TableFeatures {
 
   /**
    * Extract the writer features that should be enabled automatically based on the metadata which
-   * are not already enabled. For example, the {@code inCommitTimestamp} feature should be
-   * enabled when the delta property name (delta.enableInCommitTimestamps) is set to true in
-   * the metadata if it is not already enabled.
+   * are not already enabled. For example, the {@code inCommitTimestamp} feature should be enabled
+   * when the delta property name (delta.enableInCommitTimestamps) is set to true in the metadata if
+   * it is not already enabled.
    *
    * @param engine the engine to use for IO operations
    * @param metadata the metadata of the table
