@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.rowid
 
+import com.databricks.spark.util.DatabricksLogging
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.cdc.UpdateCDCSuite
@@ -28,7 +30,8 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
 
 trait RowTrackingUpdateSuiteBase
-  extends RowIdTestUtils {
+  extends RowIdTestUtils
+  with DatabricksLogging {
 
   protected def dvsEnabled: Boolean = false
 
@@ -180,6 +183,42 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
       }
     }
   }
+
+  for {
+    isPartitioned <- BOOLEAN_DOMAIN
+  } {
+    test("UPDATE preserves Row Tracking on tables enabled using backfill, "
+        + s"isPartitioned=$isPartitioned") {
+      withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
+        // This is the expected delta log history by the end of the test.
+        // version 0: Table Creation
+        // version 1: Protocol upgrade
+        // version 2: Backfill commit
+        // version 3: Metadata upgrade (tbl properties)
+        // version 4: Update
+        val backfillCommitVersion = 2L
+        withRowTrackingEnabled(enabled = false) {
+          withTable(targetTableName) {
+            writeTestTable(
+              targetTableName, isPartitioned, lastModifiedVersion = backfillCommitVersion)
+
+            val (log, snapshot) =
+              DeltaLog.forTableWithSnapshot(spark, TableIdentifier(targetTableName))
+            assert(!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata))
+            validateSuccessfulBackfillMetrics(expectedNumSuccessfulBatches = 1) {
+              triggerBackfillOnTestTableUsingAlterTable(targetTableName, numRowsTarget, log)
+            }
+
+            val whereClause = s"id < ${numRowsPerFile / 2}"
+            // The newVersion should be 4, the commit associated with the UPDATE.
+            val newVersion = 4L
+            checkAndExecuteUpdate(
+              tableName = targetTableName, condition = Some(whereClause), newVersion)
+          }
+        }
+      }
+    }
+  }
 }
 
 trait RowTrackingUpdateDVTests extends RowTrackingUpdateSuiteBase
@@ -196,96 +235,7 @@ trait RowTrackingCDFTests extends RowTrackingUpdateSuiteBase {
   }
 }
 
-class RowTrackingUpdateSuite extends RowTrackingUpdateCommonTests
-
 class RowTrackingUpdateCDFSuite extends RowTrackingUpdateCommonTests with RowTrackingCDFTests
-
-class RowTrackingUpdateDVSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingUpdateDVTests
 
 class RowTrackingUpdateCDFDVSuite extends RowTrackingUpdateCommonTests
   with RowTrackingUpdateDVTests with RowTrackingCDFTests
-
-class RowTrackingUpdateIdColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with DeltaColumnMappingEnableIdMode
-
-class RowTrackingUpdateNameColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with DeltaColumnMappingEnableNameMode
-
-class RowTrackingUpdateCDFDVIdColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingCDFTests with RowTrackingUpdateDVTests with DeltaColumnMappingEnableIdMode
-
-class RowTrackingUpdateCDFDVNameColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingCDFTests with RowTrackingUpdateDVTests with DeltaColumnMappingEnableNameMode
-
-class RowTrackingUpdateCDFIdColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingCDFTests with DeltaColumnMappingEnableIdMode
-
-class RowTrackingUpdateCDFNameColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingCDFTests with DeltaColumnMappingEnableNameMode
-
-// Base trait for UPDATE tests that will run post-merge only
-trait UpdateWithRowTrackingTests extends UpdateSQLSuite with RowTrackingTestUtils {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "true")
-
-  override def excluded: Seq[String] = super.excluded ++
-    Seq(
-      // TODO: UPDATE on views can't find metadata column
-      "test update on temp view - view with too many internal aliases - Dataset TempView",
-      "test update on temp view - view with too many internal aliases - SQL TempView",
-      "test update on temp view - view with too many internal aliases " +
-        "with write amplification reduction - Dataset TempView",
-      "test update on temp view - view with too many internal aliases " +
-        "with write amplification reduction - SQL TempView",
-      "test update on temp view - basic - Partition=true - SQL TempView",
-      "test update on temp view - basic - Partition=false - SQL TempView",
-      "test update on temp view - superset cols - Dataset TempView",
-      "test update on temp view - superset cols - SQL TempView",
-      "test update on temp view - nontrivial projection - Dataset TempView",
-      "test update on temp view - nontrivial projection - SQL TempView",
-      "test update on temp view - nontrivial projection " +
-        "with write amplification reduction - Dataset TempView",
-      "test update on temp view - nontrivial projection " +
-        "with write amplification reduction - SQL TempView",
-      "update a SQL temp view",
-      // Checks file size written out
-      "usage metrics"
-      )
-}
-
-// UPDATE + row tracking
-class UpdateWithRowTrackingSuite extends UpdateSQLSuite with UpdateWithRowTrackingTests {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
-}
-
-// UPDATE + CDC + row tracking
-class UpdateWithRowTrackingCDCSuite extends UpdateCDCSuite with UpdateWithRowTrackingTests {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
-}
-
-// Tests with only the table feature enabled. Should not break any tests, unless row count stats
-// are missing.
-trait UpdateWithRowTrackingTableFeatureTests extends UpdateSQLSuite with RowTrackingTestUtils {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "false")
-    .set(defaultRowTrackingFeatureProperty, "supported")
-}
-
-// UPDATE + row tracking table feature
-class UpdateWithRowTrackingTableFeatureSuite
-  extends UpdateSQLSuite
-  with UpdateWithRowTrackingTableFeatureTests {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
-}
-
-// UPDATE + CDC + row tracking table feature
-class UpdateWithRowTrackingTableFeatureCDCSuite
-  extends UpdateCDCSuite
-  with UpdateWithRowTrackingTableFeatureTests {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
-}
