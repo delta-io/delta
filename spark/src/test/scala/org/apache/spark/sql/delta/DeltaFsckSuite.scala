@@ -55,7 +55,7 @@ class DeltaFsckSuite extends QueryTest
       spark.sql(selectCommand).show()
     } catch {
       case e: SparkException =>
-        if (e.getMessage.contains("does not exist"))
+        if (e.getMessage.contains("does not exist")) {
           failedSelect = true
         }
     }
