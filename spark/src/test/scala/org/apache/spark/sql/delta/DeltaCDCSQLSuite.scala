@@ -336,4 +336,38 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       }
     }
   }
+
+  test("drop feature") {
+    withTable("table") {
+      def assertFeatureEnabled(): Unit = {
+        val log = DeltaLog.forTable(spark, TableIdentifier("table"))
+        assert(log.update().protocol.writerFeatureNames.contains(ChangeDataFeedTableFeature.name))
+      }
+
+      def assertFeatureRemoved(): Unit = {
+        val log = DeltaLog.forTable(spark, TableIdentifier("table"))
+        assert(!log.update().metadata.configuration.contains(DeltaConfigs.CHANGE_DATA_FEED.key))
+        assert(!log.update().protocol.writerFeatureNames.contains(ChangeDataFeedTableFeature.name))
+      }
+
+      sql(
+        """
+          |CREATE TABLE table (col LONG) USING DELTA
+          |TBLPROPERTIES (
+          | 'delta.minWriterVersion' = 7,
+          | 'delta.enableChangeDataFeed' = 'true'
+          |)
+          |""".stripMargin)
+      assertFeatureEnabled()
+
+      sql("ALTER TABLE table DROP FEATURE changeDataFeed")
+      assertFeatureRemoved()
+
+      sql("ALTER TABLE table SET TBLPROPERTIES ('delta.feature.changeDataFeed' = 'supported')")
+      assertFeatureEnabled()
+
+      sql("ALTER TABLE table DROP FEATURE changeDataFeed")
+      assertFeatureRemoved()
+    }
+  }
 }
