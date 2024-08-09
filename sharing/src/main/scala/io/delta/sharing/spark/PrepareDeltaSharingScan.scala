@@ -43,7 +43,8 @@ class PrepareDeltaSharingScan(override val spark: SparkSession) extends PrepareD
         val (partitionFilters, dataFilters) = filters.partition { e =>
           SqlDeltaTableUtils.isPredicatePartitionColumnsOnly(e, partitionCols, spark)
         }
-        logInfo(s"Classified filters: partition: $partitionFilters, data: $dataFilters")
+        logInfo(s"Classified filters: partition: $partitionFilters, data: $dataFilters, " +
+          s"limit: $limit.")
         val deltaLog = dsFileIndex.fetchFilesAndConstructDeltaLog(
           partitionFilters,
           dataFilters,
