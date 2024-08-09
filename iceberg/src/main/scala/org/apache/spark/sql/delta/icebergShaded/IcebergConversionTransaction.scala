@@ -31,6 +31,8 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
+import shadedForDelta.org.apache.iceberg.EvolveSchemaVisitor
+import shadedForDelta.org.apache.iceberg.{Schema => IcebergSchema}
 import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.ExpireSnapshots
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
@@ -287,7 +289,11 @@ class IcebergConversionTransaction(
           log" Setting new Iceberg schema:\n ${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}")
       }
 
-      txn.setSchema(icebergSchema).commit()
+      val updateSchema = txn.updateSchema()
+      updateSchema.allowIncompatibleChanges()
+      val previousSchema = convertDeltaSchemaToIcebergSchema(prevMetadata.schema)
+      EvolveSchemaVisitor.visit(updateSchema, previousSchema, icebergSchema)
+      updateSchema.commit()
 
       recordDeltaEvent(
         postCommitSnapshot.deltaLog,
@@ -370,7 +376,15 @@ class IcebergConversionTransaction(
         // consistency between field id in Iceberg schema after conversion and field id in
         // parquet files written by Delta.
         val setSchemaTxn = createIcebergTxn(Some(WRITE_TABLE))
-        setSchemaTxn.setSchema(icebergSchema).commit()
+
+        val updateSchema = setSchemaTxn.updateSchema()
+        EvolveSchemaVisitor.visit(
+          updateSchema,
+          setSchemaTxn.table().schema(),  // Existing
+          icebergSchema  // Target
+        )
+        updateSchema.commit()
+
         setSchemaTxn.updateProperties()
           .set(IcebergConverter.DELTA_VERSION_PROPERTY, postCommitSnapshot.version.toString)
           .commit()

@@ -369,9 +369,9 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     val rawSchema = newMetadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(newMetadata) max
                 findMaxColumnId(rawSchema)
-    val startId = maxId
     val newSchema =
-      SchemaMergingUtils.transformColumns(rawSchema)((path, field, _) => {
+      SchemaMergingUtils.transformColumns(rawSchema, traverseStructsAtOnce = true)(
+        (path, field, _) => {
         val builder = new MetadataBuilder().withMetadata(field.metadata)
 
         lazy val fullName = path :+ field.name

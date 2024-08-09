@@ -56,7 +56,8 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
 
   test("Nested struct schema test") {
     withTable(testTableName) {
-      write(s"""CREATE TABLE $testTableName
+      write(
+        s"""CREATE TABLE $testTableName
            | (col1 INT, col2 STRUCT<f1: STRUCT<f2: INT, f3: STRUCT<f4: INT, f5: INT>
            | , f6: INT>, f7: INT>) USING DELTA
            |TBLPROPERTIES (
@@ -70,8 +71,8 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
       )
 
       val innerStruct3 = StructType(
-          StructField("f4", IntegerType) ::
-            StructField("f5", IntegerType) :: Nil)
+        StructField("f4", IntegerType) ::
+          StructField("f5", IntegerType) :: Nil)
 
       val innerStruct2 = StructType(
         StructField("f2", IntegerType) ::
@@ -95,6 +96,91 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
       val result = read(s"SELECT * FROM $tableFullName")
 
       assert(result.head === data.head)
+    }
+  }
+
+  test("Nested struct schema evolution: Add nested struct") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName (
+           | col1 INT
+           |) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV1' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+
+      // Add nested struct
+      write(s"ALTER TABLE $testTableName ADD COLUMN col2 STRUCT<f3: INT, f4: STRING>")
+
+      write(
+        s"""INSERT INTO $testTableName
+           | VALUES (19, struct(25, 'Spark'))
+           |""".stripMargin)
+
+      assert(read(s"SELECT * FROM $testTableName").head.toSeq === Array(19, Row(25, "Spark")))
+    }
+  }
+
+  test("Nested struct schema evolution: Rename, reorder and update type") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName (
+           | col1 INT,
+           | col2 STRING
+           |) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV1' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+
+      write(s"INSERT INTO $testTableName VALUES (1, 'foo')")
+
+      // Rename and reorder
+      write(s"ALTER TABLE $testTableName RENAME COLUMN col1 TO col3")
+      write(s"ALTER TABLE $testTableName ALTER COLUMN col3 AFTER col2")
+
+      assert(read(s"SELECT * FROM $testTableName WHERE col3 == 1").head.toSeq === Array("foo", 1))
+    }
+  }
+
+  test("Nested struct schema evolution: Add map") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName (
+           | col1 INT
+           |) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+
+      write(s"ALTER TABLE $testTableName ADD COLUMN map_of_ints MAP<int, int>")
+      write(s"INSERT INTO $testTableName VALUES (22, map(19, 25))".stripMargin)
+
+      assert(read(s"SELECT * FROM $testTableName").head.toSeq === Array(22, Map(19 -> 25)))
+    }
+  }
+
+  test("Nested struct schema evolution: Add list") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName (
+           | col1 INT
+           |) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+
+      write(s"ALTER TABLE $testTableName ADD COLUMN ints ARRAY<int>")
+      write(s"INSERT INTO $testTableName VALUES (22, ARRAY(19, 25))".stripMargin)
+
+      assert(read(s"SELECT * FROM $testTableName").head.toSeq === Array(22, List(19, 25)))
     }
   }
 }

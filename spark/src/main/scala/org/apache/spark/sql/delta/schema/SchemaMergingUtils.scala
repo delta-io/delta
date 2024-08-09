@@ -296,16 +296,23 @@ object SchemaMergingUtils {
    * @param tf function to apply.
    * @return the transformed schema.
    */
-  def transformColumns(
-      schema: StructType)(
+  def transformColumns(schema: StructType,
+                       traverseStructsAtOnce: Boolean = false)(
       tf: (Seq[String], StructField, Resolver) => StructField): StructType = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
         case StructType(fields) =>
-          StructType(fields.map { field =>
-            val newField = tf(path, field, DELTA_COL_RESOLVER)
+          val traversedFields = if (traverseStructsAtOnce) {
+            fields.map(field => tf(path, field, DELTA_COL_RESOLVER))
+          } else {
+            fields
+          }
+          StructType(traversedFields.map { traversedField =>
+            val newField = if (!traverseStructsAtOnce) {
+              tf(path, traversedField, DELTA_COL_RESOLVER)
+            } else traversedField
             // maintain the old name as we recurse into the subfields
-            newField.copy(dataType = transform(path :+ field.name, newField.dataType))
+            newField.copy(dataType = transform(path :+ traversedField.name, newField.dataType))
           })
         case ArrayType(elementType, containsNull) =>
           ArrayType(transform(path :+ "element", elementType), containsNull)
