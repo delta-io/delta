@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.uniform
 
 import org.apache.spark.SparkSessionSwitch
-import org.apache.spark.sql.{QueryTest, Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
@@ -43,7 +43,7 @@ trait UniFormE2ETest
    *
    * @param sqlText write query to the UniForm table
    */
-  protected def write(sqlText: String): Unit = spark.sql(sqlText)
+  protected def write(sqlText: String): DataFrame = spark.sql(sqlText)
 
   /**
    * Execute a sql with reader SparkSession and return the result.

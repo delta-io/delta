@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaUnsupportedOpera
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
 
-import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.{DataFrame, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 
 trait IcebergCompatV2EnableUniformByAlterTableSuiteBase extends QueryTest {
@@ -322,7 +322,7 @@ trait IcebergCompatV2EnableUniformByAlterTableSuiteBase extends QueryTest {
   }
 
   /** The wrapper function to execute sql */
-  protected def executeSql(sqlStr: String): Unit
+  protected def executeSql(sqlStr: String): DataFrame
 
   /** The wrapper function to assert the protocol and properties for UniForm Iceberg */
   protected def assertUniFormIcebergProtocolAndProperties(id: String): Unit
