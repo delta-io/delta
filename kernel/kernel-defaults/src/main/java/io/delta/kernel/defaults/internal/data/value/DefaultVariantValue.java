@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.data.value;
 
 import io.delta.kernel.data.VariantValue;
+import java.time.ZoneId;
 import java.util.Arrays;
 
 /** Default implementation of a Delta kernel VariantValue. */
@@ -36,6 +37,11 @@ public class DefaultVariantValue implements VariantValue {
   @Override
   public byte[] getMetadata() {
     return metadata;
+  }
+
+  @Override
+  public String toJson(ZoneId zoneId) {
+    throw new UnsupportedOperationException("The 'toJson' method has not been implemented yet.");
   }
 
   @Override

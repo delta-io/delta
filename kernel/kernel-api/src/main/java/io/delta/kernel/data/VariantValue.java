@@ -16,6 +16,7 @@
 package io.delta.kernel.data;
 
 import io.delta.kernel.annotation.Evolving;
+import java.time.ZoneId;
 
 /**
  * Abstraction to represent a single Variant value in a {@link ColumnVector}.
@@ -27,4 +28,6 @@ public interface VariantValue {
   byte[] getValue();
 
   byte[] getMetadata();
+
+  String toJson(ZoneId zoneId);
 }
