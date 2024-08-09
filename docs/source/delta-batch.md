@@ -911,7 +911,7 @@ You can use the following DDL to explicitly change the schema of a table.
 ALTER TABLE table_name ADD COLUMNS (col_name data_type [COMMENT col_comment] [FIRST|AFTER colA_name], ...)
 ```
 
-By default, nullability is `true`.
+By design, nullability is always `true` and cannot be explicitly changed.
 
 To add a column to a nested field, use:
 
