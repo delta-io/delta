@@ -138,6 +138,22 @@ class OptimisticTransactionSuite
     errorMessageHint = Some("[x=1]" :: "TRUNCATE" :: Nil))
 
   check(
+    "add / read + write with write-serializable isolation",
+    conflicts = false,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x"),
+        configuration = Map(DeltaConfigs.ISOLATION_LEVEL.key -> "WriteSerializable"))
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(1)) :: Nil)
+    ),
+    concurrentWrites = Seq(
+      AddFile("a", Map("x" -> "1"), 1, 1, dataChange = true)),
+    actions = Seq(AddFile("b", Map("x" -> "1"), 1, 1, dataChange = true)))
+
+  check(
     "add / read + no write",  // no write = no real conflicting change even though data was added
     conflicts = false,        // so this should not conflict
     setup = Seq(
@@ -159,6 +175,39 @@ class OptimisticTransactionSuite
       Metadata(
         schemaString = new StructType().add("x", IntegerType).json,
         partitionColumns = Seq("x"))
+    ),
+    reads = Seq(
+      t => {
+        // Filter files twice - once for x=1 and again for x=2
+        t.filterFiles(Seq(EqualTo('x, Literal(1))))
+        t.filterFiles(Seq(EqualTo('x, Literal(2))))
+      }
+    ),
+    concurrentWrites = Seq(
+      AddFile(
+        path = "a",
+        partitionValues = Map("x" -> "1"),
+        size = 1,
+        modificationTime = 1,
+        dataChange = true)
+    ),
+    actions = Seq(
+      AddFile(
+        path = "b",
+        partitionValues = Map("x" -> "2"),
+        size = 1,
+        modificationTime = 1,
+        dataChange = true)
+    ))
+
+  check(
+    "add in part=2 / read from part=1,2 and write to part=1 with write-serializable isolation",
+    conflicts = false,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x"),
+        configuration = Map(DeltaConfigs.ISOLATION_LEVEL.key -> "WriteSerializable"))
     ),
     reads = Seq(
       t => {
@@ -239,6 +288,27 @@ class OptimisticTransactionSuite
       Metadata(
         schemaString = new StructType().add("x", IntegerType).json,
         partitionColumns = Seq("x")),
+      AddFile("a", Map("x" -> "2"), 1, 1, dataChange = true)
+    ),
+    reads = Seq(
+      t => t.filterFiles(EqualTo('x, Literal(1)) :: Nil),
+      // `readWholeTable` should disallow any concurrent change, even if the change
+      // is disjoint with the earlier filter
+      t => t.readWholeTable()
+    ),
+    concurrentWrites = Seq(
+      AddFile("b", Map("x" -> "3"), 1, 1, dataChange = true)),
+    actions = Seq(
+      AddFile("c", Map("x" -> "4"), 1, 1, dataChange = true)))
+
+  check(
+    "taint whole table with write-serializable isolation",
+    conflicts = false,
+    setup = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x"),
+        configuration = Map(DeltaConfigs.ISOLATION_LEVEL.key -> "WriteSerializable")),
       AddFile("a", Map("x" -> "2"), 1, 1, dataChange = true)
     ),
     reads = Seq(
