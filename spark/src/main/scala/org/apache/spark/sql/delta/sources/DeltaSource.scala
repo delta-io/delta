@@ -215,12 +215,13 @@ trait DeltaSourceBase extends Source
   @volatile protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
-    val schemaWithoutCDC = DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
-    if (options.readChangeFeed) {
-      CDCReader.cdcReadSchema(schemaWithoutCDC)
+    val readSchema = DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
+    val readSchemaWithCdc = if (options.readChangeFeed) {
+      CDCReader.cdcReadSchema(readSchema)
     } else {
-      schemaWithoutCDC
+      readSchema
     }
+    DeltaColumnMapping.dropColumnMappingMetadata(readSchemaWithCdc)
   }
 
   // A dummy empty dataframe that can be returned at various point during streaming
