@@ -274,7 +274,7 @@ object TestClientForDeltaFormatSharing {
     val limitSuffix = limit.map{ l => s"_l${l}"}.getOrElse("")
     BlockId(
       s"${DeltaSharingUtils.DELTA_SHARING_BLOCK_ID_PREFIX}" +
-        s"_${sharedTableName}_$queryType$suffix$limitSuffix"
+      s"_${sharedTableName}_$queryType$suffix$limitSuffix"
     )
   }
 

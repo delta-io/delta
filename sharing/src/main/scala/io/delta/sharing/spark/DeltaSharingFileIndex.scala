@@ -115,7 +115,6 @@ case class DeltaSharingFileIndex(
         val newDeltaLog = createDeltaLog(
           jsonPredicateHints,
           queryParamsHashId,
-          tablePathWithHashIdSuffix,
           overrideLimit
         )
         // In theory there should only be one entry in this set since each query creates its own
