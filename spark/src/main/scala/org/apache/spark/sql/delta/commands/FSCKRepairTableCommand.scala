@@ -126,7 +126,7 @@ case class FsckRepairTableCommand (
     recordDeltaOperation(deltaLog, "delta.fsck") {
       deltaLog.withNewTransaction(catalogTable) { txn =>
         val DVRemoveConf =
-          sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MISSING_DVS_ENABLED)
+          sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MISSING_DVS_MODE)
         val startTime = System.nanoTime()
         // scalastyle:off sparkimplicits
         import sparkSession.implicits._

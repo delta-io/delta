@@ -336,7 +336,7 @@ class DeltaFsckSuite extends QueryTest
       val tablePath = directory.getCanonicalPath
       val selectCommand = s"SELECT * FROM delta.`$tablePath`;";
       spark.conf.set("spark.databricks.delta.retentionDurationCheck.enabled", "false")
-      spark.conf.set("spark.databricks.delta.fsck.fsckMissingDVsEnabled", "removeDV")
+      spark.conf.set("spark.databricks.delta.fsck.missingDeletionVectorsMode", "removeDV")
       // Create the original table
       spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT, Col3 STRING) "
         + "USING DELTA PARTITIONED BY (Col1, Col2);")
@@ -889,7 +889,7 @@ test("FSCK ignore non-404 errors in DRY RUN mode") {
     Seq(true, false).foreach { DvEnabled =>
       withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
           withTempDir { tempDir =>
-            spark.conf.set("spark.databricks.delta.fsck.fsckMissingDVsEnabled", "removeDV")
+            spark.conf.set("spark.databricks.delta.fsck.missingDeletionVectorsMode", "removeDV")
             val directory = new File(tempDir, "test")
             val tablePath = directory.getCanonicalPath
             // Create a table in multiple files
@@ -968,7 +968,7 @@ test("FSCK ignore non-404 errors in DRY RUN mode") {
         // Create a table in multiple files
         spark.sql(s"CREATE TABLE delta.`$tablePath` "
           + "USING DELTA AS SELECT col1 as Id FROM VALUES 0, 1, 2, 3, 4, 5, 6, 7;")
-        spark.conf.set("spark.databricks.delta.fsck.fsckMissingDVsEnabled", dvResolution)
+        spark.conf.set("spark.databricks.delta.fsck.missingDeletionVectorsMode", dvResolution)
         spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1);")
         spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(2);")
         spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(3);")

@@ -1698,8 +1698,8 @@ trait DeltaSQLConfBase {
     .intConf
     .createWithDefault(1000)
 
-  val FSCK_MISSING_DVS_ENABLED =
-  buildConf("fsck.MissingDVsEnabled")
+  val FSCK_MISSING_DVS_MODE =
+  buildConf("fsck.missingDeletionVectorsMode")
     .doc("""
       | What to do in case of missing deletion vectors.
       | removeDV - remove the missing DV from the delta log (keep the parquet file)
