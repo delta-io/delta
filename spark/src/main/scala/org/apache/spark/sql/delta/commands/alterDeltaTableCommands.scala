@@ -167,7 +167,13 @@ case class AlterTableSetPropertiesDeltaCommand(
 
       txn.updateMetadata(newMetadata)
 
-      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
+      // Tag if the metadata update is _only_ for enabling row tracking. This allows for
+      // an optimization where we can safely not fail concurrent txns from the metadata update.
+      var tags = Map.empty[String, String]
+      if (enableRowTracking && configuration.size == 1) {
+        tags += (DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+      }
+      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration), tags)
 
       Seq.empty[Row]
     }
@@ -624,6 +630,13 @@ case class AlterTableChangeColumnDeltaCommand(
           verifyColumnChange(sparkSession, oldColumnForVerification, resolver, txn)
 
           val newField = {
+            if (syncIdentity) {
+              assert(oldColumn == newColumn)
+              val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+              val field = IdentityColumn.syncIdentity(newColumn, df)
+              txn.readWholeTable()
+              field
+            } else {
               // Take the name, comment, nullability and data type from newField
               // It's crucial to keep the old column's metadata, which may contain column mapping
               // metadata.
@@ -640,6 +653,7 @@ case class AlterTableChangeColumnDeltaCommand(
                   dataType =
                     SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
                   nullable = newColumn.nullable)
+            }
           }
 
           // Replace existing field with new field
@@ -884,6 +898,10 @@ case class AlterTableReplaceColumnsDeltaCommand(
 
       val metadata = txn.metadata
       val existingSchema = metadata.schema
+
+      if (ColumnWithDefaultExprUtils.hasIdentityColumn(table.initialSnapshot.schema)) {
+        throw DeltaErrors.identityColumnReplaceColumnsNotSupported()
+      }
 
       val resolver = sparkSession.sessionState.conf.resolver
       val changingSchema = StructType(columns)

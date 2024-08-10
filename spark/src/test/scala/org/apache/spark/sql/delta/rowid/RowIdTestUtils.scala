@@ -295,6 +295,7 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
     val rowIdPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
 
     spark.sql(s"ALTER TABLE $targetTableName SET TBLPROPERTIES ('$rowIdPropertyKey'=true)")
+    assert(lastCommitHasRowTrackingEnablementOnlyTag(log))
 
     // Check the protocol upgrade is as expected. We should only bump the minWriterVersion if
     // necessary and add the table feature support for row IDs.
@@ -313,5 +314,20 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
     assertRowIdsAreValid(log)
     assertRowIdsAreLargerThanValue(log, highWaterMarkBefore)
     assertHighWatermarkIsCorrectAfterUpdate(log, highWaterMarkBefore, numRowsInTable)
+  }
+
+  /**
+   * Returns a Boolean indicating whether the last commit on a Delta table has the tag
+   * [[DeltaCommitTag.RowTrackingEnablementOnlyTag.key]].
+   */
+  def lastCommitHasRowTrackingEnablementOnlyTag(log: DeltaLog): Boolean = {
+    val lastTableVersion = log.update().version
+    val (_, lastCommitActions) = log.getChanges(lastTableVersion).toList.last
+    val findRowTrackingEnablementOnlyTag = lastCommitActions.collectFirst {
+      case commitInfo: CommitInfo => DeltaCommitTag.getTagValueFromCommitInfo(
+        Some(commitInfo), DeltaCommitTag.RowTrackingEnablementOnlyTag.key)
+    }.flatten
+
+    findRowTrackingEnablementOnlyTag.exists(_.toBoolean)
   }
 }

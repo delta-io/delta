@@ -22,51 +22,51 @@ import io.delta.kernel.utils.FileStatus;
 /**
  * Representation of a commit file. It contains the version of the commit, the file status of the
  * commit, and the timestamp of the commit. This is used when we want to get the commit information
- * from the {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#commit} and
- * {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#getCommits} APIs.
+ * from the {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#commit} and {@link
+ * io.delta.kernel.engine.CommitCoordinatorClientHandler#getCommits} APIs.
  *
  * @since 3.3.0
  */
 @Evolving
 public class Commit {
 
-    private final long version;
+  private final long version;
 
-    private final FileStatus fileStatus;
+  private final FileStatus fileStatus;
 
-    private final long commitTimestamp;
+  private final long commitTimestamp;
 
-    public Commit(long version, FileStatus fileStatus, long commitTimestamp) {
-        this.version = version;
-        this.fileStatus = fileStatus;
-        this.commitTimestamp = commitTimestamp;
-    }
+  public Commit(long version, FileStatus fileStatus, long commitTimestamp) {
+    this.version = version;
+    this.fileStatus = fileStatus;
+    this.commitTimestamp = commitTimestamp;
+  }
 
-    /**
-     * Get the version of the commit.
-     *
-     * @return the version of the commit.
-     */
-    public long getVersion() {
-        return version;
-    }
+  /**
+   * Get the version of the commit.
+   *
+   * @return the version of the commit.
+   */
+  public long getVersion() {
+    return version;
+  }
 
-    /**
-     * Get the file status of the commit.
-     *
-     * @return the file status of the commit.
-     */
-    public FileStatus getFileStatus() {
-        return fileStatus;
-    }
+  /**
+   * Get the file status of the commit.
+   *
+   * @return the file status of the commit.
+   */
+  public FileStatus getFileStatus() {
+    return fileStatus;
+  }
 
-    /**
-     * Get the timestamp that represents the time since epoch in milliseconds when the commit write
-     * was started.
-     *
-     * @return the timestamp of the commit.
-     */
-    public long getCommitTimestamp() {
-        return commitTimestamp;
-    }
+  /**
+   * Get the timestamp that represents the time since epoch in milliseconds when the commit write
+   * was started.
+   *
+   * @return the timestamp of the commit.
+   */
+  public long getCommitTimestamp() {
+    return commitTimestamp;
+  }
 }

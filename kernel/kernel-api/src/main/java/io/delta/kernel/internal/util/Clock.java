@@ -15,10 +15,8 @@
  */
 package io.delta.kernel.internal.util;
 
-/**
- * An interface to represent clocks, so that they can be mocked out in unit tests.
- */
+/** An interface to represent clocks, so that they can be mocked out in unit tests. */
 public interface Clock {
-    /** @return Current system time, in ms. */
-    long getTimeMillis();
+  /** @return Current system time, in ms. */
+  long getTimeMillis();
 }

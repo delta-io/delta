@@ -68,7 +68,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     checkSupported(createTestProtocol(minWriterVersion = 7))
   }
 
-  Seq("appendOnly", "inCommitTimestamp-preview", "columnMapping")
+  Seq("appendOnly", "inCommitTimestamp", "columnMapping")
     .foreach { supportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
       checkSupported(createTestProtocol(minWriterVersion = 7, supportedWriterFeature))

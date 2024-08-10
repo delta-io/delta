@@ -110,6 +110,9 @@ case class DeltaSink(
       throw DeltaErrors.streamWriteNullTypeException
     }
 
+    IdentityColumn.blockExplicitIdentityColumnInsert(
+      txn.snapshot.schema,
+      data.queryExecution.analyzed)
 
     // If the batch reads the same Delta table as this sink is going to write to, then this
     // write has dependencies. Then make sure that this commit set hasDependencies to true

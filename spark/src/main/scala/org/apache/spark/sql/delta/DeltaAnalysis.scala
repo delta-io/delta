@@ -1218,7 +1218,15 @@ object DeltaRelation extends DeltaLogging {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       val output = if (CDCReader.isCDCRead(options)) {
         // Handles cdc for the spark.read.options().table() code path
-        toAttributes(relation.schema)
+        // Mapping needed for references to the table's columns coming from Spark Connect.
+        val newOutput = toAttributes(relation.schema)
+        newOutput.map { a =>
+          val existingReference = v2Relation.output
+            .find(e => e.name == a.name && e.dataType == a.dataType && e.nullable == a.nullable)
+          existingReference.map { e =>
+            e.copy(metadata = a.metadata)(exprId = e.exprId, qualifier = e.qualifier)
+          }.getOrElse(a)
+        }
       } else {
         v2Relation.output
       }

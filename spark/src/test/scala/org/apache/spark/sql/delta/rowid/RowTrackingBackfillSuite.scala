@@ -317,6 +317,8 @@ class RowTrackingBackfillSuite
       assertNumBackfillCommits(expectedNumCommits = 0)
       assert(!RowTracking.isSupported(snapshot.protocol))
       assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
+      assert(!lastCommitHasRowTrackingEnablementOnlyTag(log),
+          "RowTrackingEnablementOnly tag should not be set if the table property value is false")
     }
   }
 
@@ -333,6 +335,8 @@ class RowTrackingBackfillSuite
              |'$columnMappingMode'='name')""".stripMargin)
 
       val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      assert(!lastCommitHasRowTrackingEnablementOnlyTag(log),
+          "RowTrackingEnablementOnly tag should not be set for other table properties")
 
       // Try to enable row IDs at the same time as we set column mapping mode to id.
       // This should fail due to illegal column mapping mode change.
@@ -392,6 +396,9 @@ class RowTrackingBackfillSuite
         }.mkString(", ")
 
         sql(s"ALTER TABLE $testTableName SET TBLPROPERTIES($tblPropertiesString)")
+        assert(!lastCommitHasRowTrackingEnablementOnlyTag(log),
+            "RowTrackingEnablementOnly tag should not be set if ALTER TABLE is changing" +
+            " multiple table properties")
 
         val expectedFinalProtocol = if (isOtherTableFeatureLegacy) {
           Protocol(

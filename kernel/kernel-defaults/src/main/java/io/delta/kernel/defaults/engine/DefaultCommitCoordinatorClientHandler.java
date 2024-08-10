@@ -15,17 +15,11 @@
  */
 package io.delta.kernel.defaults.engine;
 
-import java.io.IOException;
-import java.util.Iterator;
-import java.util.Map;
-
-import io.delta.storage.LogStore;
-import io.delta.storage.commit.CommitCoordinatorClient;
-import io.delta.storage.commit.CommitFailedException;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-
 import io.delta.kernel.data.Row;
+import io.delta.kernel.defaults.internal.coordinatedcommits.CommitCoordinatorProvider;
+import io.delta.kernel.defaults.internal.coordinatedcommits.StorageKernelAPIAdapter;
+import io.delta.kernel.defaults.internal.json.JsonUtils;
+import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.engine.CommitCoordinatorClientHandler;
 import io.delta.kernel.engine.coordinatedcommits.CommitResponse;
 import io.delta.kernel.engine.coordinatedcommits.GetCommitsResponse;
@@ -33,144 +27,131 @@ import io.delta.kernel.engine.coordinatedcommits.UpdatedActions;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.defaults.internal.coordinatedcommits.CommitCoordinatorProvider;
-import io.delta.kernel.defaults.internal.coordinatedcommits.StorageKernelAPIAdapter;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
+import io.delta.storage.LogStore;
+import io.delta.storage.commit.CommitCoordinatorClient;
+import io.delta.storage.commit.CommitFailedException;
+import java.io.IOException;
+import java.util.Iterator;
+import java.util.Map;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
 
 /**
  * Default implementation of {@link CommitCoordinatorClientHandler} based on Hadoop APIs which uses
- * commit coordinator defined in delta-storage modules.
- * It takes a Hadoop {@link Configuration} object to interact with the commit coordinator client.
- * The following optional configurations can be set to customize the behavior of the client:
+ * commit coordinator defined in delta-storage modules. It takes a Hadoop {@link Configuration}
+ * object to interact with the commit coordinator client. The following optional configurations can
+ * be set to customize the behavior of the client:
+ *
  * <ul>
- *     <li>{@code io.delta.kernel.logStore.<scheme>.impl} - The class name of the custom
- *     {@link LogStore} implementation to use for operations on storage systems with the
- *     specified {@code scheme}. For example, to use a custom {@link LogStore} for S3 storage
- *     objects:
- *     <pre>{@code
- *     <property>
- *       <name>io.delta.kernel.logStore.s3.impl</name>
- *       <value>com.example.S3LogStore</value>
- *     </property>
- *     }</pre>
- *     If not set, the default LogStore implementation for the scheme will be used.
- *     </li>
- *     <li>{@code delta.enableFastS3AListFrom} - Set to {@code true} to enable fast listing
- *     functionality when using a {@link LogStore} created for S3 storage objects.
- *     </li>
- *     <li>{@code io.delta.kernel.commitCoordinatorBuilder.<name>.impl} - The class name of the
- *     custom {@link io.delta.kernel.defaults.internal.coordinatedcommits.CommitCoordinatorBuilder}
- *     implementation to use for building the commit coordinator client.
- *     </li>
+ *   <li>{@code io.delta.kernel.logStore.<scheme>.impl} - The class name of the custom {@link
+ *       LogStore} implementation to use for operations on storage systems with the specified {@code
+ *       scheme}. For example, to use a custom {@link LogStore} for S3 storage objects:
+ *       <pre>{@code
+ * <property>
+ *   <name>io.delta.kernel.logStore.s3.impl</name>
+ *   <value>com.example.S3LogStore</value>
+ * </property>
+ *
+ * }</pre>
+ *       If not set, the default LogStore implementation for the scheme will be used.
+ *   <li>{@code delta.enableFastS3AListFrom} - Set to {@code true} to enable fast listing
+ *       functionality when using a {@link LogStore} created for S3 storage objects.
+ *   <li>{@code io.delta.kernel.commitCoordinatorBuilder.<name>.impl} - The class name of the custom
+ *       {@link io.delta.kernel.defaults.internal.coordinatedcommits.CommitCoordinatorBuilder}
+ *       implementation to use for building the commit coordinator client.
  * </ul>
  */
 public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorClientHandler {
-    private final Configuration hadoopConf;
-    private final CommitCoordinatorClient commitCoordinatorClient;
+  private final Configuration hadoopConf;
+  private final CommitCoordinatorClient commitCoordinatorClient;
 
-    /**
-     * Create an instance of the default {@link DefaultCommitCoordinatorClientHandler}
-     * implementation.
-     *
-     * @param hadoopConf Configuration to use. List of options to customize the behavior of
-     *                   the client can be found in the class documentation.
-     * @param name The identifier or name of the underlying commit coordinator client
-     * @param commitCoordinatorConf The configuration settings for the underlying commit coordinator
-     *                              client which contains the necessary information to create the
-     *                              client such as the endpoint etc.
-     */
-    public DefaultCommitCoordinatorClientHandler(
-            Configuration hadoopConf,
-            String name,
-            Map<String, String> commitCoordinatorConf) {
-        this.hadoopConf = hadoopConf;
-        this.commitCoordinatorClient = CommitCoordinatorProvider
-                .getCommitCoordinatorClient(hadoopConf, name, commitCoordinatorConf);
+  /**
+   * Create an instance of the default {@link DefaultCommitCoordinatorClientHandler} implementation.
+   *
+   * @param hadoopConf Configuration to use. List of options to customize the behavior of the client
+   *     can be found in the class documentation.
+   * @param name The identifier or name of the underlying commit coordinator client
+   * @param commitCoordinatorConf The configuration settings for the underlying commit coordinator
+   *     client which contains the necessary information to create the client such as the endpoint
+   *     etc.
+   */
+  public DefaultCommitCoordinatorClientHandler(
+      Configuration hadoopConf, String name, Map<String, String> commitCoordinatorConf) {
+    this.hadoopConf = hadoopConf;
+    this.commitCoordinatorClient =
+        CommitCoordinatorProvider.getCommitCoordinatorClient(
+            hadoopConf, name, commitCoordinatorConf);
+  }
+
+  @Override
+  public Map<String, String> registerTable(
+      String logPath,
+      long currentVersion,
+      AbstractMetadata currentMetadata,
+      AbstractProtocol currentProtocol) {
+    return commitCoordinatorClient.registerTable(
+        new Path(logPath),
+        currentVersion,
+        StorageKernelAPIAdapter.toStorageAbstractMetadata(currentMetadata),
+        StorageKernelAPIAdapter.toStorageAbstractProtocol(currentProtocol));
+  }
+
+  @Override
+  public CommitResponse commit(
+      String logPath,
+      Map<String, String> tableConf,
+      long commitVersion,
+      CloseableIterator<Row> actions,
+      UpdatedActions updatedActions)
+      throws io.delta.kernel.engine.coordinatedcommits.CommitFailedException {
+    Path path = new Path(logPath);
+    LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
+    try {
+      return StorageKernelAPIAdapter.toKernelAPICommitResponse(
+          commitCoordinatorClient.commit(
+              logStore,
+              hadoopConf,
+              path,
+              tableConf,
+              commitVersion,
+              new Iterator<String>() {
+                @Override
+                public boolean hasNext() {
+                  return actions.hasNext();
+                }
+
+                @Override
+                public String next() {
+                  return JsonUtils.rowToJson(actions.next());
+                }
+              },
+              StorageKernelAPIAdapter.toStorageUpdatedActions(updatedActions)));
+    } catch (CommitFailedException e) {
+      throw StorageKernelAPIAdapter.toKernelAPICommitFailedException(e);
     }
+  }
 
-    @Override
-    public Map<String, String> registerTable(
-            String logPath,
-            long currentVersion,
-            AbstractMetadata currentMetadata,
-            AbstractProtocol currentProtocol) {
-        return commitCoordinatorClient.registerTable(
-                new Path(logPath),
-                currentVersion,
-                StorageKernelAPIAdapter.toStorageAbstractMetadata(currentMetadata),
-                StorageKernelAPIAdapter.toStorageAbstractProtocol(currentProtocol));
-    }
+  @Override
+  public GetCommitsResponse getCommits(
+      String logPath, Map<String, String> tableConf, Long startVersion, Long endVersion) {
+    return StorageKernelAPIAdapter.toKernelAPIGetCommitsResponse(
+        commitCoordinatorClient.getCommits(new Path(logPath), tableConf, startVersion, endVersion));
+  }
 
-    @Override
-    public CommitResponse commit(
-            String logPath,
-            Map<String, String> tableConf,
-            long commitVersion,
-            CloseableIterator<Row> actions,
-            UpdatedActions updatedActions)
-            throws io.delta.kernel.engine.coordinatedcommits.CommitFailedException {
-        Path path = new Path(logPath);
-        LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
-        try {
-            return StorageKernelAPIAdapter.toKernelAPICommitResponse(commitCoordinatorClient.commit(
-                logStore,
-                hadoopConf,
-                path,
-                tableConf,
-                commitVersion,
-                new Iterator<String>() {
-                    @Override
-                    public boolean hasNext() {
-                        return actions.hasNext();
-                    }
+  @Override
+  public void backfillToVersion(
+      String logPath, Map<String, String> tableConf, long version, Long lastKnownBackfilledVersion)
+      throws IOException {
+    Path path = new Path(logPath);
+    LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
+    commitCoordinatorClient.backfillToVersion(
+        logStore, hadoopConf, path, tableConf, version, lastKnownBackfilledVersion);
+  }
 
-                    @Override
-                    public String next() {
-                        return JsonUtils.rowToJson(actions.next());
-                    }
-                },
-                StorageKernelAPIAdapter.toStorageUpdatedActions(updatedActions)));
-        } catch (CommitFailedException e) {
-            throw StorageKernelAPIAdapter.toKernelAPICommitFailedException(e);
-        }
-    }
-
-    @Override
-    public GetCommitsResponse getCommits(
-            String logPath,
-            Map<String, String> tableConf,
-            Long startVersion,
-            Long endVersion) {
-        return StorageKernelAPIAdapter.toKernelAPIGetCommitsResponse(
-                commitCoordinatorClient.getCommits(
-                        new Path(logPath),
-                        tableConf,
-                        startVersion,
-                        endVersion));
-    }
-
-    @Override
-    public void backfillToVersion(
-            String logPath,
-            Map<String, String> tableConf,
-            long version,
-            Long lastKnownBackfilledVersion) throws IOException {
-        Path path = new Path(logPath);
-        LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
-        commitCoordinatorClient.backfillToVersion(
-                logStore,
-                hadoopConf,
-                path,
-                tableConf,
-                version,
-                lastKnownBackfilledVersion);
-    }
-
-    @Override
-    public boolean semanticEquals(CommitCoordinatorClientHandler other) {
-        return other instanceof DefaultCommitCoordinatorClientHandler &&
-                commitCoordinatorClient.semanticEquals(
-                ((DefaultCommitCoordinatorClientHandler) other).commitCoordinatorClient);
-    }
+  @Override
+  public boolean semanticEquals(CommitCoordinatorClientHandler other) {
+    return other instanceof DefaultCommitCoordinatorClientHandler
+        && commitCoordinatorClient.semanticEquals(
+            ((DefaultCommitCoordinatorClientHandler) other).commitCoordinatorClient);
+  }
 }

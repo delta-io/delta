@@ -22,13 +22,15 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, V2CheckpointTableFeature}
+import com.databricks.spark.util.UsageRecord
+import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CommitCoordinatorGetCommitsFailedException
 import org.apache.spark.sql.delta.CoordinatedCommitType._
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.InitialSnapshot
+import org.apache.spark.sql.delta.LogSegment
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -36,7 +38,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, UpdatedActions}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
@@ -521,39 +523,95 @@ class CoordinatedCommitsSuite
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
       val log = DeltaLog.forTable(spark, tablePath)
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json"))
-      log.update()
+      assert(log.unsafeVolatileSnapshot.getLastKnownBackfilledVersion == 0)
+      var snapshot = log.update()
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json"))
+      assert(snapshot.getLastKnownBackfilledVersion == 0)
 
       // Commit 1
       Seq(2).toDF.write.format("delta").mode("append").save(tablePath) // version 1
+      // Note: The assert for backfillInterval = 1 only works because with a batch
+      // size of 1, the AbstractBatchBackfillingCommitCoordinator synchronously
+      // backfills a commit and then directly returns the backfilled commit information
+      // from the commit() call so the post commit snapshot creation directly appends
+      // the backfilled commit to the LogSegment.
+      //
+      // The expected behavior before update() is:
+      // Backfill interval 1 : post commit snapshot contains 0.json, 1.json, lkbv = 1
+      // Backfill interval 2 : post commit snapshot contains 0.json, 1.uuid.json, lkbv = 0
+      // Backfill interval 10: post commit snapshot contains 0.json, 1.uuid.json, lkbv = 0
       val commit1 = if (backfillInterval < 2) "1.json" else "1.uuid-1.json"
+      var backfillVersion = if (backfillInterval < 2) 1 else 0
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1))
-      log.update()
+      assert(log.unsafeVolatileSnapshot.getLastKnownBackfilledVersion == backfillVersion)
+      snapshot = log.update()
+      // The expected behavior after update() is:
+      // Backfill interval 1 : post commit snapshot contains 0.json, 1.json, lkbv = 1
+      // Backfill interval 2 : post commit snapshot contains 0.json, 1.uuid.json, lkbv = 0
+      // Backfill interval 10: post commit snapshot contains 0.json, 1.uuid.json, lkbv = 0
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1))
+      assert(snapshot.getLastKnownBackfilledVersion == backfillVersion)
 
       // Commit 2
       Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
+      // The expected behavior before update() is:
+      // Backfill interval 1 : post commit snapshot contains
+      //   0.json, 1.json, 2.json lkbv = 2
+      // Backfill interval 2 : post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json lkbv = 0
+      // Backfill interval 10: post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, lkbv = 0
       val commit2 = if (backfillInterval < 2) "2.json" else "2.uuid-2.json"
+      backfillVersion = if (backfillInterval < 2) 2 else 0
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2))
-      log.update()
-      if (backfillInterval <= 2) {
-        // backfill would have happened at commit 2. Next deltaLog.update will pickup the backfilled
-        // files.
-        assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", "1.json", "2.json"))
-      } else {
-        assert(getDeltasInPostCommitSnapshot(log) ===
-          Seq("0.json", "1.uuid-1.json", "2.uuid-2.json"))
-      }
+      assert(log.unsafeVolatileSnapshot.getLastKnownBackfilledVersion == backfillVersion)
+      snapshot = log.update()
+      // backfill would have happened at commit 2 for batchSize = 2 but we do not swap
+      // the snapshot that contains the unbackfilled commits with the updated snapshot
+      // (which contains the backfilled commits) during update because they are identical
+      // and swapping would lead to losing the cached state. However, we update the
+      // effective last known backfilled version on the snapshot.
+      //
+      // The expected behavior after update is
+      // Backfill interval 1 : post commit snapshot contains
+      //   0.json, 1.json, 2.json lkbv = 2
+      // Backfill interval 2 : post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json lkbv = 0 lkbv = 2
+      // Backfill interval 10: post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json lkbv = 0
+      backfillVersion = if (backfillInterval <= 2) 2 else 0
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2))
+      assert(snapshot.getLastKnownBackfilledVersion == backfillVersion)
 
       // Commit 3
       Seq(4).toDF.write.format("delta").mode("append").save(tablePath)
       val commit3 = if (backfillInterval < 2) "3.json" else "3.uuid-3.json"
-      if (backfillInterval <= 2) {
-        assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", "1.json", "2.json", commit3))
-      } else {
-        assert(getDeltasInPostCommitSnapshot(log) ===
-          Seq("0.json", "1.uuid-1.json", "2.uuid-2.json", commit3))
-      }
+      // The post commit snapshot is a new snapshot and so its lastKnownBackfilledVersion
+      // member is calculated from the LogSegment. Given that the LogSegment for
+      // batchInterval > 1 only contains 0 as the only backfilled commit, we need
+      // to set the expected backfillVersion to 0 here for backfillIntervals > 1.
+      //
+      // The expected behavior before update() is:
+      // Backfill interval 1 : post commit snapshot contains
+      //   0.json, 1.json, 2.json, 3.json lkbv = 3
+      // Backfill interval 2 : post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, 3.uuid.json lkbv = 0
+      // Backfill interval 10: post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, 3.uuid.json lkbv = 0
+      backfillVersion = if (backfillInterval < 2) 3 else 0
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2, commit3))
+      assert(log.unsafeVolatileSnapshot.getLastKnownBackfilledVersion == backfillVersion)
+      snapshot = log.update()
+      // The expected behavior after update() is:
+      // Backfill interval 1 : post commit snapshot contains
+      //   0.json, 1.json, 2.json, 3.json lkbv = 3
+      // Backfill interval 2 : post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, 3.uuid.json lkbv = 2
+      // Backfill interval 10: post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, 3.uuid.json lkbv = 0
+      backfillVersion = if (backfillInterval < 2) 3 else if (backfillInterval == 2) 2 else 0
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2, commit3))
+      assert(snapshot.getLastKnownBackfilledVersion == backfillVersion)
 
       checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1), Row(2), Row(3), Row(4)))
     }
@@ -1112,6 +1170,176 @@ class CoordinatedCommitsSuite
       val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredUsageLogs.head.blob)
       assert(usageObj("numUnbackfilledFiles").asInstanceOf[Int] === 3)
       assert(usageObj("numAlreadyBackfilledFiles").asInstanceOf[Int] === 0)
+    }
+  }
+
+  test("LogSegment comparison does not swap snapshots that only differ in " +
+    "backfilled/unbackfilled commits") {
+    // Use a batch size of two so we don't immediately backfill in
+    // the AbstractBatchBackfillingCommitCoordinatorClient and so the
+    // CommitResponse contains the UUID-based commit.
+    CommitCoordinatorProvider.registerBuilder(
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
+
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      val log = DeltaLog.forTable(spark, tablePath)
+
+      // Version 0 -- backfilled by default
+      makeCommitAndAssertSnapshotState(
+        data = Seq(0),
+        expectedLastKnownBackfilledVersion = 0,
+        expectedNumUnbackfilledCommits = 0,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Version 1 -- not backfilled immediately because of batchSize = 2
+      makeCommitAndAssertSnapshotState(
+        data = Seq(1),
+        expectedLastKnownBackfilledVersion = 0,
+        expectedNumUnbackfilledCommits = 1,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Version 2 -- backfills versions 1 and 2
+      makeCommitAndAssertSnapshotState(
+        data = Seq(2),
+        expectedLastKnownBackfilledVersion = 2,
+        expectedNumUnbackfilledCommits = 2,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Version 3 -- not backfilled immediately because of batchSize = 2
+      makeCommitAndAssertSnapshotState(
+        data = Seq(3),
+        expectedLastKnownBackfilledVersion = 2,
+        expectedNumUnbackfilledCommits = 3,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Version 4 -- backfills versions 3 and 4
+      makeCommitAndAssertSnapshotState(
+        data = Seq(4),
+        expectedLastKnownBackfilledVersion = 4,
+        expectedNumUnbackfilledCommits = 4,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Trigger a checkpoint
+      log.checkpoint(log.update())
+      // Version 5 -- not backfilled immediately because of batchSize 2
+      makeCommitAndAssertSnapshotState(
+        data = Seq(5),
+        expectedLastKnownBackfilledVersion = 4,
+        expectedNumUnbackfilledCommits = 1,
+        expectedLastKnownBackfilledFile = FileNames.checkpointFileSingular(log.logPath, 4),
+        log, tablePath)
+      // Version 6 -- backfills versions 5 and 6
+      makeCommitAndAssertSnapshotState(
+        data = Seq(6),
+        expectedLastKnownBackfilledVersion = 6,
+        expectedNumUnbackfilledCommits = 2,
+        expectedLastKnownBackfilledFile = FileNames.checkpointFileSingular(log.logPath, 4),
+        log, tablePath)
+    }
+  }
+
+  private def makeCommitAndAssertSnapshotState(
+      data: Seq[Long],
+      expectedLastKnownBackfilledVersion: Long,
+      expectedNumUnbackfilledCommits: Long,
+      expectedLastKnownBackfilledFile: Path,
+      log: DeltaLog,
+      tablePath: String): Unit = {
+    data.toDF().write.format("delta").mode("overwrite").save(tablePath)
+    val snapshot = log.update()
+    val segment = snapshot.logSegment
+    var numUnbackfilledCommits = 0
+    segment.deltas.foreach {
+      case UnbackfilledDeltaFile(_, _, _) => numUnbackfilledCommits += 1
+      case _ => // do nothing
+    }
+    assert(snapshot.getLastKnownBackfilledVersion == expectedLastKnownBackfilledVersion)
+    assert(numUnbackfilledCommits == expectedNumUnbackfilledCommits)
+    val lastKnownBackfilledFile = CoordinatedCommitsUtils
+      .getLastBackfilledFile(segment.deltas).getOrElse(
+        segment.checkpointProvider.topLevelFiles.head
+      )
+    assert(lastKnownBackfilledFile.getPath == expectedLastKnownBackfilledFile,
+      s"$lastKnownBackfilledFile did not equal $expectedLastKnownBackfilledFile")
+  }
+
+  for (ignoreMissingCCImpl <- BOOLEAN_DOMAIN)
+  test(s"missing coordinator implementation [ignoreMissingCCImpl = $ignoreMissingCCImpl]") {
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
+    CommitCoordinatorProvider.registerBuilder(
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      Seq(0).toDF.write.format("delta").save(tablePath)
+      (1 to 3).foreach { v =>
+        Seq(v).toDF.write.mode("append").format("delta").save(tablePath)
+      }
+      // The table has 3 backfilled commits [0, 1, 2] and 1 unbackfilled commit [3]
+      CommitCoordinatorProvider.clearNonDefaultBuilders()
+
+      def getUsageLogsAndEnsurePresenceOfMissingCCImplLog(
+          expectedFailIfImplUnavailable: Boolean)(f: => Unit): Seq[UsageRecord] = {
+        val usageLogs = Log4jUsageLogger.track {
+          f
+        }
+        val filteredLogs = filterUsageRecords(
+          usageLogs, CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_MISSING_IMPLEMENTATION)
+        assert(filteredLogs.nonEmpty)
+        val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredLogs.head.blob)
+        assert(usageObj("commitCoordinatorName") === "tracking-in-memory")
+        assert(usageObj("registeredCommitCoordinators") ===
+          CommitCoordinatorProvider.getRegisteredCoordinatorNames.mkString(", "))
+        assert(usageObj("failIfImplUnavailable") === expectedFailIfImplUnavailable.toString)
+        usageLogs
+      }
+      withSQLConf(
+        DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION.key ->
+          ignoreMissingCCImpl.toString) {
+        DeltaLog.clearCache()
+        if (!ignoreMissingCCImpl) {
+          getUsageLogsAndEnsurePresenceOfMissingCCImplLog(expectedFailIfImplUnavailable = true) {
+            val e = intercept[IllegalArgumentException] {
+              DeltaLog.forTable(spark, tablePath)
+            }
+            assert(e.getMessage.contains("Unknown commit-coordinator"))
+          }
+        } else {
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          assert(deltaLog.snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+          // This will create a stale deltaLog as the commit-coordinator is missing.
+          assert(deltaLog.snapshot.version === 2L)
+          DeltaLog.clearCache()
+          getUsageLogsAndEnsurePresenceOfMissingCCImplLog(expectedFailIfImplUnavailable = false) {
+            checkAnswer(spark.read.format("delta").load(tablePath), Seq(0, 1, 2).toDF())
+          }
+          // Writes and checkpoints should still fail.
+          val createCheckpointFn = () => (deltaLog.checkpoint())
+          val writeDataFn =
+            () => Seq(4).toDF.write.format("delta").mode("append").save(tablePath)
+          for (tableMutationFn <- Seq(createCheckpointFn, writeDataFn)) {
+            DeltaLog.clearCache()
+            val usageLogs = Log4jUsageLogger.track {
+              val e = intercept[DeltaUnsupportedOperationException] {
+                tableMutationFn()
+              }
+              checkError(e,
+                errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+                sqlState = "0AKDC",
+                parameters = Map("coordinatorName" -> "tracking-in-memory")
+              )
+              assert(e.getMessage.contains(
+                "no implementation of this coordinator is available in the current environment"))
+            }
+            val filteredLogs = filterUsageRecords(
+              usageLogs,
+              CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_MISSING_IMPLEMENTATION_WRITE)
+            val usageObj = JsonUtils.fromJson[Map[String, Any]](filteredLogs.head.blob)
+            assert(usageObj("commitCoordinatorName") === "tracking-in-memory")
+            assert(usageObj("readVersion") === "2")
+          }
+        }
+      }
     }
   }
 

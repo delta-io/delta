@@ -29,71 +29,71 @@ import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
  */
 @Evolving
 public class UpdatedActions {
-    private final AbstractCommitInfo commitInfo;
+  private final AbstractCommitInfo commitInfo;
 
-    private final AbstractMetadata newMetadata;
+  private final AbstractMetadata newMetadata;
 
-    private final AbstractProtocol newProtocol;
+  private final AbstractProtocol newProtocol;
 
-    private final AbstractMetadata oldMetadata;
+  private final AbstractMetadata oldMetadata;
 
-    private final AbstractProtocol oldProtocol;
+  private final AbstractProtocol oldProtocol;
 
-    public UpdatedActions(
-            AbstractCommitInfo commitInfo,
-            AbstractMetadata newMetadata,
-            AbstractProtocol newProtocol,
-            AbstractMetadata oldMetadata,
-            AbstractProtocol oldProtocol) {
-        this.commitInfo = commitInfo;
-        this.newMetadata = newMetadata;
-        this.newProtocol = newProtocol;
-        this.oldMetadata = oldMetadata;
-        this.oldProtocol = oldProtocol;
-    }
+  public UpdatedActions(
+      AbstractCommitInfo commitInfo,
+      AbstractMetadata newMetadata,
+      AbstractProtocol newProtocol,
+      AbstractMetadata oldMetadata,
+      AbstractProtocol oldProtocol) {
+    this.commitInfo = commitInfo;
+    this.newMetadata = newMetadata;
+    this.newProtocol = newProtocol;
+    this.oldMetadata = oldMetadata;
+    this.oldProtocol = oldProtocol;
+  }
 
-    /**
-     * Get the commit info for this commit attempt.
-     *
-     * @return the commit info.
-     */
-    public AbstractCommitInfo getCommitInfo() {
-        return commitInfo;
-    }
+  /**
+   * Get the commit info for this commit attempt.
+   *
+   * @return the commit info.
+   */
+  public AbstractCommitInfo getCommitInfo() {
+    return commitInfo;
+  }
 
-    /**
-     * Get the new metadata which needs to be committed.
-     *
-     * @return the new metadata.
-     */
-    public AbstractMetadata getNewMetadata() {
-        return newMetadata;
-    }
+  /**
+   * Get the new metadata which needs to be committed.
+   *
+   * @return the new metadata.
+   */
+  public AbstractMetadata getNewMetadata() {
+    return newMetadata;
+  }
 
-    /**
-     * Get the new protocol which needs to be committed.
-     *
-     * @return the new protocol.
-     */
-    public AbstractProtocol getNewProtocol() {
-        return newProtocol;
-    }
+  /**
+   * Get the new protocol which needs to be committed.
+   *
+   * @return the new protocol.
+   */
+  public AbstractProtocol getNewProtocol() {
+    return newProtocol;
+  }
 
-    /**
-     * Get the metadata from the read snapshot of this transaction.
-     *
-     * @return the old metadata.
-     */
-    public AbstractMetadata getOldMetadata() {
-        return oldMetadata;
-    }
+  /**
+   * Get the metadata from the read snapshot of this transaction.
+   *
+   * @return the old metadata.
+   */
+  public AbstractMetadata getOldMetadata() {
+    return oldMetadata;
+  }
 
-    /**
-     * Get the protocol from the read snapshot of this transaction.
-     *
-     * @return the old protocol.
-     */
-    public AbstractProtocol getOldProtocol() {
-        return oldProtocol;
-    }
+  /**
+   * Get the protocol from the read snapshot of this transaction.
+   *
+   * @return the old protocol.
+   */
+  public AbstractProtocol getOldProtocol() {
+    return oldProtocol;
+  }
 }

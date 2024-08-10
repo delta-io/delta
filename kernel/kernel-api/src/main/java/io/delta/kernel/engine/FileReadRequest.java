@@ -17,23 +17,15 @@ package io.delta.kernel.engine;
 
 import io.delta.kernel.annotation.Evolving;
 
-/**
- * Represents a request to read a range of bytes from a given file.
- */
+/** Represents a request to read a range of bytes from a given file. */
 @Evolving
 public interface FileReadRequest {
-    /**
-     * Get the fully qualified path of the file from which to read the data.
-     */
-    String getPath();
+  /** Get the fully qualified path of the file from which to read the data. */
+  String getPath();
 
-    /**
-     * Get the start offset in the file from where to start reading the data.
-     */
-    int getStartOffset();
+  /** Get the start offset in the file from where to start reading the data. */
+  int getStartOffset();
 
-    /**
-     * Get the length of the data to read from the file starting at the <i>startOffset</i>.
-     */
-    int getReadLength();
+  /** Get the length of the data to read from the file starting at the <i>startOffset</i>. */
+  int getReadLength();
 }
