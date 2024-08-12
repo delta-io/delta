@@ -125,14 +125,17 @@ public interface Transaction {
     // - generating the default value columns
     // - generating the generated columns
 
-    // Remove the partition columns from the data as they are already part of file metadata
-    // and are not needed in the data files. TODO: once we start supporting uniform complaint
-    // tables, we may conditionally skip this step.
+    boolean isIcebergCompatV2Enabled = isIcebergCompatV2Enabled(transactionState);
 
     // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
     return dataIter.map(
         filteredBatch -> {
+          if (isIcebergCompatV2Enabled) {
+            // don't remove the partition columns for iceberg compat v2 enabled tables
+            return filteredBatch;
+          }
+
           ColumnarBatch data = filteredBatch.getData();
           if (!data.getSchema().equals(tableSchema)) {
             throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
