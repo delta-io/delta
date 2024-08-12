@@ -26,8 +26,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.RemoveFile;
+import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
@@ -61,8 +60,11 @@ public class DeltaLogActionUtils {
    */
   public enum DeltaAction {
     REMOVE("remove", RemoveFile.FULL_SCHEMA),
-    ADD("add", AddFile.FULL_SCHEMA);
-    // Remaining actions coming in follow-up PR
+    ADD("add", AddFile.FULL_SCHEMA),
+    METADATA("metaData", Metadata.FULL_SCHEMA),
+    PROTOCOL("protocol", Protocol.FULL_SCHEMA),
+    COMMITINFO("commitInfo", CommitInfo.FULL_SCHEMA);
+    // TODO AddCDC
 
     public final String colName;
     public final StructType schema;
