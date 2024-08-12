@@ -85,7 +85,6 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       val txnState = testTxnState(testSchema, enableIcebergCompatV2 = icebergCompatV2Enabled)
       val engine = testMockEngine(testSchema)
 
-
       Seq(
         // missing stats
         (
@@ -223,7 +222,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
         numRows,
         Map.empty[Column, Literal].asJava, // minValues - empty value as this is just for tests.
         Map.empty[Column, Literal].asJava, // maxValues - empty value as this is just for tests.
-        Map.empty[Column, JLong].asJava, // nullCount - empty value as this is just for tests.
+        Map.empty[Column, JLong].asJava // nullCount - empty value as this is just for tests.
       )
     })
   }
