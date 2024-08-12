@@ -4205,12 +4205,3 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 }
 
 class DeltaProtocolVersionSuite extends DeltaProtocolVersionSuiteBase
-  with DeltaProtocolVersionSuiteEdge {
-
-  test("TEST") {
-    testWriterFeatureRemoval(
-      TestRemovableLegacyWriterFeature,
-      TestRemovableLegacyWriterFeature.TABLE_PROP_KEY)
-  }
-
-}
