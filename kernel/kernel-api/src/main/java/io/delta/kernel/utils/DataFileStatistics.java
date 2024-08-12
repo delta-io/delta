@@ -87,8 +87,15 @@ public class DataFileStatistics {
     return nullCounts;
   }
 
+  @Override
+  public String toString() {
+    return serializeAsJson();
+  }
+
   public String serializeAsJson() {
-    // TODO: implement this
-    return "{}";
+    // TODO: implement this. Full statistics serialization will be added as part of
+    // https://github.com/delta-io/delta/pull/3342. The PR is pending on a decision.
+    // For now just serialize the number of records.
+    return "{\"numRecords\":" + numRecords + "}";
   }
 }

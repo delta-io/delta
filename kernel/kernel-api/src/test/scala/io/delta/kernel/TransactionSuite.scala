@@ -15,10 +15,12 @@
  */
 package io.delta.kernel
 
-import io.delta.kernel.Transaction.transformLogicalData
+import io.delta.kernel.Transaction.{generateAppendActions, transformLogicalData}
 import io.delta.kernel.data._
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.expressions.{Column, Literal}
+import io.delta.kernel.internal.DataWriteContextImpl
 import io.delta.kernel.internal.TableConfig.ICEBERG_COMPAT_V2_ENABLED
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.data.TransactionStateRow
@@ -27,9 +29,10 @@ import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils, VectorTestUtils}
 import io.delta.kernel.types.{LongType, StringType, StructType}
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatistics, DataFileStatus}
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.lang.{Long => JLong}
 import java.util
 import java.util.Optional
 import scala.collection.JavaConverters._
@@ -73,6 +76,54 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
           assert(batch.getSchema === testSchema)
         }
       })
+    }
+  }
+
+  Seq(true, false).foreach { icebergCompatV2Enabled =>
+    test(s"generateAppendActions: iceberg comaptibily checks, " +
+      s"icebergCompatV2Enabled=$icebergCompatV2Enabled") {
+      val txnState = testTxnState(testSchema, enableIcebergCompatV2 = icebergCompatV2Enabled)
+      val engine = testMockEngine(testSchema)
+
+
+      Seq(
+        // missing stats
+        (
+          testDataFileStatuses(
+            "file1" -> testStats(Some(10)), // valid stats
+            "file2" -> None // missing stats
+          ),
+          "Iceberg V2 compatibility requires statistics" // expected error message
+        )
+      ).foreach { case (actionRows, expectedErrorMsg) =>
+        if (icebergCompatV2Enabled) {
+          val ex = intercept[KernelException] {
+            generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
+              .forEachRemaining(_ => ()) // consume the iterator
+          }
+          assert(ex.getMessage.contains(expectedErrorMsg))
+        } else {
+          // when icebergCompatV2Enabled is disabled, no exception should be thrown
+          generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
+            .forEachRemaining(_ => ()) // consume the iterator
+        }
+      }
+
+      // valid stats
+      val dataFileStatuses = testDataFileStatuses(
+        "file1" -> testStats(Some(10)),
+        "file2" -> testStats(Some(20))
+      )
+      var actStats: Seq[String] = Seq.empty
+      generateAppendActions(engine, txnState, dataFileStatuses, testDataWriteContext())
+        .forEachRemaining { addActionRow =>
+          val addOrdinal = addActionRow.getSchema.indexOf("add")
+          val add = addActionRow.getStruct(addOrdinal)
+          val statsOrdinal = add.getSchema.indexOf("stats")
+          actStats = actStats :+ add.getString(statsOrdinal)
+        }
+
+      assert(actStats === Seq("{\"numRecords\":10}", "{\"numRecords\":20}"))
     }
   }
 }
@@ -164,5 +215,35 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
         override def deserializeStructType(structTypeJson: String): StructType = schema
       }
     )
+  }
+
+  def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {
+    numRowsOpt.map(numRows => {
+      new DataFileStatistics(
+        numRows,
+        Map.empty[Column, Literal].asJava, // minValues - empty value as this is just for tests.
+        Map.empty[Column, Literal].asJava, // maxValues - empty value as this is just for tests.
+        Map.empty[Column, JLong].asJava, // nullCount - empty value as this is just for tests.
+      )
+    })
+  }
+
+  def testDataFileStatuses(fileNameStatsPairs: (String, Option[DataFileStatistics])*)
+  : CloseableIterator[DataFileStatus] = {
+
+    toCloseableIterator(
+      fileNameStatsPairs.map { case (fileName, statsOpt) =>
+        new DataFileStatus(
+          fileName,
+          23L, // size - arbitrary value as this is just for tests.
+          23L, // modificationTime - arbitrary value as this is just for tests.
+          Optional.ofNullable(statsOpt.orNull)
+        )
+      }.asJava.iterator())
+  }
+
+  /** Test [[DataWriteContext]]. As of now we don't need any custom values in this suite. */
+  def testDataWriteContext(): DataWriteContext = {
+    new DataWriteContextImpl("targetDir", Map.empty[String, Literal].asJava, Seq.empty.asJava)
   }
 }
