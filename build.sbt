@@ -1541,7 +1541,43 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing, hudi)
+  .aggregate(spark)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
+
+lazy val storageGroup = project
+  .aggregate(storage, storageS3DynamoDB)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
+
+lazy val icebergGroup = project
+  .aggregate(iceberg, testDeltaIcebergJar)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
+
+lazy val hudiGroup = project
+  .aggregate(hudi)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
+
+lazy val deltaGroup = project
+  .aggregate(contribs, sharing)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

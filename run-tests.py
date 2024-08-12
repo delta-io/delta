@@ -25,7 +25,7 @@ import argparse
 # Define groups of subprojects that can be tested separately from other groups.
 # As of now, we have only defined project groups in the SBT build, so these must match
 # the group names defined in build.sbt.
-valid_project_groups = ["spark", "kernel"]
+valid_project_groups = ["spark", "kernel", "storage", "hudi", "iceberg", "delta"]
 
 
 def get_args():
