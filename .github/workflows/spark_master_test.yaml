@@ -86,8 +86,8 @@ jobs:
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         run: |
           echo 'ThisBuild / version := "4.0.0-SNAPSHOT"' > version.sbt     
+          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
+          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/test
+          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectClient/test
           TEST_PARALLELISM_COUNT=2 USE_SPARK_MASTER=true pipenv run python run-tests.py
-        # We only run the python tests when SCALA_VERSION=2.12 for now
-        # TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
-        # TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/test
-        # TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectClient/test
+        # run-tests.py only runs the python tests when USE_SPARK_MASTER=true
