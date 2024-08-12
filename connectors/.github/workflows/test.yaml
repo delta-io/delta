@@ -3,7 +3,7 @@ on: [push, pull_request]
 jobs:
   build:
     name: "Run tests"
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         scala: [2.13.13, 2.12.18, 2.11.12]

@@ -2,7 +2,7 @@ name: "Delta Spark Local Publishing and Examples Compilation"
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
@@ -39,7 +39,7 @@ jobs:
       - name: Install Job dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
+          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
         if: steps.git-diff.outputs.diff
       - name: Run Delta Spark Local Publishing and Examples Compilation
