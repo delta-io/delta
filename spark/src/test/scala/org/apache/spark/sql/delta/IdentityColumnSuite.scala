@@ -204,17 +204,17 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
            |""".stripMargin)
       val path = DeltaLog.forTable(spark, TableIdentifier(tblName)).dataPath.toString
 
-      val commands: Map[Int, () => Dataset[_]] = Map(
-        1 -> (() => spark.table(tblName)),
-        2 -> (() => sql(s"SELECT * FROM $tblName")),
-        3 -> (() => sql(s"SELECT * FROM delta.`$path`")),
-        4 -> (() => spark.read.format("delta").load(path)),
-        5 -> (() => spark.read.format("delta").table(tblName)),
-        6 -> (() => spark.readStream.format("delta").load(path)),
-        7 -> (() => spark.readStream.format("delta").table(tblName))
+      val commands: Seq[() => Dataset[_]] = Seq(
+        () => spark.table(tblName),
+        () => sql(s"SELECT * FROM $tblName"),
+        () => sql(s"SELECT * FROM delta.`$path`"),
+        () => spark.read.format("delta").load(path),
+        () => spark.read.format("delta").table(tblName),
+        () => spark.readStream.format("delta").load(path),
+        () => spark.readStream.format("delta").table(tblName)
       )
-      for ((id, command) <- commands) {
-        verifyNoIdentityColumn(id, command)
+      commands.zipWithIndex.foreach {
+        case (f, id) => verifyNoIdentityColumn(id, f)
       }
       withTempDir { checkpointDir =>
         val q = spark.readStream.format("delta").table(tblName).writeStream
@@ -362,8 +362,11 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
           DeltaColumnMapping.dropColumnMappingMetadata(table.snapshot.metadata.schema)
         assert(actualSchema === expectedSchema(generatedAsIdentityType, start, step))
         if ((start < 0L) == (step < 0L)) {
-          intercept[org.apache.spark.SparkException](
-            sql(s"INSERT INTO $tblName(value) SELECT 1 UNION ALL SELECT 2"))
+          // test long underflow and overflow
+          val ex = intercept[org.apache.spark.SparkException](
+            sql(s"INSERT INTO $tblName(value) SELECT 1 UNION ALL SELECT 2")
+          )
+          assert(ex.getMessage.contains("long overflow"))
         } else {
           sql(s"INSERT INTO $tblName(value) SELECT 1 UNION ALL SELECT 2")
           checkAnswer(sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $tblName"), Row(true))
