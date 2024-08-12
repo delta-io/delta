@@ -115,12 +115,20 @@ public class ActionCommitLog {
     }
 
     if (commitVersions.isEmpty() || !Objects.equals(commitVersions.get(0), expectedStartVersion)) {
-      throw startVersionNotFound(tablePath.toString(), expectedStartVersion);
+      throw startVersionNotFound(
+          tablePath.toString(),
+          expectedStartVersion,
+          commitVersions.isEmpty() ? Optional.empty() : Optional.of(commitVersions.get(0)));
     }
 
     if (commitVersions.isEmpty()
         || !Objects.equals(commitVersions.get(commitVersions.size() - 1), expectedEndVersion)) {
-      throw endVersionNotFound(tablePath.toString(), expectedEndVersion);
+      throw endVersionNotFound(
+          tablePath.toString(),
+          expectedEndVersion,
+          commitVersions.isEmpty()
+              ? Optional.empty()
+              : Optional.of(commitVersions.get(commitVersions.size() - 1)));
     }
   }
 

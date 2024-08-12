@@ -23,6 +23,7 @@ import io.delta.kernel.types.StructType;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /** Contains methods to create user-facing Delta exceptions. */
@@ -96,21 +97,32 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException startVersionNotFound(String tablePath, long startVersionRequested) {
+  public static KernelException startVersionNotFound(
+      String tablePath, long startVersionRequested, Optional<Long> earliestAvailableVersion) {
     String message =
         String.format(
             "%s: Requested table changes beginning with startVersion=%s but no log file found for "
-                + "version %s",
+                + "version %s.",
             tablePath, startVersionRequested, startVersionRequested);
+    if (earliestAvailableVersion.isPresent()) {
+      message =
+          message
+              + String.format(" Earliest available version is %s", earliestAvailableVersion.get());
+    }
     return new KernelException(message);
   }
 
-  public static KernelException endVersionNotFound(String tablePath, long endVersionRequested) {
+  public static KernelException endVersionNotFound(
+      String tablePath, long endVersionRequested, Optional<Long> latestAvailableVersion) {
     String message =
         String.format(
-            "%s: Requested table changes beginning with endVersion=%s but no log file found for "
+            "%s: Requested table changes ending with endVersion=%s but no log file found for "
                 + "version %s",
             tablePath, endVersionRequested, endVersionRequested);
+    if (latestAvailableVersion.isPresent()) {
+      message =
+          message + String.format(" Latest available version is %s", latestAvailableVersion.get());
+    }
     return new KernelException(message);
   }
 
