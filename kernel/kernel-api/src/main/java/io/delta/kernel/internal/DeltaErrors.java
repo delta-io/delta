@@ -86,6 +86,43 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException noCommitFilesFoundForVersionRange(
+      String tablePath, long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "%s: Requested table changes between [%s, %s] but no log files found in the requested"
+                + " version range.",
+            tablePath, startVersion, endVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException startVersionNotFound(String tablePath, long startVersionRequested) {
+    String message =
+        String.format(
+            "%s: Requested table changes beginning with startVersion=%s but no log file found for "
+                + "version %s",
+            tablePath, startVersionRequested, startVersionRequested);
+    return new KernelException(message);
+  }
+
+  public static KernelException endVersionNotFound(String tablePath, long endVersionRequested) {
+    String message =
+        String.format(
+            "%s: Requested table changes beginning with endVersion=%s but no log file found for "
+                + "version %s",
+            tablePath, endVersionRequested, endVersionRequested);
+    return new KernelException(message);
+  }
+
+  public static KernelException invalidVersionRange(long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "Invalid version range: requested table changes for version range [%s, %s]. "
+                + "Requires startVersion >= 0 and endVersion >= startVersion.",
+            startVersion, endVersion);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
 
   public static KernelException unsupportedReaderProtocol(
