@@ -396,7 +396,7 @@ trait TestUtils extends Assertions with SQLHelper {
 
   /**
    * Reads the results of the Spark dataframe with Kernel and verifies that the results are
-   * identical. 
+   * identical.
    */
   def checkTableVsSpark(df: DataFrame): Unit = {
     withTempDir { dir =>
