@@ -269,13 +269,14 @@ trait IdentityColumnConflictSuiteBase
     }
   }
 
-  test(s"ALTER TABLE SYNC IDENTITY Serializable") {
+  test("ALTER TABLE SYNC IDENTITY conflict on serializable table") {
     transactionIdentityConflictHelper(
       syncIdentityTestCase,
       noMetadataUpdateTestCase,
       tblIsoLevel = Some(Serializable)
     )
   }
+
 }
 
 class IdentityColumnConflictScalaSuite
