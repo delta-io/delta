@@ -229,7 +229,18 @@ public class TableConfig<T> {
    * @return the value of the table property
    */
   public T fromMetadata(Engine engine, Metadata metadata) {
-    String value = metadata.getConfiguration().getOrDefault(key, defaultValue);
+    return fromMetadata(engine, metadata.getConfiguration());
+  }
+
+  /**
+   * Returns the value of the table property from the given configuration.
+   *
+   * @param engine {@link Engine} instance.
+   * @param configuration the table configuration
+   * @return the value of the table property
+   */
+  public T fromMetadata(Engine engine, Map<String, String> configuration) {
+    String value = configuration.getOrDefault(key, defaultValue);
     validate(engine, value);
     return fromString.apply(engine, value);
   }
