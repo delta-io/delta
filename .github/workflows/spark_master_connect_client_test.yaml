@@ -1,4 +1,4 @@
-name: "Delta Spark Master Tests"
+name: "Delta Spark Master ConnectClient Tests"
 on: [push, pull_request]
 jobs:
   test:
@@ -46,5 +46,5 @@ jobs:
       - name: Run Spark Master tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         run: |
-          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
+          TEST_PARALLELISM_COUNT=2 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectClient/test
         if: steps.git-diff.outputs.diff
