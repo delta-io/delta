@@ -684,11 +684,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
     val existingFeatureNames = newProtocolBeforeAddingFeatures.readerAndWriterFeatureNames
     if (!newFeaturesFromTableConf.map(_.name).subsetOf(existingFeatureNames)) {
+      // When enabling legacy features, include all preceding legacy features.
+      val implicitFeatures = TableFeatureProtocolUtils.implicitFeatures(newFeaturesFromTableConf)
       newProtocol = Some(
         Protocol(
           readerVersionForNewProtocol,
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-          .withFeatures(newFeaturesFromTableConf)
+          .withFeatures(newFeaturesFromTableConf ++ implicitFeatures)
           .merge(newProtocolBeforeAddingFeatures))
     }
 

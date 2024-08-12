@@ -498,4 +498,12 @@ object TableFeatureProtocolUtils {
    */
   def minimumRequiredVersions(features: Seq[TableFeature]): (Int, Int) =
     ((features.map(_.minReaderVersion) :+ 1).max, (features.map(_.minWriterVersion) :+ 1).max)
+
+  /**
+   * Return a set with the implicit features of the provided feature set.
+   */
+  def implicitFeatures(features: Set[TableFeature]): Set[TableFeature] =
+    features.flatMap { f =>
+      Protocol(f.minReaderVersion, f.minWriterVersion).implicitlySupportedFeatures
+    }
 }
