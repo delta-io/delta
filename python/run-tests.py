@@ -198,3 +198,10 @@ if __name__ == "__main__":
     # For versions 4.0+ run Delta Connect tests as well
     if use_spark_master:
         run_delta_connect_codegen_python(root_dir)
+        # TODO: In the future, find a way to get these
+        # packages locally instead of downloading from Maven.
+        delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
+                                  "org.apache.spark:spark-connect_2.13:4.0.0-preview1",
+                                  get_local_package("delta-connect-server", use_spark_master)]
+
+        test(root_dir, path.join("delta", "connect"), delta_connect_packages)
