@@ -60,10 +60,11 @@ def prepare(root_dir, use_spark_master):
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
+    packages = ["spark/publishM2", "storage/publishM2"]
     if use_spark_master:
         sbt_command = sbt_command + ["-DsparkVersion=master"]
-    # TODO publish connectServer and connectCommon for Spark master
-    run_cmd(sbt_command + ["clean", "spark/publishM2", "storage/publishM2"], stream_output=True)
+        packages = packages + ["connectCommon/publishM2", "connectServer/publishM2"]
+    run_cmd(sbt_command + ["clean"] + packages, stream_output=True)
 
 
 def get_local_package(package_name, use_spark_master):
@@ -197,10 +198,6 @@ if __name__ == "__main__":
     # For versions 4.0+ run Delta Connect tests as well
     if use_spark_master:
         run_delta_connect_codegen_python(root_dir)
-        sbt_path = path.join(root_dir, path.join("build", "sbt"))
-        sbt_command = ["-DsparkVersion=master", "connectCommon/publishM2",
-                       "connectServer/publishM2"]
-        run_cmd([sbt_path] + sbt_command, stream_output=True)
         # TODO: In the future, find a way to get these
         # packages locally instead of downloading from Maven.
         delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
