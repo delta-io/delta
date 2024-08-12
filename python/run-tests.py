@@ -53,27 +53,30 @@ def delete_if_exists(path):
         print("Deleted %s " % path)
 
 
-def prepare(root_dir):
+def prepare(root_dir, use_spark_master):
     print("##### Preparing python tests & building packages #####")
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
-    run_cmd([sbt_path, "clean", "spark/publishM2", "storage/publishM2"], stream_output=True)
+    sbt_command = [sbt_path]
+    packages = ["spark/publishM2", "storage/publishM2"]
+    if use_spark_master:
+        sbt_command = sbt_command + ["-DsparkVersion=master"]
+        packages = packages + ["connectCommon/publishM2", "connectServer/publishM2"]
+    run_cmd(sbt_command + ["clean"] + packages, stream_output=True)
 
 
-def get_local_package(package_name):
+def get_local_package(package_name, use_spark_master):
     # Get current release which is required to be loaded
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
 
-    major_version = int(version.split(".")[0])
-
-    if major_version >= 4:
-        return major_version, f"io.delta:{package_name}_2.13:" + version
+    if use_spark_master:
+        return f"io.delta:{package_name}_2.13:" + version
     else:
-        return major_version, f"io.delta:{package_name}_2.12:" + version
+        return f"io.delta:{package_name}_2.12:" + version
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
@@ -183,16 +186,15 @@ def run_delta_connect_codegen_python(root_dir):
 if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    prepare(root_dir)
-    major_version, delta_spark_package = get_local_package("delta-spark")
+    use_spark_master = os.getenv("USE_SPARK_MASTER") or False
+    prepare(root_dir, use_spark_master)
+    delta_spark_package = get_local_package("delta-spark", use_spark_master)
 
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
-    # For Spark master version don't run pypi packing tests since packaging hasn't been updated yet
-    if major_version < 4:
-        run_pypi_packaging_tests(root_dir)
+    run_pypi_packaging_tests(root_dir)
     test(root_dir, "delta", [delta_spark_package])
 
     # For versions 4.0+ run Delta Connect tests as well
-    if major_version >= 4:
+    if use_spark_master:
         run_delta_connect_codegen_python(root_dir)
