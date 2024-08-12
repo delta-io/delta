@@ -276,7 +276,6 @@ trait IdentityColumnConflictSuiteBase
       tblIsoLevel = Some(Serializable)
     )
   }
-
 }
 
 class IdentityColumnConflictScalaSuite
