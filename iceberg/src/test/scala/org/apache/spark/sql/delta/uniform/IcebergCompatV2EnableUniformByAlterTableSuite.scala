@@ -18,14 +18,11 @@ package org.apache.spark.sql.delta.uniform
 
 import java.util.UUID
 
-import org.apache.spark.sql.delta.{
-  ColumnMappingTableFeature,
-  DeltaLog,
-  IcebergCompatV2TableFeature,
-  UniversalFormat}
+import org.apache.spark.sql.delta.{ColumnMappingTableFeature, DeltaLog, IcebergCompatV2TableFeature, UniversalFormat}
 import org.apache.spark.sql.delta.uniform.IcebergCompatV2EnableUniformByAlterTableSuiteBase
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.TableIdentifier
 
 class IcebergCompatV2EnableUniformByAlterTableSuite
@@ -42,7 +39,7 @@ class IcebergCompatV2EnableUniformByAlterTableSuite
     }
   }
 
-  override def executeSql(sqlStr: String): Unit = write(sqlStr)
+  override def executeSql(sqlStr: String): DataFrame = write(sqlStr)
 
   override def assertUniFormIcebergProtocolAndProperties(id: String): Unit = {
     val snapshot = DeltaLog.forTable(spark, new TableIdentifier(id)).update()

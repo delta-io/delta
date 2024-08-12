@@ -22,6 +22,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.types.*;
@@ -255,6 +256,11 @@ public class DefaultJsonRow implements Row {
       throwIfTypeMismatch("timestamp", jsonValue.isTextual(), jsonValue);
       Instant time = OffsetDateTime.parse(jsonValue.textValue()).toInstant();
       return ChronoUnit.MICROS.between(Instant.EPOCH, time);
+    }
+
+    if (dataType instanceof TimestampNTZType) {
+      throwIfTypeMismatch("timestamp_ntz", jsonValue.isTextual(), jsonValue);
+      return DefaultKernelUtils.parseTimestampNTZ(jsonValue.textValue());
     }
 
     if (dataType instanceof StructType) {
