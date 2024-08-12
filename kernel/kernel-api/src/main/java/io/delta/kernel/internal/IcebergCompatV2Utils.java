@@ -15,9 +15,6 @@
  */
 package io.delta.kernel.internal;
 
-import static java.lang.String.format;
-
-import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.utils.DataFileStatus;
 
 /** Utility methods for validation and compatibility checks for Iceberg V2. */
@@ -32,10 +29,8 @@ public class IcebergCompatV2Utils {
    */
   public static void validDataFileStatus(DataFileStatus dataFileStatus) {
     if (!dataFileStatus.getStatistics().isPresent()) {
-      throw new KernelException(
-          format(
-              "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s",
-              dataFileStatus));
+      // presence of stats means always has a non-null `numRecords`
+      throw DeltaErrors.missingNumRecordsStatsForIcebergCompatV2(dataFileStatus);
     }
   }
 }

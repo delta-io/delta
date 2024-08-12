@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.utils;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import java.util.Collections;
@@ -42,6 +44,7 @@ public class DataFileStatistics {
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
       Map<Column, Long> nullCounts) {
+    checkArgument(numRecords >= 0, "numRecords should be non-negative");
     this.numRecords = numRecords;
     this.minValues = Collections.unmodifiableMap(minValues);
     this.maxValues = Collections.unmodifiableMap(maxValues);
