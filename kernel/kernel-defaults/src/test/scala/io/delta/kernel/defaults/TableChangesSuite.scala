@@ -431,7 +431,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
           VectorUtils.toJavaList(
             metadataRow.getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))).asScala,
           VectorUtils.toJavaMap[String, String](
-            metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))).asScala.toMap,
+            metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))).asScala.toMap
         ))
 
       case DeltaAction.PROTOCOL.colName =>
@@ -465,9 +465,12 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
 
         Some(StandardCommitInfo(
           if (commitInfoRow.isNullAt(operationIdx)) null else commitInfoRow.getString(operationIdx),
-          if (commitInfoRow.isNullAt(operationMetricsIdx)) Map.empty else
+          if (commitInfoRow.isNullAt(operationMetricsIdx)) {
+            Map.empty
+          } else {
             VectorUtils.toJavaMap[String, String](
               commitInfoRow.getMap(operationMetricsIdx)).asScala.toMap
+          }
         ))
 
       case DeltaAction.CDC.colName =>
