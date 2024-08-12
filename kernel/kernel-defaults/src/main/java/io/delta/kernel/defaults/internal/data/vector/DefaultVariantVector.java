@@ -30,7 +30,7 @@ public class DefaultVariantVector extends AbstractColumnVector {
   private final ColumnVector metadataVector;
 
   /**
-   * Create an instance of {@link io.delta.kernel.data.ColumnVector} for array type.
+   * Create an instance of {@link io.delta.kernel.data.ColumnVector} for variant type.
    *
    * @param size number of elements in the vector.
    * @param type {@code variant} datatype definition.

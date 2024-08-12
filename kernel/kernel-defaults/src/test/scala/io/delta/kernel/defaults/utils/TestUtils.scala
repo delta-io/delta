@@ -37,7 +37,7 @@ import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
@@ -392,6 +392,21 @@ trait TestUtils extends Assertions with SQLHelper {
 
     val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, engine)
     checkAnswer(result, expectedAnswer)
+  }
+
+  /**
+   * Reads the results of the Spark dataframe with Kernel and verifies that the results are
+   * identical. 
+   */
+  def checkTableVsSpark(df: DataFrame): Unit = {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      df.write
+        .format("delta")
+        .mode("overwrite")
+        .save(path)
+      checkTable(path, df.collect().map(TestRow(_)))
+    }
   }
 
   def checkAnswer(result: => Seq[Row], expectedAnswer: Seq[TestRow]): Unit = {

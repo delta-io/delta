@@ -1601,60 +1601,8 @@ class ScanSuite extends AnyFunSuite
     }
   }
 
-  private def testReadWithVariant(testName: String)(df: => DataFrame): Unit = {
-    testSparkMasterOnly(testName) {
-      withTable("test_table") {
-        df.write
-          .format("delta")
-          .mode("overwrite")
-          .saveAsTable("test_table")
-        val path = spark.sql("describe table extended `test_table`")
-          .where("col_name = 'Location'")
-          .collect()(0)
-          .getString(1)
-          .replace("file:", "")
-
-        val kernelSchema = tableSchema(path)
-
-        val snapshot = latestSnapshot(path)
-        val scan = snapshot.getScanBuilder(defaultEngine).build()
-        val scanState = scan.getScanState(defaultEngine)
-        val physicalReadSchema =
-          ScanStateRow.getPhysicalDataReadSchema(defaultEngine, scanState)
-        val scanFilesIter = scan.getScanFiles(defaultEngine)
-
-        val readRows = ArrayBuffer[Row]()
-        while (scanFilesIter.hasNext()) {
-          val scanFilesBatch = scanFilesIter.next()
-          val scanFileRows = scanFilesBatch.getRows()
-          while (scanFileRows.hasNext()) {
-            val scanFileRow = scanFileRows.next()
-            val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
-
-            val physicalDataIter = defaultEngine.getParquetHandler.readParquetFiles(
-              singletonCloseableIterator(fileStatus),
-              physicalReadSchema,
-              Optional.empty())
-
-            val transformedRowsIter = Scan.transformPhysicalData(
-              defaultEngine,
-              scanState,
-              scanFileRow,
-              physicalDataIter
-            )
-
-            val transformedRows = transformedRowsIter.asScala.toSeq.map(_.getRows).flatMap(_.toSeq)
-            readRows.appendAll(transformedRows)
-          }
-        }
-
-        checkAnswer(readRows.toSeq, df.collect().map(TestRow(_)))
-      }
-    }
-  }
-
-  testReadWithVariant("basic variant") {
-    spark.range(0, 1, 1, 1).selectExpr(
+  testSparkMasterOnly("basic variant") {
+    val df = spark.range(0, 10000).selectExpr(
       "parse_json(cast(id as string)) as basic_v",
       "named_struct('v', parse_json(cast(id as string))) as struct_v",
       "named_struct('v', array(parse_json(cast(id as string)))) as struct_array_v",
@@ -1678,10 +1626,11 @@ class ScanSuite extends AnyFunSuite
       "map('test', parse_json(cast(id as string))) as map_value_v",
       "map('test', named_struct('v', parse_json(cast(id as string)))) as map_struct_v"
     )
+    checkTableVsSpark(df)
   }
 
-  testReadWithVariant("basic null variant") {
-    spark.range(0, 10, 1, 1).selectExpr(
+  testSparkMasterOnly("basic null variant") {
+    val df = spark.range(0, 10000).selectExpr(
       "cast(null as variant) basic_v",
       "named_struct('v', cast(null as variant)) as struct_v",
       """array(
@@ -1691,6 +1640,7 @@ class ScanSuite extends AnyFunSuite
       ) as array_v""",
       "map('test', cast(null as variant)) as map_value_v"
     )
+    checkTableVsSpark(df)
   }
 }
 
