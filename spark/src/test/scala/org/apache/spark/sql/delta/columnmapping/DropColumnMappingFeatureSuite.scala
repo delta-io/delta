@@ -209,9 +209,8 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
          |ALTER TABLE $testTableName DROP FEATURE ${ColumnMappingTableFeature.name} TRUNCATE HISTORY
          |""".stripMargin)
     val newSnapshot = deltaLog.update()
-    assert(newSnapshot.protocol.readerAndWriterFeatures.isEmpty, "Should drop the feature.")
-    assert(newSnapshot.protocol.minWriterVersion == 1)
-    assert(newSnapshot.protocol.minReaderVersion == 1)
+    assert(!newSnapshot.protocol.readerAndWriterFeatures.contains(ColumnMappingTableFeature),
+      "Should drop the feature.")
   }
 
   protected def dropColumnMappingTableFeature(): Unit = {

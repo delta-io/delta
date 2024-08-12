@@ -215,11 +215,11 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
       val path = tempDir.getAbsolutePath
       spark.range(5).write.format("delta").save(path)
       val deltaLog = DeltaLog.forTable(spark, path)
-      val oldProtocolVersion = deltaLog.snapshot.protocol
+      val oldProtocolVersion = deltaLog.update().protocol
       // Update table to latest version.
       deltaLog.upgradeProtocol(
         oldProtocolVersion.merge(Protocol().withFeature(TestReaderWriterFeature)))
-      val newProtocolVersion = deltaLog.snapshot.protocol
+      val newProtocolVersion = deltaLog.update().protocol
       assert(newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
         newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
         s"newProtocolVersion=$newProtocolVersion is not strictly greater than" +
@@ -230,7 +230,7 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
         // Restore to before the upgrade.
         restoreTableToVersion(path, version = 0, isMetastoreTable = false)
       }
-      val restoredProtocolVersion = deltaLog.snapshot.protocol
+      val restoredProtocolVersion = deltaLog.update().protocol
       if (downgradeAllowed) {
         assert(restoredProtocolVersion === oldProtocolVersion)
       } else {
@@ -246,13 +246,13 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
         val path = tempDir.getAbsolutePath
         spark.range(5).write.format("delta").save(path)
         val deltaLog = DeltaLog.forTable(spark, path)
-        val oldProtocolVersion = deltaLog.snapshot.protocol
+        val oldProtocolVersion = deltaLog.update().protocol
         // Update table to latest version.
         deltaLog.upgradeProtocol(
           Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
             .withFeatures(Seq(TestLegacyReaderWriterFeature))
             .withFeatures(oldProtocolVersion.implicitlySupportedFeatures))
-        val newProtocolVersion = deltaLog.snapshot.protocol
+        val newProtocolVersion = deltaLog.update().protocol
         assert(
           newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
             newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
@@ -265,12 +265,13 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
           // Restore to before the upgrade.
           restoreTableToVersion(path, version = 0, isMetastoreTable = false)
         }
-        val restoredProtocolVersion = deltaLog.snapshot.protocol
+        val restoredProtocolVersion = deltaLog.update().protocol
         if (downgradeAllowed) {
           assert(restoredProtocolVersion === oldProtocolVersion)
         } else {
-          assert(restoredProtocolVersion ===
-            newProtocolVersion.merge(oldProtocolVersion))
+          assert(restoredProtocolVersion === Protocol(
+            TestLegacyReaderWriterFeature.minReaderVersion,
+            TestLegacyReaderWriterFeature.minWriterVersion))
         }
       }
     }

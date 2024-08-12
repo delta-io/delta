@@ -1892,8 +1892,6 @@ class DeltaColumnMappingSuite extends QueryTest
   test("column mapping upgrade with table features") {
     val testTableName = "columnMappingTestTable"
     withTable(testTableName) {
-      val minReaderKey = DeltaConfigs.MIN_READER_VERSION.key
-      val minWriterKey = DeltaConfigs.MIN_WRITER_VERSION.key
       sql(
         s"""CREATE TABLE $testTableName
            |USING DELTA
@@ -1915,7 +1913,15 @@ class DeltaColumnMappingSuite extends QueryTest
       assert(deltaLog.update().protocol === Protocol(2, 7).withFeatures(Seq(
         AppendOnlyTableFeature,
         InvariantsTableFeature,
+        CheckConstraintsTableFeature,
+        GeneratedColumnsTableFeature,
+        ChangeDataFeedTableFeature,
         ColumnMappingTableFeature,
+        TestLegacyWriterFeature,
+        TestLegacyReaderWriterFeature,
+        TestRemovableLegacyWriterFeature,
+        TestRemovableLegacyReaderWriterFeature,
+        DomainMetadataTableFeature,
         RowTrackingFeature
       )))
     }

@@ -393,7 +393,7 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      txn.updateProtocol(txn.protocol.denormalized.removeFeature(removableFeature))
+      txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
       txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, truncateHistory))
       Nil
     }

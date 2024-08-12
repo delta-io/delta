@@ -337,7 +337,14 @@ class DeltaTableFeatureSuite
         assert(protocol.readerAndWriterFeatureNames === Set(
           AppendOnlyTableFeature.name,
           InvariantsTableFeature.name,
+          CheckConstraintsTableFeature.name,
+          GeneratedColumnsTableFeature.name,
+          ChangeDataFeedTableFeature.name,
           ColumnMappingTableFeature.name,
+          TestLegacyWriterFeature.name,
+          TestRemovableLegacyReaderWriterFeature.name,
+          TestLegacyReaderWriterFeature.name,
+          TestRemovableLegacyWriterFeature.name,
           TestWriterFeature.name))
       }
     }
@@ -372,8 +379,7 @@ class DeltaTableFeatureSuite
         commandName = "CLONE", targetTableName = "target", sourceTableName = "src"))
       val targetLog = DeltaLog.forTable(spark, TableIdentifier("target"))
       val protocol = targetLog.update().protocol
-      assert(protocol.readerAndWriterFeatureNames === Set(
-        ColumnMappingTableFeature.name))
+      assert(protocol === Protocol(2, 5))
     }
   }
 
@@ -392,6 +398,8 @@ class DeltaTableFeatureSuite
           assert(protocol.readerAndWriterFeatureNames === Set(
             AppendOnlyTableFeature.name,
             InvariantsTableFeature.name,
+            CheckConstraintsTableFeature.name,
+            GeneratedColumnsTableFeature.name,
             ChangeDataFeedTableFeature.name,
             TestWriterFeature.name))
         }

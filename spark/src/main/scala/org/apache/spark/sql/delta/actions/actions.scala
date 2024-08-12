@@ -342,6 +342,11 @@ object Protocol {
         spark, metadata, Protocol().withFeatures(tablePropEnabledFeatures))
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
+    // When enabling legacy features, include all preceding legacy features.
+    val implicitFeatures = allEnabledFeatures.flatMap { f =>
+      Protocol(f.minReaderVersion, f.minWriterVersion).implicitlySupportedFeatures
+    }
+
     // Determine the min reader and writer version required by features in table properties or
     // metadata.
     // If any table property is specified:
@@ -398,7 +403,8 @@ object Protocol {
         case _ => Set.empty
       }
 
-    (finalReaderVersion, finalWriterVersion, allEnabledFeatures ++ implicitFeaturesFromTableConf)
+    (finalReaderVersion, finalWriterVersion,
+      allEnabledFeatures ++ implicitFeatures ++ implicitFeaturesFromTableConf)
   }
 
   /**
@@ -424,8 +430,12 @@ object Protocol {
       readerVersion = math.max(readerVersion, feature.minReaderVersion)
       writerVersion = math.max(writerVersion, feature.minWriterVersion)
     }
+    // When enabling legacy features, include all preceding legacy features.
+    val implicitFeatures = enabledFeatures.flatMap { f =>
+      Protocol(f.minReaderVersion, f.minWriterVersion).implicitlySupportedFeatures
+    }
 
-    (readerVersion, writerVersion, enabledFeatures)
+    (readerVersion, writerVersion, enabledFeatures ++ implicitFeatures)
   }
 
   /** Cast the table property for the protocol version to an integer. */
