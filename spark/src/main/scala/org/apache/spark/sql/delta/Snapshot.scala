@@ -160,6 +160,60 @@ class Snapshot(
   @volatile private[delta] var stateReconstructionTriggered = false
 
   /**
+   * The last known backfilled version of this snapshot. This can be larger than the last
+   * backfilled file in the snapshot's LogSegment so is separately tracked in this mutable
+   * variable. The reason why this is needed is as follows:
+   *
+   * In general, we update a snapshot's LogSegment after a commit by appending the latest
+   * commit file. This can be an unbackfilled commit. The next time we call update(), we
+   * check, if we can reuse the post commit snapshot or if we need to create a new snapshot.
+   * The update performs a listing and creates a new LogSegment and the criteria for
+   * keeping or replacing the old snapshot is whether the old snapshot's LogSegment is equal
+   * to the LogSegment created by the update() call (see getSnapshotForLogSegmentInternal).
+   *
+   * If an unbackfilled commit has been backfilled before update() is called, the new LogSegment
+   * would contain the backfilled version of this commit and so the old and new LogSegments are
+   * determined to be different and the snapshot is swapped. However, the snapshots are in fact
+   * identical and so swapping the snapshot is not necessary and wold only lead to a loss of the
+   * cached state of the old snapshot.
+   *
+   * To prevent this, we don't swap the snapshot in this case (see
+   * LogSegment.lastMatchingBackfilledCommitIsEqual). This means that we'll continue to use
+   * the old LogSegment, which contains the unbackfilled commit(s). To correctly keep track of
+   * the fact that all commits in the LogSegment have indeed been backfilled, we keep the
+   * last known backfilled version of the snapshot in this variable and update it each time
+   * during LogSegment comparison. This allows callers to figure out whether this snapshot
+   * indeed contains any unbackfilled commits or the LogSegment is just based on an older
+   * version.
+   */
+  @volatile private var lastKnownBackfilledVersion: Long =
+    logSegment.lastBackfilledVersionInSegment
+
+  def getLastKnownBackfilledVersion: Long = lastKnownBackfilledVersion
+
+  def updateLastKnownBackfilledVersion(newVersion: Long): Unit = {
+    if (newVersion > this.version) {
+      throw new IllegalStateException("Can't update the last known backfilled version " +
+        "to a version greater than the snapshot's version.")
+    }
+    lastKnownBackfilledVersion = math.max(lastKnownBackfilledVersion, newVersion)
+  }
+
+  /**
+   * Helper method to determine, whether this snapshot contains "actual" unbackfilled
+   * commits. See [[Snapshot.lastKnownBackfilledVersion]] for more details on why a
+   * LogSegment may contain unbackfilled commits, even though these files have already
+   * been backfilled.
+   */
+  private[delta] def allCommitsBackfilled: Boolean = {
+    lastKnownBackfilledVersion >= FileNames.getFileVersion(logSegment.deltas.last) &&
+      // This should always be true because we synchronously backfill during checkpoint
+      // creation and always create a new snapshot after that, which will force the
+      // latest LogSegment to be used.
+      lastKnownBackfilledVersion >= logSegment.checkpointProvider.version
+  }
+
+  /**
    * Use [[stateReconstruction]] to create a representation of the actions in this table.
    * Cache the resultant output.
    */

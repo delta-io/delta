@@ -17,12 +17,8 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.booleanWrapperVector;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.childAt;
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
-import static io.delta.kernel.internal.util.ExpressionUtils.getLeft;
-import static io.delta.kernel.internal.util.ExpressionUtils.getRight;
-import static io.delta.kernel.internal.util.ExpressionUtils.getUnaryChild;
+import static io.delta.kernel.internal.util.ExpressionUtils.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -35,6 +31,7 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -258,6 +255,36 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           new ScalarExpression(
               "COALESCE", children.stream().map(e -> e.expression).collect(Collectors.toList())),
           children.get(0).outputType);
+    }
+
+    @Override
+    ExpressionTransformResult visitTimeAdd(ScalarExpression timeAdd) {
+      List<ExpressionTransformResult> children =
+          timeAdd.getChildren().stream().map(this::visit).collect(Collectors.toList());
+
+      if (children.size() != 2) {
+        throw unsupportedExpressionException(
+            timeAdd, "TIMEADD requires exactly two arguments: timestamp column and milliseconds");
+      }
+
+      Expression timestampColumn = children.get(0).expression;
+      Expression durationMilliseconds = children.get(1).expression;
+      DataType timestampColumnType = children.get(0).outputType;
+      DataType literalColumnType = children.get(1).outputType;
+
+      // Ensure the first child is either a TimestampType or a TimestampNTZType,
+      // and the second is a LongType.
+      if (!((timestampColumnType instanceof TimestampType
+              || timestampColumnType instanceof TimestampNTZType)
+          && (literalColumnType instanceof LongType))) {
+        throw new IllegalArgumentException(
+            "TIMEADD requires a timestamp and a Long (milliseconds) to add to it");
+      }
+
+      return new ExpressionTransformResult(
+          new ScalarExpression("TIMEADD", Arrays.asList(timestampColumn, durationMilliseconds)),
+          timestampColumnType // Result is also a timestamp
+          );
     }
 
     @Override
@@ -532,6 +559,44 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             }
             return 0; // If all are null then any idx suffices
           });
+    }
+
+    @Override
+    ColumnVector visitTimeAdd(ScalarExpression timeAdd) {
+      ColumnVector timestampColumn = visit(timeAdd.getChildren().get(0));
+      ColumnVector durationVector = visit(timeAdd.getChildren().get(1));
+
+      return new ColumnVector() {
+        @Override
+        public DataType getDataType() {
+          return timestampColumn.getDataType();
+        }
+
+        @Override
+        public int getSize() {
+          return timestampColumn.getSize();
+        }
+
+        @Override
+        public void close() {
+          timestampColumn.close();
+          durationVector.close();
+        }
+
+        @Override
+        public boolean isNullAt(int rowId) {
+          return timestampColumn.isNullAt(rowId) || durationVector.isNullAt(rowId);
+        }
+
+        @Override
+        public long getLong(int rowId) {
+          if (isNullAt(rowId)) {
+            return 0;
+          }
+          long durationMicros = durationVector.getLong(rowId) * 1000L;
+          return timestampColumn.getLong(rowId) + durationMicros;
+        }
+      };
     }
 
     @Override

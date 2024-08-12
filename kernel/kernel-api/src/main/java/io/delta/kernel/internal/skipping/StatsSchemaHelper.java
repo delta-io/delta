@@ -19,7 +19,9 @@ import static io.delta.kernel.internal.util.ColumnMapping.getPhysicalName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -112,26 +114,46 @@ public class StatsSchemaHelper {
 
   /**
    * Given a logical column in the data schema provided when creating {@code this}, return the
-   * corresponding MIN column in the statistic schema that stores the MIN values for the provided
-   * logical column.
+   * corresponding MIN column and an optional column adjustment expression from the statistic schema
+   * that stores the MIN values for the provided logical column.
+   *
+   * @param column the logical column name.
+   * @return a tuple of the MIN column and an optional adjustment expression.
    */
-  public Column getMinColumn(Column column) {
+  public Tuple2<Column, Optional<Expression>> getMinColumn(Column column) {
     checkArgument(
         isSkippingEligibleMinMaxColumn(column),
         String.format("%s is not a valid min column for data schema %s", column, dataSchema));
-    return getStatsColumn(column, MIN);
+    return new Tuple2<>(getStatsColumn(column, MIN), Optional.empty());
   }
 
   /**
    * Given a logical column in the data schema provided when creating {@code this}, return the
-   * corresponding MAX column in the statistic schema that stores the MAX values for the provided
-   * logical column.
+   * corresponding MAX column and an optional column adjustment expression from the statistic schema
+   * that stores the MAX values for the provided logical column.
+   *
+   * @param column the logical column name.
+   * @return a tuple of the MAX column and an optional adjustment expression.
    */
-  public Column getMaxColumn(Column column) {
+  public Tuple2<Column, Optional<Expression>> getMaxColumn(Column column) {
     checkArgument(
         isSkippingEligibleMinMaxColumn(column),
         String.format("%s is not a valid min column for data schema %s", column, dataSchema));
-    return getStatsColumn(column, MAX);
+    DataType dataType = logicalToDataType.get(column);
+    Column maxColumn = getStatsColumn(column, MAX);
+
+    // If this is a column of type Timestamp or TimestampNTZ
+    // compensate for the truncation from microseconds to milliseconds
+    // by adding 1 millisecond. For example, a file containing only
+    // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
+    // to contain the range from 01:02:03.456 to 01:02:03.457.
+    if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
+      return new Tuple2<>(
+          maxColumn,
+          Optional.of(
+              new ScalarExpression("TIMEADD", Arrays.asList(maxColumn, Literal.ofLong(1)))));
+    }
+    return new Tuple2<>(maxColumn, Optional.empty());
   }
 
   /**
@@ -158,13 +180,7 @@ public class StatsSchemaHelper {
    */
   public boolean isSkippingEligibleMinMaxColumn(Column column) {
     return logicalToDataType.containsKey(column)
-        && isSkippingEligibleDataType(logicalToDataType.get(column))
-        &&
-        // TODO (delta-io/delta#2462) for now we block using min/max columns of timestamps.
-        //  JSON serialization truncates to milliseconds. To safely use timestamp min/max stats
-        //  we need to add a millisecond to max statistics which requires time addition
-        //  expression
-        !(logicalToDataType.get(column) instanceof TimestampType);
+        && isSkippingEligibleDataType(logicalToDataType.get(column));
   }
 
   /**
@@ -196,6 +212,7 @@ public class StatsSchemaHelper {
           add("double");
           add("date");
           add("timestamp");
+          add("timestamp_ntz");
           add("string");
         }
       };
