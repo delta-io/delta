@@ -14,9 +14,7 @@
 # limitations under the License.
 #
 
-# mypy: disable-error-code="union-attr"
-# mypy: disable-error-code="attr-defined"
-# type: ignore[union-attr]
+# mypy: disable-error-code="union-attr, attr-defined"
 
 import unittest
 import os
@@ -491,7 +489,7 @@ class DeltaTableTestsMixin:
         target_path = os.path.join(self.tempFile, "target")
         spark = self.spark
 
-        def f(spark):
+        def f(spark):  # type: ignore[no-untyped-def]
             spark.range(20) \
                 .withColumn("x", col("id")) \
                 .withColumn("y", col("id")) \
@@ -927,10 +925,10 @@ class DeltaTableTestsMixin:
 
     def test_verify_paritionedBy_compatibility(self) -> None:
         try:
-            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+            from pyspark.sql.column import _to_seq  # type: ignore[import-not-found]
         except ImportError:
             # Spark 4
-            from pyspark.sql.classic.column import _to_seq  # type: ignore[attr-defined]
+            from pyspark.sql.classic.column import _to_seq  # type: ignore
 
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
@@ -1056,8 +1054,8 @@ class DeltaTableTestsMixin:
             builder.addColumn(
                 "a",
                 "bigint",
-                generatedByDefaultAs=""
-            )  # type: ignore[arg-type]
+                generatedByDefaultAs=""  # type: ignore[arg-type]
+            )
 
         # bad generatedByDefaultAs - identity column data type must be Long
         with self.assertRaises(UnsupportedOperationException):
