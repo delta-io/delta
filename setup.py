@@ -13,8 +13,19 @@ def get_version_from_sbt():
         version = fp.read().strip()
     return version.split('"')[1]
 
-
+# revert the usage of use_spark_master and instead add 4.0 to mima settings :(
 VERSION = get_version_from_sbt()
+use_spark_master = os.getenv("USE_SPARK_MASTER") or False
+
+packages_arg = ['delta']
+install_requires_arg = ['pyspark>=3.5.0,<3.6.0', 'importlib_metadata>=1.0.0']
+python_requires_arg = '>=3.6'
+
+# Delta 4.0+ contains Delta Connect code and uses Spark 4.0+
+if use_spark_master:
+    packages_arg = ['delta', 'delta.connect', 'delta.connect.proto']
+    install_requires_arg = ['pyspark>=4.0.0.dev1', 'importlib_metadata>=1.0.0']
+    python_requires_arg = '>=3.9'
 
 
 class VerifyVersionCommand(install):
@@ -60,15 +71,12 @@ setup(
     ],
     keywords='delta.io',
     package_dir={'': 'python'},
-    packages=['delta'],
+    packages=packages_arg,
     package_data={
         'delta': ['py.typed'],
     },
-    install_requires=[
-        'pyspark>=3.5.0,<3.6.0',
-        'importlib_metadata>=1.0.0',
-    ],
-    python_requires='>=3.6',
+    install_requires=install_requires_arg,
+    python_requires=python_requires_arg,
     cmdclass={
         'verify': VerifyVersionCommand,
     }
