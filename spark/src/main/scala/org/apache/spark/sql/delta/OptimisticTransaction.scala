@@ -436,7 +436,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     syncIdentity || (updatedIdentityHighWaterMarks.nonEmpty && newMetadata.isEmpty)
   }
 
-
   // Called before commit to update table schema with collected IDENTITY column high water marks
   // so that the change can be committed to delta log.
   def precommitUpdateSchemaWithIdentityHighWaterMarks(): Unit = {
