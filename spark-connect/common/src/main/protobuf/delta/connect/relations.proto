@@ -19,6 +19,7 @@ syntax = 'proto3';
 package delta.connect;
 
 import "delta/connect/base.proto";
+import "spark/connect/types.proto";
 
 option java_multiple_files = true;
 option java_package = "io.delta.connect.proto";
@@ -28,6 +29,10 @@ message DeltaRelation {
   oneof relation_type {
     Scan scan = 1;
     DescribeHistory describe_history = 2;
+    DescribeDetail describe_detail = 3;
+    ConvertToDelta convert_to_delta = 4;
+    RestoreTable restore_table = 5;
+    IsDeltaTable is_delta_table = 6;
   }
 }
 
@@ -42,4 +47,52 @@ message Scan {
 message DescribeHistory {
   // (Required) The Delta table to read the history of.
   DeltaTable table = 1;
+}
+
+// Relation containing the details of a Delta table such as the format, name, and size.
+message DescribeDetail {
+  // (Required) The Delta table to describe the details of.
+  DeltaTable table = 1;
+}
+
+// Command that turns a Parquet table into a Delta table.
+//
+// This needs to be a Relation as it returns the identifier of the resulting table.
+// We cannot simply reuse the input identifier, as it could be a path-based identifier,
+// and in that case we need to replace "parquet.`...`" with "delta.`...`".
+message ConvertToDelta {
+  // (Required) Parquet table identifier formatted as "parquet.`path`"
+  string identifier = 1;
+
+  // (Optional) Partitioning schema of the input table
+  oneof partition_schema {
+    // Hive DDL formatted string
+    string partition_schema_string = 2;
+    // Struct with names and types of partitioning columns
+    spark.connect.DataType partition_schema_struct = 3;
+  }
+}
+
+// Command that restores the DeltaTable to an older version of the table specified by either a
+// version number or a timestamp.
+//
+// Needs to be a Relation, as it returns a row containing the execution metrics.
+message RestoreTable {
+  // (Required) The Delta table to restore to an earlier version.
+  DeltaTable table = 1;
+
+  // (Required) Version to restore to.
+  oneof version_or_timestamp {
+    // The version number to restore to.
+    int64 version = 2;
+    // The timestamp to restore to.
+    string timestamp = 3;
+  }
+}
+
+// Relation containing a single row containing a single boolean that indicates whether the provided
+// path contains a Delta table.
+message IsDeltaTable {
+  // (Required) The path to check.
+  string path = 1;
 }
