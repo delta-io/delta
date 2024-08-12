@@ -355,6 +355,11 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     case _ => None
   }
 
+  /**
+   * When we query the Spark actions using DeltaLog::getChanges ALL action types are returned. Since
+   * Kernel only returns actions in the provided `actionSet` this FX prunes the Spark actions to
+   * match `actionSet`.
+   */
   def pruneSparkActionsByActionSet(
     sparkActions: Iterator[(Long, Seq[SparkAction])],
     actionSet: Set[DeltaAction]): Iterator[(Long, Seq[SparkAction])] = {
