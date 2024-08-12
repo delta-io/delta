@@ -120,7 +120,6 @@ public class TableImpl implements Table {
     return new Path(tablePath, "_delta_log");
   }
 
-  // TODO what about coordinated commits?
   /**
    * Returns the raw delta actions for each version between startVersion and endVersion. Only reads
    * the actions requested in actionSet from the JSON log files.

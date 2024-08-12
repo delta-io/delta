@@ -306,8 +306,6 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     dataChange: Boolean) extends StandardAction
 
   def standardizeKernelAction(row: Row): Option[StandardAction] = {
-    // TODO verify that it's okay that some of the returned rows are all null (or should we filter
-    //  out these null rows with a selection vector?)
     val actionIdx = (2 until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
       return None
     )

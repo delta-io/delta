@@ -128,7 +128,7 @@ class ActionCommitLogSuite extends AnyFunSuite with MockFileSystemClientUtils {
     files: Seq[FileStatus],
     startVersion: Long = 1,
     endVersion: Long = 3,
-    expectedErrorMessageContains: String,
+    expectedErrorMessageContains: String
   )(implicit classTag: ClassTag[T]): Unit = {
     test("getCommitFilesForVersionRange: " + testName) {
       val e = intercept[T] {
