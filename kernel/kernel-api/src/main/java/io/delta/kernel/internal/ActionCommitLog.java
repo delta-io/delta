@@ -17,8 +17,6 @@ package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.fs.Path.getName;
-import static io.delta.kernel.internal.util.Utils.closeCloseables;
-import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -31,6 +29,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
@@ -229,112 +228,45 @@ public class ActionCommitLog {
   public static CloseableIterator<ColumnarBatch> readCommitFiles(
       Engine engine, List<FileStatus> commitFiles, StructType readSchema) {
 
-    return new CloseableIterator<ColumnarBatch>() {
+    return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty())
+        .map(
+            actionWrapper -> {
+              long timestamp =
+                  actionWrapper
+                      .getTimestamp()
+                      .orElseThrow(
+                          () ->
+                              new RuntimeException("Commit files should always have a timestamp"));
+              ExpressionEvaluator commitVersionGenerator =
+                  wrapEngineException(
+                      () ->
+                          engine
+                              .getExpressionHandler()
+                              .getEvaluator(
+                                  readSchema,
+                                  Literal.ofLong(actionWrapper.getVersion()),
+                                  LongType.LONG),
+                      "Get the expression evaluator for the commit version");
+              ExpressionEvaluator commitTimestampGenerator =
+                  wrapEngineException(
+                      () ->
+                          engine
+                              .getExpressionHandler()
+                              .getEvaluator(readSchema, Literal.ofLong(timestamp), LongType.LONG),
+                      "Get the expression evaluator for the commit timestamp");
+              ColumnVector commitVersionVector =
+                  wrapEngineException(
+                      () -> commitVersionGenerator.eval(actionWrapper.getColumnarBatch()),
+                      "Evaluating the commit version expression");
+              ColumnVector commitTimestampVector =
+                  wrapEngineException(
+                      () -> commitTimestampGenerator.eval(actionWrapper.getColumnarBatch()),
+                      "Evaluating the commit timestamp expression");
 
-      final Iterator<FileStatus> fsIter = commitFiles.iterator();
-      boolean closed = false;
-      CloseableIterator<ColumnarBatch> batchIter;
-
-      @Override
-      public void close() throws IOException {
-        if (!closed && batchIter != null) {
-          batchIter.close();
-          batchIter = null;
-          closed = true;
-        }
-      }
-
-      @Override
-      public boolean hasNext() {
-        if (closed) {
-          throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
-        }
-        tryEnsureNextBatchIterIsReady();
-        // By definition of tryEnsureNextBatchIterIsReady, we know that if batchIter
-        // is not null then it has a next element
-        return batchIter != null;
-      }
-
-      @Override
-      public ColumnarBatch next() {
-        if (closed) {
-          throw new IllegalStateException("Can't call `next` on a closed iterator.");
-        }
-        if (!hasNext()) {
-          throw new NoSuchElementException("No next element");
-        }
-        return batchIter.next();
-      }
-
-      /* Try to load the next batchIter from fsIter if possible */
-      private void tryEnsureNextBatchIterIsReady() {
-        if (batchIter != null) {
-          if (batchIter.hasNext()) {
-            return; // Exit early if next batch is available
-          }
-          closeCloseables(batchIter);
-          batchIter = null;
-        }
-
-        if (fsIter.hasNext()) {
-          batchIter = readAndTransformFile(fsIter.next());
-          tryEnsureNextBatchIterIsReady(); // recurse in case file is empty
-        }
-      }
-
-      /**
-       * Reads the commit file given and transforms each batch to have columns "version" and
-       * "timestamp".
-       */
-      private CloseableIterator<ColumnarBatch> readAndTransformFile(FileStatus fs) {
-        ExpressionEvaluator commitVersionGenerator =
-            wrapEngineException(
-                () ->
-                    engine
-                        .getExpressionHandler()
-                        .getEvaluator(
-                            readSchema,
-                            Literal.ofLong(FileNames.deltaVersion(fs.getPath())),
-                            LongType.LONG),
-                "Get the expression evaluator for the commit version");
-        ExpressionEvaluator commitTimestampGenerator =
-            wrapEngineException(
-                () ->
-                    engine
-                        .getExpressionHandler()
-                        .getEvaluator(
-                            readSchema, Literal.ofLong(fs.getModificationTime()), LongType.LONG),
-                "Get the expression evaluator for the commit timestamp");
-
-        try {
-          return wrapEngineExceptionThrowsIO(
-                  () ->
-                      engine
-                          .getJsonHandler()
-                          .readJsonFiles(
-                              singletonCloseableIterator(fs), readSchema, Optional.empty()),
-                  "Reading JSON log file `%s` with readSchema=%s",
-                  fs,
-                  readSchema)
-              .map(
-                  batch -> {
-                    ColumnVector commitVersionVector =
-                        wrapEngineException(
-                            () -> commitVersionGenerator.eval(batch),
-                            "Evaluating the commit version expression");
-                    ColumnVector commitTimestampVector =
-                        wrapEngineException(
-                            () -> commitTimestampGenerator.eval(batch),
-                            "Evaluating the commit timestamp expression");
-
-                    return batch
-                        .withNewColumn(0, COMMIT_VERSION_STRUCT_FIELD, commitVersionVector)
-                        .withNewColumn(1, COMMIT_TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
-                  });
-        } catch (IOException e) {
-          throw new UncheckedIOException(e);
-        }
-      }
-    };
+              return actionWrapper
+                  .getColumnarBatch()
+                  .withNewColumn(0, COMMIT_VERSION_STRUCT_FIELD, commitVersionVector)
+                  .withNewColumn(1, COMMIT_TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
+            });
   }
 }
