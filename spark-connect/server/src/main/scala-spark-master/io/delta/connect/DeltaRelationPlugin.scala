@@ -18,7 +18,6 @@ package org.apache.spark.sql.connect.delta
 
 import java.util.Optional
 
-import com.databricks.spark.util.DatabricksLogging
 import com.google.protobuf
 import com.google.protobuf.{ByteString, InvalidProtocolBufferException}
 import io.delta.connect.proto
@@ -39,7 +38,7 @@ import org.apache.spark.sql.types.StructType
 /**
  * Planner plugin for relation extensions using [[proto.DeltaRelation]].
  */
-class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase with DatabricksLogging {
+class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   override def transform(raw: Array[Byte], planner: SparkConnectPlanner): Optional[LogicalPlan] = {
     val relation = parseAnyFrom(raw,
       SparkEnv.get.conf.get(Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT))
@@ -58,7 +57,6 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase with Data
 
   private def transform(
       relation: proto.DeltaRelation, planner: SparkConnectPlanner): LogicalPlan = {
-    logConsole("Transforming DeltaRelation " + relation.getRelationTypeCase)
     relation.getRelationTypeCase match {
       case proto.DeltaRelation.RelationTypeCase.SCAN =>
         transformScan(planner.session, relation.getScan)

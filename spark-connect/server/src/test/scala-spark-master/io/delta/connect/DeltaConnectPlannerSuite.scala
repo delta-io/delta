@@ -24,7 +24,6 @@ import com.google.protobuf
 import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{Dataset, QueryTest, SparkSession}
@@ -131,7 +130,7 @@ class DeltaConnectPlannerSuite
       val plan = transform(input)
       val result = Dataset.ofRows(spark, plan).collect()
 
-      assert(result.length == 1)
+      assert(result.length === 1)
       val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
       assert(!deltaTable.toDF.isEmpty)
     }
@@ -160,7 +159,7 @@ class DeltaConnectPlannerSuite
       val plan = transform(input)
       val result = Dataset.ofRows(spark, plan).collect()
 
-      assert(result.length == 1)
+      assert(result.length === 1)
       val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
       assert(!deltaTable.toDF.isEmpty)
     }
@@ -207,7 +206,7 @@ class DeltaConnectPlannerSuite
       val plan = transform(input)
       val result = Dataset.ofRows(spark, plan).collect()
 
-      assert(result.length == 1)
+      assert(result.length === 1)
       val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
       assert(!deltaTable.toDF.isEmpty)
     }
@@ -254,7 +253,7 @@ class DeltaConnectPlannerSuite
       val childResult = result.asInstanceOf[DescribeDeltaDetailCommand].child
       val childExpected = expected.asInstanceOf[DescribeDeltaDetailCommand].child
 
-      assert(childResult.asInstanceOf[ResolvedTable].identifier.name ==
+      assert(childResult.asInstanceOf[ResolvedTable].identifier.name ===
         childExpected.asInstanceOf[ResolvedTable].identifier.name)
     }
   }
@@ -288,9 +287,9 @@ class DeltaConnectPlannerSuite
       val plan = transform(input)
       assert(plan.columns.toSeq == expectedRestoreOutputColumns)
       val result = Dataset.ofRows(spark, plan).collect()
-      assert(result.length == 1)
-      assert(result.head.getLong(2) == 2) // Two files should have been removed.
-      assert(spark.read.table("table").count() == 1000)
+      assert(result.length === 1)
+      assert(result.head.getLong(2) === 2) // Two files should have been removed.
+      assert(spark.read.table("table").count() === 1000)
     }
   }
 
@@ -336,9 +335,9 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      assert(plan.schema.length == 1)
+      assert(plan.schema.length === 1)
       val result = Dataset.ofRows(spark, plan).collect()
-      assert(result.length == 1)
+      assert(result.length === 1)
       assert(result.head.getBoolean(0))
     }
   }
@@ -354,9 +353,9 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      assert(plan.schema.length == 1)
+      assert(plan.schema.length === 1)
       val result = Dataset.ofRows(spark, plan).collect()
-      assert(result.length == 1)
+      assert(result.length === 1)
       assert(!result.head.getBoolean(0))
     }
   }
