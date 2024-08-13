@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.parquet;
 
+import static io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY;
 import static java.lang.String.format;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit.MICROS;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.decimalType;
@@ -74,8 +75,7 @@ class ParquetSchemaUtils {
    */
   static MessageType pruneSchema(
       GroupType fileSchema /* parquet */, StructType deltaType /* delta-kernel */) {
-    boolean hasFieldIds = hasFieldIds(deltaType);
-    return new MessageType("fileSchema", pruneFields(fileSchema, deltaType, hasFieldIds));
+    return new MessageType("fileSchema", pruneFields(fileSchema, deltaType));
   }
 
   /**
@@ -91,9 +91,10 @@ class ParquetSchemaUtils {
 
     // First search by the field id. If not found, search by case-sensitive name. Finally
     // by the case-insensitive name.
-    if (hasFieldId(field.getMetadata())) {
-      int deltaFieldId = getFieldId(field.getMetadata());
-      Type subType = parquetFieldIdToTypeMap.get(deltaFieldId);
+    // For Delta readers, no need to use the nested field ids added as part of icebergCompatV2
+    Optional<Integer> fieldId = getFieldId(field.getMetadata());
+    if (fieldId.isPresent()) {
+      Type subType = parquetFieldIdToTypeMap.get(fieldId.get());
       if (subType != null) {
         return subType;
       }
@@ -138,21 +139,22 @@ class ParquetSchemaUtils {
    * @param structType Kernel schema object
    * @return {@link MessageType} representing the schema in Parquet format.
    */
-  public static MessageType toParquetSchema(StructType structType) {
+  static MessageType toParquetSchema(StructType structType) {
     List<Type> types = new ArrayList<>();
     for (StructField structField : structType.fields()) {
       types.add(
           toParquetType(
+              structField /* nearestAncestor with struct field */,
+              structField.getName() /* relativePath to nearestAncestor */,
               structField.getDataType(),
               structField.getName(),
               structField.isNullable() ? OPTIONAL : REQUIRED,
-              getFieldId(structField)));
+              getFieldId(structField.getMetadata())));
     }
-    return new MessageType("Default Kernel Schema", types);
+    return new MessageType("DefaultKernelSchema", types);
   }
 
-  private static List<Type> pruneFields(
-      GroupType type, StructType deltaDataType, boolean hasFieldIds) {
+  private static List<Type> pruneFields(GroupType type, StructType deltaDataType) {
     // prune fields including nested pruning like in pruneSchema
     final Map<Integer, Type> parquetFieldIdToTypeMap = getParquetFieldToTypeMap(type);
 
@@ -161,7 +163,7 @@ class ParquetSchemaUtils {
             column -> {
               Type subType = findSubFieldType(type, column, parquetFieldIdToTypeMap);
               if (subType != null) {
-                return prunedType(subType, column.getDataType(), hasFieldIds);
+                return prunedType(subType, column.getDataType());
               } else {
                 return null;
               }
@@ -170,18 +172,41 @@ class ParquetSchemaUtils {
         .collect(Collectors.toList());
   }
 
-  private static Type prunedType(Type type, DataType deltaType, boolean hasFieldIds) {
+  private static Type prunedType(Type type, DataType deltaType) {
     if (type instanceof GroupType && deltaType instanceof StructType) {
       GroupType groupType = (GroupType) type;
       StructType structType = (StructType) deltaType;
-      return groupType.withNewFields(pruneFields(groupType, structType, hasFieldIds));
+      return groupType.withNewFields(pruneFields(groupType, structType));
     } else {
       return type;
     }
   }
 
+  /**
+   * Converts a Delta type {@code dataType} to a Parquet type.
+   *
+   * @param nearestAncestor The nearest ancestor with a {@link StructField}. This ancestor
+   *     represents the current node or any other node on the path to the current node from root of
+   *     the schema.
+   * @param relativePath The relative path to this element from {@code nearestAncestor}. For
+   *     example, consider a column type {@code col1 STRUCT(a INT, b STRUCT(c INT, d ARRAY(INT)))}.
+   *     The absolute path to the nested {@code element} field of the list is col1.b.d.element,
+   *     while the relative path is d.element, i.e., relative to the nearest ancestor with a struct
+   *     field.
+   * @param dataType The Delta type to be converted to a Parquet type.
+   * @param name The name of the field.
+   * @param repetition The {@link Repetition} of the field.
+   * @param fieldId The field ID of the field. If present, the field ID is added to the Parquet
+   *     type.
+   * @return The Parquet type representing the given Delta type.
+   */
   private static Type toParquetType(
-      DataType dataType, String name, Repetition repetition, Optional<Integer> fieldId) {
+      StructField nearestAncestor,
+      String relativePath,
+      DataType dataType,
+      String name,
+      Repetition repetition,
+      Optional<Integer> fieldId) {
     Type type;
     if (dataType instanceof BooleanType) {
       type = primitive(BOOLEAN, repetition).named(name);
@@ -237,9 +262,10 @@ class ParquetSchemaUtils {
               .as(timestampType(false /* isAdjustedToUTC */, MICROS))
               .named(name);
     } else if (dataType instanceof ArrayType) {
-      type = toParquetArrayType((ArrayType) dataType, name, repetition);
+      type =
+          toParquetArrayType(nearestAncestor, relativePath, (ArrayType) dataType, name, repetition);
     } else if (dataType instanceof MapType) {
-      type = toParquetMapType((MapType) dataType, name, repetition);
+      type = toParquetMapType(nearestAncestor, relativePath, (MapType) dataType, name, repetition);
     } else if (dataType instanceof StructType) {
       type = toParquetStructType((StructType) dataType, name, repetition);
     } else {
@@ -254,42 +280,64 @@ class ParquetSchemaUtils {
     return type;
   }
 
-  private static Type toParquetArrayType(ArrayType arrayType, String name, Repetition rep) {
-    // We will be supporting the 3-level array structure only. 2-level array structure will
-    // be supported in the future.
+  private static Type toParquetArrayType(
+      StructField nearestAncestor,
+      String relativePath,
+      ArrayType arrayType,
+      String name,
+      Repetition rep) {
+    // We will be supporting the 3-level array structure only. 2-level array structures are
+    // a very old legacy versions of Parquet which Kernel doesn't support writing as.
+
+    String elementRelativePath = relativePath + ".element";
     return Types.buildGroup(rep)
         .as(LogicalTypeAnnotation.listType())
         .addField(
             Types.repeatedGroup()
                 .addField(
                     toParquetType(
+                        nearestAncestor,
+                        elementRelativePath,
                         arrayType.getElementType(),
                         "element", /* name */
                         arrayType.containsNull() ? OPTIONAL : REQUIRED,
-                        Optional.empty()))
+                        getNestedFieldId(nearestAncestor, elementRelativePath)))
                 .named("list"))
         .named(name);
   }
 
-  private static Type toParquetMapType(MapType mapType, String name, Repetition repetition) {
-    // We will be supporting the 3-level array structure only. 2-level array structure will
-    // be supported in the future.
+  private static Type toParquetMapType(
+      StructField nearestAncestor,
+      String relativePath,
+      MapType mapType,
+      String name,
+      Repetition repetition) {
+    // We will be supporting the 3-level array structure only. 2-level array structures are
+    // a very old legacy versions of Parquet which Kernel doesn't support writing as.
+
+    String keyRelativePath = relativePath + ".key";
+    String valueRelativePath = relativePath + ".value";
+
     return Types.buildGroup(repetition)
         .as(LogicalTypeAnnotation.mapType())
         .addField(
             Types.repeatedGroup()
                 .addField(
                     toParquetType(
+                        nearestAncestor,
+                        keyRelativePath,
                         mapType.getKeyType(),
                         "key", /* name */
                         REQUIRED, /* repetition */
-                        Optional.empty()))
+                        getNestedFieldId(nearestAncestor, keyRelativePath)))
                 .addField(
                     toParquetType(
+                        nearestAncestor,
+                        valueRelativePath,
                         mapType.getValueType(),
                         "value", /* name */
                         mapType.isValueContainsNull() ? OPTIONAL : REQUIRED,
-                        Optional.empty()))
+                        getNestedFieldId(nearestAncestor, valueRelativePath)))
                 .named("key_value"))
         .named(name);
   }
@@ -300,53 +348,33 @@ class ParquetSchemaUtils {
     for (StructField field : structType.fields()) {
       fields.add(
           toParquetType(
+              field, /* nearestAncestor with struct field */
+              field.getName(), /* relativePath to nearestAncestor */
               field.getDataType(),
               field.getName(),
               field.isNullable() ? OPTIONAL : REQUIRED,
-              getFieldId(field)));
+              getFieldId(field.getMetadata())));
     }
     return new GroupType(repetition, name, fields);
   }
 
-  /** Recursively checks whether the given data type has any Parquet field ids in it. */
-  private static boolean hasFieldIds(DataType dataType) {
-    if (dataType instanceof StructType) {
-      StructType structType = (StructType) dataType;
-      for (StructField field : structType.fields()) {
-        if (hasFieldId(field.getMetadata()) || hasFieldIds(field.getDataType())) {
-          return true;
-        }
-      }
-      return false;
-    } else if (dataType instanceof ArrayType) {
-      return hasFieldIds(((ArrayType) dataType).getElementType());
-    } else if (dataType instanceof MapType) {
-      MapType mapType = (MapType) dataType;
-      return hasFieldIds(mapType.getKeyType()) || hasFieldIds(mapType.getValueType());
+  private static Optional<Integer> getFieldId(FieldMetadata fieldMetadata) {
+    return getFieldId(fieldMetadata, ColumnMapping.PARQUET_FIELD_ID_KEY);
+  }
+
+  private static Optional<Integer> getNestedFieldId(
+      StructField field, String nestedFieldRelativePath) {
+    FieldMetadata nestedFieldIDMetadata =
+        field.getMetadata().getMetadata(PARQUET_FIELD_NESTED_IDS_METADATA_KEY);
+    if (nestedFieldIDMetadata != null) {
+      return getFieldId(nestedFieldIDMetadata, nestedFieldRelativePath);
     }
-
-    // Primitive types don't have metadata field. It will be checked as part of the
-    // StructType check this primitive type is part of.
-    return false;
+    return Optional.empty();
   }
 
-  private static boolean hasFieldId(FieldMetadata fieldMetadata) {
-    return fieldMetadata.contains(ColumnMapping.PARQUET_FIELD_ID_KEY);
-  }
-
-  /** Assumes the field id exists */
-  private static int getFieldId(FieldMetadata fieldMetadata) {
+  private static Optional<Integer> getFieldId(FieldMetadata fieldMetadata, String fieldIdKey) {
     // Field id delta schema metadata is deserialized as long, but the range should always
     // be within integer range.
-    Long fieldId = fieldMetadata.getLong(ColumnMapping.PARQUET_FIELD_ID_KEY);
-    return Math.toIntExact(fieldId);
-  }
-
-  private static Optional<Integer> getFieldId(StructField field) {
-    if (hasFieldId(field.getMetadata())) {
-      return Optional.of(getFieldId(field.getMetadata()));
-    } else {
-      return Optional.empty();
-    }
+    return Optional.ofNullable(fieldMetadata.getLong(fieldIdKey)).map(Math::toIntExact);
   }
 }
