@@ -19,13 +19,15 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, If, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.UnresolvedDeltaPathOrIdentifier
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{RemoveFile}
+import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DateTimeUtils.NANOS_PER_MILLIS
 import org.apache.spark.sql.delta.util.DeltaFileOperations
@@ -35,14 +37,11 @@ import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTim
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.BooleanType
 import org.apache.spark.sql.types.StringType
-import org.apache.spark.sql.types.NullType
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.{Row, SparkSession, Column}
 import org.apache.spark.util.SerializableConfiguration
 
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 
 
 trait FsckCommandMetrics { self: RunnableCommand =>
@@ -51,8 +50,7 @@ trait FsckCommandMetrics { self: RunnableCommand =>
   def createMetrics: Map[String, SQLMetric] = Map[String, SQLMetric](
     "numMissingFiles" -> createMetric(sc, "number of files removed."),
     "executionTimeMs" -> createTimingMetric(sc, "time taken to execute the entire operation."),
-    "numFilesScanned" -> createMetric(sc, "Number of files scanned."),
-    "numMissingDVs" -> createMetric(sc, "Number of files with missing deletion vectors.")
+    "numFilesScanned" -> createMetric(sc, "Number of files scanned.")
   )
 }
 
@@ -63,17 +61,15 @@ trait FsckCommandMetrics { self: RunnableCommand =>
  * }}}
  */
 case class FsckRepairTableCommand (
-  child: LogicalPlan,
-  dryRun: Boolean) extends RunnableCommand
-  with UnaryNode
-  with DeltaCommand
-  with FsckCommandMetrics {
+    child: LogicalPlan,
+    dryRun: Boolean) extends RunnableCommand
+                     with UnaryNode
+                     with DeltaCommand
+                     with FsckCommandMetrics {
   // Create output columns for the command
   override val output: Seq[Attribute] =
     Seq(AttributeReference("dataFilePath", StringType, nullable = false)(),
-      AttributeReference("dataFileMissing", BooleanType, nullable = false)(),
-      AttributeReference("deletionVectorPath", StringType, nullable = true)(),
-      AttributeReference("deletionVectorFileMissing", BooleanType, nullable = false)())
+      AttributeReference("dataFileMissing", BooleanType, nullable = false)())
   override lazy val metrics = createMetrics
 
   override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
@@ -93,12 +89,10 @@ case class FsckRepairTableCommand (
 
     // This chunk will call performFsck which executes the FSCK logic
     // and then will commit the changes to the Delta Log if needed.
-    val (removedFiles, numMissingFiles, numMissingDVs) =
-      performFsck(sparkSession, deltaLog, catalogTable)
-    val limit =
-      sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MAX_NUM_ENTRIES_IN_RESULT)
+    val (removedFiles, numMissingFiles) = performFsck(sparkSession, deltaLog, catalogTable)
     // Display the relevant log
-    val missingDVMessage = s"Found (${numMissingDVs}) file(s) with missing deletion vectors.\n"
+    val limit =
+        sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MAX_NUM_ENTRIES_IN_RESULT)
     val msg = if (dryRun) {
       if (numMissingFiles <= limit) {
         s"Found (${numMissingFiles}) file(s) to be removed from the delta log. Listing all rows"
@@ -108,43 +102,31 @@ case class FsckRepairTableCommand (
     } else {
       s"Removed (${numMissingFiles}) file(s) from the delta log."
     }
-    logConsole(missingDVMessage + msg)
-    logInfo(missingDVMessage + msg)
+    logConsole(msg)
+    logInfo(msg)
     // Format the output (the list of deleted files)
-    removedFiles.map(file => {
-      Row(file.getAs[String]("path"),
-        file.getAs[Boolean]("dataFileMissing"),
-        file.getAs[String]("deletionVectorPath"),
-        file.getAs[Boolean]("deletionVectorFileMissing"))
-    })
+    removedFiles.map(action => Row(action.path, true))
   }
 
   def performFsck(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
-      catalogTable: Option[CatalogTable]): (Seq[Row], Long, Long) = {
+      catalogTable: Option[CatalogTable]): (Seq[RemoveFile], Long) = {
     recordDeltaOperation(deltaLog, "delta.fsck") {
       deltaLog.withNewTransaction(catalogTable) { txn =>
-        val DVRemoveConf =
-          sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MISSING_DVS_MODE)
         val startTime = System.nanoTime()
+        // Needed to get the dataset of AddFile
         // scalastyle:off sparkimplicits
         import sparkSession.implicits._
+
         // scalastyle:on sparkimplicits
 
-        // Get the display limit for dry run
-        val limit =
-        sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MAX_NUM_ENTRIES_IN_RESULT)
-
         // Get the files referenced in the current Delta Log
-        // We keep the numRecords stats for removeFile entry
         val allFiles = deltaLog.snapshot.withStats
           .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
           .as[AddFile]
 
-        // Get the file count for metrics and current time.
         val numFilesScanned = allFiles.count()
-        val currentTimestamp = System.currentTimeMillis()
 
         // get table path
         val path = deltaLog.dataPath
@@ -165,82 +147,43 @@ case class FsckRepairTableCommand (
           }
         }).asNondeterministic()
 
-        // Create a UDF to get the absolute path of a deletion vector and check if it exists
-        val absoluteDVPathMissing = udf((deletionVec: Option[DeletionVectorDescriptor],
-                                 tablePath: String) => {
-          val output = deletionVec match {
-            case None => (None, false)
-            case Some(deletionVec) if deletionVec.isOnDisk =>
-              val absolutePath = deletionVec.absolutePath(new Path(tablePath))
-              val exists = absolutePath
-                .getFileSystem(serializableHadoopConf.value).exists(absolutePath)
-              (Some(absolutePath.toString()), !exists)
-            case Some(deletionVec) => (None, false)
-          }
-          output
-        }).asNondeterministic()
+        // Get the files that are in DeltaLogs but that don't exist in the filesystem.
+        val missingFiles = allFiles.filter(fileExists(lit(deltaLog.dataPath.toString),
+          col("path"), lit(dryRun)) === false)
 
-        val allMissingFiles = allFiles
-          .withColumn("deletionVectorInfo",
-          absoluteDVPathMissing(col("deletionVector"),
-            lit(deltaLog.dataPath.toString)))
-          .withColumn("dataFileMissing", fileExists(lit(deltaLog.dataPath.toString),
-            col("path"), lit(dryRun)) === false)
-          .select("deletionVectorInfo.*", "path", "dataFileMissing")
-          .withColumnRenamed("_1", "deletionVectorPath")
-          .withColumnRenamed("_2", "deletionVectorFileMissing")
-          .filter(col("dataFileMissing") || col("deletionVectorFileMissing"))
-          .collect()
-        val filesToRemove = allMissingFiles.filter(row => row.getBoolean(3) || row.getBoolean(1))
-          .map(row => {
-            val file = allFiles.filter(col("path") === row.getString(2)).first()
-            file.removeWithTimestamp(currentTimestamp, false)
+        // Create remove actions based on the missing files and put them into a data set.
+        val currentTimestamp = System.currentTimeMillis()
+        val filesToRemoveDS = missingFiles.map(file => {
+          file.removeWithTimestamp(currentTimestamp, false)
         })
-
-        val filesToCommit = DVRemoveConf match {
-          case "exception" =>
-            val missingDV = allMissingFiles
-              .filter(row => !row.getBoolean(3) && row.getBoolean(1)).headOption
-            missingDV match {
-              case Some(value) =>
-                if (!dryRun) {
-                  val path = value.getString(2)
-                  throw DeltaErrors.fileNotFoundException(path)
-                }
-                filesToRemove
-              case _ => filesToRemove
-            }
-          case "removeDV" =>
-            // In this implementation, only remove the deletion vector from the delta log
-            // Filter out the files that only have DV missing
-            // For files that only have the DV missing, we will add the file
-            // with the deletion vector set to null
-            val filesToAdd = allMissingFiles
-              .filter(row => !row.getBoolean(3) && row.getBoolean(1))
-              .map(row => {
-                val file = allFiles.filter(col("path") === row.getString(2)).first()
-                file.copy(deletionVector = null, modificationTime = currentTimestamp)
-              })
-            val filesToCommit = filesToRemove ++ filesToAdd
-            val output = allMissingFiles
-            filesToCommit
-        }
 
         // Calculate metrics
         val executionTimeMs = (System.nanoTime() - startTime) / NANOS_PER_MILLIS
-        val numMissingDVs = allMissingFiles.filter(row => row.getBoolean(1)).length
-        val numMissingFiles = allMissingFiles.filter(row => row.getBoolean(3)).length
+        val incrMissingFilesCountExpr = IncrementMetric(TrueLiteral, metrics("numMissingFiles"))
+
+        // Only process the values based on the provided dryRun output limit
+        val filesToRemove = if (dryRun) {
+          filesToRemoveDS
+            .filter(new Column(incrMissingFilesCountExpr))
+            .collect()
+            .take(
+            sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MAX_NUM_ENTRIES_IN_RESULT))
+            .toSeq
+        } else {
+          filesToRemoveDS
+            .filter(new Column(incrMissingFilesCountExpr))
+            .collect()
+            .toSeq
+        }
 
         // Set SQL metrics
         metrics("executionTimeMs").set(executionTimeMs)
         metrics("numFilesScanned").set(numFilesScanned)
-        metrics("numMissingDVs").set(numMissingDVs)
-        metrics("numMissingFiles").set(numMissingFiles)
 
-        // Register the metrics
         txn.registerSQLMetrics(sparkSession, metrics)
         sendDriverMetrics(sparkSession, metrics)
 
+        // Record delta event
         recordDeltaEvent(
           deltaLog,
           opType = "delta.fsck.stats",
@@ -248,25 +191,14 @@ case class FsckRepairTableCommand (
             numFilesScanned,
             metrics("numMissingFiles").value,
             executionTimeMs,
-            metrics("numMissingDVs").value,
             dryRun)
         )
 
-        if (!dryRun && filesToCommit.nonEmpty) {
-          // Commit both the add and the remove actions
-          txn.commitIfNeeded(filesToCommit,
-            DeltaOperations.Fsck(dryRun))
+        // No commit if dryRun is true
+        if (!dryRun && filesToRemove.nonEmpty) {
+          txn.commitIfNeeded(filesToRemove, DeltaOperations.Fsck(dryRun))
         }
-        // Prepare the output
-        // Prepare the output
-
-        val output = if (dryRun) {
-          allMissingFiles.take(limit)
-        } else {
-          allMissingFiles
-        }
-
-        (output, metrics("numMissingFiles").value, metrics("numMissingDVs").value)
+        (filesToRemove, metrics("numMissingFiles").value)
       }
     }
   }
@@ -286,6 +218,5 @@ case class FsckMetric (
   numFilesScanned: Long,
   numMissingFiles: Long,
   executionTimeMs: Long,
-  numMissingDVs: Long,
   dryRun: Boolean
 )
