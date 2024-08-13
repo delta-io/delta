@@ -745,67 +745,65 @@ class DeltaFsckSuite extends QueryTest
 test("FSCK special characters test") {
   withTempDir { dir =>
     var tblName = s"test"
-    withSQLConf("spark.sql.valid.characters.in.table.name" -> " ") {
-      // Create the original table
-      val tblPath = dir + tblName
-      spark.sql(s"CREATE TABLE `$tblName` (Id INT, Col1 INT, Col2 INT, Col3 STRING) "
-        + s"USING DELTA PARTITIONED BY (Col1, Col2) "
-        + s"LOCATION '$tblPath';")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(7, 2, 1, 'ABCF');")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(0, 1, 2, 'AD');")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 5, 0, 'ABC');")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(1, 11, 1, 'CBC');")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 2, 7, 'ACC');")
+    // Create the original table
+    val tblPath = dir + tblName
+    spark.sql(s"CREATE TABLE `$tblName` (Id INT, Col1 INT, Col2 INT, Col3 STRING) "
+      + s"USING DELTA PARTITIONED BY (Col1, Col2) "
+      + s"LOCATION '$tblPath';")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(7, 2, 1, 'ABCF');")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(0, 1, 2, 'AD');")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 5, 0, 'ABC');")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(1, 11, 1, 'CBC');")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 2, 7, 'ACC');")
 
-      // Create a new table by cloning the old one
-      val newTablePath = dir + "test CLONE"
-      spark.sql(s"CREATE TABLE delta.`$newTablePath` SHALLOW CLONE `$tblName`;")
+    // Create a new table by cloning the old one
+    val newTablePath = dir + "test CLONE"
+    spark.sql(s"CREATE TABLE delta.`$newTablePath` SHALLOW CLONE `$tblName`;")
 
-      // Add more entries to the cloned table
-      spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(0, 11, 1, 'BCBC');")
-      spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 4, 7, 'BACC');")
-      spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 5, 1, 'BBC');")
-      spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(1, 9, 1, 'BBC');")
-      // Remove 4 parquet files
-      val inputFiles = spark.read.format("delta")
-                                  .load(newTablePath).inputFiles
-      val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 3,
-      inputFiles.length / 2,
-      inputFiles.length - 1)
-      val filesToDelete: Seq[Path] = indicesToDelete.map(index => new Path(inputFiles(index)))
-      val clonedDataPath = new Path(newTablePath)
+    // Add more entries to the cloned table
+    spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(0, 11, 1, 'BCBC');")
+    spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 4, 7, 'BACC');")
+    spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 5, 1, 'BBC');")
+    spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(1, 9, 1, 'BBC');")
+    // Remove 4 parquet files
+    val inputFiles = spark.read.format("delta")
+                                .load(newTablePath).inputFiles
+    val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 3,
+    inputFiles.length / 2,
+    inputFiles.length - 1)
+    val filesToDelete: Seq[Path] = indicesToDelete.map(index => new Path(inputFiles(index)))
+    val clonedDataPath = new Path(newTablePath)
 
-      // scalastyle:off deltahadoopconfiguration
-      val fs = clonedDataPath.getFileSystem(spark.sessionState.newHadoopConf())
-      // scalastyle:on deltahadoopconfiguration
+    // scalastyle:off deltahadoopconfiguration
+    val fs = clonedDataPath.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
 
-      // Get the files referenced within the Delta Log
-      val deltaLog = DeltaLog.forTable(spark, newTablePath.toString)
-      var snapshot = deltaLog.snapshot
-      var allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      var allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
-        StandardCharsets.UTF_8.toString))
-      // Make sure the files exist in the Delta Log
-      val existingFilesBefore = allFiles.map(file => filesToDelete.map(fileToDelete =>
-        fileToDelete.toString.contains(file)).count(_ == true))
-      assert(existingFilesBefore.count(_ == 1) == 4)
-      // Delete parquet files
-      for (file <- filesToDelete) {
-        fs.delete(file, true)
-      }
-      // Make sure the table is corrupted before fsck
-      checkTableIsBroken(newTablePath)
-      // Fix the table
-      val output = spark.sql(s"FSCK REPAIR TABLE delta.`${newTablePath}`;")
-      assert(output.count() == 4)
-      checkTableIsBroken(newTablePath, false)
-      // Make sure the removed files are not referenced in the delta log anymore
-      snapshot = deltaLog.update()
-      allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
-        StandardCharsets.UTF_8.toString))
-      assert(allFiles.forall(file => filesToDelete.forall(!_.toString.contains(file))))
+    // Get the files referenced within the Delta Log
+    val deltaLog = DeltaLog.forTable(spark, newTablePath.toString)
+    var snapshot = deltaLog.snapshot
+    var allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
+    var allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
+      StandardCharsets.UTF_8.toString))
+    // Make sure the files exist in the Delta Log
+    val existingFilesBefore = allFiles.map(file => filesToDelete.map(fileToDelete =>
+      fileToDelete.toString.contains(file)).count(_ == true))
+    assert(existingFilesBefore.count(_ == 1) == 4)
+    // Delete parquet files
+    for (file <- filesToDelete) {
+      fs.delete(file, true)
     }
+    // Make sure the table is corrupted before fsck
+    checkTableIsBroken(newTablePath)
+    // Fix the table
+    val output = spark.sql(s"FSCK REPAIR TABLE delta.`${newTablePath}`;")
+    assert(output.count() == 4)
+    checkTableIsBroken(newTablePath, false)
+    // Make sure the removed files are not referenced in the delta log anymore
+    snapshot = deltaLog.update()
+    allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
+    allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
+      StandardCharsets.UTF_8.toString))
+    assert(allFiles.forall(file => filesToDelete.forall(!_.toString.contains(file))))
   }
 }
 
