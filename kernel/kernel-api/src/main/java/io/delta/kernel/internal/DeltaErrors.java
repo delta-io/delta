@@ -20,6 +20,7 @@ import static java.lang.String.format;
 import io.delta.kernel.exceptions.*;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
@@ -173,6 +174,13 @@ public final class DeltaErrors {
         "The schema of the data to be written to the table doesn't match "
             + "the table schema. \nTable: %s\nTable schema: %s, \nData schema: %s";
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
+  }
+
+  public static KernelException missingNumRecordsStatsForIcebergCompatV2(
+      DataFileStatus dataFileStatus) {
+    throw new KernelException(
+        format(
+            "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s", dataFileStatus));
   }
 
   public static KernelException partitionColumnMissingInData(

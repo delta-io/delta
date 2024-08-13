@@ -30,6 +30,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DataWriteContextImpl;
+import io.delta.kernel.internal.IcebergCompatV2Utils;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.fs.Path;
@@ -186,7 +187,9 @@ public interface Transaction {
    *
    * @param engine {@link Engine} instance.
    * @param transactionState State of the transaction.
-   * @param fileStatusIter Iterator of row objects representing each data file written.
+   * @param fileStatusIter Iterator of row objects representing each data file written. When {@code
+   *     delta.icebergCompatV2} is enabled, each data file status should contain {@link
+   *     DataFileStatistics} with at least the {@link DataFileStatistics#getNumRecords()} field set.
    * @param dataWriteContext The context used when writing the data files given in {@code
    *     fileStatusIter}
    * @return {@link CloseableIterator} of {@link Row} representing the actions to commit using
@@ -201,9 +204,13 @@ public interface Transaction {
         dataWriteContext instanceof DataWriteContextImpl,
         "DataWriteContext is not created by the `Transaction.getWriteContext()`");
 
+    boolean isIcebergCompatV2Enabled = isIcebergCompatV2Enabled(transactionState);
     URI tableRoot = new Path(getTablePath(transactionState)).toUri();
     return fileStatusIter.map(
         dataFileStatus -> {
+          if (isIcebergCompatV2Enabled) {
+            IcebergCompatV2Utils.validDataFileStatus(dataFileStatus);
+          }
           Row addFileRow =
               AddFile.convertDataFileStatus(
                   tableRoot,
