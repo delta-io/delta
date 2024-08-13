@@ -336,7 +336,7 @@ class DeltaFsckSuite extends QueryTest
       val tablePath = directory.getCanonicalPath
       val selectCommand = s"SELECT * FROM delta.`$tablePath`;";
       spark.conf.set("spark.databricks.delta.retentionDurationCheck.enabled", "false")
-
+      spark.conf.set("spark.databricks.delta.fsck.missingDeletionVectorsMode", "removeDV")
       // Create the original table
       spark.sql(s"CREATE TABLE delta.`$tablePath` (Id INT, Col1 INT, Col2 INT, Col3 STRING) "
         + "USING DELTA PARTITIONED BY (Col1, Col2);")
@@ -352,7 +352,7 @@ class DeltaFsckSuite extends QueryTest
       spark.sql(s"VACUUM delta.`$tablePath` RETAIN 0 HOURS;")
       // Restore the version of the table when deleted files were present
       withSQLConf(("spark.sql.files.ignoreMissingFiles", "true")) {
-      spark.sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 3;")
+        spark.sql(s"RESTORE TABLE delta.`$tablePath` TO VERSION AS OF 3;")
       }
 
       // Make sure the table is corrupted before fsck
@@ -645,7 +645,8 @@ class DeltaFsckSuite extends QueryTest
       val output = spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
       checkTableIsBroken(tablePath, false)
       // Make sure the output rows are correct
-      checkAnswer(output, filesToDelete.map(file => Row(file.toString.split("/").last, true)))
+      checkAnswer(output, filesToDelete.map(file => Row(file.toString.split("/").last,
+        true, null, false)))
     }
   }
 
@@ -721,13 +722,19 @@ class DeltaFsckSuite extends QueryTest
         val actualOperationMetrics = actualOperationMetricsAndName
           .getMap(0)
           .asInstanceOf[Map[String, String]]
+        val expectedMetrics = Map("numMissingFiles" -> Some("1"),
+                                     "numFilesScanned" -> Some(s"${inputFiles.length}"),
+                                     "numMissingDVs" -> Some("0"))
         // Test that the metric exists.
         Seq(
           "numFilesScanned",
           "numMissingFiles",
-          "executionTimeMs"
+          "executionTimeMs",
+          "numMissingDVs"
         ).foreach(metric => {
-          assert(actualOperationMetrics.get(metric).isDefined)})
+          if (expectedMetrics.contains(metric)) {
+              assert(expectedMetrics(metric) == actualOperationMetrics.get(metric))
+            }})
         val operationName = actualOperationMetricsAndName(1).asInstanceOf[String]
         assert(operationName === DeltaOperations.FSCK_OPERATION_NAME)
         checkTableIsBroken(tablePath, false)
@@ -738,66 +745,65 @@ class DeltaFsckSuite extends QueryTest
 test("FSCK special characters test") {
   withTempDir { dir =>
     var tblName = s"test"
-    withSQLConf("spark.sql.valid.characters.in.table.name" -> " ") {
-      // Create the original table
-      spark.sql(s"CREATE TABLE `$tblName` "
-        + "(Id INT, Col1 INT, Col2 INT, Col3 STRING) USING DELTA PARTITIONED BY (Col1, Col2);")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(7, 2, 1, 'ABCF');")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(0, 1, 2, 'AD');")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 5, 0, 'ABC');")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(1, 11, 1, 'CBC');")
-      spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 2, 7, 'ACC');")
+    // Create the original table
+    val tblPath = dir + tblName
+    spark.sql(s"CREATE TABLE `$tblName` (Id INT, Col1 INT, Col2 INT, Col3 STRING) "
+      + s"USING DELTA PARTITIONED BY (Col1, Col2) "
+      + s"LOCATION '$tblPath';")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(7, 2, 1, 'ABCF');")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(0, 1, 2, 'AD');")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 5, 0, 'ABC');")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(1, 11, 1, 'CBC');")
+    spark.sql(s"INSERT INTO TABLE `$tblName` VALUES(2, 2, 7, 'ACC');")
 
-      // Create a new table by cloning the old one
-      val newDirectory = new File(dir, "test CLONE")
-      val newTablePath = newDirectory.getCanonicalPath
-      spark.sql(s"CREATE TABLE delta.`$newTablePath` SHALLOW CLONE `$tblName`;")
+    // Create a new table by cloning the old one
+    val newTablePath = dir + "test CLONE"
+    spark.sql(s"CREATE TABLE delta.`$newTablePath` SHALLOW CLONE `$tblName`;")
 
-      // Add more entries to the cloned table
-      spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(0, 11, 1, 'BCBC');")
-      spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 4, 7, 'BACC');")
-      spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 5, 1, 'BBC');")
-      spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(1, 9, 1, 'BBC');")
-      // Remove 4 parquet files
-      val inputFiles = spark.read.format("delta")
-                                  .load(newTablePath).inputFiles
-      val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 3,
-      inputFiles.length / 2,
-      inputFiles.length - 1)
-      val filesToDelete: Seq[Path] = indicesToDelete.map(index => new Path(inputFiles(index)))
-      val clonedDataPath = new Path(newTablePath)
+    // Add more entries to the cloned table
+    spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(0, 11, 1, 'BCBC');")
+    spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 4, 7, 'BACC');")
+    spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(2, 5, 1, 'BBC');")
+    spark.sql(s"INSERT INTO TABLE delta.`$newTablePath` VALUES(1, 9, 1, 'BBC');")
+    // Remove 4 parquet files
+    val inputFiles = spark.read.format("delta")
+                                .load(newTablePath).inputFiles
+    val indicesToDelete: Seq[Int] = Seq(0, inputFiles.length / 3,
+    inputFiles.length / 2,
+    inputFiles.length - 1)
+    val filesToDelete: Seq[Path] = indicesToDelete.map(index => new Path(inputFiles(index)))
+    val clonedDataPath = new Path(newTablePath)
 
-      // scalastyle:off deltahadoopconfiguration
-      val fs = clonedDataPath.getFileSystem(spark.sessionState.newHadoopConf())
-      // scalastyle:on deltahadoopconfiguration
+    // scalastyle:off deltahadoopconfiguration
+    val fs = clonedDataPath.getFileSystem(spark.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
 
-      // Get the files referenced within the Delta Log
-      val deltaLog = DeltaLog.forTable(spark, newTablePath.toString)
-      var snapshot = deltaLog.snapshot
-      var allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      var allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
-        StandardCharsets.UTF_8.toString))
-      // Make sure the files exist in the Delta Log
-      val existingFilesBefore = allFiles.map(file => filesToDelete.map(fileToDelete =>
-        fileToDelete.toString.contains(file)).count(_ == true))
-      assert(existingFilesBefore.count(_ == 1) == 4)
-      // Delete parquet files
-      for (file <- filesToDelete) {
-        fs.delete(file, true)
-      }
-      // Make sure the table is corrupted before fsck
-      checkTableIsBroken(newTablePath)
-      // Fix the table
-      val output = spark.sql(s"FSCK REPAIR TABLE delta.`${newTablePath}`;")
-      assert(output.count() == 4)
-      checkTableIsBroken(newTablePath, false)
-      // Make sure the removed files are not referenced in the delta log anymore
-      snapshot = deltaLog.update()
-      allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
-      allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
-        StandardCharsets.UTF_8.toString))
-      assert(allFiles.forall(file => filesToDelete.forall(!_.toString.contains(file))))
+    // Get the files referenced within the Delta Log
+    val deltaLog = DeltaLog.forTable(spark, newTablePath.toString)
+    var snapshot = deltaLog.snapshot
+    var allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
+    var allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
+      StandardCharsets.UTF_8.toString))
+    // Make sure the files exist in the Delta Log
+    val existingFilesBefore = allFiles.map(file => filesToDelete.map(fileToDelete =>
+      fileToDelete.toString.contains(file)).count(_ == true))
+    assert(existingFilesBefore.count(_ == 1) == 4)
+    // Delete parquet files
+    for (file <- filesToDelete) {
+      fs.delete(file, true)
     }
+    // Make sure the table is corrupted before fsck
+    checkTableIsBroken(newTablePath)
+    // Fix the table
+    val output = spark.sql(s"FSCK REPAIR TABLE delta.`${newTablePath}`;")
+    assert(output.count() == 4)
+    checkTableIsBroken(newTablePath, false)
+    // Make sure the removed files are not referenced in the delta log anymore
+    snapshot = deltaLog.update()
+    allFilesEncoded = snapshot.allFilesViaStateReconstruction.collect()
+    allFiles = allFilesEncoded.map(file => URLDecoder.decode(file.path,
+      StandardCharsets.UTF_8.toString))
+    assert(allFiles.forall(file => filesToDelete.forall(!_.toString.contains(file))))
   }
 }
 
@@ -875,5 +881,146 @@ test("FSCK ignore non-404 errors in DRY RUN mode") {
       // Make sure only three files were deleted
       assert(allFilesEncoded.length == inputFiles.length - 3)
     }
+  }
+
+  test("FSCK metrics in Delta table history with missing DVs") {
+    Seq(true, false).foreach { DvEnabled =>
+      withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+          withTempDir { tempDir =>
+            spark.conf.set("spark.databricks.delta.fsck.missingDeletionVectorsMode", "removeDV")
+            val directory = new File(tempDir, "test")
+            val tablePath = directory.getCanonicalPath
+            // Create a table in multiple files
+            spark.sql(s"CREATE TABLE delta.`$tablePath` "
+              + "USING DELTA AS SELECT col1 as Id FROM VALUES 0, 1, 2, 3, 4, 5;")
+            spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1);")
+            spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(2);")
+            spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(3);")
+            spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(4);")
+            spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(5);")
+            spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(6);")
+            spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(7);")
+            spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(8);")
+            spark.sql(s"ALTER TABLE delta.`$tablePath` "
+              + s"SET TBLPROPERTIES ('delta.enableDeletionVectors' = $DvEnabled);")
+            spark.sql(s"DELETE FROM delta.`$tablePath` WHERE Id = 2;")
+
+            val inputFiles = spark.read.format("delta")
+                                        .load(tablePath).inputFiles
+            // Remove a file
+            val indexToDelete = inputFiles.length / 2
+            val fileToDelete = new Path(inputFiles(indexToDelete))
+            val dataPath = new Path(tablePath)
+            // scalastyle:off deltahadoopconfiguration
+            val fs = dataPath.getFileSystem(spark.sessionState.newHadoopConf())
+            // scalastyle:on deltahadoopconfiguration
+            val allInputFiles: Array[FileStatus] = fs.listStatus(new Path(tablePath))
+            if (DvEnabled) {
+              val dvToRemove = allInputFiles.filter(file =>
+                file.getPath.toString.contains("deletion_vector"))
+              dvToRemove.foreach(fileStatus => {
+                fs.delete(fileStatus.getPath, true)
+              })
+            }
+            // Delete a parquet file
+            fs.delete(fileToDelete, true)
+            checkTableIsBroken(tablePath)
+            spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
+            checkTableIsBroken(tablePath, false)
+            import io.delta.tables.DeltaTable
+            val actualOperationMetricsAndName = DeltaTable.forPath(spark, tablePath)
+              .history(1)
+              .select("operationMetrics", "operation")
+              .head
+
+            val actualOperationMetrics = actualOperationMetricsAndName
+              .getMap(0)
+              .asInstanceOf[Map[String, String]]
+
+            val expectedMetrics = Map("numMissingFiles" -> Some("1"),
+                                      "numFilesScanned" -> Some(s"${inputFiles.length}"),
+                                      "numMissingDVs" -> Some(if (DvEnabled) "1" else "0"))
+            // Make sure the metrics exist
+            Seq(
+              "numFilesScanned",
+              "numMissingFiles",
+              "executionTimeMs",
+              "numMissingDVs"
+            ).foreach(metric => {
+              if (expectedMetrics.contains(metric)) {
+                assert(expectedMetrics(metric) == actualOperationMetrics.get(metric))
+              }
+              assert(actualOperationMetrics.get(metric).isDefined)})
+            val operationName = actualOperationMetricsAndName(1).asInstanceOf[String]
+            assert(operationName === DeltaOperations.FSCK_OPERATION_NAME)
+        }
+      }
+    }
+  }
+
+  test("FSCK missing deletion vector") {
+    Seq("exception", "removeDV").foreach(dvResolution => {
+      withTempDir { tempDir =>
+        val directory = new File(tempDir, "test with spaces DVs")
+        val tablePath = directory.getCanonicalPath
+        // Create a table in multiple files
+        spark.sql(s"CREATE TABLE delta.`$tablePath` "
+          + "USING DELTA AS SELECT col1 as Id FROM VALUES 0, 1, 2, 3, 4, 5, 6, 7;")
+        spark.conf.set("spark.databricks.delta.fsck.missingDeletionVectorsMode", dvResolution)
+        spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(1);")
+        spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(2);")
+        spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(3);")
+        spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(4);")
+        spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(5);")
+        spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(6);")
+        spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(7);")
+        spark.sql(s"INSERT INTO TABLE delta.`$tablePath` VALUES(8);")
+        spark.sql(s"ALTER TABLE delta.`$tablePath` "
+          + "SET TBLPROPERTIES ('delta.enableDeletionVectors' = true);")
+        spark.sql(s"DELETE FROM delta.`$tablePath` WHERE Id = 2;")
+        // Find the deletion vector
+        val inputFiles = spark.read.format("delta")
+                                    .load(tablePath).inputFiles
+        val dataPath = new Path(tablePath)
+
+        // scalastyle:off deltahadoopconfiguration
+        val fs = dataPath.getFileSystem(spark.sessionState.newHadoopConf())
+        // scalastyle:on deltahadoopconfiguration
+
+        val allInputFiles: Array[FileStatus] = fs.listStatus(new Path(tablePath))
+        val dvToRemove = allInputFiles.filter(file =>
+          file.getPath.toString.contains("deletion_vector"))
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        dvToRemove.foreach(fileStatus => {
+            fs.delete(fileStatus.getPath, true)
+        })
+        checkTableIsBroken(dataPath.toString)
+        dvResolution match {
+          case "exception" =>
+            val e = intercept[Exception] {
+              spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
+            }
+            assert(e.getMessage.contains("DELTA_FILE_NOT_FOUND"))
+          case _ =>
+            val output = spark.sql(s"FSCK REPAIR TABLE delta.`${tablePath}`;")
+            checkTableIsBroken(dataPath.toString, false)
+            // Make sure the output rows are correct
+            checkAnswer(output, dvToRemove.map(file =>
+              Row(output.collect()(0).getAs[String]("dataFilePath"),
+                false,
+                file.getPath.toString, true)))
+            val sumOutput = spark.sql(s"SELECT SUM(*) FROM delta.`${tablePath}`;")
+            val expectedSum = if (dvResolution == "removeDV") 62L else 56L
+            assert(sumOutput.select("sum(Id)").collect()(0).getLong(0) == expectedSum)
+            // Add test to check how many files were removed
+
+            val snapshot = deltaLog.update()
+            val allFiles = snapshot.allFilesViaStateReconstruction.collect()
+            // Make sure only three files were deleted
+            val expectedFilesRemoved = if (dvResolution == "removeDV") 0 else 1
+            assert(allFiles.length == inputFiles.length - expectedFilesRemoved)
+          }
+        }
+    })
   }
 }
