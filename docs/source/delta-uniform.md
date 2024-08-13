@@ -155,4 +155,5 @@ The following <Delta> features work for Delta clients when UniForm is enabled, b
 - Change Data Feed
 - Delta Sharing
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

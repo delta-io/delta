@@ -2,7 +2,7 @@
 description: Learn how to set up an integration to enable you to read Delta tables from <Redshift>.
 ---
 
-# <Redshift> to <Delta> integration
+# <Redshift>
 
 .. admonition::  Experimental
     :class: preview
@@ -131,5 +131,5 @@ This is an experimental integration and its performance and scalability characte
 
 
 .. <Redshift> replace:: Redshift Spectrum
-
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

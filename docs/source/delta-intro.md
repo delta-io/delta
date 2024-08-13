@@ -17,5 +17,9 @@ Specifically, <Delta> offers:
 - Schema enforcement: Automatically handles schema variations to prevent insertion of bad records during ingestion.
 - [Time travel](delta-batch.md#deltatimetravel): Data versioning enables rollbacks, full historical audit trails, and reproducible machine learning experiments.
 - [Upserts](delta-update.md#delta-merge) and [deletes](delta-update.md#delta-delete): Supports merge, update and delete operations to enable complex use cases like change-data-capture, slowly-changing-dimension (SCD) operations, streaming upserts, and so on.
+- [Vibrant connector ecosystem](delta-connectors.md): <Delta> has connectors read and write Delta tables from various data processing engines like Apache Spark, Apache Flink, Apache Hive, Apache Trino, AWS Athena, and more.
 
-.. include:: /shared/replacements.md
+To get started follow the [quickstart guide](quick-start.md) to learn how to use <Delta> with Apache Spark.
+
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

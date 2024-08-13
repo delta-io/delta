@@ -16,34 +16,14 @@ This is the documentation site for <Delta>.
     :glob:
 
     delta-intro
-    quick-start
-    delta-batch
-    delta-streaming
-    delta-update
-    delta-change-data-feed
-    delta-utility
-    delta-constraints
-    versioning
-    delta-default-columns
-    delta-column-mapping
-    delta-clustering
-    delta-deletion-vectors
-    delta-drop-feature
-    delta-row-tracking
+    delta-connectors
+    delta-kernel
+    delta-standalone
     delta-apidoc
-    delta-storage
-    delta-type-widening
-    delta-uniform
-    delta-sharing
-    concurrency-control
-    integrations
-    porting
-    best-practices
-    delta-faq
     releases
     delta-resources
-    optimizations-oss
     table-properties
 
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark
