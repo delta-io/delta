@@ -117,6 +117,45 @@ class DeltaTable private[tables](
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
     sparkSession.newDataFrame(_.mergeFrom(sparkRelation))
   }
+
+  private def executeRestore(version: Option[Long], timestamp: Option[String]): DataFrame = {
+    val restore = proto.RestoreTable
+      .newBuilder()
+      .setTable(table)
+    version.foreach(restore.setVersion)
+    timestamp.foreach(restore.setTimestamp)
+    val relation = proto.DeltaRelation.newBuilder().setRestoreTable(restore).build()
+    val extension = com.google.protobuf.Any.pack(relation)
+    val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
+    val result = sparkSession.newDataFrame(_.mergeFrom(sparkRelation)).collectResult()
+    sparkSession.createDataFrame(result.toArray.toSeq.asJava, result.schema)
+  }
+
+  /**
+   * Restore the DeltaTable to an older version of the table specified by version number.
+   *
+   * An example would be
+   * {{{ io.delta.tables.DeltaTable.restoreToVersion(7) }}}
+   *
+   * @since 4.0.0
+   */
+  def restoreToVersion(version: Long): DataFrame = {
+    executeRestore(version = Some(version), timestamp = None)
+  }
+
+  /**
+   * Restore the DeltaTable to an older version of the table specified by a timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss
+   *
+   * An example would be
+   * {{{ io.delta.tables.DeltaTable.restoreToTimestamp("2019-01-01") }}}
+   *
+   * @since 4.0.0
+   */
+  def restoreToTimestamp(timestamp: String): DataFrame = {
+    executeRestore(version = None, timestamp = Some(timestamp))
+  }
 }
 
 /**

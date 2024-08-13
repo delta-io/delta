@@ -17,6 +17,7 @@
 package io.delta.tables
 
 import java.io.File
+import java.text.SimpleDateFormat
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.test.DeltaQueryTest
@@ -115,6 +116,51 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     withTempPath { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
+    }
+  }
+
+  private def getTimestampForVersion(path: String, version: Long): String = {
+    val logPath = new File(path, "_delta_log")
+    val file = new File(logPath, f"$version%020d.json")
+    val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+    sdf.format(file.lastModified())
+  }
+
+  test("restore") {
+    val session = spark
+    import session.implicits._
+    withTempPath { dir =>
+      val path = dir.getPath
+
+      val df1 = Seq(1, 2, 3).toDF("id")
+      val df2 = Seq(4, 5).toDF("id")
+      val df3 = Seq(6, 7).toDF("id")
+
+      // version 0.
+      df1.write.format("delta").save(path)
+      // version 1.
+      df2.write.format("delta").mode("append").save(path)
+      // version 2.
+      df3.write.format("delta").mode("append").save(path)
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        df1.union(df2).union(df3))
+
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
+      deltaTable.restoreToVersion(1)
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        df1.union(df2))
+
+      val deltaTable2 = io.delta.tables.DeltaTable.forPath(spark, path)
+      val timestamp = getTimestampForVersion(path, version = 0)
+      deltaTable2.restoreToTimestamp(timestamp)
+
+      checkAnswer(
+        spark.read.format("delta").load(path),
+        df1)
     }
   }
 }
