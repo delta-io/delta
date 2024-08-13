@@ -1410,6 +1410,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
+    executionObserver.preparingCommit()
 
     // From this point onwards, newProtocolOpt should not be used.
     // `newProtocol` or `protocol` should be used instead.
@@ -1517,6 +1518,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       allActions = DefaultRowCommitVersion
         .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
+      executionObserver.beginDoCommit()
       if (readVersion < 0) {
         deltaLog.createLogDirectoriesIfNotExists()
       }
@@ -1580,6 +1582,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
 
+      executionObserver.transactionCommitted()
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
       (attemptVersion, postCommitSnapshot)
     } catch {
@@ -1600,9 +1603,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
               throw DeltaErrors.concurrentWriteException(commitInfo)
             } finally {
               logs.close()
+              executionObserver.transactionAborted()
             }
           case NonFatal(_) =>
             recordCommitLargeFailure(e, op)
+            executionObserver.transactionAborted()
             throw e
           case _ =>
             throw e

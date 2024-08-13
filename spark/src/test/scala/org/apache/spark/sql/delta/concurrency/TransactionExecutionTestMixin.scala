@@ -126,6 +126,48 @@ trait TransactionExecutionTestMixin {
     observer.phases.backfillPhase.entryBarrier.unblock()
   }
 
+  def unblockCommit(observer: TransactionObserver): Unit = {
+    observer.phases.commitPhase.entryBarrier.unblock()
+    observer.phases.backfillPhase.entryBarrier.unblock()
+  }
+
+  def waitForPrecommit(observer: TransactionObserver): Unit =
+    busyWaitFor(observer.phases.preparePhase.hasEntered, timeout)
+
+  def waitForCommit(observer: TransactionObserver): Unit = {
+    busyWaitFor(observer.phases.commitPhase.hasLeft, timeout)
+    busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+  }
+
+  /**
+   * Run 2 transactions A, B with following order:
+   *
+   * t1 -------------------------------------- TxnA starts
+   * t2 --------- TxnB starts and commits (no transaction observer)
+   * t6 -------------------------------------- TxnA commits
+   *
+   * This function returns futures for each of the query runs.
+   */
+  def runTxnsWithOrder__A_Start__B__A_end_without_observer_on_B(
+      txnA: () => Array[Row],
+      txnB: () => Array[Row]): Future[Array[Row]] = {
+    val Seq(futureA) =
+      runFunctionsWithOrderingFromObserver(Seq(txnA)) {
+        case (observerA :: Nil) =>
+          // A starts
+          unblockUntilPreCommit(observerA)
+          busyWaitFor(observerA.phases.preparePhase.hasEntered, timeout)
+
+          // B starts and finishes
+          txnB()
+
+          // A commits
+          unblockCommit(observerA)
+          waitForCommit(observerA)
+      }
+    futureA
+  }
+
   /**
    * Run 2 transactions A, B with following order:
    *
