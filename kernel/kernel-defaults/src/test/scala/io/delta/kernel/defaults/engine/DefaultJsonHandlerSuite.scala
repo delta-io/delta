@@ -397,7 +397,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     checkAnswer(actResult, expResult)
   }
 
-  test("read json files, all empty") {
+  test("read json files, all of which are empty") {
     val testFiles = fsClient.listFrom(getTestResourceFilePath("json-files-all-empty/1.json"))
     val actResult = jsonHandler.readJsonFiles(
       testFiles,
