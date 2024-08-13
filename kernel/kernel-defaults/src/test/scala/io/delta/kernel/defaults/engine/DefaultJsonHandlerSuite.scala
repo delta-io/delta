@@ -377,6 +377,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     val startingFileIdxs = Seq(8, 5, 1)
     var expResult: Seq[TestRow] = Seq()
     var jsonValues = Seq(
+      Seq(),
       Seq(
         TestRow("part-00000-842017c2-3e02-44b5-a3d6-5b9ae1745045-c000.snappy.parquet", 649L, true),
         TestRow("part-00001-e62ca5a1-923c-4ee6-998b-c61d1cfb0b1c-c000.snappy.parquet", 649L, true)
@@ -402,12 +403,10 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
         Optional.empty()
       ).toSeq.map(batch => TestRow(batch.getRows.next))
 
-      checkAnswer(actResult, expResult)
+      expResult ++= jsonValues.head
+      jsonValues = jsonValues.tail
 
-      if (jsonValues.nonEmpty) {
-        expResult ++= jsonValues.head
-        jsonValues = jsonValues.tail
-      }
+      checkAnswer(actResult, expResult)
     }
   }
 
