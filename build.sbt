@@ -456,7 +456,8 @@ lazy val spark = (project in file("spark"))
       "-Ddelta.log.cacheSize=3",
       "-Dspark.databricks.delta.delta.log.cacheSize=3",
       "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-      "-Xmx1024m"
+      "-Xmx1024m",
+      "-Dsbt.task.timings=true"
     ),
 
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
