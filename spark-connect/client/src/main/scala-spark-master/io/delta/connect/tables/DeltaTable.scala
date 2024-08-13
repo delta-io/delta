@@ -22,7 +22,7 @@ import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 
 import org.apache.spark.annotation.Evolving
-import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.{functions, Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.AgnosticEncoders.PrimitiveBooleanEncoder
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 
@@ -118,6 +118,343 @@ class DeltaTable private[tables](
     sparkSession.newDataFrame(_.mergeFrom(sparkRelation))
   }
 
+  private def executeDelete(condition: Option[Column]): Unit = {
+    val delete = proto.DeleteFromTable
+      .newBuilder()
+      .setTarget(df.plan.getRoot)
+    condition.foreach(c => delete.setCondition(c.expr))
+    val relation = proto.DeltaRelation.newBuilder().setDeleteFromTable(delete).build()
+    val extension = com.google.protobuf.Any.pack(relation)
+    val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
+    sparkSession.newDataFrame(_.mergeFrom(sparkRelation)).collect()
+  }
+
+  /**
+   * Delete data from the table that match the given `condition`.
+   *
+   * @param condition Boolean SQL expression
+   * @since 4.0.0
+   */
+  def delete(condition: String): Unit = {
+    delete(functions.expr(condition))
+  }
+
+  /**
+   * Delete data from the table that match the given `condition`.
+   *
+   * @param condition Boolean SQL expression
+   * @since 4.0.0
+   */
+  def delete(condition: Column): Unit = {
+    executeDelete(condition = Some(condition))
+  }
+
+  /**
+   * Delete data from the table.
+   *
+   * @since 4.0.0
+   */
+  def delete(): Unit = {
+    executeDelete(condition = None)
+  }
+
+  private def executeUpdate(condition: Option[Column], set: Map[String, Column]): Unit = {
+    val assignments = set.toSeq.map { case (field, value) =>
+      proto.Assignment
+        .newBuilder()
+        .setField(functions.expr(field).expr)
+        .setValue(value.expr)
+        .build()
+    }
+    val update = proto.UpdateTable
+      .newBuilder()
+      .setTarget(df.plan.getRoot)
+      .addAllAssignments(assignments.asJava)
+    condition.foreach(c => update.setCondition(c.expr))
+    val relation = proto.DeltaRelation.newBuilder().setUpdateTable(update).build()
+    val extension = com.google.protobuf.Any.pack(relation)
+    val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
+    sparkSession.newDataFrame(_.mergeFrom(sparkRelation)).collect()
+  }
+
+  /**
+   * Update rows in the table based on the rules defined by `set`.
+   *
+   * Scala example to increment the column `data`.
+   * {{{
+   *    import org.apache.spark.sql.functions._
+   *
+   *    deltaTable.update(Map("data" -> col("data") + 1))
+   * }}}
+   *
+   * @param set rules to update a row as a Scala map between target column names and
+   *            corresponding update expressions as Column objects.
+   * @since 4.0.0
+   */
+  def update(set: Map[String, Column]): Unit = {
+    executeUpdate(condition = None, set)
+  }
+
+  /**
+   * Update rows in the table based on the rules defined by `set`.
+   *
+   * Java example to increment the column `data`.
+   * {{{
+   *    import org.apache.spark.sql.Column;
+   *    import org.apache.spark.sql.functions;
+   *
+   *    deltaTable.update(
+   *      new HashMap<String, Column>() {{
+   *        put("data", functions.col("data").plus(1));
+   *      }}
+   *    );
+   * }}}
+   *
+   * @param set rules to update a row as a Java map between target column names and
+   *            corresponding update expressions as Column objects.
+   * @since 4.0.0
+   */
+  def update(set: java.util.Map[String, Column]): Unit = {
+    update(set.asScala.asInstanceOf[Map[String, Column]])
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition`
+   * based on the rules defined by `set`.
+   *
+   * Scala example to increment the column `data`.
+   * {{{
+   *    import org.apache.spark.sql.functions._
+   *
+   *    deltaTable.update(
+   *      col("date") > "2018-01-01",
+   *      Map("data" -> col("data") + 1))
+   * }}}
+   *
+   * @param condition boolean expression as Column object specifying which rows to update.
+   * @param set       rules to update a row as a Scala map between target column names and
+   *                  corresponding update expressions as Column objects.
+   * @since 4.0.0
+   */
+  def update(condition: Column, set: Map[String, Column]): Unit = {
+    executeUpdate(Some(condition), set)
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition`
+   * based on the rules defined by `set`.
+   *
+   * Java example to increment the column `data`.
+   * {{{
+   *    import org.apache.spark.sql.Column;
+   *    import org.apache.spark.sql.functions;
+   *
+   *    deltaTable.update(
+   *      functions.col("date").gt("2018-01-01"),
+   *      new HashMap<String, Column>() {{
+   *        put("data", functions.col("data").plus(1));
+   *      }}
+   *    );
+   * }}}
+   *
+   * @param condition boolean expression as Column object specifying which rows to update.
+   * @param set       rules to update a row as a Java map between target column names and
+   *                  corresponding update expressions as Column objects.
+   * @since 4.0.0
+   */
+  def update(condition: Column, set: java.util.Map[String, Column]): Unit = {
+    executeUpdate(Some(condition), set.asScala.toMap)
+  }
+
+  /**
+   * Update rows in the table based on the rules defined by `set`.
+   *
+   * Scala example to increment the column `data`.
+   * {{{
+   *    deltaTable.updateExpr(Map("data" -> "data + 1")))
+   * }}}
+   *
+   * @param set rules to update a row as a Scala map between target column names and
+   *            corresponding update expressions as SQL formatted strings.
+   * @since 4.0.0
+   */
+  def updateExpr(set: Map[String, String]): Unit = {
+    update(toStrColumnMap(set))
+  }
+
+  /**
+   * Update rows in the table based on the rules defined by `set`.
+   *
+   * Java example to increment the column `data`.
+   * {{{
+   *    deltaTable.updateExpr(
+   *      new HashMap<String, String>() {{
+   *        put("data", "data + 1");
+   *      }}
+   *    );
+   * }}}
+   *
+   * @param set rules to update a row as a Java map between target column names and
+   *            corresponding update expressions as SQL formatted strings.
+   * @since 4.0.0
+   */
+  def updateExpr(set: java.util.Map[String, String]): Unit = {
+    update(toStrColumnMap(set.asScala.toMap))
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition`,
+   * which performs the rules defined by `set`.
+   *
+   * Scala example to increment the column `data`.
+   * {{{
+   *    deltaTable.update(
+   *      "date > '2018-01-01'",
+   *      Map("data" -> "data + 1"))
+   * }}}
+   *
+   * @param condition boolean expression as SQL formatted string object specifying
+   *                  which rows to update.
+   * @param set       rules to update a row as a Scala map between target column names and
+   *                  corresponding update expressions as SQL formatted strings.
+   * @since 4.0.0
+   */
+  def updateExpr(condition: String, set: Map[String, String]): Unit = {
+    executeUpdate(Some(functions.expr(condition)), toStrColumnMap(set))
+  }
+
+  /**
+   * Update data from the table on the rows that match the given `condition`,
+   * which performs the rules defined by `set`.
+   *
+   * Java example to increment the column `data`.
+   * {{{
+   *    deltaTable.update(
+   *      "date > '2018-01-01'",
+   *      new HashMap<String, String>() {{
+   *        put("data", "data + 1");
+   *      }}
+   *    );
+   * }}}
+   *
+   * @param condition boolean expression as SQL formatted string object specifying
+   *                  which rows to update.
+   * @param set       rules to update a row as a Java map between target column names and
+   *                  corresponding update expressions as SQL formatted strings.
+   * @since 4.0.0
+   */
+  def updateExpr(condition: String, set: java.util.Map[String, String]): Unit = {
+    executeUpdate(Some(functions.expr(condition)), toStrColumnMap(set.asScala.toMap))
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
+   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * actions to be performed on rows based on whether the rows matched the condition or not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
+   * update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value");
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute();
+   * }}}
+   *
+   * @param source    source Dataframe to be merged.
+   * @param condition boolean expression as SQL formatted string
+   * @since 4.0.0
+   */
+  def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
+    merge(source, functions.expr(condition))
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
+   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * actions to be performed on rows based on whether the rows matched the condition or not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
+   * update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value")
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute()
+   * }}}
+   *
+   * @param source    source Dataframe to be merged.
+   * @param condition boolean expression as a Column object
+   * @since 4.0.0
+   */
+  def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
+    DeltaMergeBuilder(this, source, condition)
+  }
+
   private def executeRestore(version: Option[Long], timestamp: Option[String]): DataFrame = {
     val restore = proto.RestoreTable
       .newBuilder()
@@ -155,6 +492,10 @@ class DeltaTable private[tables](
    */
   def restoreToTimestamp(timestamp: String): DataFrame = {
     executeRestore(version = None, timestamp = Some(timestamp))
+  }
+
+  private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
+    map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
   }
 }
 
