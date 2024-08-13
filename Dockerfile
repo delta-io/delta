@@ -31,7 +31,7 @@ RUN apt-get install -y git
 # cryptography. Otherwise, building wheels for these packages fails.
 RUN pip3 install --upgrade pip
 
-RUN pip3 install pyspark==3.5.0
+RUN pip3 install pyspark==3.5.2
 
 RUN pip3 install mypy==0.982
 
