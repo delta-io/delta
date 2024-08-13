@@ -48,4 +48,19 @@ public class DataFileStatus extends FileStatus {
   public Optional<DataFileStatistics> getStatistics() {
     return statistics;
   }
+
+  @Override
+  public String toString() {
+    return "DataFileStatus{"
+        + "path='"
+        + getPath()
+        + '\''
+        + ", size="
+        + getSize()
+        + ", modificationTime="
+        + getModificationTime()
+        + ", statistics="
+        + statistics
+        + '}';
+  }
 }
