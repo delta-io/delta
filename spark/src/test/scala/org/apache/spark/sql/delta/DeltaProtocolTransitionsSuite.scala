@@ -391,8 +391,8 @@ class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
         createTableProperties = Seq(
           (s"delta.feature.${ColumnMappingTableFeature.name}", "supported"),
           (s"delta.feature.${DomainMetadataTableFeature.name}", "supported"),
-          (s"delta.feature.${DeletionVectorsTableFeature.name}", "supported")),
-        dropFeatures = Seq(DeletionVectorsTableFeature),
+          (s"delta.feature.${V2CheckpointTableFeature.name}", "supported")),
+        dropFeatures = Seq(V2CheckpointTableFeature),
         expectedProtocol = Protocol(2, 7).withFeatures(Seq(
           InvariantsTableFeature,
           AppendOnlyTableFeature,
