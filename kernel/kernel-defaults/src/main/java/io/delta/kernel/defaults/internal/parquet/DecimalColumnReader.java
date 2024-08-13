@@ -28,6 +28,7 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DecimalType;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.util.Arrays;
 import org.apache.parquet.column.Dictionary;
 import org.apache.parquet.io.api.Binary;
@@ -101,20 +102,23 @@ public class DecimalColumnReader {
     // working state
     private BigDecimal[] values;
 
-    private final DataType dataType;
+    private final DecimalType decimalType;
+
     private final int scale;
     protected BigDecimal[] expandedDictionary;
 
     BaseDecimalColumnReader(DataType dataType, int precision, int scale, int initialBatchSize) {
       super(initialBatchSize);
       DecimalType decimalType = (DecimalType) dataType;
+      int scaleIncrease = decimalType.getScale() - scale;
+      int precisionIncrease = decimalType.getPrecision() - precision;
       checkArgument(
-          decimalType.getPrecision() == precision && decimalType.getScale() == scale,
+          scaleIncrease >= 0 && precisionIncrease >= scaleIncrease,
           String.format(
               "Found Delta type %s but Parquet type has precision=%s and scale=%s",
               decimalType, precision, scale));
       this.scale = scale;
-      this.dataType = dataType;
+      this.decimalType = decimalType;
       this.values = new BigDecimal[initialBatchSize];
     }
 
@@ -130,6 +134,9 @@ public class DecimalColumnReader {
     protected void addDecimal(BigDecimal value) {
       resizeIfNeeded();
       this.nullability[currentRowIndex] = false;
+      if (decimalType.getScale() != scale) {
+        value = value.setScale(decimalType.getScale(), RoundingMode.UNNECESSARY);
+      }
       this.values[currentRowIndex] = value;
     }
 
@@ -140,7 +147,7 @@ public class DecimalColumnReader {
 
     @Override
     public ColumnVector getDataColumnVector(int batchSize) {
-      ColumnVector vector = new DefaultDecimalVector(dataType, batchSize, values);
+      ColumnVector vector = new DefaultDecimalVector(decimalType, batchSize, values);
       // re-initialize the working space
       this.nullability = ParquetColumnReaders.initNullabilityVector(nullability.length);
       this.values = new BigDecimal[values.length];
