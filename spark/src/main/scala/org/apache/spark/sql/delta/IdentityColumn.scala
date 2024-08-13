@@ -44,6 +44,8 @@ object IdentityColumn extends DeltaLogging {
   val opTypeDefinition = "delta.identityColumn.definition"
   // When table with IDENTITY columns are written into.
   val opTypeWrite = "delta.identityColumn.write"
+  // When IDENTITY column update causes transaction to abort.
+  val opTypeAbort = "delta.identityColumn.abort"
 
   // Return true if `field` is an identity column that allows explicit insert. Caller must ensure
   // `isIdentityColumn(field)` is true.
@@ -242,6 +244,10 @@ object IdentityColumn extends DeltaLogging {
         )
       )
     }
+  }
+
+  def logTransactionAbort(deltaLog: DeltaLog): Unit = {
+    recordDeltaEvent(deltaLog, opTypeAbort)
   }
 
   // Calculate the sync'ed IDENTITY high water mark based on actual data and returns a

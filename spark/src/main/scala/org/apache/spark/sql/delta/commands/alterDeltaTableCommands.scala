@@ -634,6 +634,7 @@ case class AlterTableChangeColumnDeltaCommand(
               assert(oldColumn == newColumn)
               val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
               val field = IdentityColumn.syncIdentity(newColumn, df)
+              txn.setSyncIdentity()
               txn.readWholeTable()
               field
             } else {

@@ -43,16 +43,23 @@ def get_args():
         default=False,
         action="store_true",
         help="Enables test coverage and generates an aggregate report for all subprojects")
+    parser.add_argument(
+        "--shard",
+        required=False,
+        default=None,
+        help="some shard")
     return parser.parse_args()
 
 
-def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
+def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None):
     print("##### Running SBT tests #####")
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     cmd = [sbt_path, "clean"]
 
     test_cmd = "test"
+    if shard:
+        os.environ["SHARD_ID"] = str(shard)
 
     if test_group:
         # if test group is specified, then run tests only on that test group
@@ -223,7 +230,7 @@ if __name__ == "__main__":
         run_tests_in_docker(test_env_image_tag, args.group)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
+        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
 
         # Python tests are run only when spark group of projects are being tested.
         is_testing_spark_group = args.group is None or args.group == "spark"
