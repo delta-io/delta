@@ -1696,6 +1696,7 @@ trait DeltaSQLConfBase {
        | How many entries are displayed in the result of the FSCK command in
        | DRY RUN mode.""".stripMargin)
     .intConf
+    .checkValue(_ >= 0, "maxNumEntriesInResult must be non-negative")
     .createWithDefault(1000)
 
   //////////////////
