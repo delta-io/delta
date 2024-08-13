@@ -172,7 +172,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     targetJvm := "8",
     // For adding staged Spark RC versions, e.g.:
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
-    resolvers += "Apache Spark 3.5.2 (RC3) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1459/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
     Antlr4 / antlr4Version := "4.9.3",
