@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.defaults.internal.parquet;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit.MICROS;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.decimalType;
@@ -340,10 +339,7 @@ class ParquetSchemaUtils {
     // Field id delta schema metadata is deserialized as long, but the range should always
     // be within integer range.
     Long fieldId = fieldMetadata.getLong(ColumnMapping.PARQUET_FIELD_ID_KEY);
-    long fieldIdLong = fieldId.longValue();
-    int fieldIdInt = (int) fieldIdLong;
-    checkArgument((long) fieldIdInt == fieldIdLong, "Field id out of range", fieldIdLong);
-    return fieldIdInt;
+    return Math.toIntExact(fieldId);
   }
 
   private static Optional<Integer> getFieldId(StructField field) {

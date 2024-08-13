@@ -21,7 +21,6 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -31,7 +30,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
 
 public class DefaultKernelUtils {
-  private static final LocalDate EPOCH = LocalDate.ofEpochDay(0);
   private static final DateTimeFormatter DEFAULT_JSON_TIMESTAMPNTZ_FORMATTER =
       new DateTimeFormatterBuilder()
           .appendPattern("yyyy-MM-dd'T'HH:mm:ss")

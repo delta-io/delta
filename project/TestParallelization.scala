@@ -3,6 +3,8 @@ import sbt._
 
 object TestParallelization {
 
+  lazy val numShards = sys.env.get("NUM_SHARDS").map(_.toInt)
+
   lazy val settings = {
     val parallelismCount = sys.env.get("TEST_PARALLELISM_COUNT")
     if (parallelismCount.exists( _.toInt > 1)) {
@@ -50,10 +52,14 @@ object TestParallelization {
     Test / forkTestJVMCount := {
       sys.env.get("TEST_PARALLELISM_COUNT").map(_.toInt).getOrElse(4)
     },
+    Test / shardId := {
+      sys.env.get("SHARD_ID").map(_.toInt)
+    },
     Test / testGroupingStrategy := {
       val groupsCount = (Test / forkTestJVMCount).value
+      val shard = (Test / shardId).value
       val baseJvmDir = baseDirectory.value
-      SimpleHashStrategy(groupsCount, baseJvmDir, defaultForkOptions.value)
+      SimpleHashStrategy(groupsCount, baseJvmDir, shard, defaultForkOptions.value)
     },
     Test / parallelExecution := true,
     Global / concurrentRestrictions := {
@@ -61,6 +67,9 @@ object TestParallelization {
     }
   )
 
+  val shardId = SettingKey[Option[Int]]("shard id",
+    "The shard id assigned"
+  )
 
   val forkTestJVMCount = SettingKey[Int]("fork test jvm count",
     "The number of separate JVM to use for tests"
@@ -107,25 +116,57 @@ object TestParallelization {
     def testGroups: List[Tests.Group]
   }
 
-  class SimpleHashStrategy private(groups: Map[Int, Tests.Group]) extends GroupingStrategy {
+  class SimpleHashStrategy private(
+      groups: Map[Int, Tests.Group],
+      shardId: Option[Int]) extends GroupingStrategy {
 
     lazy val testGroups = groups.values.toList
     val groupCount = groups.size
 
     override def add(testDefinition: TestDefinition): GroupingStrategy = {
+
+      /**
+       * The way test sharding works is that every action task is assigned a shard ID
+       * in the range [0, numShards - 1].
+       * Tests where the (test name hash % number of shards) is equal to the
+       * shard ID for this action are added to the set of tests to run.
+       * All other tests will be assigned to other shards.
+       * We are guaranteed coverage since the result of the modulo math is guaranteed
+       * be within [0, numShards - 1] and there will be numShards actions
+       * that are triggered.
+       *
+       * Note: This is a simple grouping strategy which doesn't consider test
+       * complexity, duration or other factors.
+       */
+      if (shardId.isDefined && numShards.isDefined) {
+        if (shardId.get < 0 || shardId.get >= numShards.get) {
+          throw new IllegalArgumentException(
+            s"Assigned shard ID $shardId is not between 0 and ${numShards.get - 1} inclusive")
+        }
+
+        val testIsAssignedToShard =
+          math.abs(testDefinition.name.hashCode % numShards.get) == shardId.get
+        if(!testIsAssignedToShard) {
+          return new SimpleHashStrategy(groups, shardId)
+        }
+      }
+
       val groupIdx = math.abs(testDefinition.name.hashCode % groupCount)
       val currentGroup = groups(groupIdx)
       val updatedGroup = currentGroup.withTests(
         currentGroup.tests :+ testDefinition
       )
-      new SimpleHashStrategy(groups + (groupIdx -> updatedGroup))
+      new SimpleHashStrategy(groups + (groupIdx -> updatedGroup), shardId)
     }
   }
 
   object SimpleHashStrategy {
 
-    def apply(groupCount: Int,
-              baseDir: File, forkOptionsTemplate: ForkOptions): GroupingStrategy = {
+    def apply(
+        groupCount: Int,
+        baseDir: File,
+        shard: Option[Int],
+        forkOptionsTemplate: ForkOptions): GroupingStrategy = {
       val testGroups = (0 until groupCount).map {
         groupIdx =>
           val forkOptions = forkOptionsTemplate.withRunJVMOptions(
@@ -139,7 +180,7 @@ object TestParallelization {
           )
           groupIdx -> group
       }
-      new SimpleHashStrategy(testGroups.toMap)
+      new SimpleHashStrategy(testGroups.toMap, shard)
     }
   }
 
