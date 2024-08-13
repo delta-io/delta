@@ -266,6 +266,28 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
     }
   }
 
+  test("partition pruning from checkpoint") {
+    withTempDir { path =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        // Create partitioned table and insert some data, ensuring that a checkpoint is created
+        // after the last insertion.
+        spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta " +
+          s"PARTITIONED BY (a) LOCATION '$path' " +
+          s"TBLPROPERTIES ('delta.checkpointInterval' = '2')")
+        spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
+        spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
+        spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+
+        // Read from the source table with a partition predicate and validate the results.
+        val result = readSnapshot(
+          latestSnapshot(path.toString),
+          filter = greaterThan(col("a"), Literal.ofInt(3)))
+        checkAnswer(result, Seq(TestRow(4, "d"), TestRow(5, "e"), TestRow(6, "f")))
+      }
+    }
+  }
+
   private def readUsingSpark(tablePath: String, predicate: String): Seq[TestRow] = {
     val where = if (predicate.isEmpty) "" else s"WHERE $predicate"
     spark.sql(s"SELECT * FROM delta.`$tablePath` $where")

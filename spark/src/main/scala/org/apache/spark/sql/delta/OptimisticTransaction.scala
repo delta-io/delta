@@ -400,9 +400,16 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   // writes.
   protected var trackHighWaterMarks: Option[Set[String]] = None
 
+  // Set to true if this transaction is ALTER TABLE ALTER COLUMN SYNC IDENTITY.
+  protected var syncIdentity: Boolean = false
+
   def setTrackHighWaterMarks(track: Set[String]): Unit = {
     assert(trackHighWaterMarks.isEmpty, "The tracking set shouldn't have been set")
     trackHighWaterMarks = Some(track)
+  }
+
+  def setSyncIdentity(): Unit = {
+    syncIdentity = true
   }
 
   /**
@@ -419,6 +426,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    */
   private def updateMetadataAfterWrite(updatedMetadata: Metadata): Unit = {
     updateMetadataInternal(updatedMetadata, ignoreDefaultProperties = false)
+  }
+
+  // Returns whether this transaction updates metadata solely for IDENTITY high water marks (this
+  // can be either a write that generates IDENTITY values or an ALTER TABLE ALTER COLUMN SYNC
+  // IDENTITY command). This must be called before precommitUpdateSchemaWithIdentityHighWaterMarks
+  // as it might update `newMetadata`.
+  def isIdentityOnlyMetadataUpdate(): Boolean = {
+    syncIdentity || (updatedIdentityHighWaterMarks.nonEmpty && newMetadata.isEmpty)
   }
 
   // Called before commit to update table schema with collected IDENTITY column high water marks
@@ -1206,6 +1221,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       // Check for internal SetTransaction conflicts and dedup.
       val finalActions = checkForSetTransactionConflictAndDedup(actions ++ this.actions.toSeq)
 
+      val identityOnlyMetadataUpdate = isIdentityOnlyMetadataUpdate()
       // Update schema for IDENTITY column writes if necessary. This has to be called before
       // `prepareCommit` because it might change metadata and `prepareCommit` is responsible for
       // converting updated metadata into a `Metadata` action.
@@ -1235,6 +1251,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val readRowIdHighWatermark =
         RowId.extractHighWatermark(snapshot).getOrElse(RowId.MISSING_HIGH_WATER_MARK)
 
+      val autoTags = mutable.HashMap.empty[String, String]
+      if (identityOnlyMetadataUpdate) {
+        autoTags += (DeltaSourceUtils.IDENTITY_COMMITINFO_TAG -> "true")
+      }
+      val allTags = tags ++ autoTags
+
       commitAttemptStartTimeMillis = clock.getTimeMillis()
       commitInfo = CommitInfo(
         time = commitAttemptStartTimeMillis,
@@ -1248,7 +1270,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isBlindAppend = Some(isBlindAppend),
         operationMetrics = getOperationMetrics(op),
         userMetadata = getUserMetadata(op),
-        tags = if (tags.nonEmpty) Some(tags) else None,
+        tags = if (allTags.nonEmpty) Some(allTags) else None,
         txnId = Some(txnId))
 
       val firstAttemptVersion = getFirstAttemptVersion

@@ -27,7 +27,7 @@ import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
@@ -185,6 +185,17 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
     long checkpointVersion = checkpointVersion(file.getPath());
 
+    // If the read schema contains Add/Remove files, we should always read the sidecar file
+    // actions from the checkpoint manifest regardless of the checkpoint predicate.
+    Optional<Predicate> checkpointPredicateIncludingSidecars;
+    if (schemaContainsAddOrRemoveFiles) {
+      Predicate containsSidecarPredicate =
+          new Predicate("IS_NOT_NULL", new Column(LogReplay.SIDECAR_FIELD_NAME));
+      checkpointPredicateIncludingSidecars =
+          checkpointPredicate.map(p -> new Or(p, containsSidecarPredicate));
+    } else {
+      checkpointPredicateIncludingSidecars = checkpointPredicate;
+    }
     final CloseableIterator<ColumnarBatch> topLevelIter;
     StructType finalModifiedReadSchema = modifiedReadSchema;
     if (fileName.endsWith(".parquet")) {
@@ -196,11 +207,11 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .readParquetFiles(
                           singletonCloseableIterator(file),
                           finalModifiedReadSchema,
-                          checkpointPredicate),
+                          checkpointPredicateIncludingSidecars),
               "Reading parquet log file `%s` with readSchema=%s and predicate=%s",
               file,
               modifiedReadSchema,
-              checkpointPredicate);
+              checkpointPredicateIncludingSidecars);
     } else if (fileName.endsWith(".json")) {
       topLevelIter =
           wrapEngineExceptionThrowsIO(
@@ -210,11 +221,11 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .readJsonFiles(
                           singletonCloseableIterator(file),
                           finalModifiedReadSchema,
-                          checkpointPredicate),
+                          checkpointPredicateIncludingSidecars),
               "Reading JSON log file `%s` with readSchema=%s and predicate=%s",
               file,
               modifiedReadSchema,
-              checkpointPredicate);
+              checkpointPredicateIncludingSidecars);
     } else {
       throw new IOException("Unrecognized top level v2 checkpoint file format: " + fileName);
     }
