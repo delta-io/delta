@@ -117,18 +117,21 @@ public class DefaultJsonHandler implements JsonHandler {
         // read.
         try {
           if (currentFileReader == null || (nextLine = currentFileReader.readLine()) == null) {
-
-            tryOpenNextFile();
-            if (currentFileReader != null) {
-              nextLine = currentFileReader.readLine();
+            // nextLine is here always null because, when currentFileReader is null, nextLine is also null
+            while (nextLine == null) {
+              tryOpenNextFile();
+              if (currentFileReader != null) {
+                nextLine = currentFileReader.readLine();
+              } else {
+                return false;
+              }
             }
           }
+          return true; // we had line in currentFileReader, or we found it in next file
         } catch (IOException ex) {
           throw new KernelEngineException(
               format("Error reading JSON file: %s", currentFile.getPath()), ex);
         }
-
-        return nextLine != null;
       }
 
       @Override
