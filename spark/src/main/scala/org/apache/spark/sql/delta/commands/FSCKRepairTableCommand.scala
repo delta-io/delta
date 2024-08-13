@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.UnresolvedDeltaPathOrIdentifier
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{RemoveFile}
+import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DateTimeUtils.NANOS_PER_MILLIS
 import org.apache.spark.sql.delta.util.DeltaFileOperations
@@ -36,7 +37,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.BooleanType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.NullType
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.{Row, SparkSession, Column}
 import org.apache.spark.util.SerializableConfiguration
 
 import org.apache.spark.sql.delta.actions.AddFile
@@ -143,7 +144,6 @@ case class FsckRepairTableCommand (
           .as[AddFile]
 
         // Get the file count for metrics and current time.
-        val numFilesScanned = allFiles.count()
         val currentTimestamp = System.currentTimeMillis()
 
         // get table path
@@ -161,7 +161,7 @@ case class FsckRepairTableCommand (
             // see the missing files. However without dryRun mode, if there are
             // any errors with reading files the command will terminate immediately.
             case e: Exception if dryRun => true
-            case e => throw e
+            case e: Throwable => throw e
           }
         }).asNondeterministic()
 
@@ -169,18 +169,19 @@ case class FsckRepairTableCommand (
         val absoluteDVPathMissing = udf((deletionVec: Option[DeletionVectorDescriptor],
                                  tablePath: String) => {
           val output = deletionVec match {
-            case None => (None, false)
             case Some(deletionVec) if deletionVec.isOnDisk =>
               val absolutePath = deletionVec.absolutePath(new Path(tablePath))
               val exists = absolutePath
                 .getFileSystem(serializableHadoopConf.value).exists(absolutePath)
               (Some(absolutePath.toString()), !exists)
-            case Some(deletionVec) => (None, false)
+            case _ => (None, false)
           }
           output
         }).asNondeterministic()
 
+        val numFilesScannedCounter = IncrementMetric(TrueLiteral, metrics("numFilesScanned"))
         val allMissingFiles = allFiles
+          .filter(new Column(numFilesScannedCounter))
           .withColumn("deletionVectorInfo",
           absoluteDVPathMissing(col("deletionVector"),
             lit(deltaLog.dataPath.toString)))
@@ -233,7 +234,6 @@ case class FsckRepairTableCommand (
 
         // Set SQL metrics
         metrics("executionTimeMs").set(executionTimeMs)
-        metrics("numFilesScanned").set(numFilesScanned)
         metrics("numMissingDVs").set(numMissingDVs)
         metrics("numMissingFiles").set(numMissingFiles)
 
@@ -245,7 +245,7 @@ case class FsckRepairTableCommand (
           deltaLog,
           opType = "delta.fsck.stats",
           data = FsckMetric(
-            numFilesScanned,
+            metrics("numFilesScanned").value,
             metrics("numMissingFiles").value,
             executionTimeMs,
             metrics("numMissingDVs").value,
@@ -257,7 +257,6 @@ case class FsckRepairTableCommand (
           txn.commitIfNeeded(filesToCommit,
             DeltaOperations.Fsck(dryRun))
         }
-        // Prepare the output
         // Prepare the output
 
         val output = if (dryRun) {

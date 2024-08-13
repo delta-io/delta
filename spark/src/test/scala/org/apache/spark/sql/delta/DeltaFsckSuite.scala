@@ -883,7 +883,7 @@ test("FSCK ignore non-404 errors in DRY RUN mode") {
     }
   }
 
-  test("FSCK metrics in Delta table history with missing DVs") {
+  test("FSCK metrics in Delta table history") {
     Seq(true, false).foreach { DvEnabled =>
       withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
           withTempDir { tempDir =>
