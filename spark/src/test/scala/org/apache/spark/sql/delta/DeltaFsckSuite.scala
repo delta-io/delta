@@ -723,8 +723,8 @@ class DeltaFsckSuite extends QueryTest
           .getMap(0)
           .asInstanceOf[Map[String, String]]
         val expectedMetrics = Map("numMissingFiles" -> Some("1"),
-                                     "numFilesScanned" -> Some(s"${inputFiles.length}"),
-                                     "numMissingDVs" -> Some("0"))
+                                  "numFilesScanned" -> Some(s"${inputFiles.length}"),
+                                  "numMissingDVs" -> Some("0"))
         // Test that the metric exists.
         Seq(
           "numFilesScanned",
