@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
@@ -138,6 +139,12 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   val onlyAddFiles: Boolean = actions.collect { case f: FileAction => f }
     .forall(_.isInstanceOf[AddFile])
 
+  // This indicates this commit contains metadata action that is solely for the purpose for
+  // updating IDENTITY high water marks. This is used by [[ConflictChecker]] to avoid certain
+  // conflict in [[checkNoMetadataUpdates]].
+  val identityOnlyMetadataUpdate = DeltaCommitTag
+    .getTagValueFromCommitInfo(commitInfo, DeltaSourceUtils.IDENTITY_COMMITINFO_TAG)
+    .exists(_.toBoolean)
 }
 
 private[delta] class ConflictChecker(
@@ -359,16 +366,62 @@ private[delta] class ConflictChecker(
     false
   }
 
+  // scalastyle:off line.size.limit
   /**
    * Check if the committed transaction has changed metadata.
+   *
+   * We want to deal with (and optimize for) the case where the winning commit's metadata update is
+   * solely for updating IDENTITY high water marks. In addition, we want to allow a metadata update
+   * that only sets the table property for row tracking enablement to true not to fail concurrent
+   * transactions if the current transaction does not do a metadata update.
+   *
+   * The conflict matrix is as follows:
+   *
+   * |                                               | Winning Metadata (id) | Winning Metadata Row Tracking Enablement Only | Winning Metadata (other) | Winning No Metadata |
+   * | --------------------------------------------- | --------------------- | --------------------------------------------- | ------------------------ | ------------------- |
+   * | Current Metadata (id)                         | Conflict              | Conflict (3)                                  | Conflict                 | No conflict         |
+   * | Current Metadata Row Tracking Enablement Only | Conflict (1)          | Conflict (3)                                  | Conflict                 | No conflict         |
+   * | Current Metadata (other)                      | Conflict (1)          | Conflict (3)                                  | Conflict                 | No conflict         |
+   * | Current No Metadata                           | No conflict (2)       | No conflict (4)                               | Conflict                 | No conflict         |
+   *
+   * The differences in cases (1), (2), (3), and (4) are:
+   * (1) This is a case we could have done something to avoid conflict, e.g., current transaction
+   * adds a column, while winning transaction does blind append that generates IDENTITY values. But
+   * it's not a common case and the change to avoid conflict is non-trivial (we have to somehow
+   * merge the metadata from winning txn and current txn). We decide to not do that and let it
+   * conflict.
+   * (2) This is a case that is more common (e.g., current = delete/update, winning = update high
+   * water mark) and we will not let it conflict here. Note that it might still cause conflict in
+   * other conflict checks.
+   * (3) If the current txn changes the metadata too, we will fail the current txn. While it is
+   * possible to copy over the metadata information, this scenario is unlikely to happen in practice
+   * and properly handling this for the many edge case (e.g current txn sets the table property
+   * to false) is risky.
+   * (4) In a row tracking enablement only metadata update, the only difference with the previous
+   * metadata are the row tracking table property and materialized column names. These metadata
+   * information only affect the preservation of row tracking. If we copy over the new metadata
+   * configurations and mark the current txn as not preserving row tracking, then the current txn
+   * is respecting the metadata update and does not need to fail.
+   *
    */
+  // scalastyle:on line.size.limit
   protected def checkNoMetadataUpdates(): Unit = {
+    // If winning commit does not contain metadata update, no conflict.
+    if (winningCommitSummary.metadataUpdates.isEmpty) return
+
     if (tryResolveRowTrackingEnablementOnlyMetadataUpdateConflict()) {
       return
     }
 
-    // Fail if the metadata is different than what the txn read.
-    if (winningCommitSummary.metadataUpdates.nonEmpty) {
+    // The only case in the remaining cases that we will not conflict is winning commit is
+    // identity only metadata update and current commit has no metadata update.
+    val tolerateIdentityOnlyMetadataUpdate = winningCommitSummary.identityOnlyMetadataUpdate &&
+      !currentTransactionInfo.metadataChanged
+
+    if (!tolerateIdentityOnlyMetadataUpdate) {
+      if (winningCommitSummary.identityOnlyMetadataUpdate) {
+        IdentityColumn.logTransactionAbort(deltaLog)
+      }
       throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
     }
   }
