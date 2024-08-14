@@ -54,6 +54,12 @@ case class DeltaSharingFileIndex(
     with SupportsRowIndexFilters
     with DeltaFileFormat
     with Logging {
+  // Use the head of an uuid as fileIndexId, which will be used in the key of the map from a delta
+  // log path to a deltaLog class, to allow different queries with the same parameters on the
+  // same fileIndex to reuse delta log.
+  // Also, the uuid is used to differentiate different fileIndices on the same table in the same
+  // cluster, the head of an uuid should be sufficient given the low collision chance and small
+  // number of classes that could be created in the same computing environment.
   private val fileIndexId = UUID.randomUUID().toString().split('-').head
 
   override def spark: SparkSession = params.spark
