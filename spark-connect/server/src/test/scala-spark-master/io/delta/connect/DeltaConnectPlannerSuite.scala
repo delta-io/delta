@@ -28,8 +28,8 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{Dataset, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
-import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
