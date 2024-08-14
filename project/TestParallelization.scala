@@ -50,7 +50,8 @@ object TestParallelization {
    */
   lazy val simpleGroupingStrategySettings = Seq(
     Test / forkTestJVMCount := {
-      sys.env.get("TEST_PARALLELISM_COUNT").map(_.toInt).getOrElse(4)
+      sys.env.get("TEST_PARALLELISM_COUNT").map(_.toInt)
+        .getOrElse(java.lang.Runtime.getRuntime.availableProcessors)
     },
     Test / shardId := {
       sys.env.get("SHARD_ID").map(_.toInt)
