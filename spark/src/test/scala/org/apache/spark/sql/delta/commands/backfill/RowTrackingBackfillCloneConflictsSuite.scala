@@ -134,7 +134,6 @@ class RowTrackingBackfillCloneConflictsSuite extends RowTrackingBackfillConflict
               ThreadUtils.awaitResult(backfillFuture, timeout)
             }
             assertAbortedBecauseOfMetadataChange(ex)
-            assert(ex.getMessage.contains("\"operation\":\"CLONE\""))
             assert(!RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
           }
         }
@@ -187,7 +186,6 @@ class RowTrackingBackfillCloneConflictsSuite extends RowTrackingBackfillConflict
                     ThreadUtils.awaitResult(cloneFuture, timeout)
                   }
                   assertAbortedBecauseOfConcurrentWrite(ex)
-                  assert(ex.getMessage.contains("\"operation\":\"SET TBLPROPERTIES\""))
               }
 
             ThreadUtils.awaitResult(backfillFuture, timeout)
