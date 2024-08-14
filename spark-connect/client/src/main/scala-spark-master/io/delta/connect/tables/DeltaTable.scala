@@ -65,6 +65,11 @@ class DeltaTable private[tables](
    */
   def toDF: Dataset[Row] = df
 
+  /**
+   * Helper method for the history APIs.
+   * @param limit The number of previous commands to get history for.
+   * @since 4.0.0
+   */
   private def executeHistory(limit: Option[Int]): DataFrame = {
     val describeHistory = proto.DescribeHistory
       .newBuilder()
@@ -117,6 +122,7 @@ class DeltaTable private[tables](
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
     sparkSession.newDataFrame(_.mergeFrom(sparkRelation))
   }
+
 
   private def executeDelete(condition: Option[Column]): Unit = {
     val delete = proto.DeleteFromTable
@@ -455,6 +461,13 @@ class DeltaTable private[tables](
     DeltaMergeBuilder(this, source, condition)
   }
 
+  /**
+   * Helper method for the restoreToVersion and restoreToTimestamp APIs.
+   *
+   * @param version The version number of the older version of the table to restore to.
+   * @param timestamp The timestamp of the older version of the table to restore to.
+   * @since 4.0.0
+   */
   private def executeRestore(version: Option[Long], timestamp: Option[String]): DataFrame = {
     val restore = proto.RestoreTable
       .newBuilder()

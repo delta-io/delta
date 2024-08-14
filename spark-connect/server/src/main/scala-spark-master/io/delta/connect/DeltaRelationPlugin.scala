@@ -150,7 +150,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformDeleteFromTable(
-      planner: SparkConnectPlanner, deleteFromTable: proto.DeleteFromTable): LogicalPlan = {
+                                        planner: SparkConnectPlanner, deleteFromTable: proto.DeleteFromTable): LogicalPlan = {
     val target = planner.transformRelation(deleteFromTable.getTarget)
     val condition = if (deleteFromTable.hasCondition) {
       Some(planner.transformExpression(deleteFromTable.getCondition))
@@ -158,12 +158,12 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       None
     }
     Dataset.ofRows(
-        planner.session, DeleteFromTable(target, condition.getOrElse(Literal.TrueLiteral)))
+      planner.session, DeleteFromTable(target, condition.getOrElse(Literal.TrueLiteral)))
       .queryExecution.commandExecuted
   }
 
   private def transformUpdateTable(
-      planner: SparkConnectPlanner, updateTable: proto.UpdateTable): LogicalPlan = {
+                                    planner: SparkConnectPlanner, updateTable: proto.UpdateTable): LogicalPlan = {
     val target = planner.transformRelation(updateTable.getTarget)
     val condition = if (updateTable.hasCondition) {
       Some(planner.transformExpression(updateTable.getCondition))
@@ -176,7 +176,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformMergeIntoTable(
-      planner: SparkConnectPlanner, protoMerge: proto.MergeIntoTable): LogicalPlan = {
+                                       planner: SparkConnectPlanner, protoMerge: proto.MergeIntoTable): LogicalPlan = {
     val target = planner.transformRelation(protoMerge.getTarget)
     val source = planner.transformRelation(protoMerge.getSource)
     val condition = planner.transformExpression(protoMerge.getCondition)
@@ -199,8 +199,8 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformMergeActionCondition(
-      planner: SparkConnectPlanner,
-      protoAction: proto.MergeIntoTable.Action): Option[Expression] = {
+                                             planner: SparkConnectPlanner,
+                                             protoAction: proto.MergeIntoTable.Action): Option[Expression] = {
     if (protoAction.hasCondition) {
       Some(planner.transformExpression(protoAction.getCondition))
     } else {
@@ -209,8 +209,8 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformMergeWhenMatchedAction(
-      planner: SparkConnectPlanner,
-      protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoMatchedClause = {
+                                               planner: SparkConnectPlanner,
+                                               protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoMatchedClause = {
     val condition = transformMergeActionCondition(planner, protoAction)
 
     protoAction.getActionTypeCase match {
@@ -226,8 +226,8 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformMergeWhenNotMatchedAction(
-      planner: SparkConnectPlanner,
-      protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoNotMatchedClause = {
+                                                  planner: SparkConnectPlanner,
+                                                  protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoNotMatchedClause = {
     val condition = transformMergeActionCondition(planner, protoAction)
 
     protoAction.getActionTypeCase match {
@@ -241,8 +241,8 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformMergeWhenNotMatchedBySourceAction(
-      planner: SparkConnectPlanner,
-      protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoNotMatchedBySourceClause = {
+                                                          planner: SparkConnectPlanner,
+                                                          protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoNotMatchedBySourceClause = {
     val condition = transformMergeActionCondition(planner, protoAction)
 
     protoAction.getActionTypeCase match {
@@ -256,8 +256,8 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformMergeAssignments(
-      planner: SparkConnectPlanner,
-      protoAssignments: Seq[proto.Assignment]): Seq[Expression] = {
+                                         planner: SparkConnectPlanner,
+                                         protoAssignments: Seq[proto.Assignment]): Seq[Expression] = {
     if (protoAssignments.isEmpty) {
       Seq.empty
     } else {
@@ -266,7 +266,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformAssignment(
-      planner: SparkConnectPlanner, assignment: proto.Assignment): Assignment = {
+                                   planner: SparkConnectPlanner, assignment: proto.Assignment): Assignment = {
     Assignment(
       key = planner.transformExpression(assignment.getField),
       value = planner.transformExpression(assignment.getValue))

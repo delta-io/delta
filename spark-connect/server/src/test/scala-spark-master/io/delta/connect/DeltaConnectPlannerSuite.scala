@@ -80,8 +80,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(createDummySessionHolder(spark))
-        .transformRelation(input)
+      val result = transform(input)
       val expected = DeltaTable.forName(spark, "table").toDF.queryExecution.analyzed
       comparePlans(result, expected)
     }
@@ -107,8 +106,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(createDummySessionHolder(spark))
-        .transformRelation(input)
+      val result = transform(input)
       val expected = DeltaTable.forPath(spark, dir.getAbsolutePath).toDF.queryExecution.analyzed
       comparePlans(result, expected)
     }
@@ -225,7 +223,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(createDummySessionHolder(spark)).transformRelation(input)
+      val result = transform(input)
       result match {
         case lr: LocalRelation if lr.schema == ExpressionEncoder[DeltaHistory]().schema =>
         case other => fail(s"Unexpected plan: $other")
@@ -359,6 +357,7 @@ class DeltaConnectPlannerSuite
       assert(!result.head.getBoolean(0))
     }
   }
+
 
   test("delete without condition") {
     val tableName = "table"
@@ -609,7 +608,7 @@ class DeltaConnectPlannerSuite
   }
 
   private def createSubqueryAlias(
-      input: spark_proto.Relation, alias: String): spark_proto.Relation = {
+                                   input: spark_proto.Relation, alias: String): spark_proto.Relation = {
     spark_proto.Relation.newBuilder()
       .setSubqueryAlias(
         spark_proto.SubqueryAlias.newBuilder()
