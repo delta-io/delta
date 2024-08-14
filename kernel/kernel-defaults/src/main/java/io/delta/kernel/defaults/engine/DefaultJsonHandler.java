@@ -117,7 +117,8 @@ public class DefaultJsonHandler implements JsonHandler {
         // read.
         try {
           if (currentFileReader == null || (nextLine = currentFileReader.readLine()) == null) {
-            // `nextLine` will initially be null because `currentFileReader` is guaranteed to be null
+            // `nextLine` will initially be null because `currentFileReader` is guaranteed
+            // to be null
             while (nextLine == null) {
               tryOpenNextFile();
               if (currentFileReader != null) {
