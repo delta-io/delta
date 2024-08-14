@@ -63,8 +63,7 @@ class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
   }
 
   test("check TableConfig.editable is true") {
-    val expMap: Map[String, String] = Map()
-    val engine = mockEngine(jsonHandler = new KeyValueJsonHandler(expMap))
+    val engine = mockEngine(jsonHandler = new KeyValueJsonHandler(Map()))
 
     TableConfig.validateProperties(engine,
       Map(

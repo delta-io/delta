@@ -200,7 +200,7 @@ public final class DeltaErrors {
   }
 
   public static KernelException cannotModifyTableProperty(String key) {
-    String msg = format("Delta can not modify table property: %s", key);
+    String msg = format("Delta cannot modify table property: %s", key);
     return new KernelException(msg);
   }
 
