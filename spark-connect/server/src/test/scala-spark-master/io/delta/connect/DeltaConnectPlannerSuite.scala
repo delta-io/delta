@@ -80,8 +80,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(createDummySessionHolder(spark))
-        .transformRelation(input)
+      val result = transform(input)
       val expected = DeltaTable.forName(spark, "table").toDF.queryExecution.analyzed
       comparePlans(result, expected)
     }
@@ -107,8 +106,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(createDummySessionHolder(spark))
-        .transformRelation(input)
+      val result = transform(input)
       val expected = DeltaTable.forPath(spark, dir.getAbsolutePath).toDF.queryExecution.analyzed
       comparePlans(result, expected)
     }
@@ -225,7 +223,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(createDummySessionHolder(spark)).transformRelation(input)
+      val result = transform(input)
       result match {
         case lr: LocalRelation if lr.schema == ExpressionEncoder[DeltaHistory]().schema =>
         case other => fail(s"Unexpected plan: $other")
