@@ -277,10 +277,10 @@ public class TableConfig<T> {
               tableConfig.validate(engine, value);
               validatedConfigurations.put(tableConfig.getKey(), value);
           } else {
-              throw DeltaErrors.cannotModifyTableProperty(key);
+            throw DeltaErrors.cannotModifyTableProperty(key);
           }
         } else {
-            throw DeltaErrors.unknownConfigurationException(key);
+          throw DeltaErrors.unknownConfigurationException(key);
         }
     }
     return validatedConfigurations;
