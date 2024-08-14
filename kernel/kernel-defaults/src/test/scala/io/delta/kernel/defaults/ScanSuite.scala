@@ -1596,24 +1596,17 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   Seq(
-    ("no checkpoint no predicate", "spark-variant-no-checkpoint", None, 2),
-    (
-      "no checkpoint non partition col predicate",
-      "spark-variant-no-checkpoint",
-      Some(equals(col("id"), ofLong(1))),
-      1
-    ),
-    ("checkpoint no predicate", "spark-variant-checkpoint", None, 102),
-    (
-      "checkpoint non partition col predicate",
-      "spark-variant-checkpoint",
-      Some(equals(col("id"), ofLong(5000))),
-      1
-    )
-  ).foreach { case (nameSuffix, tableName, predicate, expectedNumFiles) =>
+    ("first checkpoint no predicate", None, Some(0), 2),
+    ("latest checkpoint no predicate", None, None, 4),
+    ("first checkpoint with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)
+  ).foreach { case (nameSuffix, predicate, checkpointVersion, expectedNumFiles) =>
     test(s"read scan files with variant - $nameSuffix") {
-      val path = getTestResourceFilePath(tableName)
-      val snapshot = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
+      val path = getTestResourceFilePath("spark-variant-checkpoint")
+      val table = Table.forPath(defaultEngine, path)
+      val snapshot = checkpointVersion match {
+        case Some(version) => table.getSnapshotAsOfVersion(defaultEngine, version)
+        case None => table.getLatestSnapshot(defaultEngine)
+      }
       val snapshotSchema = snapshot.getSchema(defaultEngine)
 
       val expectedSchema = new StructType()
