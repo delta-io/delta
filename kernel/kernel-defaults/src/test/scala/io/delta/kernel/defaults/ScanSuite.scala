@@ -1595,36 +1595,56 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
-  test("read scan files with variant") {
-    val path = getTestResourceFilePath("spark-variant-delta")
-    val snapshot = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
-    val snapshotSchema = snapshot.getSchema(defaultEngine)
+  Seq(
+    ("no checkpoint no predicate", "spark-variant-no-checkpoint", None, 2),
+    (
+      "no checkpoint non partition col predicate",
+      "spark-variant-no-checkpoint",
+      Some(equals(col("id"), ofLong(1))),
+      1
+    ),
+    ("checkpoint no predicate", "spark-variant-checkpoint", None, 102),
+    (
+      "checkpoint non partition col predicate",
+      "spark-variant-checkpoint",
+      Some(equals(col("id"), ofLong(5000))),
+      1
+    )
+  ).foreach { case (nameSuffix, tableName, predicate, expectedNumFiles) =>
+    test(s"read scan files with variant - $nameSuffix") {
+      val path = getTestResourceFilePath(tableName)
+      val snapshot = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
+      val snapshotSchema = snapshot.getSchema(defaultEngine)
 
-    val expectedSchema = new StructType()
-      .add("id", LongType.LONG, true)
-      .add("v", VariantType.VARIANT, true)
-      .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
-      .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
-      .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
-      .add(
-        "array_of_struct_of_variants",
-        new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
-        true
-      )
-      .add(
-        "struct_of_array_of_variants",
-        new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
-        true
-      )
-      .add("partitionKey", LongType.LONG, true)
+      val expectedSchema = new StructType()
+        .add("id", LongType.LONG, true)
+        .add("v", VariantType.VARIANT, true)
+        .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
+        .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
+        .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
+        .add(
+          "array_of_struct_of_variants",
+          new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
+          true
+        )
+        .add(
+          "struct_of_array_of_variants",
+          new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
+          true
+        )
 
-    assert(snapshotSchema == expectedSchema)
+      assert(snapshotSchema == expectedSchema)
 
-    val scan = snapshot.getScanBuilder(defaultEngine).build()
-    val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+      val scanBuilder = snapshot.getScanBuilder(defaultEngine)
+      val scan = predicate match {
+        case Some(pred) => scanBuilder.withFilter(defaultEngine, pred).build()
+        case None => scanBuilder.build()
+      }
 
-    // The golden table has two files.
-    assert(scanFiles.next().getRows().toSeq.length == 2)
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+
+      assert(scanFiles.next().getRows().toSeq.length == expectedNumFiles)
+    }
   }
 }
 
