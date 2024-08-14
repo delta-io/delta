@@ -134,11 +134,6 @@ trait TransactionExecutionTestMixin {
     observer.phases.backfillPhase.entryBarrier.unblock()
   }
 
-  def unblockCommit(observer: TransactionObserver): Unit = {
-    observer.phases.commitPhase.entryBarrier.unblock()
-    observer.phases.backfillPhase.entryBarrier.unblock()
-  }
-
   def waitForPrecommit(observer: TransactionObserver): Unit =
     busyWaitFor(observer.phases.preparePhase.hasEntered, timeout)
 
