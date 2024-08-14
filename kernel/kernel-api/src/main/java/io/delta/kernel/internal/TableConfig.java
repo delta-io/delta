@@ -269,19 +269,19 @@ public class TableConfig<T> {
       Engine engine, Map<String, String> configurations) {
     Map<String, String> validatedConfigurations = new HashMap<>();
     for (Map.Entry<String, String> kv : configurations.entrySet()) {
-      String key = kv.getKey().toLowerCase(Locale.ROOT);
-      String value = kv.getValue();
-      if (key.startsWith("delta.")) {
-        TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
-        if (tableConfig != null) {
-          tableConfig.validate(engine, value);
-          validatedConfigurations.put(tableConfig.getKey(), value);
+        String key = kv.getKey().toLowerCase(Locale.ROOT);
+        String value = kv.getValue();
+        if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
+          TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
+          if (tableConfig.editable) {
+              tableConfig.validate(engine, value);
+              validatedConfigurations.put(tableConfig.getKey(), value);
+          } else {
+              throw DeltaErrors.cannotModifyTableProperty(key);
+          }
         } else {
-          throw DeltaErrors.unknownConfigurationException(key);
+            throw DeltaErrors.unknownConfigurationException(key);
         }
-      } else {
-        throw DeltaErrors.unknownConfigurationException(key);
-      }
     }
     return validatedConfigurations;
   }
@@ -332,9 +332,6 @@ public class TableConfig<T> {
   }
 
   private void validate(Engine engine, String value) {
-    if (!editable) {
-      throw DeltaErrors.cannotModifyTableProperty(key);
-    }
     T parsedValue = fromString.apply(engine, value);
     if (!validator.test(parsedValue)) {
       throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);

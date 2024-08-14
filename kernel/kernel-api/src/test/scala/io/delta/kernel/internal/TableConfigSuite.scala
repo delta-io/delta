@@ -61,6 +61,24 @@ class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
     }
     assert(e4.getMessage === null)
   }
+
+  test("check TableConfig.editable is true") {
+    val expMap = Map("key1" -> "string_value", "key2Int" -> "2")
+    val engine = mockEngine(jsonHandler = new KeyValueJsonHandler(expMap))
+
+    TableConfig.validateProperties(engine,
+      Map(
+        TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
+        TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
+        TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
+        TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> "1",
+        TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> "1",
+        TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "{in-memory}",
+        TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{\"1\": \"1\"}",
+        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey -> "{\"1\": \"1\"}",
+        TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
+        TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true").asJava)
+  }
 }
 
 /**
