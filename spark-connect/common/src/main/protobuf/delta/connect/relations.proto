@@ -37,7 +37,6 @@ message DeltaRelation {
     IsDeltaTable is_delta_table = 6;
     DeleteFromTable delete_from_table = 7;
     UpdateTable update_table = 8;
-    MergeIntoTable merge_into_table = 9;
   }
 }
 
@@ -129,68 +128,6 @@ message UpdateTable {
 
   // (Optional) Set of assignments to apply to the rows matching the condition.
   repeated Assignment assignments = 3;
-}
-
-// Command that merges a source query/table into a Delta table,
-//
-// Needs to be a Relation, as it returns a row containing the execution metrics.
-message MergeIntoTable {
-  // (Required) Target table to merge into.
-  spark.connect.Relation target = 1;
-
-  // (Required) Source data to merge from.
-  spark.connect.Relation source = 2;
-
-  // (Required) Condition for a source row to match with a target row.
-  spark.connect.Expression condition = 3;
-
-  // (Optional) Actions to apply when a source row matches a target row.
-  repeated Action matched_actions = 4;
-
-  // (Optional) Actions to apply when a source row does not match a target row.
-  repeated Action not_matched_actions = 5;
-
-  // (Optional) Actions to apply when a target row does not match a source row.
-  repeated Action not_matched_by_source_actions = 6;
-
-  // (Optional) Whether Schema Evolution is enabled for this command.
-  optional bool with_schema_evolution = 7;
-
-  // Rule that specifies how the target table should be modified.
-  message Action {
-    // (Optional) Condition for the action to be applied.
-    spark.connect.Expression condition = 1;
-
-    // (Required)
-    oneof action_type {
-      DeleteAction delete_action = 2;
-      UpdateAction update_action = 3;
-      UpdateStarAction update_star_action = 4;
-      InsertAction insert_action = 5;
-      InsertStarAction insert_star_action = 6;
-    }
-
-    // Action that deletes the target row.
-    message DeleteAction {}
-
-    // Action that updates the target row using a set of assignments.
-    message UpdateAction {
-      // (Optional) Set of assignments to apply.
-      repeated Assignment assignments = 1;
-    }
-
-    // Action that updates the target row by overwriting all columns.
-    message UpdateStarAction {}
-
-    // Action that inserts the source row into the target using a set of assignments.
-    message InsertAction {
-      // (Optional) Set of assignments to apply.
-      repeated Assignment assignments = 1;
-    }
-
-    // Action that inserts the source row into the target by setting all columns.
-    message InsertStarAction {}
-  }
 }
 
 // Represents an assignment of a value to a field.
