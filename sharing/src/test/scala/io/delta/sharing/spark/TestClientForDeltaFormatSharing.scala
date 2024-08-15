@@ -144,7 +144,7 @@ private[spark] class TestClientForDeltaFormatSharing(
       .getOrElse {
         throw new IllegalStateException(
           s"getFiles is missing for: ${table.name} versionAsOf:$versionAsOf, " +
-            s"timestampAsOf:$timestampAsOf, limit: $limit. This shouldn't happen in the unit test."
+          s"timestampAsOf:$timestampAsOf, limit: $limit. This shouldn't happen in the unit test."
         )
       }
     // iterator.toSeq doesn't trigger CompletionIterator in BlockManager which releases the reader
