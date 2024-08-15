@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata,
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -131,6 +132,8 @@ case class CreateDeltaTableCommand(
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
+    CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurations(
+      sparkSession, deltaLog, query, tableWithLocation.properties)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val result = handleCommit(sparkSession, deltaLog, tableWithLocation)
