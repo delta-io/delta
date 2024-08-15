@@ -67,7 +67,8 @@ class DeltaTable private[tables](
 
   /**
    * Helper method for the history APIs.
-   * @param limit The number of previous commands to get history for.
+   * @param limit The number of previous commands to get history for
+   *
    * @since 4.0.0
    */
   private def executeHistory(limit: Option[Int]): DataFrame = {
@@ -123,7 +124,12 @@ class DeltaTable private[tables](
     sparkSession.newDataFrame(_.mergeFrom(sparkRelation))
   }
 
-
+  /**
+   * Helper method for the delete APIs.
+   *
+   * @param condition Boolean SQL expression
+   * @since 4.0.0
+   */
   private def executeDelete(condition: Option[Column]): Unit = {
     val delete = proto.DeleteFromTable
       .newBuilder()
@@ -164,6 +170,14 @@ class DeltaTable private[tables](
     executeDelete(condition = None)
   }
 
+  /**
+   * Helper method for the update APIs.
+   *
+   * @param condition boolean expression as Column object specifying which rows to update.
+   * @param set       rules to update a row as a Scala map between target column names and
+   *                  corresponding update expressions as Column objects.
+   * @since 4.0.0
+   */
   private def executeUpdate(condition: Option[Column], set: Map[String, Column]): Unit = {
     val assignments = set.toSeq.map { case (field, value) =>
       proto.Assignment
@@ -399,6 +413,14 @@ class DeltaTable private[tables](
     executeRestore(version = None, timestamp = Some(timestamp))
   }
 
+  /**
+   * Converts a map of column names to SQL expressions into a map of column names to Column objects.
+   *
+   * @param map A map where the key is a column name and the value
+   *            is an expression as a SQL formatted string.
+   * @return A map where the key is a column name and the value is
+   *         a Column object created from the SQL expression.
+   */
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
     map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
   }
