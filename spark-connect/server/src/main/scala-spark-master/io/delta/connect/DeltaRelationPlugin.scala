@@ -27,12 +27,12 @@ import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.{Dataset, Encoders, SparkSession}
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connect.common.{DataTypeProtoConverter, InvalidPlanInput}
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
-import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.RelationPlugin
 import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand

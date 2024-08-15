@@ -415,7 +415,7 @@ class DeltaTable private[tables](
 
   /**
    * Converts a map of strings to expressions formatted as SQL string
-   * into a map of string to Column objects.
+   * into a map of strings to Column objects.
    *
    * @param map A map where the value is an expression formatted as SQL string.
    * @return A map where the value is a Column object created from the expression.
