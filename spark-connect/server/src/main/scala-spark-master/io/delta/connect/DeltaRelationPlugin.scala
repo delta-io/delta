@@ -155,7 +155,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       None
     }
     Dataset.ofRows(
-      planner.session, DeleteFromTable(target, condition.getOrElse(Literal.TrueLiteral)))
+        planner.session, DeleteFromTable(target, condition.getOrElse(Literal.TrueLiteral)))
       .queryExecution.commandExecuted
   }
 
