@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.utils;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import java.util.Collections;
@@ -42,6 +44,7 @@ public class DataFileStatistics {
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
       Map<Column, Long> nullCounts) {
+    checkArgument(numRecords >= 0, "numRecords should be non-negative");
     this.numRecords = numRecords;
     this.minValues = Collections.unmodifiableMap(minValues);
     this.maxValues = Collections.unmodifiableMap(maxValues);
@@ -87,8 +90,15 @@ public class DataFileStatistics {
     return nullCounts;
   }
 
+  @Override
+  public String toString() {
+    return serializeAsJson();
+  }
+
   public String serializeAsJson() {
-    // TODO: implement this
-    return "{}";
+    // TODO: implement this. Full statistics serialization will be added as part of
+    // https://github.com/delta-io/delta/pull/3342. The PR is pending on a decision.
+    // For now just serialize the number of records.
+    return "{\"numRecords\":" + numRecords + "}";
   }
 }

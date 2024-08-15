@@ -19,6 +19,12 @@ conda env create --name delta_docs --file=<absolute_path_to_delta_repo>/docs/env
 ### JDK Setup
 API doc generation needs JDK 1.8. Make sure to setup `JAVA_HOME` that points to JDK 1.8.
 
+### Set the Delta Lake version
+Set the version of Delta Lake release these docs are being generated for.
+```
+export _DELTA_LAKE_RELEASE_VERSION_=3.3.0
+```
+
 ### Generate docs
 Run the command from the `delta` repo root directory:
 ```
