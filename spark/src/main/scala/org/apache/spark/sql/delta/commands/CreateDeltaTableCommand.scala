@@ -58,6 +58,8 @@ import org.apache.spark.sql.types.StructType
  *                - CTAS
  *                - saveAsTable
  * @param protocol This is used to create a table with specific protocol version
+ * @param createTableFunc If specified, call this function to create the table, instead of
+ *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
 case class CreateDeltaTableCommand(
     table: CatalogTable,
