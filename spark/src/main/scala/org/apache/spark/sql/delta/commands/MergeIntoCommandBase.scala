@@ -45,7 +45,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   with PredicateHelper
   with ImplicitMetadataOperation
   with MergeIntoMaterializeSource
-  with UpdateExpressionsSupport {
+  with UpdateExpressionsSupport
+  with SupportsNonDeterministicExpression {
 
   @transient val source: LogicalPlan
   @transient val target: LogicalPlan
@@ -469,6 +470,22 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       sqlMetricName = "materializeSourceTimeMs") {
     super.prepareMergeSource(
       spark, source, condition, matchedClauses, notMatchedClauses, isInsertOnly)
+  }
+
+  /** Returns whether it allows non-deterministic expressions. */
+  override def allowNonDeterministicExpression: Boolean = {
+    def isConditionDeterministic(mergeClause: DeltaMergeIntoClause): Boolean = {
+      mergeClause.condition match {
+        case Some(c) => c.deterministic
+        case None => true
+      }
+    }
+    // Allow actions to be non-deterministic while all the conditions
+    // must be deterministic.
+    condition.deterministic &&
+      matchedClauses.forall(isConditionDeterministic) &&
+      notMatchedClauses.forall(isConditionDeterministic) &&
+      notMatchedBySourceClauses.forall(isConditionDeterministic)
   }
 }
 
