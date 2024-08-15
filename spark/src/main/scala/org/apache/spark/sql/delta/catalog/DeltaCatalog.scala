@@ -73,7 +73,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   private lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
-    delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.connectors")
+    delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog")
   }
 
   /**
