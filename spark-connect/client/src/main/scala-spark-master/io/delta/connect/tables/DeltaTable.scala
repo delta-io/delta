@@ -67,8 +67,8 @@ class DeltaTable private[tables](
 
   /**
    * Helper method for the history APIs.
-   * @param limit The number of previous commands to get history for
    *
+   * @param limit The number of previous commands to get history for
    * @since 4.0.0
    */
   private def executeHistory(limit: Option[Int]): DataFrame = {
