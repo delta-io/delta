@@ -1705,7 +1705,7 @@ class CoordinatedCommitsSuite
       (Map(tableConf), Seq(cNameDefault)),
       (Map(tableConf), Seq(cNameDefault, cConfDefault)),
       (Map(tableConf), Seq(cNameDefault, cConfDefault, tableConfDefault)),
-      (Map(tableConf), Seq(tableConfDefault)),
+      (Map(tableConf), Seq(tableConfDefault))
     )
   ) { case (
       propertyOverrides: Map[String, String],
@@ -1724,7 +1724,7 @@ class CoordinatedCommitsSuite
       (Seq(cNameDefault), Some(errMissingConfInSession(cConfDefaultKey))),
       (Seq(cNameDefault, cConfDefault), None),
       (Seq(cNameDefault, cConfDefault, tableConfDefault), Some(errTableConfInSession)),
-      (Seq(tableConfDefault), Some(errTableConfInSession)),
+      (Seq(tableConfDefault), Some(errTableConfInSession))
     )
   ) { case (
       defaultConfs: Seq[(String, String)],
@@ -1781,7 +1781,7 @@ class CoordinatedCommitsSuite
       Seq(cNameDefault),
       Seq(cNameDefault, cConfDefault),
       Seq(cNameDefault, cConfDefault, tableConfDefault),
-      Seq(tableConfDefault),
+      Seq(tableConfDefault)
     )
   ) { defaultConfs: Seq[(String, String)] =>
     testValidation(
