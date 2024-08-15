@@ -24,6 +24,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.Optional;
 
@@ -68,7 +69,11 @@ public class ScanBuilderImpl implements ScanBuilder {
 
   @Override
   public ScanBuilder withReadSchema(Engine engine, StructType readSchema) {
-    // TODO: validate the readSchema is a subset of the table schema
+    for(StructField field : readSchema.fields()) {
+      if (!snapshotSchema.fields().contains(field)) {
+        throw new IllegalArgumentException(String.format("Field '%s' is not a table field", field.getName()));
+      }
+    }
     this.readSchema = readSchema;
     return this;
   }

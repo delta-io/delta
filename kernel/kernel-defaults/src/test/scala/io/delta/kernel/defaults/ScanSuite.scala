@@ -26,12 +26,13 @@ import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
-import io.delta.kernel.types.StructType
+import io.delta.kernel.types.{LongType, StringType, StructField, StructType}
+import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Scan, Snapshot, Table}
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.apache.spark.sql.{Row => SparkRow}
 import org.scalatest.funsuite.AnyFunSuite
@@ -1592,6 +1593,125 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             )
           ).build()
       )
+    }
+  }
+
+  test("read schema same as table schema") {
+    withTempDir { tempDir =>
+      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
+        .write.format("delta").save(tempDir.getCanonicalPath)
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+
+      snapshot
+        .getScanBuilder(defaultEngine)
+        .withReadSchema(defaultEngine, snapshot.getSchema(defaultEngine))
+    }
+  }
+
+  test("read schema superset of table schema") {
+    withTempDir { tempDir =>
+      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
+        .write.format("delta").save(tempDir.getCanonicalPath)
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+      val supersetSchema = snapshot.getSchema(defaultEngine)
+        .add(new StructField("c3", INTEGER, true))
+
+      val e = intercept[IllegalArgumentException] {
+        snapshot
+          .getScanBuilder(defaultEngine)
+          .withReadSchema(defaultEngine, supersetSchema)
+      }
+      assert(e.isInstanceOf[IllegalArgumentException])
+      assert(e.getMessage == s"Field 'c3' is not a table field")
+    }
+  }
+
+  test("read schema subset of table schema") {
+    withTempDir { tempDir =>
+      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
+        .write.format("delta").save(tempDir.getCanonicalPath)
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+      val subsetSchema = new StructType().add("c2", STRING, true)
+
+      snapshot
+        .getScanBuilder(defaultEngine)
+        .withReadSchema(defaultEngine, subsetSchema)
+    }
+  }
+
+  test("read schema different than table schema") {
+    withTempDir { tempDir =>
+      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
+        .write.format("delta").save(tempDir.getCanonicalPath)
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+      val schema = new StructType().add("c2", STRING, true).add("c3", INTEGER, true);
+
+      val e = intercept[IllegalArgumentException] {
+        snapshot
+          .getScanBuilder(defaultEngine)
+          .withReadSchema(defaultEngine, schema)
+      }
+      assert(e.isInstanceOf[IllegalArgumentException])
+      assert(e.getMessage == s"Field 'c3' is not a table field")
+    }
+  }
+
+  test("read schema differs from table schema in field type") {
+    withTempDir { tempDir =>
+      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
+        .write.format("delta").save(tempDir.getCanonicalPath)
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+      val schema = new StructType().add("c2", STRING, true).add("c1", INTEGER, true);
+
+      val e = intercept[IllegalArgumentException] {
+        snapshot
+          .getScanBuilder(defaultEngine)
+          .withReadSchema(defaultEngine, schema)
+      }
+      assert(e.isInstanceOf[IllegalArgumentException])
+      assert(e.getMessage == s"Field 'c1' is not a table field")
+    }
+  }
+
+  test("read schema differs from table schema in field name") {
+    withTempDir { tempDir =>
+      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
+        .write.format("delta").save(tempDir.getCanonicalPath)
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+      val schema = new StructType().add("c2", STRING, true).add("c3", LONG, true);
+
+      val e = intercept[IllegalArgumentException] {
+        snapshot
+          .getScanBuilder(defaultEngine)
+          .withReadSchema(defaultEngine, schema)
+      }
+      assert(e.isInstanceOf[IllegalArgumentException])
+      assert(e.getMessage == s"Field 'c3' is not a table field")
+    }
+  }
+
+  test("read schema differs from the table schema only in that " +
+    "one field is nullable in the read schema but not in the table schema") {
+    withTempDir { tempDir =>
+      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
+        .write.format("delta").save(tempDir.getCanonicalPath)
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+      val schema = new StructType().add("c2", STRING, true).add("c1", LONG, false);
+
+      val e = intercept[IllegalArgumentException] {
+        snapshot
+          .getScanBuilder(defaultEngine)
+          .withReadSchema(defaultEngine, schema)
+      }
+      assert(e.isInstanceOf[IllegalArgumentException])
+      assert(e.getMessage == s"Field 'c1' is not a table field")
     }
   }
 }
