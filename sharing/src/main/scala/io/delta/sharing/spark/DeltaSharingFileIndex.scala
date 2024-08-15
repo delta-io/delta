@@ -116,7 +116,10 @@ case class DeltaSharingFileIndex(
       queryParamsHashId
     )
     queriedTableQueryIdToDeltaLog.get(tableKey) match {
-      case Some(deltaLog) => deltaLog
+      case Some(deltaLog) =>
+        logInfo(s"Reusing deltaLog for tableKey:$tableKey.partitionFilters:$partitionFilters," +
+          s"dataFilters:$dataFilters,overrideLimit:$overrideLimit.")
+        deltaLog
       case None =>
         val newDeltaLog = createDeltaLog(
           jsonPredicateHints,
@@ -127,6 +130,8 @@ case class DeltaSharingFileIndex(
         // FileIndex class. This is purged together with the FileIndex class when the query
         // finishes.
         queriedTableQueryIdToDeltaLog.put(tableKey, newDeltaLog)
+        logInfo(s"Added new deltaLog for tableKey:$tableKey.partitionFilters:$partitionFilters," +
+          s"dataFilters:$dataFilters,overrideLimit:$overrideLimit.")
         newDeltaLog
     }
   }
