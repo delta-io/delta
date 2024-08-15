@@ -83,8 +83,8 @@ object DeltaUDF {
     if (SparkSession.active.sessionState.conf
       .getConf(DeltaSQLConf.INTERNAL_UDF_OPTIMIZATION_ENABLED)) {
       val inputEncoders = template.inputEncoders
-        .map(_.map(_.asInstanceOf[ExpressionEncoder].copy()))
-      val outputEncoder = template.outputEncoder.map(_.asInstanceOf[ExpressionEncoder].copy())
+        .map(_.map(_.asInstanceOf[ExpressionEncoder[_]].copy()))
+      val outputEncoder = template.outputEncoder.map(_.asInstanceOf[ExpressionEncoder[_]].copy())
       template.copy(f = f, inputEncoders = inputEncoders, outputEncoder = outputEncoder)
     } else {
       orElse
