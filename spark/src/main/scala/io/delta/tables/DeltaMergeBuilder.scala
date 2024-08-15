@@ -156,8 +156,8 @@ class DeltaMergeBuilder private(
     private val whenClauses: Seq[DeltaMergeIntoClause],
     private val schemaEvolutionEnabled: Boolean)
   extends AnalysisHelper
-    with Logging
-{
+  with Logging
+  {
 
   def this(
       targetTable: DeltaTable,

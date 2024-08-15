@@ -78,8 +78,6 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
         transformDeleteFromTable(planner, relation.getDeleteFromTable)
       case proto.DeltaRelation.RelationTypeCase.UPDATE_TABLE =>
         transformUpdateTable(planner, relation.getUpdateTable)
-      case proto.DeltaRelation.RelationTypeCase.MERGE_INTO_TABLE =>
-        transformMergeIntoTable(planner, relation.getMergeIntoTable)
       case _ =>
         throw InvalidPlanInput(s"Unknown DeltaRelation ${relation.getRelationTypeCase}")
     }
@@ -150,7 +148,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformDeleteFromTable(
-                                        planner: SparkConnectPlanner, deleteFromTable: proto.DeleteFromTable): LogicalPlan = {
+      planner: SparkConnectPlanner, deleteFromTable: proto.DeleteFromTable): LogicalPlan = {
     val target = planner.transformRelation(deleteFromTable.getTarget)
     val condition = if (deleteFromTable.hasCondition) {
       Some(planner.transformExpression(deleteFromTable.getCondition))
@@ -163,7 +161,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformUpdateTable(
-                                    planner: SparkConnectPlanner, updateTable: proto.UpdateTable): LogicalPlan = {
+      planner: SparkConnectPlanner, updateTable: proto.UpdateTable): LogicalPlan = {
     val target = planner.transformRelation(updateTable.getTarget)
     val condition = if (updateTable.hasCondition) {
       Some(planner.transformExpression(updateTable.getCondition))
@@ -175,98 +173,8 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       .queryExecution.commandExecuted
   }
 
-  private def transformMergeIntoTable(
-                                       planner: SparkConnectPlanner, protoMerge: proto.MergeIntoTable): LogicalPlan = {
-    val target = planner.transformRelation(protoMerge.getTarget)
-    val source = planner.transformRelation(protoMerge.getSource)
-    val condition = planner.transformExpression(protoMerge.getCondition)
-    val matchedActions = protoMerge.getMatchedActionsList.asScala
-      .map(transformMergeWhenMatchedAction(planner, _))
-    val notMatchedActions = protoMerge.getNotMatchedActionsList.asScala
-      .map(transformMergeWhenNotMatchedAction(planner, _))
-    val notMatchedBySourceActions = protoMerge.getNotMatchedBySourceActionsList.asScala
-      .map(transformMergeWhenNotMatchedBySourceAction(planner, _))
-    val withSchemaEvolution = protoMerge.getWithSchemaEvolution
-
-    val merge = DeltaMergeInto(
-      target,
-      source,
-      condition,
-      matchedActions.toSeq ++ notMatchedActions.toSeq ++ notMatchedBySourceActions.toSeq,
-      withSchemaEvolution
-    )
-    Dataset.ofRows(planner.session, merge).queryExecution.commandExecuted
-  }
-
-  private def transformMergeActionCondition(
-                                             planner: SparkConnectPlanner,
-                                             protoAction: proto.MergeIntoTable.Action): Option[Expression] = {
-    if (protoAction.hasCondition) {
-      Some(planner.transformExpression(protoAction.getCondition))
-    } else {
-      None
-    }
-  }
-
-  private def transformMergeWhenMatchedAction(
-                                               planner: SparkConnectPlanner,
-                                               protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoMatchedClause = {
-    val condition = transformMergeActionCondition(planner, protoAction)
-
-    protoAction.getActionTypeCase match {
-      case proto.MergeIntoTable.Action.ActionTypeCase.DELETE_ACTION =>
-        DeltaMergeIntoMatchedDeleteClause(condition)
-      case proto.MergeIntoTable.Action.ActionTypeCase.UPDATE_ACTION =>
-        val actions = transformMergeAssignments(
-          planner, protoAction.getUpdateAction.getAssignmentsList.asScala.toSeq)
-        DeltaMergeIntoMatchedUpdateClause(condition, actions)
-      case proto.MergeIntoTable.Action.ActionTypeCase.UPDATE_STAR_ACTION =>
-        DeltaMergeIntoMatchedUpdateClause(condition, Seq(UnresolvedStar(None)))
-    }
-  }
-
-  private def transformMergeWhenNotMatchedAction(
-                                                  planner: SparkConnectPlanner,
-                                                  protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoNotMatchedClause = {
-    val condition = transformMergeActionCondition(planner, protoAction)
-
-    protoAction.getActionTypeCase match {
-      case proto.MergeIntoTable.Action.ActionTypeCase.INSERT_ACTION =>
-        val actions = transformMergeAssignments(
-          planner, protoAction.getInsertAction.getAssignmentsList.asScala.toSeq)
-        DeltaMergeIntoNotMatchedInsertClause(condition, actions)
-      case proto.MergeIntoTable.Action.ActionTypeCase.INSERT_STAR_ACTION =>
-        DeltaMergeIntoNotMatchedInsertClause(condition, Seq(UnresolvedStar(None)))
-    }
-  }
-
-  private def transformMergeWhenNotMatchedBySourceAction(
-                                                          planner: SparkConnectPlanner,
-                                                          protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoNotMatchedBySourceClause = {
-    val condition = transformMergeActionCondition(planner, protoAction)
-
-    protoAction.getActionTypeCase match {
-      case proto.MergeIntoTable.Action.ActionTypeCase.DELETE_ACTION =>
-        DeltaMergeIntoNotMatchedBySourceDeleteClause(condition)
-      case proto.MergeIntoTable.Action.ActionTypeCase.UPDATE_ACTION =>
-        val actions = transformMergeAssignments(
-          planner, protoAction.getUpdateAction.getAssignmentsList.asScala.toSeq)
-        DeltaMergeIntoNotMatchedBySourceUpdateClause(condition, actions)
-    }
-  }
-
-  private def transformMergeAssignments(
-                                         planner: SparkConnectPlanner,
-                                         protoAssignments: Seq[proto.Assignment]): Seq[Expression] = {
-    if (protoAssignments.isEmpty) {
-      Seq.empty
-    } else {
-      DeltaMergeIntoClause.toActions(protoAssignments.map(transformAssignment(planner, _)))
-    }
-  }
-
   private def transformAssignment(
-                                   planner: SparkConnectPlanner, assignment: proto.Assignment): Assignment = {
+      planner: SparkConnectPlanner, assignment: proto.Assignment): Assignment = {
     Assignment(
       key = planner.transformExpression(assignment.getField),
       value = planner.transformExpression(assignment.getValue))
