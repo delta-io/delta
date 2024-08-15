@@ -414,12 +414,11 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Converts a map of column names to SQL expressions into a map of column names to Column objects.
+   * Converts a map of strings to expressions formatted as SQL string
+   * into a map of string to Column objects.
    *
-   * @param map A map where the key is a column name and the value
-   *            is an expression as a SQL formatted string.
-   * @return A map where the key is a column name and the value is
-   *         a Column object created from the SQL expression.
+   * @param map A map where the value is an expression formatted as SQL string.
+   * @return A map where the value is a Column object created from the expression.
    */
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
     map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
