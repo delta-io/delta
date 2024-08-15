@@ -25,14 +25,14 @@ import io.delta.kernel.expressions._
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.StringType.STRING
-import io.delta.kernel.types.{LongType, StringType, StructField, StructType}
 import io.delta.kernel.types.LongType.LONG
+import io.delta.kernel.types.StringType.STRING
+import io.delta.kernel.types.{StructField, StructType}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Scan, Snapshot, Table}
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.apache.spark.sql.{Row => SparkRow}
 import org.scalatest.funsuite.AnyFunSuite
