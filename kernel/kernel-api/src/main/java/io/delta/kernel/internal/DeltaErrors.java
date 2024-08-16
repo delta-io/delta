@@ -201,7 +201,7 @@ public final class DeltaErrors {
 
   public static KernelException cannotModifyTableProperty(String key) {
     String msg = format("The Delta table property '%s' is an internal property " +
-      "and cannot be updated.", key);
+            "and cannot be updated.", key);
     return new KernelException(msg);
   }
 
