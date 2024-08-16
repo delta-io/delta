@@ -115,13 +115,12 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   }
 
   protected def executeClone(
-    table: DeltaTableV2,
-    target: String,
-    replace: Boolean,
-    tableProperties: Map[String, String],
-    versionAsOf: Option[Long] = None,
-    timestampAsOf: Option[String] = None
-  ): DeltaTable = withActiveSession(sparkSession) {
+      table: DeltaTableV2,
+      target: String,
+      replace: Boolean,
+      properties: Map[String, String],
+      versionAsOf: Option[Long] = None,
+      timestampAsOf: Option[String] = None): DeltaTable = withActiveSession(sparkSession) {
     val (targetRelation, targetPath) = if (new Path(target).isAbsolute()) {
       (UnresolvedRelation(TableIdentifier(target, Some("delta"))), Some(target))
     } else {
@@ -146,7 +145,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     }
 
     val qe = sparkSession.sessionState.executePlan(CloneTableStatement(maybeTimeTravel,
-      targetRelation, false, replace, true, tableProperties.toMap, targetPath))
+      targetRelation, false, replace, true, properties.toMap, targetPath))
 
     // call `QueryExecution.toRDD` to trigger the execution of commands.
     SQLExecution.withNewExecutionId(qe, Some("clone delta table"))(qe.toRdd)
