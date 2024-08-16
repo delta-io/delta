@@ -1714,7 +1714,7 @@
   },
   "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION" : {
     "message" : [
-      "During <command>, either both coordinated commits configurations (\"spark.databricks.delta.properties.defaults.coordinatedCommits.commitCoordinator-preview\", \"spark.databricks.delta.properties.defaults.coordinatedCommits.commitCoordinatorConf-preview\") are set in the SparkSession configurations or neither of them. Missing: \"<configuration>\". Please set this configuration in the SparkSession or unset the other configuration, and then retry the command again."
+      "During <command>, either both coordinated commits configurations (\"coordinatedCommits.commitCoordinator-preview\", \"coordinatedCommits.commitCoordinatorConf-preview\") are set in the SparkSession configurations or neither of them. Missing: \"<configuration>\". Please set this configuration in the SparkSession or unset the other configuration, and then retry the command again."
     ],
     "sqlState" : "42616"
   },
