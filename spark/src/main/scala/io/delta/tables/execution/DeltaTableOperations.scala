@@ -123,16 +123,16 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     versionAsOf: Option[Long] = None,
     timestampAsOf: Option[String] = None
   ): DataFrame = withActiveSession(sparkSession) {
-    val (targetRelation, targetPath, targetIdentifier) = if (new Path(target).isAbsolute()) {
-      (UnresolvedRelation(TableIdentifier(target, Some("delta"))), Some(target), None)
+    val (targetRelation, targetPath) = if (new Path(target).isAbsolute()) {
+      (UnresolvedRelation(TableIdentifier(target, Some("delta"))), Some(target))
     } else {
       val tableIdentifier = sparkSession
         .sessionState
         .sqlParser
         .parseTableIdentifier(target)
-      (UnresolvedRelation(tableIdentifier), None, Some(tableIdentifier))
+      (UnresolvedRelation(tableIdentifier), None)
     }
-    val source = DataSourceV2Relation.create(table, None, targetIdentifier.map(
+    val source = DataSourceV2Relation.create(table, None, table.getTableIdentifierIfExists.map(
       id => Identifier.of(id.database.toArray, id.table)))
 
     val maybeTimeTravel = if (timestampAsOf.isDefined || versionAsOf.isDefined) {
