@@ -35,6 +35,7 @@ import builtins
 import delta.connect.proto.proto.base_pb2
 import google.protobuf.descriptor
 import google.protobuf.message
+import pyspark.sql.connect.proto.types_pb2
 import sys
 
 if sys.version_info >= (3, 8):
@@ -50,24 +51,84 @@ class DeltaRelation(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
     SCAN_FIELD_NUMBER: builtins.int
+    DESCRIBE_HISTORY_FIELD_NUMBER: builtins.int
+    DESCRIBE_DETAIL_FIELD_NUMBER: builtins.int
+    CONVERT_TO_DELTA_FIELD_NUMBER: builtins.int
+    RESTORE_TABLE_FIELD_NUMBER: builtins.int
+    IS_DELTA_TABLE_FIELD_NUMBER: builtins.int
     @property
     def scan(self) -> global___Scan: ...
+    @property
+    def describe_history(self) -> global___DescribeHistory: ...
+    @property
+    def describe_detail(self) -> global___DescribeDetail: ...
+    @property
+    def convert_to_delta(self) -> global___ConvertToDelta: ...
+    @property
+    def restore_table(self) -> global___RestoreTable: ...
+    @property
+    def is_delta_table(self) -> global___IsDeltaTable: ...
     def __init__(
         self,
         *,
         scan: global___Scan | None = ...,
+        describe_history: global___DescribeHistory | None = ...,
+        describe_detail: global___DescribeDetail | None = ...,
+        convert_to_delta: global___ConvertToDelta | None = ...,
+        restore_table: global___RestoreTable | None = ...,
+        is_delta_table: global___IsDeltaTable | None = ...,
     ) -> None: ...
     def HasField(
         self,
-        field_name: typing_extensions.Literal["relation_type", b"relation_type", "scan", b"scan"],
+        field_name: typing_extensions.Literal[
+            "convert_to_delta",
+            b"convert_to_delta",
+            "describe_detail",
+            b"describe_detail",
+            "describe_history",
+            b"describe_history",
+            "is_delta_table",
+            b"is_delta_table",
+            "relation_type",
+            b"relation_type",
+            "restore_table",
+            b"restore_table",
+            "scan",
+            b"scan",
+        ],
     ) -> builtins.bool: ...
     def ClearField(
         self,
-        field_name: typing_extensions.Literal["relation_type", b"relation_type", "scan", b"scan"],
+        field_name: typing_extensions.Literal[
+            "convert_to_delta",
+            b"convert_to_delta",
+            "describe_detail",
+            b"describe_detail",
+            "describe_history",
+            b"describe_history",
+            "is_delta_table",
+            b"is_delta_table",
+            "relation_type",
+            b"relation_type",
+            "restore_table",
+            b"restore_table",
+            "scan",
+            b"scan",
+        ],
     ) -> None: ...
     def WhichOneof(
         self, oneof_group: typing_extensions.Literal["relation_type", b"relation_type"]
-    ) -> typing_extensions.Literal["scan"] | None: ...
+    ) -> (
+        typing_extensions.Literal[
+            "scan",
+            "describe_history",
+            "describe_detail",
+            "convert_to_delta",
+            "restore_table",
+            "is_delta_table",
+        ]
+        | None
+    ): ...
 
 global___DeltaRelation = DeltaRelation
 
@@ -91,3 +152,182 @@ class Scan(google.protobuf.message.Message):
     def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
 
 global___Scan = Scan
+
+class DescribeHistory(google.protobuf.message.Message):
+    """Relation containing information of the latest commits on a Delta table.
+    The information is in reverse chronological order.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to read the history of."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["table", b"table"]
+    ) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
+
+global___DescribeHistory = DescribeHistory
+
+class DescribeDetail(google.protobuf.message.Message):
+    """Relation containing the details of a Delta table such as the format, name, and size."""
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to describe the details of."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["table", b"table"]
+    ) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
+
+global___DescribeDetail = DescribeDetail
+
+class ConvertToDelta(google.protobuf.message.Message):
+    """Command that turns a Parquet table into a Delta table.
+
+    This needs to be a Relation as it returns the identifier of the resulting table.
+    We cannot simply reuse the input identifier, as it could be a path-based identifier,
+    and in that case we need to replace "parquet.`...`" with "delta.`...`".
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    IDENTIFIER_FIELD_NUMBER: builtins.int
+    PARTITION_SCHEMA_STRING_FIELD_NUMBER: builtins.int
+    PARTITION_SCHEMA_STRUCT_FIELD_NUMBER: builtins.int
+    identifier: builtins.str
+    """(Required) Parquet table identifier formatted as "parquet.`path`" """
+    partition_schema_string: builtins.str
+    """Hive DDL formatted string"""
+    @property
+    def partition_schema_struct(self) -> pyspark.sql.connect.proto.types_pb2.DataType:
+        """Struct with names and types of partitioning columns"""
+    def __init__(
+        self,
+        *,
+        identifier: builtins.str = ...,
+        partition_schema_string: builtins.str = ...,
+        partition_schema_struct: pyspark.sql.connect.proto.types_pb2.DataType | None = ...,
+    ) -> None: ...
+    def HasField(
+        self,
+        field_name: typing_extensions.Literal[
+            "partition_schema",
+            b"partition_schema",
+            "partition_schema_string",
+            b"partition_schema_string",
+            "partition_schema_struct",
+            b"partition_schema_struct",
+        ],
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal[
+            "identifier",
+            b"identifier",
+            "partition_schema",
+            b"partition_schema",
+            "partition_schema_string",
+            b"partition_schema_string",
+            "partition_schema_struct",
+            b"partition_schema_struct",
+        ],
+    ) -> None: ...
+    def WhichOneof(
+        self, oneof_group: typing_extensions.Literal["partition_schema", b"partition_schema"]
+    ) -> typing_extensions.Literal["partition_schema_string", "partition_schema_struct"] | None: ...
+
+global___ConvertToDelta = ConvertToDelta
+
+class RestoreTable(google.protobuf.message.Message):
+    """Command that restores the DeltaTable to an older version of the table specified by either a
+    version number or a timestamp.
+
+    Needs to be a Relation, as it returns a row containing the execution metrics.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    VERSION_FIELD_NUMBER: builtins.int
+    TIMESTAMP_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to restore to an earlier version."""
+    version: builtins.int
+    """The version number to restore to."""
+    timestamp: builtins.str
+    """The timestamp to restore to."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+        version: builtins.int = ...,
+        timestamp: builtins.str = ...,
+    ) -> None: ...
+    def HasField(
+        self,
+        field_name: typing_extensions.Literal[
+            "table",
+            b"table",
+            "timestamp",
+            b"timestamp",
+            "version",
+            b"version",
+            "version_or_timestamp",
+            b"version_or_timestamp",
+        ],
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal[
+            "table",
+            b"table",
+            "timestamp",
+            b"timestamp",
+            "version",
+            b"version",
+            "version_or_timestamp",
+            b"version_or_timestamp",
+        ],
+    ) -> None: ...
+    def WhichOneof(
+        self,
+        oneof_group: typing_extensions.Literal["version_or_timestamp", b"version_or_timestamp"],
+    ) -> typing_extensions.Literal["version", "timestamp"] | None: ...
+
+global___RestoreTable = RestoreTable
+
+class IsDeltaTable(google.protobuf.message.Message):
+    """Relation containing a single row containing a single boolean that indicates whether the provided
+    path contains a Delta table.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    PATH_FIELD_NUMBER: builtins.int
+    path: builtins.str
+    """(Required) The path to check."""
+    def __init__(
+        self,
+        *,
+        path: builtins.str = ...,
+    ) -> None: ...
+    def ClearField(self, field_name: typing_extensions.Literal["path", b"path"]) -> None: ...
+
+global___IsDeltaTable = IsDeltaTable

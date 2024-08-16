@@ -70,6 +70,14 @@ trait DeltaTimeTravelTests extends QueryTest
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
     if (isICTEnabledForNewTables) {
       InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
+      if (FileNames.isUnbackfilledDeltaFile(filePath)) {
+        // Also change the ICT in the backfilled file if it exists.
+        val backfilledFilePath = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+        val fs = backfilledFilePath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        if (fs.exists(backfilledFilePath)) {
+          InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, backfilledFilePath, Some(ts))
+        }
+      }
       if (crc.exists()) {
         InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(ts))
       }

@@ -134,17 +134,42 @@ trait TransactionExecutionTestMixin {
     observer.phases.backfillPhase.entryBarrier.unblock()
   }
 
-  def unblockCommit(observer: TransactionObserver): Unit = {
-    observer.phases.commitPhase.entryBarrier.unblock()
-    observer.phases.backfillPhase.entryBarrier.unblock()
-  }
-
   def waitForPrecommit(observer: TransactionObserver): Unit =
     busyWaitFor(observer.phases.preparePhase.hasEntered, timeout)
 
   def waitForCommit(observer: TransactionObserver): Unit = {
     busyWaitFor(observer.phases.commitPhase.hasLeft, timeout)
     busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer.
+   * If nextObserver is set, we need to manually call backfillPhase.leave() to advance to the
+   * nextObserver. Details in [[TransactionObserver.waitForCommitPhaseAndAdvanceToNextObserver]].
+   */
+  private def prepareAndCommitBase(
+      observer: TransactionObserver, hasNextObserver: Boolean): Unit = {
+    unblockUntilPreCommit(observer)
+    waitForPrecommit(observer)
+    unblockCommit(observer)
+    if (hasNextObserver) {
+      observer.phases.backfillPhase.leave()
+    }
+    waitForCommit(observer)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer.
+   */
+  def prepareAndCommit(observer: TransactionObserver): Unit = {
+    prepareAndCommitBase(observer, hasNextObserver = false)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer which has nextObserver set.
+   */
+  def prepareAndCommitWithNextObserverSet(observer: TransactionObserver): Unit = {
+    prepareAndCommitBase(observer, hasNextObserver = true)
   }
 
   /**
