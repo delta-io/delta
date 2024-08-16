@@ -384,9 +384,9 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     withTable(tableName) {
       generateTableWithIdentityColumn(tableName)
       sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
-      sql(s"INSERT INTO $tableName (val) VALUES (6)")
+      sql(s"INSERT INTO $tableName (value) VALUES (6)")
       checkAnswer(
-        sql(s"SELECT key, val FROM $tableName ORDER BY val ASC"),
+        sql(s"SELECT id, value FROM $tableName ORDER BY value ASC"),
         Seq(Row(0, 0), Row(1, 1), Row(2, 2), Row(6, 6))
       )
     }
@@ -397,9 +397,9 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     withTable(tableName) {
       generateTableWithIdentityColumn(tableName, step = -1)
       sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
-      sql(s"INSERT INTO $tableName (val) VALUES (6)")
+      sql(s"INSERT INTO $tableName (value) VALUES (6)")
       checkAnswer(
-        sql(s"SELECT key, val FROM $tableName ORDER BY val ASC"),
+        sql(s"SELECT id, value FROM $tableName ORDER BY value ASC"),
         Seq(Row(0, 0), Row(-1, 1), Row(-2, 2), Row(-6, 6))
       )
     }
