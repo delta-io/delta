@@ -23,6 +23,7 @@ import java.util.ConcurrentModificationException
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
@@ -333,6 +334,13 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_ADD_CONSTRAINTS",
       messageParameters = Array.empty)
+  }
+
+  def cannotDropCheckConstraintFeature(constraintNames: Seq[String]): AnalysisException = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+      messageParameters = Array(constraintNames.map(formatColumn).mkString(", "))
+    )
   }
 
   def incorrectLogStoreImplementationException(
@@ -656,6 +664,17 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP",
       messageParameters = Array(reason, formatSchema(oldSchema), formatSchema(newSchema))
+    )
+  }
+
+  def unsupportedTypeChangeInSchema(
+      fieldPath: Seq[String],
+      fromType: DataType,
+      toType: DataType)
+    : Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      messageParameters = Array(SchemaUtils.prettyFieldName(fieldPath), fromType.sql, toType.sql)
     )
   }
 
@@ -1754,13 +1773,50 @@ trait DeltaErrorsBase
     )
   }
 
-  def generatedColumnsTypeMismatch(
+  def generatedColumnsUnsupportedType(dt: DataType): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN",
+      messageParameters = Array(s"${dt.sql}")
+    )
+  }
+
+  def generatedColumnsExprTypeMismatch(
       column: String,
       columnType: DataType,
       exprType: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
       messageParameters = Array(column, exprType.sql, columnType.sql)
+    )
+  }
+
+  def generatedColumnsDataTypeMismatch(
+      columnPath: Seq[String],
+      columnType: DataType,
+      dataType: DataType,
+      generatedColumns: Map[String, String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+      messageParameters = Array(
+        SchemaUtils.prettyFieldName(columnPath),
+        columnType.sql,
+        dataType.sql,
+        generatedColumns.mkString("\n"))
+    )
+  }
+
+  def constraintDataTypeMismatch(
+      columnPath: Seq[String],
+      columnType: DataType,
+      dataType: DataType,
+      constraints: Map[String, String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+      messageParameters = Array(
+        SchemaUtils.prettyFieldName(columnPath),
+        columnType.sql,
+        dataType.sql,
+        constraints.mkString("\n"))
     )
   }
 
@@ -1987,41 +2043,18 @@ trait DeltaErrorsBase
         mode.name))
   }
 
-  def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
-    val requiredProtocol = {
-      if (oldProtocol.supportsReaderFeatures || oldProtocol.supportsWriterFeatures) {
-        Protocol(
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-          .withFeature(ColumnMappingTableFeature)
-      } else {
-        ColumnMappingTableFeature.minProtocolVersion
-      }
-    }
-
-    new DeltaColumnMappingUnsupportedException(
-      errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL",
-      messageParameters = Array(
-        s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
-        s"$requiredProtocol",
-        s"$oldProtocol",
-        columnMappingAdviceMessage(requiredProtocol)))
-  }
-
-  private def columnMappingAdviceMessage(
+  protected def columnMappingAdviceMessage(
       requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
+    val readerVersion = requiredProtocol.minReaderVersion
+    val writerVersion = requiredProtocol.minWriterVersion
     s"""
        |Please enable Column Mapping on your Delta table with mapping mode 'name'.
        |You can use one of the following commands.
        |
-       |If your table is already on the required protocol version:
        |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
        |
-       |If your table is not on the required protocol version and requires a protocol upgrade:
-       |ALTER TABLE table_name SET TBLPROPERTIES (
-       |   'delta.columnMapping.mode' = 'name',
-       |   'delta.minReaderVersion' = '${requiredProtocol.minReaderVersion}',
-       |   'delta.minWriterVersion' = '${requiredProtocol.minWriterVersion}')
+       |Note, if your table is not on the required protocol version it will be upgraded.
+       |Column mapping requires at least protocol ($readerVersion, $writerVersion)
        |""".stripMargin
   }
 
@@ -2068,22 +2101,20 @@ trait DeltaErrorsBase
       messageParameters = columnNames.toArray)
 
   def foundViolatingConstraintsForColumnChange(
-      operation: String,
       columnName: String,
       constraints: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0004",
-      messageParameters = Array(operation, columnName, constraints.mkString("\n"))
+      errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+      messageParameters = Array(columnName, constraints.mkString("\n"))
     )
   }
 
   def foundViolatingGeneratedColumnsForColumnChange(
-      operation: String,
       columnName: String,
-      fields: Seq[StructField]): Throwable = {
+      generatedColumns: Map[String, String]): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0005",
-      messageParameters = Array(operation, columnName, fields.map(_.name).mkString("\n"))
+      errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+      messageParameters = Array(columnName, generatedColumns.mkString("\n"))
     )
   }
 
@@ -2295,6 +2326,14 @@ trait DeltaErrorsBase
       messageParameters = Array(feature))
   }
 
+  def dropTableFeatureFailedBecauseOfDependentFeatures(
+      feature: String,
+      dependentFeatures: Seq[String]): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+      messageParameters = Array(feature, dependentFeatures.mkString(", "), feature))
+  }
+
   def dropTableFeatureConflictRevalidationFailed(
       conflictingCommit: Option[CommitInfo] = None): DeltaTableFeatureException = {
     val concurrentCommit = DeltaErrors.concurrentModificationExceptionMsg(
@@ -2398,6 +2437,34 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(errorClass = "DELTA_UNSET_NON_EXISTENT_PROPERTY", Array(key, table))
   }
 
+  def identityColumnWithGenerationExpression(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION", Array.empty)
+  }
+
+  def identityColumnIllegalStep(): Throwable = {
+    new DeltaAnalysisException(errorClass = "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP", Array.empty)
+  }
+
+  def identityColumnDataTypeNotSupported(unsupportedType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(unsupportedType.typeName)
+    )
+  }
+
+  def identityColumnAlterNonIdentityColumnError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnAlterNonDeltaFormatError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT",
+      messageParameters = Array.empty)
+  }
+
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,
@@ -2407,6 +2474,36 @@ trait DeltaErrorsBase
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
       messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
     )
+  }
+
+  def identityColumnExplicitInsertNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED",
+      messageParameters = Array(colName))
+  }
+
+  def identityColumnAlterColumnNotSupported(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnReplaceColumnsNotSupported(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_REPLACE_COLUMN_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnPartitionNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_PARTITION_NOT_SUPPORTED",
+      messageParameters = Array(colName))
+  }
+
+  def identityColumnUpdateNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_UPDATE_NOT_SUPPORTED",
+      messageParameters = Array(colName))
   }
 
   def activeSparkSessionNotFound(): Throwable = {
@@ -3120,7 +3217,7 @@ trait DeltaErrorsBase
       icebergCompatVersion: Int,
       cause: Throwable): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "",
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.REWRITE_DATA_FAILED",
       messageParameters = Array(
         icebergCompatVersion.toString,
         icebergCompatVersion.toString
@@ -3202,6 +3299,16 @@ trait DeltaErrorsBase
     )
   }
 
+  def universalFormatConversionFailedException(
+      failedOnCommitVersion: Long,
+      format: String,
+      errorMessage: String): Throwable = {
+    new DeltaRuntimeException(
+      errorClass = "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED",
+      messageParameters = Array(s"$failedOnCommitVersion", format, errorMessage)
+    )
+  }
+
   def invalidAutoCompactType(value: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_INVALID_AUTO_COMPACT_TYPE",
@@ -3234,6 +3341,12 @@ trait DeltaErrorsBase
       "DELTA_CLUSTERING_COLUMNS_MISMATCH",
       Array(providedClusteringColumns, existingClusteringColumns)
     )
+  }
+
+  def clusterByWithPartitionedBy(): Throwable = {
+    new DeltaAnalysisException(
+      "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY",
+      Array.empty)
   }
 
   def dropClusteringColumnNotSupported(droppingClusteringCols: Seq[String]): Throwable = {
@@ -3270,16 +3383,6 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED",
       messageParameters = Array.empty)
-  }
-
-  def clusteringTablePreviewDisabledException(): Throwable = {
-    val msg = s"""
-      |A clustered table is currently in preview and is disabled by default. Please set
-      |${DeltaSQLConf.DELTA_CLUSTERING_TABLE_PREVIEW_ENABLED.key} to true to enable it.
-      |Note that a clustered table is not recommended for production use (e.g., unsupported
-      |incremental clustering).
-      |""".stripMargin.replace("\n", " ")
-    new UnsupportedOperationException(msg)
   }
 
   def alterTableSetClusteringTableFeatureException(tableFeature: String): Throwable = {
@@ -3331,6 +3434,36 @@ trait DeltaErrorsBase
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0008",
       messageParameters = Array(
         UnresolvedAttribute(columnPath).name, schema.treeString, extraErrMsg))
+  }
+
+  def alterTableClusterByOnPartitionedTableException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED",
+      messageParameters = Array.empty)
+  }
+
+  def createTableWithDifferentClusteringException(
+      path: Path,
+      specifiedClusterBySpec: Option[ClusterBySpec],
+      existingClusterBySpec: Option[ClusterBySpec]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+      messageParameters = Array(
+        path.toString,
+        specifiedClusterBySpec
+          .map(_.columnNames.map(_.toString))
+          .getOrElse(Seq.empty)
+          .mkString(", "),
+        existingClusterBySpec
+          .map(_.columnNames.map(_.toString))
+          .getOrElse(Seq.empty)
+          .mkString(", ")))
+  }
+
+  def unsupportedWritesWithMissingCoordinators(coordinatorName: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+      messageParameters = Array(coordinatorName))
   }
 }
 

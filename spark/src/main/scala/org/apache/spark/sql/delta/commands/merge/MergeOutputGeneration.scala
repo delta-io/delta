@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands.merge
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
@@ -98,6 +99,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    */
   protected def generateWriteAllChangesOutputCols(
       targetWriteCols: Seq[Expression],
+      rowIdColumnExpressionOpt: Option[NamedExpression],
+      rowCommitVersionColumnExpressionOpt: Option[NamedExpression],
       targetWriteColNames: Seq[String],
       noopCopyExprs: Seq[Expression],
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
@@ -109,6 +112,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // ==== Generate N + 2 (N + 4 preserving Row Tracking) expressions for MATCHED clauses ====
     val processedMatchClauses: Seq[ProcessedClause] = generateAllActionExprs(
       targetWriteCols,
+      rowIdColumnExpressionOpt,
+      rowCommitVersionColumnExpressionOpt,
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoMatchedClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
@@ -120,12 +125,19 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // N + 1 (or N + 2 with CDC, N + 4 preserving Row Tracking and CDC) expressions to delete the
     // unmatched source row when it should not be inserted. `target.output` will produce NULLs
     // which will get deleted eventually.
-    val deleteSourceRowExprs = (targetWriteCols :+ Literal.TrueLiteral) ++
-      (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Nil)
+
+    val deleteSourceRowExprs =
+      (targetWriteCols ++
+        rowIdColumnExpressionOpt.map(_ => Literal(null)) ++
+        rowCommitVersionColumnExpressionOpt.map(_ => Literal(null)) ++
+        Seq(Literal(true))) ++
+        (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Seq())
 
     // ==== Generate N + 2 (N + 4 preserving Row Tracking) expressions for NOT MATCHED clause ====
     val processedNotMatchClauses: Seq[ProcessedClause] = generateAllActionExprs(
       targetWriteCols,
+      rowIdColumnExpressionOpt,
+      rowCommitVersionColumnExpressionOpt,
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoNotMatchedClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
@@ -137,6 +149,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // === Generate N + 2 (N + 4 with Row Tracking) expressions for NOT MATCHED BY SOURCE clause ===
     val processedNotMatchBySourceClauses: Seq[ProcessedClause] = generateAllActionExprs(
       targetWriteCols,
+      rowIdColumnExpressionOpt,
+      rowCommitVersionColumnExpressionOpt,
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoNotMatchedBySourceClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
@@ -187,7 +201,17 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         ifSourceRowNull -> notMatchedBySourceExprs(i),
         ifTargetRowNull -> notMatchedExprs(i)),
         /*  otherwise  */ matchedExprs(i))
-      Column(Alias(caseWhen, name)())
+      if (rowIdColumnExpressionOpt.exists(_.name == name)) {
+        // Add Row ID metadata to allow writing the column.
+        Column(Alias(caseWhen, name)(
+          explicitMetadata = Some(RowId.columnMetadata(name))))
+      } else if (rowCommitVersionColumnExpressionOpt.exists(_.name == name)) {
+        // Add Row Commit Versions metadata to allow writing the column.
+        Column(Alias(caseWhen, name)(
+          explicitMetadata = Some(RowCommitVersion.columnMetadata(name))))
+      } else {
+        Column(Alias(caseWhen, name)())
+      }
     }
     logDebug("writeAllChanges: join output expressions\n\t" + seqToString(outputCols.map(_.expr)))
     outputCols
@@ -206,6 +230,11 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    * UPDATE, DELETE and/or INSERT action(s).
    * @param targetWriteCols List of output column expressions from the target table. Used to
    *                        generate CDC data for DELETE.
+   * @param rowIdColumnExpressionOpt The optional Row ID preservation column with the physical
+   *                                 Row ID name, it stores stable Row IDs of the table.
+   * @param rowCommitVersionColumnExpressionOpt The optional Row Commit Version preservation
+   *                                 column with the physical Row Commit Version name, it stores
+   *                                 stable Row Commit Versions.
    * @param clausesWithPrecompConditions List of merge clauses with precomputed conditions. Action
    *                                     expressions are generated for each of these clauses.
    * @param cdcEnabled Whether the generated expressions should include CDC information.
@@ -217,6 +246,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    */
   protected def generateAllActionExprs(
       targetWriteCols: Seq[Expression],
+      rowIdColumnExpressionOpt: Option[NamedExpression],
+      rowCommitVersionColumnExpressionOpt: Option[NamedExpression],
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
       cdcEnabled: Boolean,
       shouldCountDeletedRows: Boolean): Seq[ProcessedClause] = {
@@ -230,6 +261,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             valueToReturn = false)
           // Generate update expressions and set ROW_DROPPED_COL = false
           u.resolvedActions.map(_.expr) ++
+            rowIdColumnExpressionOpt ++
+            rowCommitVersionColumnExpressionOpt.map(_ => Literal(null)) ++
             Seq(incrCountExpr) ++
             (if (cdcEnabled) Some(Literal(CDC_TYPE_UPDATE_POSTIMAGE)) else None)
         case u: DeltaMergeIntoNotMatchedBySourceUpdateClause =>
@@ -238,6 +271,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             valueToReturn = false)
           // Generate update expressions and set ROW_DROPPED_COL = false
           u.resolvedActions.map(_.expr) ++
+            rowIdColumnExpressionOpt ++
+            rowCommitVersionColumnExpressionOpt.map(_ => Literal(null)) ++
             Seq(incrCountExpr) ++
             (if (cdcEnabled) Some(Literal(CDC_TYPE_UPDATE_POSTIMAGE)) else None)
         case _: DeltaMergeIntoMatchedDeleteClause =>
@@ -252,6 +287,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
           }
           // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
           targetWriteCols ++
+            rowIdColumnExpressionOpt ++
+            rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
             (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
         case _: DeltaMergeIntoNotMatchedBySourceDeleteClause =>
@@ -266,6 +303,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
           }
           // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
           targetWriteCols ++
+            rowIdColumnExpressionOpt ++
+            rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
             (if (cdcEnabled) Some(CDC_TYPE_DELETE) else None)
         case i: DeltaMergeIntoNotMatchedInsertClause =>
@@ -273,6 +312,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             names = Seq("numTargetRowsInserted"),
             valueToReturn = false)
           i.resolvedActions.map(_.expr) ++
+            rowIdColumnExpressionOpt.map(_ => Literal(null)) ++
+            rowCommitVersionColumnExpressionOpt.map(_ => Literal(null)) ++
             Seq(incrInsertedCountExpr) ++
             (if (cdcEnabled) Some(Literal(CDC_TYPE_INSERT)) else None)
       }
@@ -346,6 +387,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       outputCols: Seq[Column],
       outputColNames: Seq[String],
       noopCopyExprs: Seq[Expression],
+      rowIdColumnNameOpt: Option[String],
+      rowCommitVersionColumnNameOpt: Option[String],
       deduplicateDeletes: DeduplicateCDFDeletes): DataFrame = {
     import org.apache.spark.sql.delta.commands.cdc.CDCReader._
     // The main partition just needs to swap in the CDC_TYPE_NOT_CDC value.
@@ -416,12 +459,16 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         sourceDf,
         cdcArray,
         cdcToMainDataArray,
+        rowIdColumnNameOpt,
+        rowCommitVersionColumnNameOpt,
         outputColNames)
     } else {
       packAndExplodeCDCOutput(
         sourceDf,
         cdcArray,
         cdcToMainDataArray,
+        rowIdColumnNameOpt,
+        rowCommitVersionColumnNameOpt,
         outputColNames,
         dedupColumns = Nil)
     }
@@ -440,6 +487,11 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    * @param cdcToMainDataArray Transforms the packed CDC data to add the main data output, i.e. rows
    *                           that are inserted or updated and will be written to the main
    *                           partition.
+   * @param rowIdColumnNameOpt The optional Row ID preservation column with the physical Row ID
+   *                           name, it stores stable Row IDs.
+   * @param rowCommitVersionColumnNameOpt The optional Row Commit Version preservation column
+   *                                      with the physical Row Commit Version name, it stores
+   *                                      stable Row Commit Versions.
    * @param outputColNames All the main and CDC columns to use in the output.
    * @param dedupColumns Additional columns to add to enable deduplication.
    */
@@ -447,15 +499,25 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       sourceDf: DataFrame,
       cdcArray: Column,
       cdcToMainDataArray: Column,
+      rowIdColumnNameOpt: Option[String],
+      rowCommitVersionColumnNameOpt: Option[String],
       outputColNames: Seq[String],
       dedupColumns: Seq[Column]): DataFrame = {
     val unpackedCols = outputColNames.map { name =>
+      if (rowIdColumnNameOpt.contains(name)) {
+        // Add metadata to allow writing the column although it is not part of the schema.
+        col(s"packedData.`$name`").as(name, RowId.columnMetadata(name))
+      } else if (rowCommitVersionColumnNameOpt.contains(name)) {
+        col(s"packedData.`$name`").as(name, RowCommitVersion.columnMetadata(name))
+      } else {
         col(s"packedData.`$name`").as(name)
+      }
     }
+
     sourceDf
       // `explode()` creates a [[Generator]] which can't handle non-deterministic expressions that
       // we use to increment metric counters. We first project the CDC array so that the expressions
-      // are evaluated before we explode the array,
+      // are evaluated before we explode the array.
       .select(cdcArray.as("projectedCDC") +: dedupColumns: _*)
       .select(explode(col("projectedCDC")).as("packedCdc") +: dedupColumns: _*)
       .select(explode(cdcToMainDataArray).as("packedData") +: dedupColumns: _*)
@@ -480,6 +542,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       df: DataFrame,
       cdcArray: Column,
       cdcToMainDataArray: Column,
+      rowIdColumnNameOpt: Option[String],
+      rowCommitVersionColumnNameOpt: Option[String],
       outputColNames: Seq[String]): DataFrame = {
     val dedupColumns = if (deduplicateDeletes.includesInserts) {
       Seq(col(TARGET_ROW_INDEX_COL), col(SOURCE_ROW_INDEX_COL))
@@ -491,6 +555,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       df,
       cdcArray,
       cdcToMainDataArray,
+      rowIdColumnNameOpt,
+      rowCommitVersionColumnNameOpt,
       outputColNames,
       dedupColumns
     )

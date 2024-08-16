@@ -15,13 +15,16 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.utils.{TestUtils, VectorTestUtils}
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
+import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
 import io.delta.kernel.expressions._
 import io.delta.kernel.types._
 
-trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
+import scala.collection.JavaConverters._
+
+trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
   /** create a columnar batch of given `size` with zero columns in it. */
   protected def zeroColumnBatch(rowCount: Int): ColumnarBatch = {
     new DefaultColumnarBatch(rowCount, new StructType(), new Array[ColumnVector](0))
@@ -33,6 +36,17 @@ trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
 
   protected def or(left: Predicate, right: Predicate): Or = {
     new Or(left, right)
+  }
+
+  protected def like(
+      left: Expression, right: Expression, escape: Option[Character] = None): Predicate = {
+    if (escape.isDefined && escape.get!=null) {
+      like(List(left, right, Literal.ofString(escape.get.toString)))
+    } else like(List(left, right))
+  }
+
+  protected def like(children: List[Expression]): Predicate = {
+    new Predicate("like", children.asJava)
   }
 
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
@@ -49,6 +63,19 @@ trait ExpressionSuiteBase extends TestUtils with VectorTestUtils {
           actual.getBoolean(rowId) === expected.getBoolean(rowId),
           s"unexpected value at $rowId"
         )
+      }
+    }
+  }
+
+  protected def checkTimestampVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getSize === expected.getSize)
+    for (rowId <- 0 until actual.getSize) {
+      if (expected.isNullAt(rowId)) {
+        assert(actual.isNullAt(rowId), s"Expected null at row $rowId")
+      } else {
+        val expectedValue = getValueAsObject(expected, rowId).asInstanceOf[Long]
+        val actualValue = getValueAsObject(actual, rowId).asInstanceOf[Long]
+        assert(actualValue === expectedValue, s"Unexpected value at row $rowId")
       }
     }
   }

@@ -23,10 +23,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import io.delta.kernel.data.ColumnVector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import io.delta.kernel.data.ColumnVector;
 
 import io.delta.standalone.DeltaScan;
 import io.delta.standalone.actions.AddFile;
@@ -73,7 +72,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      */
     @Override
     public long getVersion() {
-        // WARNING: getVersion in SnapshotImpl currently doesn't use the table client, so we can
+        // WARNING: getVersion in SnapshotImpl currently doesn't use the engine so we can
         // pass null, but if this changes this code could break
         return kernelSnapshot.getVersion(null);
     }

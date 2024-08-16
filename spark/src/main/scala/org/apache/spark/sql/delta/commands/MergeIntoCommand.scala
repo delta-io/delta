@@ -197,8 +197,8 @@ case class MergeIntoCommand(
       deltaTxn: OptimisticTransaction,
       mergeActions: Seq[FileAction],
       startTime: Long,
-      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
-    : Unit = {
+      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason
+  ): Unit = {
     checkNonDeterministicSource(spark)
 
     // Metrics should be recorded before commit (where they are written to delta logs).
@@ -206,15 +206,17 @@ case class MergeIntoCommand(
     deltaTxn.registerSQLMetrics(spark, metrics)
 
     val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ mergeActions
-    deltaTxn.commitIfNeeded(
+    val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val commitVersion = deltaTxn.commitIfNeeded(
       actions = finalActions,
-      DeltaOperations.Merge(
+      op = DeltaOperations.Merge(
         predicate = Option(condition),
         matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedBySourcePredicates =
-          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))))
-    val stats = collectMergeStats(deltaTxn, materializeSourceReason)
+          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))),
+      tags = RowTracking.addPreservedRowTrackingTagIfNotSet(deltaTxn.snapshot))
+    val stats = collectMergeStats(deltaTxn, materializeSourceReason, commitVersion, numRecordsStats)
     recordDeltaEvent(targetDeltaLog, "delta.dml.merge.stats", data = stats)
   }
 }

@@ -55,6 +55,9 @@
   - [Row Commit Versions](#row-commit-versions)
   - [Reader Requirements for Row Tracking](#reader-requirements-for-row-tracking)
   - [Writer Requirements for Row Tracking](#writer-requirements-for-row-tracking)
+- [VACUUM Protocol Check](#vacuum-protocol-check)
+  - [Writer Requirements for Vacuum Protocol Check](#writer-requirements-for-vacuum-protocol-check)
+  - [Reader Requirements for Vacuum Protocol Check](#reader-requirements-for-vacuum-protocol-check)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
 - [Requirements for Writers](#requirements-for-writers)
@@ -101,6 +104,7 @@
   - [Last Checkpoint File Schema](#last-checkpoint-file-schema)
     - [JSON checksum](#json-checksum)
       - [How to URL encode keys and string values](#how-to-url-encode-keys-and-string-values)
+  - [Delta Data Type to Parquet Type Mappings](#delta-data-type-to-parquet-type-mappings)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -206,7 +210,7 @@ The checkpoint file name is based on the version of the table that the checkpoin
 Delta supports three kinds of checkpoints:
 
 1. UUID-named Checkpoints: These follow [V2 spec](#v2-spec) which uses the following file name: `n.checkpoint.u.{json/parquet}`, where `u` is a UUID and `n` is the
-snapshot version that this checkpoint represents. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
+snapshot version that this checkpoint represents. Here `n` must be zero padded to have length 20. The UUID-named V2 Checkpoint may be in json or parquet format, and references zero or more checkpoint sidecars
 in the `_delta_log/_sidecars` directory. A checkpoint sidecar is a uniquely-named parquet file: `{unique}.parquet` where `unique` is some unique
 string such as a UUID.
 
@@ -219,7 +223,7 @@ _sidecars/016ae953-37a9-438e-8683-9a9a4a79a395.parquet
 _sidecars/7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.parquet
 ```
 
-2. A [classic checkpoint](#classic-checkpoint) for version `n` of the table consists of a file named `n.checkpoint.parquet`.
+2. A [classic checkpoint](#classic-checkpoint) for version `n` of the table consists of a file named `n.checkpoint.parquet`. Here `n` must be zero padded to have length 20.
 These could follow either [V1 spec](#v1-spec) or [V2 spec](#v2-spec).
 For example:
 
@@ -229,7 +233,7 @@ For example:
 
 
 3. A [multi-part checkpoint](#multi-part-checkpoint) for version `n` consists of `p` "part" files (`p > 1`), where
-part `o` of `p` is named `n.checkpoint.o.p.parquet`. These are always [V1 checkpoints](#v1-spec).
+part `o` of `p` is named `n.checkpoint.o.p.parquet`. Here `n` must be zero padded to have length 20, while `o` and `p` must be zero padded to have length 10. These are always [V1 checkpoints](#v1-spec).
 For example:
 
 ```
@@ -473,7 +477,9 @@ The following is an example `remove` action.
 ```
 
 ### Add CDC File
-The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
+The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. The `cdc` action is allowed to add a [Data File](#data-files) that is also added by an `add` action, when it does not contain any copied rows and the `_change_type` column is filled for all rows.
+
+When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
 
 The schema of the `cdc` action is as follows:
 
@@ -515,11 +521,11 @@ Specifically, to read the row-level changes made in a version, the following str
     Field Name | Data Type | Description
     -|-|-
     _commit_version|`Long`| The table version containing the change. This can be derived from the name of the Delta log file that contains actions.
-    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be derived from the file modification time of the Delta log file that contains actions.
+    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. Depending on whether [In-Commit Timestamps](#in-commit-timestamps) are enabled, this is derived from either the `inCommitTimestamp` field of the `commitInfo` action of the version's Delta log file, or from the Delta log file's modification time.
 
 ##### Note for non-change data readers
 
-In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema and will consistently have a `null` value. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
+In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
@@ -613,6 +619,8 @@ A table that is using table features for both readers and writers:
 A delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
 
 Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
+
+When [In-Commit Timestamps](#in-commit-timestamps) are enabled, writers are required to include a `commitInfo` action with every commit, which must include the `inCommitTimestamp` field. Also, the `commitInfo` action must be first action in the commit.
 
 An example of storing provenance information related to an `INSERT` operation:
 ```json
@@ -1179,6 +1187,29 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
   In particular, writers should set `delta.rowTracking.preserved` in the `tags` of the `commitInfo` action to `true` if no rows are updated or copied.
   Writers should set that flag to false otherwise.
 
+# VACUUM Protocol Check
+
+The `vacuumProtocolCheck` ReaderWriter feature ensures consistent application of reader and writer protocol checks during `VACUUM` operations, addressing potential protocol discrepancies and mitigating the risk of data corruption due to skipped writer checks.
+
+Enablement:
+- The table must be on Writer Version 7 and Reader Version 3.
+- The feature `vacuumProtocolCheck` must exist in the table `protocol`'s `writerFeatures` and `readerFeatures`.
+
+## Writer Requirements for Vacuum Protocol Check
+
+This feature affects only the VACUUM operations; standard commits remain unaffected.
+
+Before performing a VACUUM operation, writers must ensure that they check the table's write protocol. This is most easily implemented by adding an unconditional write protocol check for all tables, which removes the need to examine individual table properties.
+
+Writers that do not implement VACUUM do not need to change anything and can safely write to tables that enable the feature.
+
+## Reader Requirements for Vacuum Protocol Check
+
+For tables with Vacuum Protocol Check enabled, readers don’t need to understand or change anything new; they just need to acknowledge the feature exists.
+
+Making this feature a ReaderWriter feature (rather than solely a Writer feature) ensures that:
+- Older vacuum implementations, which only performed the Reader protocol check and lacked the Writer protocol check, will begin to fail if the table has `vacuumProtocolCheck` enabled.This change allows future writer features to have greater flexibility and safety in managing files within the table directory, eliminating the risk of older Vacuum implementations (that lack the Writer protocol check) accidentally deleting relevant files.
+
 # Clustered Table
 
 The Clustered Table feature facilitates the physical clustering of rows that share similar values on a predefined set of clustering columns.
@@ -1225,6 +1256,41 @@ The example above converts `configuration` field into JSON format, including esc
   ]
 }
 ```
+
+# In-Commit Timestamps
+
+The In-Commit Timestamps writer feature strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata.
+
+Enablement:
+- The table must be on Writer Version 7.
+- The feature `inCommitTimestamps` must exist in the table `protocol`'s `writerFeatures`.
+- The table property `delta.enableInCommitTimestamps` must be set to `true`.
+
+## Writer Requirements for In-Commit Timestamps
+
+When In-Commit Timestamps is enabled, then:
+1. Writers must write the `commitInfo` (see [Commit Provenance Information](#commit-provenance-information)) action in the commit.
+2. The `commitInfo` action must be the first action in the commit.
+3. The `commitInfo` action must include a field named `inCommitTimestamp`, of type `long` (see [Primitive Types](#primitive-types)), which represents the time (in milliseconds since the Unix epoch) when the commit is considered to have succeeded. It is the larger of two values:
+   - The time, in milliseconds since the Unix epoch, at which the writer attempted the commit
+   - One millisecond later than the previous commit's `inCommitTimestamp`
+4. If the table has commits from a period when this feature was not enabled, provenance information around when this feature was enabled must be tracked in table properties:
+   - The property `delta.inCommitTimestampEnablementVersion` must be used to track the version of the table when this feature was enabled.
+   - The property `delta.inCommitTimestampEnablementTimestamp` must be the same as the `inCommitTimestamp` of the commit when this feature was enabled.
+5. The `inCommitTimestamp` of the commit that enables this feature must be greater than the file modification time of the immediately preceding commit.
+
+## Recommendations for Readers of Tables with In-Commit Timestamps
+
+For tables with In-Commit timestamps enabled, readers should use the `inCommitTimestamp` as the commit timestamp for operations like time travel and [`DESCRIBE HISTORY`](https://docs.delta.io/latest/delta-utility.html#retrieve-delta-table-history).
+If a table has commits from a period before In-Commit timestamps were enabled, the table properties `delta.inCommitTimestampEnablementVersion` and `delta.inCommitTimestampEnablementTimestamp` would be set and can be used to identify commits that don't have `inCommitTimestamp`.
+To correctly determine the commit timestamp for these tables, readers can use the following rules:
+1. For commits with version >= `delta.inCommitTimestampEnablementVersion`, readers should use the `inCommitTimestamp` field of the `commitInfo` action.
+2. For commits with version < `delta.inCommitTimestampEnablementVersion`, readers should use the file modification timestamp.
+
+Furthermore, when attempting timestamp-based time travel where table state must be fetched as of `timestamp X`, readers should use the following rules:
+1. If `timestamp X` >= `delta.inCommitTimestampEnablementTimestamp`, only table versions >= `delta.inCommitTimestampEnablementVersion` should be considered for the query.
+2. Otherwise, only table versions less than `delta.inCommitTimestampEnablementVersion` should be considered for the query.
+
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
@@ -1442,7 +1508,7 @@ the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
 We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
 time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
-3. Delete all [delta log entries](#delta-log-entries and [checkpoint files](#checkpoints) before the
+3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the
 `cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
 startVersion <= `cutOffCheckpoint`'s version.
 4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
@@ -1611,7 +1677,9 @@ Feature | Name | Readers or Writers?
 [Domain Metadata](#domain-metadata) | `domainMetadata` | Writers only
 [V2 Checkpoint](#v2-checkpoint-table-feature) | `v2Checkpoint` | Readers and writers
 [Iceberg Compatibility V1](#iceberg-compatibility-v1) | `icebergCompatV1` | Writers only
+[Iceberg Compatibility V2](#iceberg-compatibility-v2) | `icebergCompatV2` | Writers only
 [Clustered Table](#clustered-table) | `clustering` | Writers only
+[VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
 
 ## Deletion Vector Format
 
@@ -1679,7 +1747,7 @@ numRecords | The number of records in this data file.
 tightBounds | Whether per-column statistics are currently **tight** or **wide** (see below).
 
 For any logical file where `deletionVector` is not `null`, the `numRecords` statistic *must* be present and accurate. That is, it must equal the number of records in the data file, not the valid records in the logical file.
-In the presence of [Deletion Vectors](#Deletion-Vectors) the statistics may be somewhat outdated, i.e. not reflecting deleted rows yet. The flag `stats.tightBounds` indicates whether we have **tight bounds** (i.e. the min/maxValue exists[^1] in the valid state of the file) or **wide bounds** (i.e. the minValue is <= all valid values in the file, and the maxValue >= all valid values in the file). These upper/lower bounds are sufficient information for data skipping.
+In the presence of [Deletion Vectors](#Deletion-Vectors) the statistics may be somewhat outdated, i.e. not reflecting deleted rows yet. The flag `stats.tightBounds` indicates whether we have **tight bounds** (i.e. the min/maxValue exists[^1] in the valid state of the file) or **wide bounds** (i.e. the minValue is <= all valid values in the file, and the maxValue >= all valid values in the file). These upper/lower bounds are sufficient information for data skipping. Note, `stats.tightBounds` should be treated as `true` when it is not explicitly present in the statistics.
 
 Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data.
 For example, given the following data schema:
@@ -1785,7 +1853,7 @@ An array stores a variable length collection of items of some type.
 Field Name | Description
 -|-
 type| Always the string "array"
-elementType| The type of element stored in this array represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+elementType| The type of element stored in this array, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 containsNull| Boolean denoting whether this array can contain one or more null values
 
 ### Map Type
@@ -2086,3 +2154,27 @@ uppercase and lowercase as part of percent-encoding. Thus, we require a stricter
 3. Always [percent-encode](https://datatracker.ietf.org/doc/html/rfc3986#section-2) reserved octets
 4. Never percent-encode non-reserved octets
 5. A percent-encoded octet consists of three characters: `%` followed by its 2-digit hexadecimal value in uppercase letters, e.g. `>` encodes to `%3E`
+
+## Delta Data Type to Parquet Type Mappings
+Below table captures how each Delta data type is stored physically in Parquet files. Parquet files are used for storing the table data or metadata ([checkpoints](#checkpoints)). Parquet has a limited number of [physical types](https://parquet.apache.org/docs/file-format/types/). Parquet [logical types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md) are used to extend the types by specifying how the physical types should be interpreted.
+
+For some of the Delta data types, there are multiple ways store the values physically in Parquet file. For example, `timestamp` can be stored either as `int96` or `int64`. The exact physical type depends on the engine that is writing the Parquet file and/or engine specific configuration options. For a Delta lake table reader, it is recommended that the Parquet file reader support at least the Parquet physical and logical types mentioned in the below table.
+
+Delta Type Name | Parquet Physical Type | Parquet Logical Type
+-|-|-
+boolean| `boolean` |
+byte| `int32` | `INT(bitwidth = 8, signed = true)`
+short| `int32` | `INT(bitwidth = 16, signed = true)`
+int| `int32` | `INT(bitwidth = 32, signed = true)`
+long| `int64` | `INT(bitwidth = 64, signed = true)`
+date| `int32` | `DATE`
+timestamp| `int96` or `int64` | `TIMESTAMP(isAdjustedToUTC = true, units = microseconds)`
+timestamp without time zone| `int96` or `int64` | `TIMESTAMP(isAdjustedToUTC = false, units = microseconds)`
+float| `float` |
+double| `double` |
+decimal| `int32`, `int64` or `fixed_length_binary` | `DECIMAL(scale, precision)`
+string| `binary` | `string (UTF-8)`
+binary| `binary` |
+array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
+map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
+struct| `group` |

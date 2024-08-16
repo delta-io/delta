@@ -19,12 +19,18 @@ package org.apache.spark.sql.delta.rowtracking
 import org.apache.spark.sql.delta.{DeltaConfigs, RowTrackingFeature}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.test.SharedSparkSession
 
-trait RowTrackingTestUtils extends QueryTest with SharedSparkSession {
+trait RowTrackingTestUtils
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaSQLTestUtils
+  with ParquetTest {
   lazy val rowTrackingFeatureName: String =
     TableFeatureProtocolUtils.propertyKey(RowTrackingFeature)
   lazy val defaultRowTrackingFeatureProperty: String =

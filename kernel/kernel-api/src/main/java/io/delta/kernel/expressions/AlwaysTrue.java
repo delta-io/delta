@@ -15,9 +15,8 @@
  */
 package io.delta.kernel.expressions;
 
-import java.util.Collections;
-
 import io.delta.kernel.annotation.Evolving;
+import java.util.Collections;
 
 /**
  * Predicate which always evaluates to {@code true}.
@@ -26,9 +25,9 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public final class AlwaysTrue extends Predicate {
-    public static final AlwaysTrue ALWAYS_TRUE = new AlwaysTrue();
+  public static final AlwaysTrue ALWAYS_TRUE = new AlwaysTrue();
 
-    private AlwaysTrue() {
-        super("ALWAYS_TRUE", Collections.emptyList());
-    }
+  private AlwaysTrue() {
+    super("ALWAYS_TRUE", Collections.emptyList());
+  }
 }

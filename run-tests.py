@@ -43,17 +43,23 @@ def get_args():
         default=False,
         action="store_true",
         help="Enables test coverage and generates an aggregate report for all subprojects")
+    parser.add_argument(
+        "--shard",
+        required=False,
+        default=None,
+        help="some shard")
     return parser.parse_args()
 
 
-def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
+def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None):
     print("##### Running SBT tests #####")
-    is_running_spark_tests = test_group is None or test_group == "spark"
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     cmd = [sbt_path, "clean"]
 
     test_cmd = "test"
+    if shard:
+        os.environ["SHARD_ID"] = str(shard)
 
     if test_group:
         # if test group is specified, then run tests only on that test group
@@ -67,7 +73,7 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None):
         cmd += ["+ %s" % test_cmd]  # build/sbt ... "+ project/test" ...
     else:
         # when no scala version is specified, run test with only the specified scala version
-        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.8" "project/test" ...
+        cmd += ["++ %s" % scala_version, test_cmd]  # build/sbt ... "++ 2.13.13" "project/test" ...
 
     if coverage:
         cmd += ["coverageAggregate", "coverageOff"]
@@ -84,7 +90,7 @@ def run_python_tests(root_dir):
     print("##### Running Python tests #####")
     python_test_script = path.join(root_dir, path.join("python", "run-tests.py"))
     print("Calling script %s", python_test_script)
-    run_cmd(["python3", python_test_script], stream_output=True)
+    run_cmd(["python3", python_test_script], env={'DELTA_TESTING': '1'}, stream_output=True)
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
@@ -224,7 +230,7 @@ if __name__ == "__main__":
         run_tests_in_docker(test_env_image_tag, args.group)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version)
+        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
 
         # Python tests are run only when spark group of projects are being tested.
         is_testing_spark_group = args.group is None or args.group == "spark"

@@ -22,7 +22,7 @@ import java.util.Locale
 import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, TestReaderWriterFeature, TestWriterFeature}
+import org.apache.spark.sql.delta.{AppendOnlyTableFeature, DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, InvariantsTableFeature, TestReaderWriterFeature, TestWriterFeature}
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -188,7 +188,7 @@ class DeltaTableSuite extends QueryTest
     }
 
     // DeltaTable can be passed to executor but method call causes exception.
-    val e = intercept[SparkException] {
+    val e = intercept[Exception] {
       withTempDir { dir =>
         testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
         val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
@@ -515,7 +515,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
         val time = format.parse(desiredTime).getTime
 
         val logPath = new Path(dir.getCanonicalPath, "_delta_log")
-        val file = new File(FileNames.deltaFile(logPath, 0).toString)
+        val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
         assert(file.setLastModified(time))
 
         val deltaTable2 = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
@@ -537,9 +537,9 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // create a table with a default Protocol.
       val testSchema = spark.range(1).schema
       val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata(schemaString = testSchema.json).json, Protocol(0, 0).json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -563,9 +563,9 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // create a table with a default Protocol.
       val testSchema = spark.range(1).schema
       val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata(schemaString = testSchema.json).json, Protocol(1, 2).json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -574,13 +574,17 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // update the protocol to support a writer feature.
       val table = DeltaTable.forPath(spark, path, fsOptions)
       table.addFeatureSupport(TestWriterFeature.name)
-      assert(log.update().protocol === Protocol(1, 7)
-        .merge(Protocol(1, 2)).withFeature(TestWriterFeature))
+      assert(log.update().protocol === Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        TestWriterFeature)))
       table.addFeatureSupport(TestReaderWriterFeature.name)
       assert(
-        log.update().protocol === Protocol(3, 7)
-          .merge(Protocol(1, 2))
-          .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature)))
+        log.update().protocol === Protocol(3, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          TestWriterFeature,
+          TestReaderWriterFeature)))
 
       // update the protocol again with invalid feature name.
       assert(intercept[DeltaTableFeatureException] {

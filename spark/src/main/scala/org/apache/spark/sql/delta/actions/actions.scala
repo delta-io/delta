@@ -23,6 +23,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
@@ -37,7 +38,7 @@ import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
-
+import io.delta.storage.commit.actions.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
@@ -135,6 +136,7 @@ case class Protocol private (
     @JsonInclude(Include.NON_ABSENT)
     writerFeatures: Option[Set[String]])
   extends Action
+  with AbstractProtocol
   with TableFeatureSupport {
   // Correctness check
   // Reader and writer versions must match the status of reader and writer features
@@ -176,6 +178,14 @@ case class Protocol private (
   }
 
   override def toString: String = s"Protocol($simpleString)"
+
+  override def getMinReaderVersion: Int = minReaderVersion
+
+  override def getMinWriterVersion: Int = minWriterVersion
+
+  override def getReaderFeatures: java.util.Set[String] = readerFeatures.map(_.asJava).orNull
+
+  override def getWriterFeatures: java.util.Set[String] = writerFeatures.map(_.asJava).orNull
 }
 
 object Protocol {
@@ -198,13 +208,22 @@ object Protocol {
       writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
+  /** Returns the required protocol for a given feature. Takes into account dependent features. */
   def forTableFeature(tf: TableFeature): Protocol = {
-    val writerFeatures = Some(Set(tf.name)) // every table feature is a writer feature
-    val readerFeatures = if (tf.isReaderWriterFeature) writerFeatures else None
-    val minReaderVersion = if (readerFeatures.isDefined) TABLE_FEATURES_MIN_READER_VERSION else 1
-    val minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION
+    // Every table feature is a writer feature.
+    val writerFeatures = tf.requiredFeatures + tf
+    val readerFeatures = writerFeatures.filter(f => f.isReaderWriterFeature && !f.isLegacyFeature)
+    val writerFeaturesNames = writerFeatures.map(_.name)
+    val readerFeaturesNames = readerFeatures.map(_.name)
 
-    new Protocol(minReaderVersion, minWriterVersion, readerFeatures, writerFeatures)
+    val minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION
+    val minReaderVersion = (readerFeatures.map(_.minReaderVersion) + 1).max
+
+    new Protocol(
+      minReaderVersion,
+      minWriterVersion,
+      readerFeatures = Option(readerFeaturesNames).filter(_.nonEmpty),
+      writerFeatures = Some(writerFeaturesNames))
   }
 
   /**
@@ -245,7 +264,16 @@ object Protocol {
 
     val (readerVersion, writerVersion, enabledFeatures) =
       minProtocolComponentsFromMetadata(spark, metadata)
-    Protocol(readerVersion, writerVersion).withFeatures(enabledFeatures)
+    // New table protocols should always be denormalized and then normalized to convert the
+    // protocol to the weakest possible form. This means either converting a table features
+    // protocol to a legacy protocol or reducing the versions of a table features protocol.
+    // For example:
+    // 1) (3, 7, RowTracking) is normalized to (1, 7, RowTracking).
+    // 2) (3, 7, AppendOnly, Invariants) is normalized to (1, 2).
+    // 3) (2, 3) is normalized to (1, 3).
+    Protocol(readerVersion, writerVersion)
+      .withFeatures(enabledFeatures)
+      .denormalizedNormalized
   }
 
   /**
@@ -270,17 +298,15 @@ object Protocol {
   def extractAutomaticallyEnabledFeatures(
       spark: SparkSession,
       metadata: Metadata,
-      protocol: Option[Protocol] = None): Set[TableFeature] = {
+      protocol: Protocol): Set[TableFeature] = {
     val protocolEnabledFeatures = protocol
-      .map(_.writerFeatureNames)
-      .getOrElse(Set.empty)
+      .writerFeatureNames
       .flatMap(TableFeature.featureNameToFeature)
     val metadataEnabledFeatures = TableFeature
       .allSupportedFeaturesMap.values
       .collect {
         case f: TableFeature with FeatureAutomaticallyEnabledByMetadata
-          if f.metadataRequiresFeatureToBeEnabled(metadata, spark) =>
-          f.asInstanceOf[TableFeature]
+          if f.metadataRequiresFeatureToBeEnabled(protocol, metadata, spark) => f
       }
       .toSet
 
@@ -313,7 +339,7 @@ object Protocol {
     // let [[getDependencyClosure]] collect them.
     val metaEnabledFeatures =
       extractAutomaticallyEnabledFeatures(
-        spark, metadata, Some(Protocol().withFeatures(tablePropEnabledFeatures)))
+        spark, metadata, Protocol().withFeatures(tablePropEnabledFeatures))
     val allEnabledFeatures = tablePropEnabledFeatures ++ metaEnabledFeatures
 
     // Determine the min reader and writer version required by features in table properties or
@@ -356,7 +382,23 @@ object Protocol {
     val finalWriterVersion =
       Seq(1, writerVersionFromFeatures, writerVersionFromTableConfOpt.getOrElse(0)).max
 
-    (finalReaderVersion, finalWriterVersion, allEnabledFeatures)
+    // If the user explicitly sets the table versions, we need to take into account the
+    // relevant implicit features.
+    val implicitFeaturesFromTableConf =
+      (readerVersionFromTableConfOpt, writerVersionFromTableConfOpt) match {
+        case (Some(readerVersion), Some(writerVersion)) =>
+          // We cannot have a table features reader version if the protocol does not
+          // support writer features.
+          val sanitizedReaderVersion = if (supportsWriterFeatures(writerVersion)) {
+            readerVersion
+          } else {
+            Math.min(2, readerVersion)
+          }
+          Protocol(sanitizedReaderVersion, writerVersion).implicitlySupportedFeatures
+        case _ => Set.empty
+      }
+
+    (finalReaderVersion, finalWriterVersion, allEnabledFeatures ++ implicitFeaturesFromTableConf)
   }
 
   /**
@@ -374,8 +416,9 @@ object Protocol {
    */
   def minProtocolComponentsFromAutomaticallyEnabledFeatures(
       spark: SparkSession,
-      metadata: Metadata): (Int, Int, Set[TableFeature]) = {
-    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata)
+      metadata: Metadata,
+      current: Protocol): (Int, Int, Set[TableFeature]) = {
+    val enabledFeatures = extractAutomaticallyEnabledFeatures(spark, metadata, current)
     var (readerVersion, writerVersion) = (0, 0)
     enabledFeatures.foreach { feature =>
       readerVersion = math.max(readerVersion, feature.minReaderVersion)
@@ -407,7 +450,7 @@ object Protocol {
   }
 
   /** Assert a table metadata contains no protocol-related table properties. */
-  private def assertMetadataContainsNoProtocolProps(metadata: Metadata): Unit = {
+  def assertMetadataContainsNoProtocolProps(metadata: Metadata): Unit = {
     assert(
       !metadata.configuration.contains(MIN_READER_VERSION_PROP),
       "Should not have the " +
@@ -444,16 +487,32 @@ object Protocol {
       spark: SparkSession,
       metadata: Metadata,
       current: Protocol): Option[Protocol] = {
-    assertMetadataContainsNoProtocolProps(metadata)
-
     val (readerVersion, writerVersion, minRequiredFeatures) =
-      minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata)
+      minProtocolComponentsFromAutomaticallyEnabledFeatures(spark, metadata, current)
+
+    // If the user sets the protocol versions we need to take it account. In general,
+    // enabling legacy features on legacy protocols results to pumping up the protocol
+    // versions. However, setting table feature protocol versions while enabling
+    // legacy features results to only enabling the requested features. For example:
+    // 1) Create table with (1, 2), then ALTER TABLE with DeltaConfigs.CHANGE_DATA_FEED.key = true
+    //    results to (1, 4).
+    // 2) Alternatively, Create table with (1, 2), then
+    //    ALTER TABLE set versions (1, 7) and DeltaConfigs.CHANGE_DATA_FEED.key = true results
+    //    to (1, 7, AppendOnly, Invariants, CDF).
+    val readerVersionFromConf =
+      Protocol.getReaderVersionFromTableConf(metadata.configuration).getOrElse(readerVersion)
+    val writerVersionFromConf =
+      Protocol.getWriterVersionFromTableConf(metadata.configuration).getOrElse(writerVersion)
+
+    val finalReaderVersion =
+      Seq(readerVersion, readerVersionFromConf, current.minReaderVersion).max
+    val finalWriterVersion =
+      Seq(writerVersion, writerVersionFromConf, current.minWriterVersion).max
 
     // Increment the reader and writer version to accurately add enabled legacy table features
-    // either to the implicitly enabled table features or the table feature lists
-    val required = Protocol(
-      readerVersion.max(current.minReaderVersion), writerVersion.max(current.minWriterVersion))
-      .withFeatures(minRequiredFeatures)
+    // either to the implicitly enabled table features or the table feature lists.
+    val required =
+      Protocol(finalReaderVersion, finalWriterVersion).withFeatures(minRequiredFeatures)
     if (!required.canUpgradeTo(current)) {
       // When the current protocol does not satisfy metadata requirement, some additional features
       // must be supported by the protocol. We assert those features can actually perform the
@@ -485,7 +544,7 @@ object Protocol {
         .collect { case f: FeatureAutomaticallyEnabledByMetadata => f }
         .partition(_.automaticallyUpdateProtocolOfExistingTables)
     if (nonAutoUpdateCapableFeatures.nonEmpty) {
-      // The "current features" we give the user are which from the original protocol, plus
+      // The "current features" we give to the user are from the original protocol, plus
       // features newly supported by table properties in the current transaction, plus
       // metadata-enabled features that are auto-update capable. The first two are provided by
       // `currentFeatures`.
@@ -586,6 +645,10 @@ sealed trait FileAction extends Action {
   /** Returns the approx size of the remaining records after excluding the deleted ones. */
   @JsonIgnore
   def estLogicalFileSize: Option[Long]
+
+  /** Returns [[tags]] or an empty Map if null */
+  @JsonIgnore
+  def tagsOrEmpty: Map[String, String] = Option(tags).getOrElse(Map.empty[String, String])
 
   /**
    * Return tag value if tags is not null and the tag present.
@@ -771,20 +834,23 @@ case class AddFile(
     }
   }
 
+  // Don't use lazy val because we want to save memory.
   @JsonIgnore
-  lazy val insertionTime: Long = tag(AddFile.Tags.INSERTION_TIME).map(_.toLong)
+  def insertionTime: Long = longTag(AddFile.Tags.INSERTION_TIME)
     // From modification time in milliseconds to microseconds.
     .getOrElse(TimeUnit.MICROSECONDS.convert(modificationTime, TimeUnit.MILLISECONDS))
 
 
   def copyWithTags(newTags: Map[String, String]): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) ++ newTags)
-
+    copy(tags = tagsOrEmpty ++ newTags)
 
   def tag(tag: AddFile.Tags.KeyType): Option[String] = getTag(tag.name)
 
+  def longTag(tagKey: AddFile.Tags.KeyType): Option[Long] =
+    tag(tagKey).map(_.toLong)
+
   def copyWithTag(tag: AddFile.Tags.KeyType, value: String): AddFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) + (tag.name -> value))
+    copy(tags = tagsOrEmpty + (tag.name -> value))
 
   def copyWithoutTag(tag: AddFile.Tags.KeyType): AddFile = {
     if (tags == null) {
@@ -864,6 +930,8 @@ object AddFile {
  *
  * Since old tables would not have `extendedFileMetadata` and `size` field, we should make them
  * nullable by setting their type Option.
+ *
+ * [[path]] is URL-encoded.
  */
 // scalastyle:off
 case class RemoveFile(
@@ -901,13 +969,13 @@ case class RemoveFile(
    * Create a copy with the new tag. `extendedFileMetadata` is copied unchanged.
    */
   def copyWithTag(tag: String, value: String): RemoveFile = copy(
-    tags = Option(tags).getOrElse(Map.empty) + (tag -> value))
+    tags = tagsOrEmpty + (tag -> value))
 
   /**
    * Create a copy without the tag.
    */
   def copyWithoutTag(tag: String): RemoveFile =
-    copy(tags = Option(tags).getOrElse(Map.empty) - tag)
+    copy(tags = tagsOrEmpty - tag)
 
   @JsonIgnore
   override def getFileSize: Long = size.getOrElse(0L)
@@ -919,6 +987,8 @@ case class RemoveFile(
  * A change file containing CDC data for the Delta version it's within. Non-CDC readers should
  * ignore this, CDC readers should scan all ChangeFiles in a version rather than computing
  * changes from AddFile and RemoveFile actions.
+ *
+ * [[path]] is URL-encoded.
  */
 case class AddCDCFile(
     override val path: String,
@@ -944,7 +1014,6 @@ case class AddCDCFile(
   override def numLogicalRecords: Option[Long] = None
 }
 
-
 case class Format(
     provider: String = "parquet",
     // If we support `options` in future, we should not store any file system options since they may
@@ -957,7 +1026,7 @@ case class Format(
  * any data already present in the table is still valid after any change.
  */
 case class Metadata(
-    id: String = if (Utils.isTesting) "testId" else java.util.UUID.randomUUID().toString,
+    id: String = java.util.UUID.randomUUID().toString,
     name: String = null,
     description: String = null,
     format: Format = Format(),
@@ -965,7 +1034,7 @@ case class Metadata(
     partitionColumns: Seq[String] = Nil,
     configuration: Map[String, String] = Map.empty,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    createdTime: Option[Long] = None) extends Action {
+    createdTime: Option[Long] = None) extends Action with AbstractMetadata {
 
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has
@@ -1013,23 +1082,52 @@ case class Metadata(
   lazy val physicalPartitionColumns: Seq[String] = physicalPartitionSchema.fieldNames.toSeq
 
   /**
-   * Columns whose type should never be changed. For example, if a column is used by a generated
-   * column, changing its type may break the constraint defined by the generation expression. Hence,
-   * we should never change its type.
-   */
-  @JsonIgnore
-  lazy val fixedTypeColumns: Set[String] =
-    GeneratedColumn.getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema)
-
-  /**
    * Store non-partition columns and their corresponding [[OptimizablePartitionExpression]] which
    * can be used to create partition filters from data filters of these non-partition columns.
    */
   @JsonIgnore
-  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]]
-  = GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
+  lazy val optimizablePartitionExpressions: Map[String, Seq[OptimizablePartitionExpression]] =
+    GeneratedColumn.getOptimizablePartitionExpressions(schema, partitionSchema)
+
+  /**
+   * The name of commit-coordinator which arbitrates the commits to the table. This must be
+   * available if this is a coordinated-commits table.
+   */
+  @JsonIgnore
+  lazy val coordinatedCommitsCoordinatorName: Option[String] =
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(this)
+
+  /** The configuration to uniquely identify the commit-coordinator for coordinated-commits. */
+  @JsonIgnore
+  lazy val coordinatedCommitsCoordinatorConf: Map[String, String] =
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.fromMetaData(this)
+
+  /** The table specific configuration for coordinated-commits. */
+  @JsonIgnore
+  lazy val coordinatedCommitsTableConf: Map[String, String] =
+    DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.fromMetaData(this)
 
   override def wrap: SingleAction = SingleAction(metaData = this)
+
+  override def getId: String = id
+
+  override def getName: String = name
+
+  override def getDescription: String = description
+
+  @JsonIgnore
+  override def getProvider: String = format.provider
+
+  @JsonIgnore
+  override def getFormatOptions: java.util.Map[String, String] = format.options.asJava
+
+  override def getSchemaString: String = schemaString
+
+  override def getPartitionColumns: java.util.List[String] = partitionColumns.asJava
+
+  override def getConfiguration: java.util.Map[String, String] = configuration.asJava
+
+  override def getCreatedTime: java.lang.Long = createdTime.map(Long.box).orNull
 }
 
 /**
@@ -1064,6 +1162,7 @@ case class CommitInfo(
     // infer the commit version from the file name and fill in this field then.
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
     version: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
     inCommitTimestamp: Option[Long],
     timestamp: Timestamp,
     userId: Option[String],
@@ -1082,11 +1181,21 @@ case class CommitInfo(
     userMetadata: Option[String],
     tags: Option[Map[String, String]],
     engineInfo: Option[String],
-    txnId: Option[String]) extends Action with CommitMarker {
+    txnId: Option[String]) extends Action with CommitMarker with AbstractCommitInfo {
   override def wrap: SingleAction = SingleAction(commitInfo = this)
 
   override def withTimestamp(timestamp: Long): CommitInfo = {
     this.copy(timestamp = new Timestamp(timestamp))
+  }
+
+  // We need to explicitly ignore this field during serialization as Jackson
+  // by default calls all public getters of an object, which would lead to
+  // either an exception or the inCommitTimestamp being serialized twice.
+  @JsonIgnore
+  override def getCommitTimestamp: Long = {
+    inCommitTimestamp.getOrElse {
+      throw DeltaErrors.missingCommitTimestamp(version.map(_.toString).getOrElse("unknown"))
+    }
   }
 
   override def getTimestamp: Long = timestamp.getTime
@@ -1229,7 +1338,7 @@ case class SidecarFile(
     sizeInBytes: Long,
     modificationTime: Long,
     tags: Map[String, String] = null)
-  extends Action with CheckpointOnlyAction {
+  extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(sidecar = this)
 
@@ -1260,7 +1369,7 @@ object SidecarFile {
 case class CheckpointMetadata(
     version: Long,
     tags: Map[String, String] = null)
-  extends Action with CheckpointOnlyAction {
+  extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
 }

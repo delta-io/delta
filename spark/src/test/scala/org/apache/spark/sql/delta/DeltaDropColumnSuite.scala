@@ -196,17 +196,17 @@ class DeltaDropColumnSuite extends QueryTest
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
-      assertException("Cannot drop column a because this column is referenced by") {
+      assertException("Cannot alter column a because this column is referenced by") {
         drop("t1", "a" :: Nil)
       }
 
-      assertException("Cannot drop column arr because this column is referenced by") {
+      assertException("Cannot alter column arr because this column is referenced by") {
         drop("t1", "arr" :: Nil)
       }
 
 
       // cannot drop b because its child is referenced
-      assertException("Cannot drop column b because this column is referenced by") {
+      assertException("Cannot alter column b because this column is referenced by") {
         drop("t1", "b" :: Nil)
       }
 
@@ -241,7 +241,7 @@ class DeltaDropColumnSuite extends QueryTest
       spark.sql("alter table t1 add constraint" +
         " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
 
-      assertException("Cannot drop column map because this column is referenced by") {
+      assertException("Cannot alter column map because this column is referenced by") {
         drop("t1", "map" :: Nil)
       }
     }
@@ -279,19 +279,19 @@ class DeltaDropColumnSuite extends QueryTest
 
         simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
 
-        assertException("Cannot drop column a because this column is referenced by") {
+        assertException("Cannot alter column a because this column is referenced by") {
           drop("t1", "a" :: Nil)
         }
 
-        assertException("Cannot drop column b because this column is referenced by") {
+        assertException("Cannot alter column b because this column is referenced by") {
           drop("t1", "b" :: Nil)
         }
 
-        assertException("Cannot drop column b.d because this column is referenced by") {
+        assertException("Cannot alter column b.d because this column is referenced by") {
           drop("t1", "b.d" :: Nil)
         }
 
-        assertException("Cannot drop column arr because this column is referenced by") {
+        assertException("Cannot alter column arr because this column is referenced by") {
           drop("t1", "arr" :: Nil)
         }
 

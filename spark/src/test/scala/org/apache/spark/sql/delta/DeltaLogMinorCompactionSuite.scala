@@ -18,10 +18,11 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql._
@@ -32,7 +33,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 class DeltaLogMinorCompactionSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with DeltaSQLTestUtils {
+  with DeltaSQLTestUtils
+  with CoordinatedCommitsBaseSuite {
 
   /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
   private def minorCompactDeltaLog(
@@ -40,13 +42,16 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       startVersion: Long,
       endVersion: Long): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
+    deltaLog.update().tableCommitCoordinatorClientOpt.foreach { tableCommitCoordinatorClient =>
+      tableCommitCoordinatorClient.backfillToVersion(endVersion)
+    }
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = 0,
       minSetTransactionRetentionTimestamp = None)
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     (startVersion to endVersion).foreach { versionToRead =>
-      val file = FileNames.deltaFile(deltaLog.logPath, versionToRead)
+      val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
       val actionsIterator = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
       logReplay.append(versionToRead, actionsIterator)
     }
@@ -65,7 +70,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       numRemoves: Int = 0,
       numMetadata: Int = 0): Unit = {
     assert(log.update().version === version)
-    val filePath = FileNames.deltaFile(log.logPath, version)
+    val filePath = DeltaCommitFileProvider(log.update()).deltaFile(version)
     val actions = log.store.read(filePath, log.newDeltaHadoopConf()).map(Action.fromJson)
     assert(actions.head.isInstanceOf[CommitInfo])
     assert(actions.tail.count(_.isInstanceOf[AddFile]) === numAdds)
@@ -419,7 +424,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       postSetupFunc = Some(
         (deltaLog: DeltaLog) => {
           val logPath = deltaLog.logPath
-          val deltaFileToDelete = FileNames.deltaFile(logPath, version = 4)
+          val deltaFileToDelete = FileNames.unsafeDeltaFile(logPath, version = 4)
           logPath.getFileSystem(deltaLog.newDeltaHadoopConf()).delete(deltaFileToDelete, true)
         }
       ),
@@ -435,3 +440,17 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   }
 }
 
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch1Suite
+  extends DeltaLogMinorCompactionSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch2Suite
+  extends DeltaLogMinorCompactionSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch100Suite
+    extends DeltaLogMinorCompactionSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+}

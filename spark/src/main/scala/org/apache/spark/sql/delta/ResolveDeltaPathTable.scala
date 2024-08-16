@@ -16,16 +16,13 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.catalyst.TimeTravel
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedRelation, UnresolvedTable}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.{CatalogHelper, MultipartIdentifierHelper}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
@@ -35,13 +32,13 @@ case class ResolveDeltaPathTable(sparkSession: SparkSession) extends Rule[Logica
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: UnresolvedTable =>
-      ResolveDeltaPathTable.resolveAsPathTable(sparkSession, u.multipartIdentifier, Map.empty)
+      ResolveDeltaPathTable
+        .resolveAsPathTable(sparkSession, u.multipartIdentifier)
         .getOrElse(u)
   }
 }
 
-object ResolveDeltaPathTable
-{
+object ResolveDeltaPathTable {
 
   /**
    * Try resolving the input table as a Path table.
@@ -50,31 +47,31 @@ object ResolveDeltaPathTable
   def resolveAsPathTableRelation(
       sparkSession: SparkSession,
       u: UnresolvedRelation) : Option[DataSourceV2Relation] = {
-    resolveAsPathTable(sparkSession, u.multipartIdentifier, Map.empty).map { resolvedTable =>
-      DataSourceV2Relation.create(
-        resolvedTable.table, Some(resolvedTable.catalog), Some(resolvedTable.identifier))
-    }
+    resolveAsPathTable(sparkSession, u.multipartIdentifier)
+      .map { resolvedTable =>
+        DataSourceV2Relation.create(
+          resolvedTable.table, Some(resolvedTable.catalog), Some(resolvedTable.identifier))
+      }
   }
 
   /**
    * Try resolving the input table as a Path table.
    * If the path table exists, return a [[ResolvedTable]] instance. Otherwise, return None.
    */
-  def resolveAsPathTable(
+  private def resolveAsPathTable(
       sparkSession: SparkSession,
       multipartIdentifier: Seq[String],
-      options: Map[String, String]): Option[ResolvedTable] = {
+      options: Map[String, String] = Map.empty): Option[ResolvedTable] = {
     val sessionState = sparkSession.sessionState
     if (!sessionState.conf.runSQLonFile || multipartIdentifier.size != 2) {
       return None
     }
     val tableId = multipartIdentifier.asTableIdentifier
-    if (DeltaTableUtils.isValidPath(tableId)) {
-      val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table), options = options)
-      val sessionCatalog = sessionState.catalogManager.v2SessionCatalog.asTableCatalog
-      Some(ResolvedTable.create(sessionCatalog, multipartIdentifier.asIdentifier, deltaTableV2))
-    } else {
-      None
+    if (!DeltaTableUtils.isValidPath(tableId)) {
+      return None
     }
+    val deltaTableV2 = DeltaTableV2(sparkSession, new Path(tableId.table), options = options)
+    val sessionCatalog = sessionState.catalogManager.v2SessionCatalog.asTableCatalog
+    Some(ResolvedTable.create(sessionCatalog, multipartIdentifier.asIdentifier, deltaTableV2))
   }
 }

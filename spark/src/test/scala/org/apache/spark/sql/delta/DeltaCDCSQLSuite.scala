@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{AnalysisException, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.util.DateTimeTestUtils._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.LongType
 
@@ -115,7 +116,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
             .withColumn("_change_type", lit("insert")))
       }
       assert(plans.map(_.executedPlan).toString
-        .contains("PushedFilters: [IsNotNull(id), LessThan(id,5)]"))
+        .contains("PushedFilters: [*IsNotNull(id), *LessThan(id,5)]"))
     }
   }
 
@@ -216,36 +217,48 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     }
   }
 
-  test("resolve expression for timestamp function - now") {
+  test("resolve expression for timestamp function") {
     val tbl = "tbl"
-    withTable(tbl) {
-      createTblWithThreeVersions(tblName = Some(tbl))
+    withDefaultTimeZone(UTC) {
+      withTable(tbl) {
+        createTblWithThreeVersions(tblName = Some(tbl))
 
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
 
-      val currentTime = new Date().getTime
-      modifyDeltaTimestamp(deltaLog, 0, currentTime - 100000)
-      modifyDeltaTimestamp(deltaLog, 1, currentTime)
-      modifyDeltaTimestamp(deltaLog, 2, currentTime + 100000)
+        val currentTime = new Date().getTime
+        modifyDeltaTimestamp(deltaLog, 0, currentTime - 100000)
+        modifyDeltaTimestamp(deltaLog, 1, currentTime)
+        modifyDeltaTimestamp(deltaLog, 2, currentTime + 100000)
 
-      val readDf = sql(s"SELECT * FROM table_changes('$tbl', 0, now())")
-      checkCDCAnswer(
-        DeltaLog.forTable(spark, TableIdentifier("tbl")),
-        readDf,
-        spark.range(20)
-          .withColumn("_change_type", lit("insert"))
-          .withColumn("_commit_version", (col("id") / 10).cast(LongType))
+        val readDf = sql(s"SELECT * FROM table_changes('$tbl', 0, now())")
+        checkCDCAnswer(
+          DeltaLog.forTable(spark, TableIdentifier("tbl")),
+          readDf,
+          spark.range(20)
+            .withColumn("_change_type", lit("insert"))
+            .withColumn("_commit_version", (col("id") / 10).cast(LongType))
         )
 
-      // more complex expression
-      val readDf2 = sql(s"SELECT * FROM table_changes('$tbl', 0, now() + interval 5 seconds)")
-      checkCDCAnswer(
-        DeltaLog.forTable(spark, TableIdentifier("tbl")),
-        readDf2,
-        spark.range(20)
-          .withColumn("_change_type", lit("insert"))
-          .withColumn("_commit_version", (col("id") / 10).cast(LongType))
-      )
+        // more complex expression
+        val readDf2 = sql(s"SELECT * FROM table_changes('$tbl', 0, now() + interval 5 seconds)")
+        checkCDCAnswer(
+          DeltaLog.forTable(spark, TableIdentifier("tbl")),
+          readDf2,
+          spark.range(20)
+            .withColumn("_change_type", lit("insert"))
+            .withColumn("_commit_version", (col("id") / 10).cast(LongType))
+        )
+
+        val readDf3 = sql("SELECT * FROM table_changes" +
+          s"('$tbl', string(date_sub(current_date(), 1)), string(now()))")
+        checkCDCAnswer(
+          DeltaLog.forTable(spark, TableIdentifier("tbl")),
+          readDf3,
+          spark.range(20)
+            .withColumn("_change_type", lit("insert"))
+            .withColumn("_commit_version", (col("id") / 10).cast(LongType))
+        )
+      }
     }
   }
 

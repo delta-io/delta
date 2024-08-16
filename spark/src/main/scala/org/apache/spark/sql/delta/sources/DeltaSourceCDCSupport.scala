@@ -19,8 +19,11 @@ package org.apache.spark.sql.delta.sources
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.util.Utils
 
 /**
  * Helper functions for CDC-specific handling for DeltaSource.
@@ -194,24 +197,33 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       startIndex: Long,
       isInitialSnapshot: Boolean,
       endOffset: DeltaSourceOffset): DataFrame = {
-    val changes: Iterator[(Long, Iterator[IndexedFile])] =
-      getFileChangesForCDC(startVersion, startIndex, isInitialSnapshot, None, Some(endOffset))
+    val changes = getFileChangesForCDC(
+      startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
-    val groupedFileActions: Iterator[(Long, Seq[FileAction])] =
+    val groupedFileActions =
       changes.map { case (v, indexFiles) =>
-        (v, indexFiles.filter(_.hasFileAction).map { _.getFileAction }.toSeq)
+        (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq)
       }
 
-    val cdcInfo = CDCReader.changesToDF(
-      readSnapshotDescriptor,
-      startVersion,
-      endOffset.reservoirVersion,
-      groupedFileActions,
-      spark,
-      isStreaming = true
-    )
-
-    cdcInfo.fileChangeDf
+    val (result, duration) = Utils.timeTakenMs {
+      CDCReader
+        .changesToDF(
+          readSnapshotDescriptor,
+          startVersion,
+          endOffset.reservoirVersion,
+          groupedFileActions,
+          spark,
+          isStreaming = true)
+        .fileChangeDf
+    }
+    logInfo(log"Getting CDC dataFrame for delta_log_path=" +
+      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
+      log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
+      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
+      log"endOffset=${MDC(DeltaLogKeys.END_OFFSET, endOffset)} took timeMs=" +
+      log"${MDC(DeltaLogKeys.DURATION, duration)} ms")
+    result
   }
 
   /**
@@ -243,60 +255,83 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
             actions, version, fromVersion, endOffset.map(_.reservoirVersion),
             verifyMetadataAction && !trackingMetadataChange)
         val itr = addBeginAndEndIndexOffsetsForVersion(version,
-              getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
-              fileActions.zipWithIndex.map {
-                case (action: AddFile, index) =>
-                  IndexedFile(
-                    version,
-                    index.toLong,
-                    action,
-                    shouldSkip = skipIndexedFile)
-                case (cdcFile: AddCDCFile, index) =>
-                  IndexedFile(
-                    version,
-                    index.toLong,
-                    add = null,
-                    cdc = cdcFile,
-                    shouldSkip = skipIndexedFile)
-                case (remove: RemoveFile, index) =>
-                  IndexedFile(
-                    version,
-                    index.toLong,
-                    add = null,
-                    remove = remove,
-                    shouldSkip = skipIndexedFile)
+          getMetadataOrProtocolChangeIndexedFileIterator(metadataOpt, protocolOpt, version) ++
+            fileActions.zipWithIndex.map {
+              case (action: AddFile, index) =>
+                IndexedFile(
+                  version,
+                  index.toLong,
+                  action,
+                  shouldSkip = skipIndexedFile)
+              case (cdcFile: AddCDCFile, index) =>
+                IndexedFile(
+                  version,
+                  index.toLong,
+                  add = null,
+                  cdc = cdcFile,
+                  shouldSkip = skipIndexedFile)
+              case (remove: RemoveFile, index) =>
+                IndexedFile(
+                  version,
+                  index.toLong,
+                  add = null,
+                  remove = remove,
+                  shouldSkip = skipIndexedFile)
             })
         (version, new IndexedChangeFileSeq(itr, isInitialSnapshot = false))
       }
     }
 
-    val iter: Iterator[(Long, IndexedChangeFileSeq)] = if (isInitialSnapshot) {
-      // If we are reading change data from the start of the table we need to
-      // get the latest snapshot of the table as well.
-      val snapshot: Iterator[IndexedFile] = getSnapshotAt(fromVersion).map { m =>
-        // When we get the snapshot the dataChange is false for the AddFile actions
-        // We need to set it to true for it to be considered by the CDCReader.
-        if (m.add != null) {
-          m.copy(add = m.add.copy(dataChange = true))
-        } else {
-          m
-        }
+    /** Verifies that provided version is <= endOffset version, if defined. */
+    def versionLessThanEndOffset(version: Long, endOffset: Option[DeltaSourceOffset]): Boolean = {
+      endOffset match {
+        case Some(eo) =>
+          version <= eo.reservoirVersion
+        case None =>
+          true
       }
-      val snapshotItr: Iterator[(Long, IndexedChangeFileSeq)] = Iterator((
-        fromVersion,
-        new IndexedChangeFileSeq(snapshot, isInitialSnapshot = true)
-      ))
+    }
 
-      snapshotItr ++ filterAndIndexDeltaLogs(fromVersion + 1)
-    } else {
-      filterAndIndexDeltaLogs(fromVersion)
+    val (result, duration) = Utils.timeTakenMs {
+      val iter: Iterator[(Long, IndexedChangeFileSeq)] = if (isInitialSnapshot) {
+        // If we are reading change data from the start of the table we need to
+        // get the latest snapshot of the table as well.
+        val snapshot: Iterator[IndexedFile] = getSnapshotAt(fromVersion).map { m =>
+          // When we get the snapshot the dataChange is false for the AddFile actions
+          // We need to set it to true for it to be considered by the CDCReader.
+          if (m.add != null) {
+            m.copy(add = m.add.copy(dataChange = true))
+          } else {
+            m
+          }
+        }
+        val snapshotItr: Iterator[(Long, IndexedChangeFileSeq)] = Iterator((
+          fromVersion,
+          new IndexedChangeFileSeq(snapshot, isInitialSnapshot = true)
+        ))
+
+        snapshotItr ++ filterAndIndexDeltaLogs(fromVersion + 1)
+      } else {
+        filterAndIndexDeltaLogs(fromVersion)
+      }
+
+      // In this case, filterFiles will consume the available capacity. We use takeWhile
+      // to stop the iteration when we reach the limit or if endOffset is specified and the
+      // endVersion is reached which will save us from reading unnecessary log files.
+      iter.takeWhile { case (version, _) =>
+        limits.forall(_.hasCapacity) && versionLessThanEndOffset(version, endOffset)
+      }.map { case (version, indexItr) =>
+        (version, indexItr.filterFiles(fromVersion, fromIndex, limits, endOffset))
+      }
     }
-    // In this case, filterFiles will consume the available capacity. We use takeWhile
-    // to stop the iteration when we reach the limit which will save us from reading
-    // unnecessary log files.
-    iter.takeWhile(_ => limits.forall(_.hasCapacity)).map { case (version, indexItr) =>
-      (version, indexItr.filterFiles(fromVersion, fromIndex, limits, endOffset))
-    }
+
+    logInfo(log"Getting CDC file changes for delta_log_path=" +
+      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, fromIndex=" +
+      log"${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
+      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} took timeMs=" +
+      log"${MDC(DeltaLogKeys.DURATION, duration)} ms")
+    result
   }
 
   /////////////////////

@@ -59,7 +59,7 @@ def prepare(root_dir):
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
-    run_cmd([sbt_path, "clean", "publishM2"], stream_output=True)
+    run_cmd([sbt_path, "clean", "sparkGroup/publishM2"], stream_output=True)
 
     # Get current release which is required to be loaded
     version = '0.0.0'
@@ -166,6 +166,13 @@ def run_pypi_packaging_tests(root_dir):
         raise
 
 
+def run_delta_connect_codegen_python(root_dir):
+    print("##### Running generated Delta Connect Python protobuf codes syncing tests #####")
+    test_file = os.path.join(root_dir, "dev", "check-delta-connect-codegen-python.py")
+    test_cmd = ["python3", test_file]
+    run_cmd(test_cmd, stream_output=True)
+
+
 if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -174,4 +181,5 @@ if __name__ == "__main__":
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
     run_pypi_packaging_tests(root_dir)
+    run_delta_connect_codegen_python(root_dir)
     test(root_dir, package)

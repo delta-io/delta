@@ -15,42 +15,54 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
-import java.util.Optional;
-
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
+import java.util.*;
 
 public class CheckpointMetaData {
-    public static CheckpointMetaData fromRow(Row row) {
-        return new CheckpointMetaData(
-            row.getLong(0),
-            row.getLong(1),
-            row.isNullAt(2) ? Optional.empty() : Optional.of(row.getLong(2))
-        );
-    }
+  public static CheckpointMetaData fromRow(Row row) {
+    return new CheckpointMetaData(
+        row.getLong(0),
+        row.getLong(1),
+        row.isNullAt(2) ? Optional.empty() : Optional.of(row.getLong(2)));
+  }
 
-    public static StructType READ_SCHEMA = new StructType()
-        .add("version", LongType.LONG, false /* nullable */)
-        .add("size", LongType.LONG, false /* nullable */)
-        .add("parts", LongType.LONG);
+  public static StructType READ_SCHEMA =
+      new StructType()
+          .add("version", LongType.LONG, false /* nullable */)
+          .add("size", LongType.LONG, false /* nullable */)
+          .add("parts", LongType.LONG);
 
-    public final long version;
-    public final long size;
-    public final Optional<Long> parts;
+  public final long version;
+  public final long size;
+  public final Optional<Long> parts;
 
-    public CheckpointMetaData(long version, long size, Optional<Long> parts) {
-        this.version = version;
-        this.size = size;
-        this.parts = parts;
-    }
+  public CheckpointMetaData(long version, long size, Optional<Long> parts) {
+    this.version = version;
+    this.size = size;
+    this.parts = parts;
+  }
 
-    @Override
-    public String toString() {
-        return "CheckpointMetaData{" +
-            "version=" + version +
-            ", size=" + size +
-            ", parts=" + parts +
-            '}';
-    }
+  public Row toRow() {
+    Map<Integer, Object> dataMap = new HashMap<>();
+    dataMap.put(0, version);
+    dataMap.put(1, size);
+    parts.ifPresent(aLong -> dataMap.put(2, aLong));
+
+    return new GenericRow(READ_SCHEMA, dataMap);
+  }
+
+  @Override
+  public String toString() {
+    return "CheckpointMetaData{"
+        + "version="
+        + version
+        + ", size="
+        + size
+        + ", parts="
+        + parts
+        + '}';
+  }
 }

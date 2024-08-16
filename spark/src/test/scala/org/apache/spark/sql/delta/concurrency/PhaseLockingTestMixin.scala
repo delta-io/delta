@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.concurrency
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.BusyWait
+import org.apache.spark.sql.delta.ConcurrencyHelpers
 import org.apache.spark.sql.delta.fuzzer.AtomicBarrier
 
 import org.apache.spark.SparkFunSuite
@@ -44,7 +44,7 @@ trait PhaseLockingTestMixin { self: SparkFunSuite =>
       timeout: FiniteDuration,
       // lazy evaluate so closed over states are evaluated at time of failure not invocation
       message: => String = "Exceeded deadline waiting for check to become true."): Unit = {
-    if (!BusyWait.until(check, timeout)) {
+    if (!ConcurrencyHelpers.busyWaitFor(check, timeout)) {
       fail(message)
     }
   }

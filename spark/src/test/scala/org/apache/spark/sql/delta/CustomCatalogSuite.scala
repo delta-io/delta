@@ -311,7 +311,7 @@ class DummyCatalog extends TableCatalog {
   }
   override def loadTable(ident: Identifier): Table = {
     if (!tableExists(ident)) {
-      throw new NoSuchTableException("")
+      throw new NoSuchTableException(ident)
     }
     val tablePath = getTablePath(ident.name())
     DeltaTableV2(spark = spark, path = tablePath, catalogTable = Some(createCatalogTable(ident)))

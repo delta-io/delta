@@ -310,7 +310,10 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       deltaTxn,
       filesToRewrite,
       columnsToDrop = Nil)
-    val baseTargetDF = Dataset.ofRows(spark, targetPlan)
+    val baseTargetDF = RowTracking.preserveRowTrackingColumns(
+      dfWithoutRowTrackingColumns = Dataset.ofRows(spark, targetPlan),
+      snapshot = deltaTxn.snapshot)
+
     val joinType = if (writeUnmodifiedRows) {
       if (shouldOptimizeMatchedOnlyMerge(spark)) {
         "rightOuter"
@@ -386,30 +389,46 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
           joinedDF,
           clauses = matchedClauses ++ notMatchedClauses ++ notMatchedBySourceClauses)
 
+    // In case Row IDs are preserved, get the attribute expression of the Row ID column.
+    val rowIdColumnExpressionOpt =
+      MaterializedRowId.getAttribute(deltaTxn.snapshot, joinedAndPrecomputedConditionsDF)
+
+    val rowCommitVersionColumnExpressionOpt =
+      MaterializedRowCommitVersion.getAttribute(deltaTxn.snapshot, joinedAndPrecomputedConditionsDF)
+
     // The target output columns need to be marked as nullable here, as they are going to be used
     // to reference the output of an outer join.
     val targetWriteCols = postEvolutionTargetExpressions(makeNullable = true)
 
     // If there are N columns in the target table, the full outer join output will have:
     // - N columns for target table
+    // - Two optional Row ID / Row commit version preservation columns with their physical name.
     // - ROW_DROPPED_COL to define whether the generated row should be dropped or written
     // - if CDC is enabled, also CDC_TYPE_COLUMN_NAME with the type of change being performed
     //   in a particular row
     // (N+1 or N+2 columns depending on CDC disabled / enabled)
     val outputColNames =
       targetWriteCols.map(_.name) ++
+        rowIdColumnExpressionOpt.map(_.name) ++
+        rowCommitVersionColumnExpressionOpt.map(_.name) ++
         Seq(ROW_DROPPED_COL) ++
         (if (cdcEnabled) Some(CDC_TYPE_COLUMN_NAME) else None)
 
     // Copy expressions to copy the existing target row and not drop it (ROW_DROPPED_COL=false),
     // and in case CDC is enabled, set it to CDC_TYPE_NOT_CDC.
     // (N+1 or N+2 or N+3 columns depending on CDC disabled / enabled and if Row IDs are preserved)
-      var noopCopyExprs = (targetWriteCols :+ incrNoopCountExpr) ++
-      (if (cdcEnabled) Some(CDC_TYPE_NOT_CDC) else None)
+    val noopCopyExprs =
+      targetWriteCols ++
+        rowIdColumnExpressionOpt ++
+        rowCommitVersionColumnExpressionOpt ++
+        Seq(incrNoopCountExpr) ++
+        (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Seq())
 
     // Generate output columns.
     val outputCols = generateWriteAllChangesOutputCols(
       targetWriteCols,
+      rowIdColumnExpressionOpt,
+      rowCommitVersionColumnExpressionOpt,
       outputColNames,
       noopCopyExprs,
       clausesWithPrecompConditions,
@@ -422,6 +441,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
           outputCols,
           outputColNames,
           noopCopyExprs,
+          rowIdColumnExpressionOpt.map(_.name),
+          rowCommitVersionColumnExpressionOpt.map(_.name),
           deduplicateCDFDeletes)
     } else {
       // change data capture is off, just output the normal data

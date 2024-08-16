@@ -21,11 +21,13 @@ import java.util.Locale
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkEnv
+import org.apache.spark.internal.MDC
 
 
 /**
@@ -72,7 +74,8 @@ class DelegatingLogStore(hadoopConf: Configuration)
               case lsa: LogStoreAdaptor => s"LogStoreAdapter(${lsa.logStoreImpl.getClass.getName})"
               case _ => logStore.getClass.getName
             }
-            logInfo(s"LogStore `$actualLogStoreClassName` is used for scheme `$scheme`")
+            logInfo(log"LogStore ${MDC(DeltaLogKeys.CLASS_NAME, actualLogStoreClassName)} " +
+              log"is used for scheme ${MDC(DeltaLogKeys.FILE_SYSTEM_SCHEME, scheme)}")
 
             logStore
           }

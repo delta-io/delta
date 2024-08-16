@@ -66,7 +66,7 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
 
     // Check serialized JSON as well
     val contents = deltaLog.store.read(
-      FileNames.deltaFile(deltaLog.logPath, 0L),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, 0L),
       deltaLog.newDeltaHadoopConf())
     assert(contents.exists(_.contains(""""part":null""")), "null value should be written in json")
   }

@@ -89,7 +89,7 @@ trait OptimizeTableStrategy {
   def updateOptimizeStats(
       optimizeStats: OptimizeStats,
       removedFiles: Seq[RemoveFile],
-      bins: Seq[(Map[String, String], Seq[AddFile])]): Unit
+      bins: Seq[Bin]): Unit
 }
 
 object OptimizeTableStrategy {
@@ -151,7 +151,7 @@ case class CompactionStrategy(
   override def updateOptimizeStats(
       optimizeStats: OptimizeStats,
       removedFiles: Seq[RemoveFile],
-      bins: Seq[(Map[String, String], Seq[AddFile])]): Unit = {}
+      bins: Seq[Bin]): Unit = {}
 }
 
 /** Implements ZOrder strategy */
@@ -171,7 +171,7 @@ case class ZOrderStrategy(
   override def updateOptimizeStats(
       optimizeStats: OptimizeStats,
       removedFiles: Seq[RemoveFile],
-      bins: Seq[(Map[String, String], Seq[AddFile])]): Unit = {
+      bins: Seq[Bin]): Unit = {
     val inputFileStats =
       ZOrderFileStats(removedFiles.size, removedFiles.map(_.size.getOrElse(0L)).sum)
     optimizeStats.zOrderStats = Some(ZOrderStats(
@@ -227,7 +227,7 @@ case class ClusteringStrategy(
   override def updateOptimizeStats(
       optimizeStats: OptimizeStats,
       removedFiles: Seq[RemoveFile],
-      bins: Seq[(Map[String, String], Seq[AddFile])]): Unit = {
+      bins: Seq[Bin]): Unit = {
     clusteringStatsCollector.numOutputZCubes = bins.size
     optimizeStats.clusteringStats = Option(clusteringStatsCollector.getClusteringStats)
   }

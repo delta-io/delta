@@ -23,11 +23,14 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.TruncationGranularity.{DAY, HOUR, MINUTE, TruncationGranularity}
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, listingPrefix, CheckpointFile, DeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{checkpointVersion, listingPrefix, CheckpointFile, DeltaFile, UnbackfilledDeltaFile}
 import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+
+import org.apache.spark.internal.MDC
 
 private[delta] object TruncationGranularity extends Enumeration {
   type TruncationGranularity = Value
@@ -68,7 +71,8 @@ trait MetadataCleanup extends DeltaLogging {
       val fileCutOffTime =
         truncateDate(clock.getTimeMillis() - retentionMillis, cutoffTruncationGranularity).getTime
       val formattedDate = fileCutOffTime.toGMTString
-      logInfo(s"Starting the deletion of log files older than $formattedDate")
+      logInfo(log"Starting the deletion of log files older than " +
+        log"${MDC(DeltaLogKeys.DATE, formattedDate)}")
 
       val fs = logPath.getFileSystem(newDeltaHadoopConf())
       var numDeleted = 0
@@ -81,9 +85,11 @@ trait MetadataCleanup extends DeltaLogging {
         // compat-checkpoint available.
         val v2CompatCheckpointMetrics = new V2CompatCheckpointMetrics
         createSinglePartCheckpointForBackwardCompat(snapshotToCleanup, v2CompatCheckpointMetrics)
-        logInfo(s"Compatibility checkpoint creation metrics: $v2CompatCheckpointMetrics")
+        logInfo(log"Compatibility checkpoint creation metrics: " +
+          log"${MDC(DeltaLogKeys.METRICS, v2CompatCheckpointMetrics)}")
       }
       var wasCheckpointDeleted = false
+      var maxBackfilledVersionDeleted = -1L
       expiredDeltaLogs.map(_.getPath).foreach { path =>
         // recursive = false
         if (fs.delete(path, false)) {
@@ -91,8 +97,27 @@ trait MetadataCleanup extends DeltaLogging {
           if (FileNames.isCheckpointFile(path)) {
             wasCheckpointDeleted = true
           }
+          if (FileNames.isDeltaFile(path)) {
+            maxBackfilledVersionDeleted =
+              Math.max(maxBackfilledVersionDeleted, FileNames.deltaVersion(path))
+          }
         }
       }
+      val commitDirPath = FileNames.commitDirPath(logPath)
+      // Commit Directory might not exist on tables created in older versions and
+      // never updated since.
+      val expiredUnbackfilledDeltaLogs: Iterator[FileStatus] =
+        if (fs.exists(commitDirPath)) {
+          store
+            .listFrom(listingPrefix(commitDirPath, 0), newDeltaHadoopConf())
+            .takeWhile { case UnbackfilledDeltaFile(_, fileVersion, _) =>
+              fileVersion <= maxBackfilledVersionDeleted
+            }
+        } else {
+          Iterator.empty
+        }
+      val numDeletedUnbackfilled = expiredUnbackfilledDeltaLogs.count(
+        log => fs.delete(log.getPath, false))
       if (wasCheckpointDeleted) {
         // Trigger sidecar deletion only when some checkpoints have been deleted as part of this
         // round of Metadata cleanup.
@@ -101,9 +126,11 @@ trait MetadataCleanup extends DeltaLogging {
           snapshotToCleanup,
           fileCutOffTime.getTime,
           sidecarDeletionMetrics)
-        logInfo(s"Sidecar deletion metrics: $sidecarDeletionMetrics")
+        logInfo(log"Sidecar deletion metrics: ${MDC(DeltaLogKeys.METRICS, sidecarDeletionMetrics)}")
       }
-      logInfo(s"Deleted $numDeleted log files older than $formattedDate")
+      logInfo(log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, numDeleted)} log files and " +
+        log"${MDC(DeltaLogKeys.NUM_FILES2, numDeletedUnbackfilled)} unbackfilled commit " +
+        log"files older than ${MDC(DeltaLogKeys.DATE, formattedDate)}")
     }
   }
 
@@ -275,10 +302,10 @@ trait MetadataCleanup extends DeltaLogging {
       .collect { case file if file.getModificationTime < retentionTimestamp => file.getPath }
       .filterNot(path => activeSidecarFiles.contains(path.getName))
     val sidecarDeletionStartTimeMs = System.currentTimeMillis()
-    logInfo(s"Starting the deletion of unreferenced sidecar files")
+    logInfo("Starting the deletion of unreferenced sidecar files")
     val count = deleteMultiple(fs, sidecarFilesToDelete)
 
-    logInfo(s"Deleted $count sidecar files")
+    logInfo(log"Deleted ${MDC(DeltaLogKeys.COUNT, count)} sidecar files")
     metrics.numSidecarFilesDeleted = count
     val endTimeMs = System.currentTimeMillis()
     metrics.identifyAndDeleteSidecarsTimeTakenMs =

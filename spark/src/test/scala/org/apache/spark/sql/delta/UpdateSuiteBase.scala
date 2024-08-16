@@ -38,7 +38,8 @@ abstract class UpdateSuiteBase
   with SharedSparkSession
   with DeltaDMLTestUtils
   with DeltaSQLTestUtils
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
   protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
@@ -696,6 +697,8 @@ abstract class UpdateSuiteBase
 
   test("schema pruning on finding files to update") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+    // Start from a cached snapshot state
+    deltaLog.update().stateDF
 
     val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
       checkUpdate(condition = Some("key = 2"), setClauses = "key = 1, value = 3",
@@ -717,6 +720,8 @@ abstract class UpdateSuiteBase
   test("nested schema pruning on finding files to update") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
       .select(struct("key", "value").alias("nested")))
+    // Start from a cached snapshot state
+    deltaLog.update().stateDF
 
     val executedPlans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
       checkUpdate(condition = Some("nested.key = 2"),
@@ -953,4 +958,14 @@ abstract class UpdateSuiteBase
     expectedResult = Seq(Row(0, 3), Row(2, 3))
   )
 
+  testSparkMasterOnly("Variant type") {
+    val df = sql(
+      """SELECT parse_json(cast(id as string)) v, id i
+        FROM range(2)""")
+    append(df)
+    executeUpdate(target = s"delta.`$tempPath`",
+        where = "to_json(v) = '1'", set = "i = 10, v = parse_json('123')")
+    checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+        Seq(Row(0, "0"), Row(10, "123")))
+  }
 }

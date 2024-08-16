@@ -50,7 +50,7 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
     checkTable(
       path = goldenTablePath("dv-partitioned-with-checkpoint"),
       expectedAnswer = expectedResult.map(TestRow.fromTuple(_)),
-      tableClient = defaultTableClient
+      engine = defaultEngine
     )
   }
 

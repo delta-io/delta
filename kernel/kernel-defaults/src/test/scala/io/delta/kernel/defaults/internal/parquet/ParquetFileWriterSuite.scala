@@ -16,14 +16,14 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.lang.{Double => DoubleJ, Float => FloatJ}
-
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, VectorTestUtils}
+import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, ExpressionTestUtils, TestRow}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.ColumnMapping
-import io.delta.kernel.internal.util.ColumnMapping.convertToPhysicalSchema
+import io.delta.kernel.internal.util.ColumnMapping.{ColumnMappingMode, convertToPhysicalSchema}
 import io.delta.kernel.types._
 import io.delta.kernel.utils.DataFileStatus
 import org.apache.spark.sql.{functions => sparkfn}
@@ -54,11 +54,11 @@ import org.scalatest.funsuite.AnyFunSuite
  * 4.3) verify the stats returned in (3) are correct using the Spark Parquet reader
  */
 class ParquetFileWriterSuite extends AnyFunSuite
-  with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
+  with ParquetSuiteBase with DefaultVectorTestUtils with ExpressionTestUtils {
 
   Seq(
     // Test cases reading and writing all types of data with or without stats collection
-    Seq((200, 100), (1024, 28), (1048576, 1)).map {
+    Seq((200, 67), (1024, 16), (1048576, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write all types (no stats)", // test name
@@ -89,7 +89,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
         )
     },
     // Test cases reading and writing data with field ids. This is for column mapping mode ID.
-    Seq((200, 3), (1024, 1)).map {
+    Seq((1024, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write data with field ids (no stats)", // test name
@@ -103,7 +103,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
         )
     },
     // Test cases reading and writing only a subset of data passing a predicate.
-    Seq((200, 39), (1024, 11), (1048576, 1)).map {
+    Seq((200, 26), (1024, 6), (1048576, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write filtered all types (no stats)", // test name
@@ -118,7 +118,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
         )
     },
     // Test cases reading and writing all types of data WITH stats collection
-    Seq((200, 100), (1024, 28), (1048576, 1)).map {
+    Seq((200, 67), (1024, 16), (1048576, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write all types (with stats for all leaf-level columns)", // test name
@@ -128,11 +128,11 @@ class ParquetFileWriterSuite extends AnyFunSuite
           200, /* expected number of rows written to Parquet files */
           Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
           leafLevelPrimitiveColumns(Seq.empty, tableSchema(goldenTablePath("parquet-all-types"))),
-          13 // how many columns have the stats collected from given list above
+          15 // how many columns have the stats collected from given list above
         )
     },
     // Test cases reading and writing all types of data with a partial column set stats collection
-    Seq((200, 100), (1024, 28), (1048576, 1)).map {
+    Seq((200, 67), (1024, 16), (1048576, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write all types (with stats for a subset of leaf-level columns)", // test name
@@ -146,13 +146,41 @@ class ParquetFileWriterSuite extends AnyFunSuite
             new Column("DateType"),
             new Column(Array("nested_struct", "aa")),
             new Column(Array("nested_struct", "ac", "aca")),
-            new Column("TimestampType"), // stats are not collected for timestamp type YET.
             new Column(Array("nested_struct", "ac")), // stats are not collected for struct types
             new Column("nested_struct"), // stats are not collected for struct types
             new Column("array_of_prims"), // stats are not collected for array types
             new Column("map_of_prims") // stats are not collected for map types
           ),
           4 // how many columns have the stats collected from given list above
+        )
+    },
+    // Decimal types with various precision and scales
+    Seq((10000, 1)).map {
+      case (targetFileSize, expParquetFileCount) =>
+        (
+          "write decimal various scales and precision (with stats)", // test name
+          "decimal-various-scale-precision",
+          targetFileSize,
+          expParquetFileCount,
+          3, /* expected number of rows written to Parquet files */
+          Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
+          leafLevelPrimitiveColumns(
+            Seq.empty, tableSchema(goldenTablePath("decimal-various-scale-precision"))),
+          29 // how many columns have the stats collected from given list above
+        )
+    },
+    // Read a iceberg compat v2 data with field ids and nested ids, and write it back
+    Seq((200, 1)).map {
+      case (targetFileSize, expParquetFileCount) =>
+        (
+          "write iceberg compat v2 data with field ids (no stats)", // test name
+          "table-with-columnmapping-mode-id", // input table where the data is read
+          targetFileSize,
+          expParquetFileCount,
+          6, /* input table has 6 rows, exp these in output Parquet files */
+          Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
+          Seq.empty, // list of columns to collect statistics on
+          0 // how many columns have the stats collected from given list above
         )
     }
   ).flatten.foreach {
@@ -164,8 +192,13 @@ class ParquetFileWriterSuite extends AnyFunSuite
           val inputLocation = goldenTablePath(input)
           val schema = tableSchema(inputLocation)
 
-          val physicalSchema = if (hasColumnMappingId(inputLocation)) {
-            convertToPhysicalSchema(schema, schema, ColumnMapping.COLUMN_MAPPING_MODE_ID)
+          val hasColumnMappingId =
+            hasTableProperty(inputLocation, TableConfig.COLUMN_MAPPING_MODE.getKey, "id")
+          val hasIcebergCompatV2 =
+            hasTableProperty(inputLocation, TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")
+
+          val physicalSchema = if (hasColumnMappingId || hasIcebergCompatV2) {
+            convertToPhysicalSchema(schema, schema, ColumnMappingMode.ID)
           } else {
             schema
           }
@@ -184,6 +217,9 @@ class ParquetFileWriterSuite extends AnyFunSuite
           assert(parquetFileRowCount(targetDir) == expRowCount)
 
           verifyContent(targetDir, dataToWrite)
+          if (hasIcebergCompatV2 || hasColumnMappingId) {
+            verifyFieldIds(targetDir, physicalSchema, hasIcebergCompatV2)
+          }
           verifyStatsUsingSpark(targetDir, writeOutput, schema, statsCols, expStatsColCnt)
         }
       }
@@ -319,8 +355,6 @@ class ParquetFileWriterSuite extends AnyFunSuite
     statsColumns: Seq[Column],
     expStatsColCount: Int): Unit = {
 
-    if (statsColumns.isEmpty) return
-
     val actualStatsOutput = actualFileStatuses
       .map { fileStatus =>
         // validate there are no more the expected number of stats columns
@@ -332,8 +366,6 @@ class ParquetFileWriterSuite extends AnyFunSuite
         // Convert to TestRow for comparison with the actual values computing using Spark.
         fileStatus.toTestRow(statsColumns)
       }
-
-    if (expStatsColCount == 0) return
 
     // Use spark to fetch the stats from the parquet files use them as the expected statistics
     // Compare them with the actual stats returned by the Kernel's Parquet writer.
@@ -360,7 +392,6 @@ class ParquetFileWriterSuite extends AnyFunSuite
         .flatMap { statColumn =>
           val dataType = DefaultKernelUtils.getDataType(fileDataSchema, statColumn)
           dataType match {
-            case _: TimestampType => nullStats // not yet supported
             case _: StructType => nullStats // no concept of stats for struct types
             case _: ArrayType => nullStats // no concept of stats for array types
             case _: MapType => nullStats // no concept of stats for map types

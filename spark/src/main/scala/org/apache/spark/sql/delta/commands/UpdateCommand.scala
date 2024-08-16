@@ -20,11 +20,12 @@ package org.apache.spark.sql.delta.commands
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaOperations, DeltaTableUtils, OptimisticTransaction}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
@@ -295,7 +296,11 @@ case class UpdateCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
 
     val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ totalActions
-    txn.commitIfNeeded(finalActions, DeltaOperations.Update(condition))
+    val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val commitVersion = txn.commitIfNeeded(
+      actions = finalActions,
+      op = DeltaOperations.Update(condition),
+      tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
     sendDriverMetrics(sparkSession, metrics)
 
     recordDeltaEvent(
@@ -312,7 +317,10 @@ case class UpdateCommand(
         rewriteTimeMs,
         numDeletionVectorsAdded,
         numDeletionVectorsRemoved,
-        numDeletionVectorsUpdated)
+        numDeletionVectorsUpdated,
+        commitVersion = commitVersion,
+        numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+        numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved)
     )
   }
 
@@ -342,7 +350,12 @@ case class UpdateCommand(
     val baseRelation = buildBaseRelation(
       spark, txn, "update", rootPath, inputLeafFiles.map(_.path), nameToAddFileMap)
     val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
-    val targetDf = Dataset.ofRows(spark, newTarget)
+    val (targetDf, finalOutput, finalUpdateExpressions) = UpdateCommand.preserveRowTrackingColumns(
+      targetDfWithoutRowTrackingColumns = Dataset.ofRows(spark, newTarget),
+      snapshot = txn.snapshot,
+      targetOutput = target.output,
+      updateExpressions)
+
     val targetDfWithEvaluatedCondition = {
       val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, new Column(condition))
       val copyAndUpdateRowsDf = if (copyUnmodifiedRows) {
@@ -354,8 +367,8 @@ case class UpdateCommand(
     }
 
     val updatedDataFrame = UpdateCommand.withUpdatedColumns(
-      target.output,
-      updateExpressions,
+      finalOutput,
+      finalUpdateExpressions,
       condition,
       targetDfWithEvaluatedCondition,
       UpdateCommand.shouldOutputCdc(txn))
@@ -469,6 +482,42 @@ object UpdateCommand {
 
     resultDf.drop(CONDITION_COLUMN_NAME)
   }
+
+  /**
+   * Preserve the row tracking columns when performing an UPDATE.
+   *
+   * @param targetDfWithoutRowTrackingColumns The target DataFrame on which the UPDATE
+   *                                          operation is to be performed.
+   * @param snapshot                          Snapshot of the Delta table at the start of
+   *                                          the transaction.
+   * @param targetOutput                      The output schema of the target DataFrame.
+   * @param updateExpressions                 The update transformation to perform on the
+   *                                          target DataFrame.
+   * @return
+   * 1. targetDf: The target DataFrame that includes the preserved row tracking columns.
+   * 2. finalOutput: The final output schema, including the preserved row tracking columns.
+   * 3. finalUpdateExpressions: The final update expressions, including transformations
+   * for the preserved row tracking columns.
+   */
+  def preserveRowTrackingColumns(
+      targetDfWithoutRowTrackingColumns: DataFrame,
+      snapshot: Snapshot,
+      targetOutput: Seq[Attribute] = Seq.empty,
+      updateExpressions: Seq[Expression] = Seq.empty):
+    (DataFrame, Seq[Attribute], Seq[Expression]) = {
+    val targetDf = RowTracking.preserveRowTrackingColumns(
+      targetDfWithoutRowTrackingColumns, snapshot)
+
+    val rowIdAttributeOpt = MaterializedRowId.getAttribute(snapshot, targetDf)
+    val rowCommitVersionAttributeOpt =
+      MaterializedRowCommitVersion.getAttribute(snapshot, targetDf)
+    val finalOutput = targetOutput ++ rowIdAttributeOpt ++ rowCommitVersionAttributeOpt
+
+    val finalUpdateExpressions = updateExpressions ++
+      rowIdAttributeOpt ++
+      rowCommitVersionAttributeOpt.map(_ => Literal(null, LongType))
+    (targetDf, finalOutput, finalUpdateExpressions)
+  }
 }
 
 /**
@@ -496,5 +545,11 @@ case class UpdateMetric(
     rewriteTimeMs: Long,
     numDeletionVectorsAdded: Long,
     numDeletionVectorsRemoved: Long,
-    numDeletionVectorsUpdated: Long
+    numDeletionVectorsUpdated: Long,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long] = None
 )

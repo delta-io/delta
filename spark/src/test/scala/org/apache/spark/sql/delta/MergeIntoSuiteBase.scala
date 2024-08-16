@@ -23,6 +23,7 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -46,7 +47,8 @@ abstract class MergeIntoSuiteBase
     with DeltaTestUtilsForTempViews
     with MergeIntoTestUtils
     with MergeIntoSchemaEvolutionMixin
-    with MergeIntoSchemaEvolutionAllTests {
+    with MergeIntoSchemaEvolutionAllTests
+    with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
@@ -699,6 +701,34 @@ abstract class MergeIntoSuiteBase
         // The target table should have the same number of rows as the source after the merge
         assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
       }
+    }
+  }
+
+  testSparkMasterOnly("Variant type") {
+    withTable("source") {
+      // Insert ("0", 0), ("1", 1)
+      val dstDf = sql(
+        """SELECT parse_json(cast(id as string)) v, id i
+        FROM range(2)""")
+      append(dstDf)
+      // Insert ("1", 2), ("2", 3)
+      // The first row will update, the second will insert.
+      sql(
+        s"""SELECT parse_json(cast(id as string)) v, id + 1 i
+              FROM range(1, 3)""").createOrReplaceTempView("source")
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trgNew",
+        source = "source src",
+        condition = "to_json(src.v) = to_json(trgNew.v)",
+        update = "i = 10 + src.i + trgNew.i, v = trgNew.v",
+        insert = """(i, v) VALUES (i + 100, parse_json('"inserted"'))""")
+
+      checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+        Row(0, "0") :: // No change
+          Row(13, "1") :: // Update
+          Row(103, "\"inserted\"") :: // Insert
+          Nil)
     }
   }
 
@@ -3255,7 +3285,10 @@ abstract class MergeIntoSuiteBase
   }
 
   protected lazy val expectedOpTypes: Set[String] = Set(
-    "delta.dml.merge.findTouchedFiles", "delta.dml.merge.writeAllChanges", "delta.dml.merge")
+    "delta.dml.merge.materializeSource",
+    "delta.dml.merge.findTouchedFiles",
+    "delta.dml.merge.writeAllChanges",
+    "delta.dml.merge")
 
   test("insert only merge - recorded operation") {
     var events: Seq[UsageRecord] = Seq.empty
@@ -3288,7 +3321,9 @@ abstract class MergeIntoSuiteBase
     }.map(_.opType.get.typeName).toSet
 
     assert(opTypes == Set(
-      "delta.dml.merge", "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
+      "delta.dml.merge",
+      "delta.dml.merge.materializeSource",
+      "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
   }
 
   test("recorded operations - write inserts only") {
@@ -3324,9 +3359,29 @@ abstract class MergeIntoSuiteBase
   }
 
   protected lazy val expectedOpTypesInsertOnly: Set[String] = Set(
+    "delta.dml.merge.materializeSource",
     "delta.dml.merge.findTouchedFiles",
     "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
     "delta.dml.merge")
+
+  test("merge execution is recorded with QueryExecutionListener") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: Nil,
+      target = (1, 1) :: (2, 2) :: Nil) { case (sourceName, targetName) =>
+      val plans = withLogicalPlansCaptured(spark, optimizedPlan = false) {
+        executeMerge(
+          tgt = s"$targetName t",
+          src = s"$sourceName s",
+          cond = "s.key = t.key",
+          update(set = "*"))
+      }
+      val mergeCommands = plans.collect {
+        case m: MergeIntoCommand => m
+      }
+      assert(mergeCommands.size === 1,
+        "Merge command wasn't properly recorded by QueryExecutionListener")
+    }
+  }
 }
 
 

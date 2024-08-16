@@ -160,7 +160,7 @@ class DeltaAnalysis(session: SparkSession)
             tableType = tblType,
             storage = newStorage,
             schema = sourceMetadata.schema,
-            properties = config,
+            properties = config ++ ctl.properties,
             partitionColumnNames = sourceMetadata.partitionColumns,
             provider = Some("delta"),
             comment = Option(sourceMetadata.description)
@@ -171,7 +171,7 @@ class DeltaAnalysis(session: SparkSession)
               tableType = tblType,
               storage = newStorage,
               schema = src.schema,
-              properties = src.properties,
+              properties = src.properties ++ ctl.properties,
               partitionColumnNames = src.partitionColumnNames,
               provider = Some("delta"),
               comment = src.comment
@@ -620,7 +620,8 @@ class DeltaAnalysis(session: SparkSession)
       tableIdent: TableIdentifier,
       targetLocation: Option[String],
       existingTable: Option[CatalogTable],
-      srcTable: CloneSource): CatalogTable = {
+      srcTable: CloneSource,
+      propertiesOverrides: Map[String, String]): CatalogTable = {
     // If external location is defined then then table is an external table
     // If the table is a path-based table, we also say that the table is external even if no
     // metastore table will be created. This is done because we are still explicitly providing a
@@ -633,7 +634,10 @@ class DeltaAnalysis(session: SparkSession)
     } else {
       (CatalogTableType.MANAGED, CatalogStorageFormat.empty)
     }
-    val properties = srcTable.metadata.configuration
+    var properties = srcTable.metadata.configuration
+    val validatedOverrides = DeltaConfigs.validateConfigurations(propertiesOverrides)
+    properties = properties.filterKeys(!validatedOverrides.keySet.contains(_)).toMap ++
+      validatedOverrides
 
     new CatalogTable(
       identifier = tableIdent,
@@ -650,6 +654,29 @@ class DeltaAnalysis(session: SparkSession)
     DeltaTableV2(session, new Path(path), options = options)
   }
 
+  private def resolveCreateTableMode(
+      isCreate: Boolean,
+      isReplace: Boolean,
+      ifNotExist: Boolean): (SaveMode, TableCreationModes.CreationMode) = {
+    val saveMode = if (isReplace) {
+      SaveMode.Overwrite
+    } else if (ifNotExist) {
+      SaveMode.Ignore
+    } else {
+      SaveMode.ErrorIfExists
+    }
+
+    val tableCreationMode = if (isCreate && isReplace) {
+      TableCreationModes.CreateOrReplace
+    } else if (isCreate) {
+      TableCreationModes.Create
+    } else {
+      TableCreationModes.Replace
+    }
+
+    (saveMode, tableCreationMode)
+  }
+
   /**
    * Instantiates a CreateDeltaTableCommand with CloneTableCommand as the child query.
    *
@@ -663,24 +690,11 @@ class DeltaAnalysis(session: SparkSession)
       statement: CloneTableStatement): LogicalPlan = {
     val isReplace = statement.isReplaceCommand
     val isCreate = statement.isCreateCommand
+    val ifNotExists = statement.ifNotExists
 
     import session.sessionState.analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
     val targetLocation = statement.targetLocation
-    val saveMode = if (isReplace) {
-      SaveMode.Overwrite
-    } else if (statement.ifNotExists) {
-      SaveMode.Ignore
-    } else {
-      SaveMode.ErrorIfExists
-    }
-
-    val tableCreationMode = if (isCreate && isReplace) {
-      TableCreationModes.CreateOrReplace
-    } else if (isCreate) {
-      TableCreationModes.Create
-    } else {
-      TableCreationModes.Replace
-    }
+    val (saveMode, tableCreationMode) = resolveCreateTableMode(isCreate, isReplace, ifNotExists)
     // We don't use information in the catalog if the table is time travelled
     val sourceCatalogTable = if (sourceTbl.timeTravelOpt.isDefined) None else sourceTbl.catalogTable
 
@@ -702,8 +716,8 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.cloneAmbiguousTarget(statement.targetLocation.get, tblIdent)
         }
         // We're creating a table by path and there won't be a place to store catalog stats
-        val catalog = createCatalogTableForCloneCommand(
-          path, byPath = true, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val catalog = createCatalogTableForCloneCommand(path, byPath = true, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         CreateDeltaTableCommand(
           catalog,
           None,
@@ -725,8 +739,8 @@ class DeltaAnalysis(session: SparkSession)
           .asTableIdentifier
         val finalTarget = new Path(statement.targetLocation.getOrElse(
           session.sessionState.catalog.defaultTablePath(tblIdent).toString))
-        val catalogTable = createCatalogTableForCloneCommand(
-          finalTarget, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val catalogTable = createCatalogTableForCloneCommand(finalTarget, byPath = false, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         val catalogTableWithPath = if (targetLocation.isEmpty) {
           catalogTable.copy(
             storage = CatalogStorageFormat.empty.copy(locationUri = Some(finalTarget.toUri)))
@@ -762,8 +776,8 @@ class DeltaAnalysis(session: SparkSession)
             case targetTable: DeltaTableV2 =>
               val path = targetTable.path
               val tblIdent = TableIdentifier(path.toString, Some("delta"))
-              val catalogTable = createCatalogTableForCloneCommand(
-                path, byPath = true, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+              val catalogTable = createCatalogTableForCloneCommand(path, byPath = true, tblIdent,
+                targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
               CreateDeltaTableCommand(
                 table = catalogTable,
                 existingTableOpt = None,
@@ -806,7 +820,8 @@ class DeltaAnalysis(session: SparkSession)
           tblIdent,
           targetLocation,
           sourceCatalogTable,
-          cloneSourceTable)
+          cloneSourceTable,
+          statement.tablePropertyOverrides)
 
         CreateDeltaTableCommand(
           catalogTable,
@@ -825,8 +840,8 @@ class DeltaAnalysis(session: SparkSession)
       case LogicalRelation(_, _, existingCatalogTable @ Some(catalogTable), _) =>
         val tblIdent = catalogTable.identifier
         val path = new Path(catalogTable.location)
-        val newCatalogTable = createCatalogTableForCloneCommand(
-          path, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val newCatalogTable = createCatalogTableForCloneCommand(path, byPath = false, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         CreateDeltaTableCommand(
           newCatalogTable,
           existingCatalogTable,
@@ -1203,7 +1218,15 @@ object DeltaRelation extends DeltaLogging {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       val output = if (CDCReader.isCDCRead(options)) {
         // Handles cdc for the spark.read.options().table() code path
-        toAttributes(relation.schema)
+        // Mapping needed for references to the table's columns coming from Spark Connect.
+        val newOutput = toAttributes(relation.schema)
+        newOutput.map { a =>
+          val existingReference = v2Relation.output
+            .find(e => e.name == a.name && e.dataType == a.dataType && e.nullable == a.nullable)
+          existingReference.map { e =>
+            e.copy(metadata = a.metadata)(exprId = e.exprId, qualifier = e.qualifier)
+          }.getOrElse(a)
+        }
       } else {
         v2Relation.output
       }

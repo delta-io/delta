@@ -15,24 +15,22 @@
  */
 package io.delta.kernel.defaults
 
+import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
+import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
+import io.delta.kernel.types.{LongType, StructType}
+import io.delta.kernel.Table
+import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import org.apache.spark.sql.functions.col
+import org.scalatest.funsuite.AnyFunSuite
+
 import java.io.File
 import java.math.BigDecimal
 import java.sql.Date
-
 import scala.collection.JavaConverters._
-
-import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.scalatest.funsuite.AnyFunSuite
-import org.apache.spark.sql.functions.col
-import io.delta.golden.GoldenTableUtils.goldenTablePath
-
-import io.delta.kernel.{Table, TableNotFoundException}
-import io.delta.kernel.defaults.internal.DefaultKernelUtils
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
-import io.delta.kernel.types.{LongType, StructType}
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -117,7 +115,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       if (values(2) == null) {
         null
       } else {
-        values(2).asInstanceOf[Long] + DefaultKernelUtils.DateTimeConstants.MICROS_PER_HOUR * 8
+        values(2).asInstanceOf[Long] + DateTimeConstants.MICROS_PER_HOUR * 8
       }
     )
   }
@@ -125,6 +123,41 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   for (timeZone <- Seq("UTC", "Iceland", "PST", "America/Los_Angeles")) {
     test(s"end-to-end usage: timestamp in written in PST read in $timeZone") {
       testTimestampTable("kernel-timestamp-PST", timeZone, pstTableExpectedResult)
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // Timestamp_NTZ tests
+  //////////////////////////////////////////////////////////////////////////////////
+
+  // Below is the golden table used in test
+  // (INTEGER id, TIMESTAMP_NTZ tsNtz, TIMESTAMP_NTZ tsNtzPartition)
+  // (0, '2021-11-18 02:30:00.123456','2021-11-18 02:30:00.123456'),
+  // (1, '2013-07-05 17:01:00.123456','2021-11-18 02:30:00.123456'),
+  // (2, NULL,                         '2021-11-18 02:30:00.123456'),
+  // (3, '2021-11-18 02:30:00.123456','2013-07-05 17:01:00.123456'),
+  // (4, '2013-07-05 17:01:00.123456','2013-07-05 17:01:00.123456'),
+  // (5, NULL,                        '2013-07-05 17:01:00.123456'),
+  // (6, '2021-11-18 02:30:00.123456', NULL),
+  // (7, '2013-07-05 17:01:00.123456', NULL),
+  // (8, NULL,                         NULL)
+  val expectedTimestampNtzTestRows = Seq(
+    TestRow(0, 1637202600123456L, 1637202600123456L),
+    TestRow(1, 1373043660123456L, 1637202600123456L),
+    TestRow(2, null, 1637202600123456L),
+    TestRow(3, 1637202600123456L, 1373043660123456L),
+    TestRow(4, 1373043660123456L, 1373043660123456L),
+    TestRow(5, null, 1373043660123456L),
+    TestRow(6, 1637202600123456L, null),
+    TestRow(7, 1373043660123456L, null),
+    TestRow(8, null, null)
+  )
+
+  Seq("", "-name-mode", "-id-mode").foreach { cmMode =>
+    test(s"end-to-end: read table with timestamp_ntz columns (including partition): $cmMode") {
+      checkTable(
+        path = goldenTablePath(s"data-reader-timestamp_ntz$cmMode"),
+        expectedAnswer = expectedTimestampNtzTestRows)
     }
   }
 
@@ -151,16 +184,38 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test(s"end to end: reading decimal-various-scale-precision") {
+    val tablePath = goldenTablePath("decimal-various-scale-precision")
+    val expResults = spark.sql(s"SELECT * FROM delta.`$tablePath`")
+      .collect()
+      .map(TestRow(_))
+
+    checkTable(
+      path = goldenTablePath("decimal-various-scale-precision"),
+      expectedAnswer = expResults
+    )
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Table/Snapshot tests
   //////////////////////////////////////////////////////////////////////////////////
 
   test("invalid path") {
     val invalidPath = "/path/to/non-existent-directory"
-    val ex = intercept[TableNotFoundException] {
-      Table.forPath(defaultTableClient, invalidPath)
+    val table = Table.forPath(defaultEngine, invalidPath)
+
+    def expectTableNotFoundException(fn: () => Unit): Unit = {
+      val ex = intercept[TableNotFoundException] {
+        fn()
+      }
+      assert(ex.getMessage().contains(s"Delta table at path `file:$invalidPath` is not found"))
     }
-    assert(ex.getMessage().contains(s"Delta table at path `$invalidPath` is not found"))
+
+    expectTableNotFoundException(() => table.getLatestSnapshot(defaultEngine))
+    expectTableNotFoundException(() =>
+      table.getSnapshotAsOfTimestamp(defaultEngine, 1))
+    expectTableNotFoundException(() =>
+      table.getSnapshotAsOfVersion(defaultEngine, 1))
   }
 
   test("table deleted after the `Table` creation") {
@@ -169,11 +224,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       val target = new File(temp.getCanonicalPath)
       FileUtils.copyDirectory(source, target)
 
-      val table = Table.forPath(defaultTableClient, target.getCanonicalPath)
+      val table = Table.forPath(defaultEngine, target.getCanonicalPath)
       // delete the table and try to get the snapshot. Expect a failure.
       FileUtils.deleteDirectory(target)
       val ex = intercept[TableNotFoundException] {
-        table.getLatestSnapshot(defaultTableClient)
+        table.getLatestSnapshot(defaultEngine)
       }
       assert(ex.getMessage.contains(
         s"Delta table at path `file:${target.getCanonicalPath}` is not found"))
@@ -222,8 +277,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val path = "file:" + goldenTablePath("data-reader-partition-values")
 
     // for now we don't support timestamp type partition columns so remove from read columns
-    val readCols = Table.forPath(defaultTableClient, path).getLatestSnapshot(defaultTableClient)
-      .getSchema(defaultTableClient)
+    val readCols = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
+      .getSchema(defaultEngine)
       .withoutField("as_timestamp")
       .fields()
       .asScala
@@ -316,7 +371,12 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           TestRow(i.toString, TestRow(i)), // nested_struct
           Seq(i, i + 1), // array_of_prims
           Seq(Seq(i, i + 1), Seq(i + 2, i + 3)), // array_of_arrays
-          Seq(TestRow(i.longValue()), null), // array_of_structs
+          Seq(Map(i -> Seq(2, 3), i + 1 -> Seq(4, 5))), // array_of_map_of_arrays
+          Seq(TestRow(i), TestRow(i)), // array_of_structs
+          TestRow( // struct_of_arrays_maps_of_structs
+            Seq(i, i + 1),
+            Map(Seq(i, i + 1) -> TestRow(i + 2))
+          ),
           Map(
             i -> (i + 1).longValue(),
             (i + 2) -> (i + 3).longValue()
@@ -329,29 +389,13 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
               i.longValue() -> val1,
               (i + 1).longValue() -> val2
             ) // map_of_arrays
-          }
+          },
+          Map( // map_of_maps
+            i.toLong -> Map(i -> i),
+            (i + 1).toLong -> Map(i + 2 -> i)
+          )
         )
-      } ++ (TestRow(
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null
-      ) :: Nil)
+      } ++ Seq(TestRow(Seq.fill(22)(null): _*)) // all nulls row, 22 columns
 
       checkTable(
         path = path,
@@ -456,6 +500,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
+  test(s"table with spaces in the table path") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath + s"/table- -path"
+      spark.sql(s"CREATE TABLE delta.`$target` USING DELTA " +
+        s"SELECT * FROM delta.`${getTestResourceFilePath("basic-with-checkpoint")}`")
+      checkTable(
+        path = target,
+        expectedAnswer = (0 until 150).map(i => TestRow(i.toLong))
+      )
+    }
+  }
+
   test("table with name column mapping mode") {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
@@ -531,19 +587,45 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("error - version not contiguous") {
-    val e = intercept[IllegalStateException] {
+    val e = intercept[InvalidTableException] {
       latestSnapshot(goldenTablePath("versions-not-contiguous"))
     }
-    assert(e.getMessage.contains("Versions ([0, 2]) are not continuous"))
+    assert(e.getMessage.contains("versions are not continuous: ([0, 2])"))
   }
 
   test("table protocol version greater than reader protocol version") {
     val e = intercept[Exception] {
       latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
-        .getScanBuilder(defaultTableClient)
+        .getScanBuilder(defaultEngine)
         .build()
     }
-    assert(e.getMessage.contains("Unsupported reader protocol version"))
+    assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
+  }
+
+  test("table with void type - throws KernelException") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
+      val e = intercept[KernelException] {
+        latestSnapshot(path)
+      }
+      assert(e.getMessage.contains(
+        "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))
+    }
+  }
+
+  test("read a shallow cloned table") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath
+      val source = goldenTablePath("data-reader-partition-values")
+      spark.sql(s"CREATE TABLE delta.`$target` SHALLOW CLONE delta.`$source`")
+
+      withSparkTimeZone("UTC") {
+        val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
+        assert(expAnswer.size == 3)
+        checkTable(target, expAnswer)
+      }
+    }
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -582,11 +664,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       )
       // Cannot read a version that does not exist
       val e = intercept[RuntimeException] {
-        Table.forPath(defaultTableClient, path)
-          .getSnapshotAtVersion(defaultTableClient, 11)
+        Table.forPath(defaultEngine, path)
+          .getSnapshotAsOfVersion(defaultEngine, 11)
       }
       assert(e.getMessage.contains(
-        "Trying to load a non-existent version 11. The latest version available is 10"))
+        "Cannot load table version 11 as it does not exist. The latest available version is 10"))
     }
   }
 
@@ -602,9 +684,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       val log = org.apache.spark.sql.delta.DeltaLog.forTable(
         spark, new org.apache.hadoop.fs.Path(tablePath))
+      val deltaCommitFileProvider = org.apache.spark.sql.delta.util.DeltaCommitFileProvider(
+        log.unsafeVolatileSnapshot)
       // Delete the log files for versions 0-9, truncating the table history to version 10
       (0 to 9).foreach { i =>
-        val jsonFile = org.apache.spark.sql.delta.util.FileNames.deltaFile(log.logPath, i)
+        val jsonFile = deltaCommitFileProvider.deltaFile(i)
         new File(new org.apache.hadoop.fs.Path(log.logPath, jsonFile).toUri).delete()
       }
       // Create version 11 that overwrites the whole table
@@ -615,10 +699,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
       // Cannot read a version that has been truncated
       val e = intercept[RuntimeException] {
-        Table.forPath(defaultTableClient, tablePath)
-          .getSnapshotAtVersion(defaultTableClient, 9)
+        Table.forPath(defaultEngine, tablePath)
+          .getSnapshotAsOfVersion(defaultEngine, 9)
       }
-      assert(e.getMessage.contains("Unable to reconstruct state at version 9"))
+      assert(e.getMessage.contains("Cannot load table version 9"))
       // Can read version 10
       checkTable(
         path = tablePath,
@@ -732,7 +816,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e1.getMessage.contains(
         s"The provided timestamp ${start + 50 * minuteInMilliseconds} ms " +
-          s"(2018-10-24T22:04:18Z) is after the latest commit"))
+          s"(2018-10-24T22:04:18Z) is after the latest available version"))
       // Timestamp before the first commit fails
       val e2 = intercept[RuntimeException] {
         checkTable(
@@ -743,7 +827,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       assert(e2.getMessage.contains(
         s"The provided timestamp ${start - 1L} ms (2018-10-24T21:14:17.999Z) is before " +
-          s"the earliest version available."))
+          s"the earliest available version"))
     }
   }
 
@@ -751,8 +835,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     withTempDir { dir =>
       new File(dir, "_delta_log").mkdirs()
       intercept[TableNotFoundException] {
-        Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+        Table.forPath(defaultEngine, dir.getCanonicalPath)
+          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
       }
     }
   }
@@ -760,8 +844,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   test("getSnapshotAtTimestamp: empty folder no _delta_log dir") {
     withTempDir { dir =>
       intercept[TableNotFoundException] {
-        Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+        Table.forPath(defaultEngine, dir.getCanonicalPath)
+          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
       }
     }
   }
@@ -770,8 +854,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     withTempDir { dir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(dir.getCanonicalPath)
       intercept[TableNotFoundException] {
-        Table.forPath(defaultTableClient, dir.getCanonicalPath)
-          .getSnapshotAtTimestamp(defaultTableClient, 0L)
+        Table.forPath(defaultEngine, dir.getCanonicalPath)
+          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
       }
     }
   }

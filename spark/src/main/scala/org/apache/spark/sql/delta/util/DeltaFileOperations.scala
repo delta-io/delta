@@ -25,6 +25,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaErrors, SerializableFileStatus}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.commons.io.IOUtils
@@ -36,6 +37,7 @@ import org.apache.parquet.hadoop.{Footer, ParquetFileReader}
 
 import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.execution.streaming.CheckpointFileManager
 import org.apache.spark.sql.execution.streaming.CheckpointFileManager.CancellableFSDataOutputStream
@@ -105,8 +107,9 @@ object DeltaFileOperations extends DeltaLogging {
           // ignore the error and just return `child` as is.
           child
         case e: IllegalArgumentException =>
-          logError(s"Failed to relativize the path ($child) " +
-            s"with the base path ($basePath) and the file system URI (${fs.getUri})", e)
+          logError(log"Failed to relativize the path ${MDC(DeltaLogKeys.PATH, child)} " +
+            log"with the base path ${MDC(DeltaLogKeys.PATH2, basePath)} " +
+            log"and the file system URI ${MDC(DeltaLogKeys.URI, fs.getUri)}", e)
           throw DeltaErrors.failRelativizePath(child.toString)
       }
     } else {
@@ -125,7 +128,8 @@ object DeltaFileOperations extends DeltaLogging {
       base: Int = 100,
       jitter: Int = 1000): Unit = {
     val sleepTime = Random.nextInt(jitter) + base
-    logWarning(s"Sleeping for $sleepTime ms to rate limit $opName", t)
+    logWarning(log"Sleeping for ${MDC(DeltaLogKeys.TIME_MS, sleepTime)} ms to rate limit " +
+      log"${MDC(DeltaLogKeys.OP_NAME, opName)}", t)
     Thread.sleep(sleepTime)
   }
 
@@ -150,7 +154,7 @@ object DeltaFileOperations extends DeltaLogging {
       listAsDirectories: Boolean = true): Iterator[SerializableFileStatus] = {
 
     def list(dir: String, tries: Int): Iterator[SerializableFileStatus] = {
-      logInfo(s"Listing $dir")
+      logInfo(log"Listing ${MDC(DeltaLogKeys.DIR, dir)}")
       try {
         val path = if (listAsDirectories) new Path(dir, "\u0000") else new Path(dir + "\u0000")
         logStore.listFrom(path, hadoopConf)
@@ -378,7 +382,7 @@ object DeltaFileOperations extends DeltaLogging {
         tempPath.getFileSystem(conf).delete(tempPath, false /* = recursive */)
       } catch {
         case NonFatal(e) =>
-          logError(s"Failed to delete $tempPath", e)
+          logError(log"Failed to delete ${MDC(DeltaLogKeys.PATH, tempPath)}", e)
       }
       () // Make the compiler happy
     }
@@ -403,7 +407,8 @@ object DeltaFileOperations extends DeltaLogging {
             conf, currentFile, SKIP_ROW_GROUPS)))
       } catch { case e: RuntimeException =>
         if (ignoreCorruptFiles) {
-          logWarning(s"Skipped the footer in the corrupted file: $currentFile", e)
+          logWarning(log"Skipped the footer in the corrupted file: " +
+            log"${MDC(DeltaLogKeys.FILE_STATUS, currentFile)}", e)
           None
         } else {
           throw DeltaErrors.failedReadFileFooter(currentFile.toString, e)

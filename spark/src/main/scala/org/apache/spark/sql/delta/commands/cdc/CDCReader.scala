@@ -24,14 +24,16 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession, SQLContext}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
@@ -147,6 +149,8 @@ object CDCReader extends CDCReaderImpl
 
     override val schema: StructType = cdcReadSchema(snapshotForBatchSchema.metadata.schema)
 
+    override def unhandledFilters(filters: Array[Filter]): Array[Filter] = Array.empty
+
     override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
       val df = changesToBatchDF(
         deltaLog,
@@ -158,7 +162,9 @@ object CDCReader extends CDCReaderImpl
         sqlContext.sparkSession,
         readSchemaSnapshot = Some(snapshotForBatchSchema))
 
-      df.select(requiredColumns.map(SchemaUtils.fieldNameToColumn): _*).rdd
+      val filter = new Column(DeltaSourceUtils.translateFilters(filters))
+      val projections = requiredColumns.map(SchemaUtils.fieldNameToColumn)
+      df.filter(filter).select(projections: _*).rdd
     }
   }
 
@@ -235,17 +241,15 @@ trait CDCReaderImpl extends DeltaLogging {
    */
   def getBatchSchemaModeForTable(
       spark: SparkSession,
-      snapshot: Snapshot): DeltaBatchCDFSchemaMode = {
-    if (snapshot.metadata.columnMappingMode != NoMapping) {
-      // Column-mapping table uses exact schema by default, but can be overridden by conf
+      columnMappingEnabled: Boolean): DeltaBatchCDFSchemaMode = {
+    if (columnMappingEnabled) {
+      // Tables with column-mapping enabled can specify which schema version to use with this
+      // config.
       DeltaBatchCDFSchemaMode(spark.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE
-      ))
+        DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE))
     } else {
       // Non column-mapping table uses the current default, which is typically `legacy` - usually
       // the latest schema is used, but it can depend on time-travel arguments as well.
-      // Using time-travel arguments with CDF is default blocked right now as it is an non-expected
-      // use case, users can unblock themselves with `DeltaSQLConf.DELTA_CDF_ENABLE_TIME_TRAVEL`.
       BatchCDFSchemaLegacy
     }
   }
@@ -276,7 +280,53 @@ trait CDCReaderImpl extends DeltaLogging {
       throw DeltaErrors.noStartVersionForCDC()
     }
 
-    val schemaMode = getBatchSchemaModeForTable(spark, snapshotToUse)
+    val endingVersionOpt = getVersionForCDC(
+      spark,
+      snapshotToUse.deltaLog,
+      conf,
+      options,
+      DeltaDataSource.CDC_END_VERSION_KEY,
+      DeltaDataSource.CDC_END_TIMESTAMP_KEY
+    )
+
+    verifyStartingVersion(spark, snapshotToUse, conf, startingVersion) match {
+      case Some(toReturn) =>
+        return toReturn
+      case None =>
+    }
+
+    verifyEndingVersion(spark, snapshotToUse, startingVersion, endingVersionOpt) match {
+      case Some(toReturn) =>
+        return toReturn
+      case None =>
+    }
+
+    logInfo(
+      log"startingVersion: ${MDC(DeltaLogKeys.START_VERSION, startingVersion.version)}, " +
+      log"endingVersion: ${MDC(DeltaLogKeys.END_VERSION, endingVersionOpt.map(_.version))}")
+
+    val startingSnapshot = snapshotToUse.deltaLog.getSnapshotAt(startingVersion.version)
+    val columnMappingEnabledAtStartingVersion =
+      startingSnapshot.metadata.columnMappingMode != NoMapping
+
+    val columnMappingEnabledAtEndVersion = endingVersionOpt.exists { endingVersion =>
+      // End version could be after the snapshot to use version, in which case it might not exist.
+      if (endingVersion.version > snapshotToUse.version) {
+        false
+      } else {
+        val endingSnapshot = snapshotToUse.deltaLog.getSnapshotAt(endingVersion.version)
+        endingSnapshot.metadata.columnMappingMode != NoMapping &&
+          endingVersion.version <= snapshotToUse.version
+      }
+    }
+
+    val columnMappingEnabledAtSnapshotToUseVersion =
+      snapshotToUse.metadata.columnMappingMode != NoMapping
+
+    // Special handling for tables with column mapping mode enabled in any of the versions.
+    val columnMappingEnabled = columnMappingEnabledAtSnapshotToUseVersion ||
+      columnMappingEnabledAtEndVersion || columnMappingEnabledAtStartingVersion
+    val schemaMode = getBatchSchemaModeForTable(spark, columnMappingEnabled = columnMappingEnabled)
 
     // Non-legacy schema mode options cannot be used with time-travel because the schema to use
     // will be confusing.
@@ -287,39 +337,37 @@ trait CDCReaderImpl extends DeltaLogging {
         s"${DeltaSQLConf.DELTA_CDF_DEFAULT_SCHEMA_MODE_FOR_COLUMN_MAPPING_TABLE.key} " +
           s"cannot be used with time travel options.")
     }
+    DeltaCDFRelation(
+      SnapshotWithSchemaMode(snapshotToUse, schemaMode),
+      spark.sqlContext,
+      Some(startingVersion.version),
+      endingVersionOpt.map(_.version))
+  }
 
-    def emptyCDFRelation() = {
-      new DeltaCDFRelation(
-        SnapshotWithSchemaMode(snapshotToUse, schemaMode),
-        spark.sqlContext,
-        startingVersion = None,
-        endingVersion = None) {
-        override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] =
-          sqlContext.sparkSession.sparkContext.emptyRDD[Row]
-      }
-    }
-
+  private def verifyStartingVersion(
+      spark: SparkSession,
+      snapshotToUse: Snapshot,
+      conf: SQLConf,
+      startingVersion: ResolvedCDFVersion): Option[BaseRelation] = {
     // add a version check here that is cheap instead of after trying to list a large version
     // that doesn't exist
     if (startingVersion.version > snapshotToUse.version) {
       val allowOutOfRange = conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
       // LS-129: return an empty relation if start version passed in is beyond latest commit version
       if (allowOutOfRange) {
-        return emptyCDFRelation()
+        return Some(emptyCDFRelation(spark, snapshotToUse, BatchCDFSchemaLegacy))
       }
       throw DeltaErrors.startVersionAfterLatestVersion(
         startingVersion.version, snapshotToUse.version)
     }
+    None
+  }
 
-    val endingVersionOpt = getVersionForCDC(
-      spark,
-      snapshotToUse.deltaLog,
-      conf,
-      options,
-      DeltaDataSource.CDC_END_VERSION_KEY,
-      DeltaDataSource.CDC_END_TIMESTAMP_KEY
-    )
-
+  private def verifyEndingVersion(
+      spark: SparkSession,
+      snapshotToUse: Snapshot,
+      startingVersion: ResolvedCDFVersion,
+      endingVersionOpt: Option[ResolvedCDFVersion]): Option[BaseRelation] = {
     // Given two timestamps, there is a case when both of them lay closely between two versions:
     // version:          4                                                 5
     //          ---------|-------------------------------------------------|--------
@@ -336,26 +384,30 @@ trait CDCReaderImpl extends DeltaLogging {
             endingVersion.version)
         }
         if (endingVersion.version == startingVersion.version - 1) {
-          return emptyCDFRelation()
+          return Some(emptyCDFRelation(spark, snapshotToUse, BatchCDFSchemaLegacy))
         }
       }
+      if (endingVersionOpt.exists(_.version < startingVersion.version)) {
+        throw DeltaErrors.endBeforeStartVersionInCDC(
+          startingVersion.version,
+          endingVersionOpt.get.version)
+      }
     }
+    None
+  }
 
-    if (endingVersionOpt.exists(_.version < startingVersion.version)) {
-      throw DeltaErrors.endBeforeStartVersionInCDC(
-        startingVersion.version,
-        endingVersionOpt.get.version)
-    }
-
-    logInfo(
-      s"startingVersion: ${startingVersion.version}, " +
-        s"endingVersion: ${endingVersionOpt.map(_.version)}")
-
-    DeltaCDFRelation(
-      SnapshotWithSchemaMode(snapshotToUse, schemaMode),
+  private def emptyCDFRelation(
+      spark: SparkSession,
+      snapshot: Snapshot,
+      schemaMode: DeltaBatchCDFSchemaMode) = {
+    new DeltaCDFRelation(
+      SnapshotWithSchemaMode(snapshot, schemaMode),
       spark.sqlContext,
-      Some(startingVersion.version),
-      endingVersionOpt.map(_.version))
+      startingVersion = None,
+      endingVersion = None) {
+      override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] =
+        sqlContext.sparkSession.sparkContext.emptyRDD[Row]
+    }
   }
 
   /**
@@ -614,7 +666,7 @@ trait CDCReaderImpl extends DeltaLogging {
     // 2. Similarly, handle the corner case when there are no read-incompatible schema change with
     //    the range, BUT time-travel is used so the read schema could also be arbitrary.
     // It is sufficient to just verify with the start version schema because we have already
-    // verified that all data being queries is read-compatible with start schema.
+    // verified that all data being queried is read-compatible with start schema.
     checkBatchCdfReadSchemaIncompatibility(startVersionMetadata, start, isSchemaChange = false)
 
     val dfs = ListBuffer[DataFrame]()
@@ -872,9 +924,7 @@ trait CDCReaderImpl extends DeltaLogging {
       useCoarseGrainedCDC: Boolean = false,
       startVersionSnapshot: Option[SnapshotDescriptor] = None): DataFrame = {
 
-    val changesWithinRange = deltaLog.getChanges(start).takeWhile { case (version, _) =>
-      version <= end
-    }
+    val changesWithinRange = deltaLog.getChanges(start, end, failOnDataLoss = false)
     changesToDF(
       readSchemaSnapshot.getOrElse(deltaLog.unsafeVolatileSnapshot),
       start,
@@ -899,11 +949,11 @@ trait CDCReaderImpl extends DeltaLogging {
       isStreaming: Boolean = false): DataFrame = {
 
     val relation = HadoopFsRelation(
-      index,
-      index.partitionSchema,
-      cdcReadSchema(index.schema),
+      location = index,
+      partitionSchema = index.partitionSchema,
+      dataSchema = cdcReadSchema(index.schema),
       bucketSpec = None,
-      new DeltaParquetFileFormat(index.protocol, index.metadata),
+      new DeltaParquetFileFormat(index.protocol, index.metadata, isCDCRead = true),
       options = index.deltaLog.options)(spark)
     val plan = LogicalRelation(relation, isStreaming = isStreaming)
     Dataset.ofRows(spark, plan)
@@ -936,7 +986,8 @@ trait CDCReaderImpl extends DeltaLogging {
    * Determine if the metadata provided has cdc enabled or not.
    */
   def isCDCEnabledOnTable(metadata: Metadata, spark: SparkSession): Boolean = {
-    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)
+    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(
+      protocol = Protocol(), metadata, spark)
   }
 
   /**

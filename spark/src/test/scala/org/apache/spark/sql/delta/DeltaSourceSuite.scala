@@ -42,15 +42,91 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.{NullType, StringType, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
+
+  def testNullTypeColumn(shouldDropNullTypeColumns: Boolean): Unit = {
+    withTempPaths(3) { case Seq(sourcePath, sinkPath, checkpointPath) =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key ->
+          shouldDropNullTypeColumns.toString) {
+
+        spark.sql("select CAST(null as VOID) as nullTypeCol, id from range(10)")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(sourcePath.getCanonicalPath)
+
+        def runStream() = {
+          spark.readStream
+            .format("delta")
+            .load(sourcePath.getCanonicalPath)
+            // Need to drop null type columns because it's not supported by the writer.
+            .drop("nullTypeCol")
+            .writeStream
+            .option("checkpointLocation", checkpointPath.getCanonicalPath)
+            .format("delta")
+            .start(sinkPath.getCanonicalPath)
+            .processAllAvailable()
+        }
+        if (shouldDropNullTypeColumns) {
+          val e = intercept[StreamingQueryException] {
+            runStream()
+          }
+          assert(e.getErrorClass == "STREAM_FAILED")
+          // This assertion checks the schema of the source did not change while processing a batch.
+          assert(e.getMessage.contains("assertion failed: Invalid batch: nullTypeCol"))
+        } else {
+          runStream()
+        }
+      }
+    }
+  }
+
+  test("streaming delta source should not drop null columns") {
+    testNullTypeColumn(shouldDropNullTypeColumns = false)
+  }
+
+  test("streaming delta source should drop null columns without feature flag") {
+    testNullTypeColumn(shouldDropNullTypeColumns = true)
+  }
+
+  def testCreateDataFrame(shouldDropNullTypeColumns: Boolean): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_CREATE_DATAFRAME_DROP_NULL_COLUMNS.key ->
+        shouldDropNullTypeColumns.toString) {
+      withTempPath { tempPath =>
+        spark.sql("select CAST(null as VOID) as nullTypeCol, id from range(10)")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(tempPath.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, tempPath)
+        val df = deltaLog.createDataFrame(deltaLog.update(), Seq.empty, isStreaming = false)
+        val nullTypeFields = df.schema.filter(_.dataType == NullType)
+        if(shouldDropNullTypeColumns) {
+          assert(nullTypeFields.isEmpty)
+        } else {
+          assert(nullTypeFields.size == 1)
+        }
+      }
+    }
+  }
+
+  test("DeltaLog.createDataFrame should drop null columns with feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = true)
+  }
+
+  test("DeltaLog.createDataFrame should not drop null columns without feature flag") {
+    testCreateDataFrame(shouldDropNullTypeColumns = false)
+  }
 
   test("no schema should throw an exception") {
     withTempDir { inputDir =>
@@ -1164,6 +1240,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       // Create a checkpoint so that logs before checkpoint can be expired and deleted
       writersLog.checkpoint()
+      val tahoeId = deltaLog.tableId // This isn't stable, but it shouldn't change during the test.
 
       testStream(df)(
         StartStream(Trigger.ProcessingTime("10 seconds"), new StreamManualClock),
@@ -1360,7 +1437,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
         val deltaLog = DeltaLog.forTable(spark, tempDir)
         deltaLog.store.write(
-          FileNames.deltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
+          FileNames.unsafeDeltaFile(deltaLog.logPath, deltaLog.snapshot.version + 1),
           // Write a large reader version to fail the streaming query
           Iterator(Protocol(minReaderVersion = Int.MaxValue).json),
           overwrite = false,
@@ -1385,7 +1462,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.deltaFile(deltaLog.logPath, startVersion).toUri)
+      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
       file.setLastModified(ts)
       startVersion += 1
     }
@@ -1447,7 +1524,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       assert(deltaLog.update().version == 2)
       deltaLog.checkpoint()
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
 
       // Cannot start from version 0
       assert(intercept[StreamingQueryException] {
@@ -1522,7 +1599,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Add one commit and delete version 0 and version 1
         generateCommits(inputDir.getCanonicalPath, start + 60.minutes)
         (0 to 1).foreach { v =>
-          new File(FileNames.deltaFile(deltaLog.logPath, v).toUri).delete()
+          new File(FileNames.unsafeDeltaFile(deltaLog.logPath, v).toUri).delete()
         }
 
         // Although version 1 has been deleted, restarting the query should still work as we have
@@ -1618,7 +1695,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       assert(deltaLog.update().version == 2)
       deltaLog.checkpoint()
-      new File(FileNames.deltaFile(deltaLog.logPath, 0).toUri).delete()
+      new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri).delete()
 
       // Can start from version 1 even if it's not recreatable
       // TODO: currently we would error out if we couldn't construct the snapshot to check column
@@ -1697,10 +1774,13 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           q.processAllAvailable()
           checkAnswer(
             sql("select * from startingVersionTest"),
-            ((10 until 20).map(x => (x.toLong, x.toLong, None.toString)) ++
+            ((10 until 20).map(x => (x.toLong, x.toLong, "null")) ++
               (20 until 30).map(x => (x.toLong, x.toLong, x.toString)))
               .toDF("id", "id2", "id3")
-              .selectExpr("id", "id2", "cast(id3 as long) as id3")
+              .selectExpr(
+                "id",
+                "id2",
+                "CASE WHEN id3 = 'null' THEN NULL ELSE cast(id3 as long) END as id3")
           )
         } finally {
           q.stop()
@@ -1979,7 +2059,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the first file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
 
       val e = intercept[StreamingQueryException] {
         val q = df.writeStream.format("delta")
@@ -2014,7 +2094,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the second file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
 
       val e = intercept[StreamingQueryException] {
         val q = df.writeStream.format("delta")
@@ -2050,7 +2130,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the first file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 1).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
 
       val q2 = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)
@@ -2086,7 +2166,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Create a checkpoint so that we can create a snapshot without json files before version 3
       srcLog.checkpoint()
       // Delete the second file
-      assert(new File(FileNames.deltaFile(srcLog.logPath, 2).toUri).delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
 
       val q2 = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)

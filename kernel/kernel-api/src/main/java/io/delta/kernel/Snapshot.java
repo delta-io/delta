@@ -17,7 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 
 /**
@@ -28,27 +28,27 @@ import io.delta.kernel.types.StructType;
 @Evolving
 public interface Snapshot {
 
-    /**
-     * Get the version of this snapshot in the table.
-     *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @return version of this snapshot in the Delta table
-     */
-    long getVersion(TableClient tableClient);
+  /**
+   * Get the version of this snapshot in the table.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return version of this snapshot in the Delta table
+   */
+  long getVersion(Engine engine);
 
-    /**
-     * Get the schema of the table at this snapshot.
-     *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @return Schema of the Delta table at this snapshot.
-     */
-    StructType getSchema(TableClient tableClient);
+  /**
+   * Get the schema of the table at this snapshot.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return Schema of the Delta table at this snapshot.
+   */
+  StructType getSchema(Engine engine);
 
-    /**
-     * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
-     *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @return an instance of {@link ScanBuilder}
-     */
-    ScanBuilder getScanBuilder(TableClient tableClient);
+  /**
+   * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return an instance of {@link ScanBuilder}
+   */
+  ScanBuilder getScanBuilder(Engine engine);
 }

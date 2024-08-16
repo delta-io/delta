@@ -16,13 +16,10 @@
 
 package org.apache.spark.sql.delta.schema
 
-import java.util.Locale
-
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, TypeWidening}
 
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -158,7 +155,6 @@ object SchemaMergingUtils {
    *                                 merge will succeed, because once we get to write time Spark SQL
    *                                 will support implicitly converting the int to a string.
    * @param keepExistingType Whether to keep existing types instead of trying to merge types.
-   * @param fixedTypeColumns The set of columns whose type should not be changed in any case.
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
    *                      This should default to false for Delta, which is case insensitive.
    */
@@ -168,13 +164,9 @@ object SchemaMergingUtils {
       allowImplicitConversions: Boolean = false,
       keepExistingType: Boolean = false,
       allowTypeWidening: Boolean = false,
-      fixedTypeColumns: Set[String] = Set.empty,
       caseSensitive: Boolean = false): StructType = {
     checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
-    def merge(
-        current: DataType,
-        update: DataType,
-        fixedTypeColumnsSet: Set[String] = Set.empty): DataType = {
+    def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>
           // Merge existing fields.
@@ -182,15 +174,6 @@ object SchemaMergingUtils {
           val updatedCurrentFields = currentFields.map { currentField =>
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
-                if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
-                    !equalsIgnoreCaseAndCompatibleNullability(
-                      currentField.dataType, updateField.dataType)) {
-                  throw new DeltaAnalysisException(
-                    errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-                    messageParameters = Array(currentField.name, currentField.dataType.sql,
-                      updateField.dataType.sql)
-                  )
-                }
                 try {
                   StructField(
                     currentField.name,
@@ -284,8 +267,7 @@ object SchemaMergingUtils {
             messageParameters = Array(current.toString, update.toString))
       }
     }
-    merge(tableSchema, dataSchema, fixedTypeColumns.map(_.toLowerCase(Locale.ROOT)))
-      .asInstanceOf[StructType]
+    merge(tableSchema, dataSchema).asInstanceOf[StructType]
   }
 
   /**
@@ -337,6 +319,43 @@ object SchemaMergingUtils {
       newDt.asInstanceOf[E]
     }
     transform(Seq.empty, schema)
+  }
+
+  /**
+   * Prune all nested empty structs from the schema. Return None if top level struct is also empty.
+   * @param dataType the data type to prune.
+   */
+  def pruneEmptyStructs(dataType: DataType): Option[DataType] = {
+    dataType match {
+      case StructType(fields) =>
+        val newFields = fields.flatMap { f =>
+          pruneEmptyStructs(f.dataType).map { newType =>
+            StructField(f.name, newType, f.nullable, f.metadata)
+          }
+        }
+        // when there is no fields, i.e., the struct is empty, we will return None to indicate
+        // we don't want to include that field.
+        if (newFields.isEmpty) {
+          None
+        } else {
+          Option(StructType(newFields))
+        }
+      case ArrayType(currentElementType, containsNull) =>
+        // if the array element type is from from_json, we will exclude the array.
+        pruneEmptyStructs(currentElementType).map { newType =>
+          ArrayType(newType, containsNull)
+        }
+      case MapType(keyType, elementType, containsNull) =>
+        // if the map key/element type is from from_json, we will exclude the map.
+        val filtertedKeyType = pruneEmptyStructs(keyType)
+        val filtertedValueType = pruneEmptyStructs(elementType)
+        if (filtertedKeyType.isEmpty || filtertedValueType.isEmpty) {
+          None
+        } else {
+          Option(MapType(filtertedKeyType.get, filtertedValueType.get, containsNull))
+        }
+      case _ => Option(dataType)
+    }
   }
 
   /**

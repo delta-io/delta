@@ -23,6 +23,8 @@ import java.util.regex.Pattern
 import scala.annotation.tailrec
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.RowCommitVersion
+import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -2015,6 +2017,52 @@ class SchemaUtilsSuite extends QueryTest
     assert(normalized.schema === tableSchema)
   }
 
+  test("normalize column names - can normalize row id column") {
+    withTable("src") {
+      spark.range(3).toDF("id").write
+        .format("delta")
+        .mode("overwrite")
+        .option("delta.enableRowTracking", "true")
+        .saveAsTable("src")
+
+      val df = spark.read.format("delta").table("src")
+        .select(
+          col("*"),
+          col("_metadata.row_id").as("row_id")
+        )
+        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+
+      val tableSchema = new StructType().add("id", LongType)
+      val normalized =
+        normalizeColumnNames(deltaLog = null, tableSchema, df)
+        assert(normalized.schema.fieldNames === Seq("id", "row_id"))
+    }
+  }
+
+  test("normalize column names - can normalize both row id and commit version columns") {
+    withTable("src") {
+      spark.range(3).toDF("id").write
+        .format("delta")
+        .mode("overwrite")
+        .option("delta.enableRowTracking", "true")
+        .saveAsTable("src")
+
+      val df = spark.read.format("delta").table("src")
+        .select(
+          col("*"),
+          col("_metadata.row_id").as("row_id"),
+          col("_metadata.row_commit_version").as("row_commit_version")
+        )
+        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+        .withMetadata("row_commit_version", RowCommitVersion.MetadataStructField.metadata("name"))
+
+      val tableSchema = new StructType().add("id", LongType)
+        val normalized =
+        normalizeColumnNames(deltaLog = null, tableSchema, df)
+        assert(normalized.schema.fieldNames === Seq("id", "row_id", "row_commit_version"))
+    }
+  }
+
   test("normalize column names - can normalize CDC type column") {
     val df = Seq((1, 2, 3, 4)).toDF("Abc", "def", "gHi", CDCReader.CDC_TYPE_COLUMN_NAME)
     val tableSchema = new StructType()
@@ -2534,6 +2582,48 @@ class SchemaUtilsSuite extends QueryTest
     }
     assert(visitedFields === 4)
     assert(update === res3)
+  }
+
+  ////////////////////////////
+  // pruneEmptyStructs
+  ////////////////////////////
+  test("prune empty structs") {
+    val emptySchema = new StructType()
+    var schema = emptySchema
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    val elementType = new StructType()
+      .add("a", emptySchema)
+      .add("b", new StructType().add("1", emptySchema).add("2", StringType))
+    val filteredElementType = new StructType().add("b", new StructType().add("2", StringType))
+
+    assert(SchemaMergingUtils.pruneEmptyStructs(elementType).get == filteredElementType)
+
+    // filter out array element type with empty schema
+    schema = new StructType().add("a", new ArrayType(emptySchema, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    // nested empty schema
+    schema = new StructType().add("a", new ArrayType(new StructType().add("a", emptySchema), false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new ArrayType(elementType, false))
+    assert(
+      SchemaMergingUtils.pruneEmptyStructs(schema).get ==
+        new StructType().add("a", new ArrayType(filteredElementType, false))
+    )
+
+    schema = new StructType().add("a", new MapType(emptySchema, StringType, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new MapType(StringType, emptySchema, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new MapType(StringType, elementType, false))
+    assert(
+      SchemaMergingUtils.pruneEmptyStructs(schema).get ==
+        new StructType().add("a", new MapType(StringType, filteredElementType, false))
+    )
   }
 
   ////////////////////////////

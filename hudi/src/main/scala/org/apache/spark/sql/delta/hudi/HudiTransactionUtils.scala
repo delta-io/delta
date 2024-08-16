@@ -16,15 +16,15 @@
 
 package org.apache.spark.sql.delta.hudi
 
-import org.apache.hadoop.conf.Configuration
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.hadoop.fs.Path
 import org.apache.hudi.client.WriteStatus
-import org.apache.hudi.common.model.{HoodieAvroPayload, HoodieTableType, HoodieTimelineTimeZone, HoodieDeltaWriteStat}
+import org.apache.hudi.common.model.{HoodieAvroPayload, HoodieDeltaWriteStat, HoodieTableType, HoodieTimelineTimeZone}
 import org.apache.hudi.common.table.HoodieTableMetaClient
 import org.apache.hudi.common.util.ExternalFilePathUtil
 import org.apache.hudi.exception.TableNotFoundException
-import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.hudi.storage.StorageConfiguration
 
 object HudiTransactionUtils extends DeltaLogging {
 
@@ -86,7 +86,7 @@ object HudiTransactionUtils extends DeltaLogging {
   def loadTableMetaClient(tableDataPath: String,
                           tableName: Option[String],
                           partitionFields: Seq[String],
-                          conf: Configuration): HoodieTableMetaClient = {
+                          conf: StorageConfiguration[_]): HoodieTableMetaClient = {
     try HoodieTableMetaClient.builder
       .setBasePath(tableDataPath).setConf(conf)
       .setLoadActiveTimelineOnLoad(false)
@@ -114,7 +114,7 @@ object HudiTransactionUtils extends DeltaLogging {
     private def initializeHudiTable(tableDataPath: String,
                                     tableName: String,
                                     partitionFields: Seq[String],
-                                    conf: Configuration): HoodieTableMetaClient = {
+                                    conf: StorageConfiguration[_]): HoodieTableMetaClient = {
       val keyGeneratorClass = getKeyGeneratorClass(partitionFields)
       HoodieTableMetaClient
         .withPropertyBuilder

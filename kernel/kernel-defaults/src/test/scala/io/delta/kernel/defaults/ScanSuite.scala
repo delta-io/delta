@@ -15,35 +15,33 @@
  */
 package io.delta.kernel.defaults
 
-import java.math.{BigDecimal => JBigDecimal}
-import java.sql.Date
-import java.time.{Instant, OffsetDateTime}
-import java.time.temporal.ChronoUnit
-import java.util.Optional
-
-import scala.collection.JavaConverters._
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
+import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.expressions._
+import io.delta.kernel.internal.util.InternalUtils
+import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
+import io.delta.kernel.types._
+import io.delta.kernel.types.IntegerType.INTEGER
+import io.delta.kernel.types.StringType.STRING
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.{Scan, Snapshot, Table}
 import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.{Row => SparkRow}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
+import org.apache.spark.sql.{Row => SparkRow}
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.client.{JsonHandler, ParquetHandler, TableClient}
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
-import io.delta.kernel.expressions.{AlwaysFalse, AlwaysTrue, And, Column, Or, Predicate, ScalarExpression}
-import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.types.StructType
-import io.delta.kernel.types.StringType.STRING
-import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.kernel.{Snapshot, Table}
-import io.delta.kernel.internal.util.InternalUtils
-import io.delta.kernel.internal.InternalScanFileUtils
-import io.delta.kernel.defaults.client.{DefaultJsonHandler, DefaultParquetHandler, DefaultTableClient}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import java.math.{BigDecimal => JBigDecimal}
+import java.sql.Date
+import java.time.temporal.ChronoUnit
+import java.time.{Instant, OffsetDateTime}
+import java.util.Optional
+import scala.collection.JavaConverters._
 
 class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
 
@@ -99,15 +97,15 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     val snapshot = latestSnapshot(tablePath)
     hits.foreach { predicate =>
       val scanFiles = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient)
-          .withFilter(defaultTableClient, predicate)
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, predicate)
           .build())
       assert(scanFiles.nonEmpty, s"Expected hit but got miss for $predicate")
     }
     misses.foreach { predicate =>
       val scanFiles = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient)
-          .withFilter(defaultTableClient, predicate)
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, predicate)
           .build())
       assert(scanFiles.isEmpty, s"Expected miss but got hit for $predicate\n" +
         s"Returned scan files have stats: ${getScanFileStats(scanFiles)}"
@@ -123,8 +121,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     val snapshot = latestSnapshot(tablePath)
     filterToNumExpFiles.foreach { case (filter, numExpFiles) =>
       val scanFiles = collectScanFileRows(
-        snapshot.getScanBuilder(defaultTableClient)
-          .withFilter(defaultTableClient, filter)
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, filter)
           .build())
       assert(scanFiles.length == numExpFiles,
         s"Expected $numExpFiles but found ${scanFiles.length} for $filter")
@@ -158,9 +156,16 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   /* Where timestampStr is in the format of "yyyy-MM-dd'T'HH:mm:ss.SSSXXX" */
-  def getTimestampPredicate(expr: String, col: Column, timestampStr: String): Predicate = {
+  def getTimestampPredicate(expr: String, col: Column,
+                            timestampStr: String, timeStampType: String): Predicate = {
     val time = OffsetDateTime.parse(timestampStr)
-    new Predicate(expr, col, ofTimestamp(ChronoUnit.MICROS.between(Instant.EPOCH, time)))
+    new Predicate(expr, col,
+      if (timeStampType.equalsIgnoreCase("timestamp")) {
+        ofTimestamp(ChronoUnit.MICROS.between(Instant.EPOCH, time))
+      } else {
+        ofTimestampNtz(ChronoUnit.MICROS.between(Instant.EPOCH, time))
+      }
+    )
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -806,38 +811,42 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     )
   )
 
-  // TODO (delta-io/delta#2462) JSON serialization truncates to milliseconds, to safely skip for
-  //  timestamp stats we need to add a millisecond to any max stat (requires time add expression)
-  ignore("data skipping - on TIMESTAMP type") {
-    withTempDir { tempDir =>
-      val data = "2019-09-09 01:02:03.456789"
-      val df = Seq(data).toDF("strTs")
-        .selectExpr(
-          s"CAST(strTs AS TIMESTAMP) AS ts",
-          s"STRUCT(CAST(strTs AS TIMESTAMP) AS ts) AS nested")
+  Seq("TIMESTAMP", "TIMESTAMP_NTZ").foreach { dataType =>
+    test(s"data skipping - on $dataType type") {
+      withTempDir { tempDir =>
+        withSparkTimeZone("UTC") {
+          val data = "2019-09-09 01:02:03.456789"
+          val df = Seq(data).toDF("strTs")
+            .selectExpr(
+              s"CAST(strTs AS $dataType) AS ts",
+              s"STRUCT(CAST(strTs AS $dataType) AS ts) AS nested")
 
-      val r = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
-      df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+          val r = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+          df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+        }
 
-      checkSkipping(
-        tempDir.getCanonicalPath,
-        hits = Seq(
-          getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.456789-07:00"),
-          getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.456789-07:00"),
-          getTimestampPredicate(
-            ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789-07:00"),
-          getTimestampPredicate(
-            "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789-07:00")
-        ),
-        misses = Seq(
-          getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.457001-07:00"),
-          getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.455999-07:00"),
-          getTimestampPredicate(
-            ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.457001-07:00"),
-          getTimestampPredicate(
-            "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.455999-07:00")
+        checkSkipping(
+          tempDir.getCanonicalPath,
+          hits = Seq(
+            getTimestampPredicate("=", col("ts"), "2019-09-09T01:02:03.456789Z", dataType),
+            getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.456789Z", dataType),
+            getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.456789Z", dataType),
+            getTimestampPredicate(
+              ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789Z", dataType),
+            getTimestampPredicate(
+              "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789Z", dataType)
+          ),
+          misses = Seq(
+            getTimestampPredicate("=", col("ts"), "2019-09-09T01:02:03.457001Z", dataType),
+            getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.457001Z", dataType),
+            getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.455999Z", dataType),
+            getTimestampPredicate(
+              ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.457001Z", dataType),
+            getTimestampPredicate(
+              "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.455999Z", dataType)
+          )
         )
-      )
+      }
     }
   }
 
@@ -869,11 +878,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           equals(col("c8"), ofBoolean(true)),
           equals(col("c8"), ofBoolean(false)),
           greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-          // TODO (delta-io/delta#2462) we don't currently skip for timestamps but this will still
-          //  be a hit once we do
-          getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
-          // TODO (delta-io/delta#2462) once we skip for timestamps this should be a miss
-          getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
+          getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00", "TIMESTAMP")
         ),
         misses = Seq(
           equals(col("c1"), ofInt(10)),
@@ -881,7 +886,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           lessThan(col("c3"), ofFloat(0.5f)),
           greaterThan(col("c4"), ofFloat(5.0f)),
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
-          greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
+          greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
+          getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00", "TIMESTAMP")
         )
       )
     }
@@ -925,10 +931,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           equals(col("cc8"), ofBoolean(true)),
           equals(col("cc8"), ofBoolean(false)),
           greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-          // We don't currently skip for timestamps but this will still be a hit once we do
-          getTimestampPredicate(">=", col("cc5"), "2001-01-01T01:00:00-07:00"),
-          // Once we skip for timestamps this should be a miss
-          getTimestampPredicate(">=", col("cc5"), "2003-01-01T01:00:00-07:00")
+          getTimestampPredicate(">=", col("cc5"), "2001-01-01T01:00:00-07:00", "TIMESTAMP")
         ),
         misses = Seq(
           equals(col("cc1"), ofInt(10)),
@@ -936,6 +939,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           lessThan(col("cc3"), ofFloat(0.5f)),
           greaterThan(col("cc4"), ofFloat(5.0f)),
           equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
+          getTimestampPredicate(">=", col("cc5"), "2003-01-01T01:00:00-07:00", "TIMESTAMP"),
           greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
         )
       )
@@ -948,10 +952,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       spark.sql(
         s"""CREATE TABLE delta.`$tablePath`(
            |c1 long, c2 STRING, c3 FLOAT, c4 DOUBLE, c5 TIMESTAMP, c6 DATE,
-           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2)
+           |c7 BINARY, c8 BOOLEAN, c9 DECIMAL(3, 2), c10 TIMESTAMP_NTZ
            |) USING delta
            |TBLPROPERTIES(
-           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9',
+           |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9,c10',
            |'delta.columnMapping.mode' = 'name',
            |'delta.minReaderVersion' = '2',
            |'delta.minWriterVersion' = '5'
@@ -962,8 +966,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       spark.sql(s"alter table delta.`$tablePath` drop COLUMN c8")
       spark.sql(
         s"""insert into delta.`$tablePath` values
-           |(1, 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01', 1.0),
-           |(2, 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02', 2.0)
+           |(1, 1.0, 1.0, TIMESTAMP'2001-01-01 01:00', DATE'2001-01-01',
+           |1.0, TIMESTAMP_NTZ'2001-01-01 01:00'),
+           |(2, 2.0, 2.0, TIMESTAMP'2002-02-02 02:00', DATE'2002-02-02',
+           |2.0, TIMESTAMP_NTZ'2002-02-02 02:00')
            |""".stripMargin)
       checkSkipping(
         tablePath,
@@ -973,17 +979,17 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           greaterThan(col("c4"), ofFloat(1.0f)),
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
           greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-          // We don't currently skip for timestamps but this will still be a hit once we do
-          getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00"),
-          // Once we skip for timestamps this should be a miss
-          getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00")
+          getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00", "TIMESTAMP"),
+          getTimestampPredicate(">=", col("c10"), "2001-01-01T01:00:00-07:00", "TIMESTAMP_NTZ")
         ),
         misses = Seq(
           equals(col("c1"), ofInt(10)),
           lessThan(col("c3"), ofFloat(0.5f)),
           greaterThan(col("c4"), ofFloat(5.0f)),
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
-          greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
+          greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
+          getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00", "TIMESTAMP"),
+          getTimestampPredicate(">=", col("c10"), "2003-01-01T01:00:00-07:00", "TIMESTAMP_NTZ")
         )
       )
     }
@@ -1006,8 +1012,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           predicate: Predicate, expNumPartitions: Int, expNumFiles: Long): Unit = {
         val snapshot = latestSnapshot(tableDir.getCanonicalPath)
         val scanFiles = collectScanFileRows(
-          snapshot.getScanBuilder(defaultTableClient)
-            .withFilter(defaultTableClient, predicate)
+          snapshot.getScanBuilder(defaultEngine)
+            .withFilter(defaultEngine, predicate)
             .build())
         assert(scanFiles.length == expNumFiles,
           s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
@@ -1465,10 +1471,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
   test("don't read stats column when there is no usable data skipping filter") {
     val path = goldenTablePath("data-skipping-basic-stats-all-types")
-    val tableClient = tableClientDisallowedStatsReads
+    val engine = engineDisallowedStatsReads
 
-    def snapshot(tableClient: TableClient): Snapshot = {
-      Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
+    def snapshot(engine: Engine): Snapshot = {
+      Table.forPath(engine, path).getLatestSnapshot(engine)
     }
 
     def verifyNoStatsColumn(scanFiles: CloseableIterator[FilteredColumnarBatch]): Unit = {
@@ -1480,25 +1486,25 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
     // no filter --> don't read stats
     verifyNoStatsColumn(
-      snapshot(tableClientDisallowedStatsReads)
-        .getScanBuilder(tableClient).build()
-        .getScanFiles(tableClient))
+      snapshot(engineDisallowedStatsReads)
+        .getScanBuilder(engine).build()
+        .getScanFiles(engine))
 
     // partition filter only --> don't read stats
     val partFilter = equals(new Column("part"), ofInt(1))
     verifyNoStatsColumn(
-      snapshot(tableClientDisallowedStatsReads)
-        .getScanBuilder(tableClient).withFilter(tableClient, partFilter).build()
-        .getScanFiles(tableClient))
+      snapshot(engineDisallowedStatsReads)
+        .getScanBuilder(engine).withFilter(engine, partFilter).build()
+        .getScanFiles(engine))
 
     // no eligible data skipping filter --> don't read stats
     val nonEligibleFilter = lessThan(
       new ScalarExpression("%", Seq(col("as_int"), ofInt(10)).asJava),
       ofInt(1))
     verifyNoStatsColumn(
-      snapshot(tableClientDisallowedStatsReads)
-        .getScanBuilder(tableClient).withFilter(tableClient, nonEligibleFilter).build()
-        .getScanFiles(tableClient))
+      snapshot(engineDisallowedStatsReads)
+        .getScanBuilder(engine).withFilter(engine, nonEligibleFilter).build()
+        .getScanFiles(engine))
   }
 
   test("data skipping - prune schema correctly for various predicates") {
@@ -1532,13 +1538,105 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         greaterThan(col("as_long"), ofInt(0))
       ) -> Set(nestedCol("minValues.as_int"), nestedCol("maxValues.as_long"))
     ).foreach { case (predicate, expectedCols) =>
-      val tableClient = tableClientVerifyJsonParseSchema(verifySchema(expectedCols))
+      val engine = engineVerifyJsonParseSchema(verifySchema(expectedCols))
       collectScanFileRows(
-        Table.forPath(tableClient, path).getLatestSnapshot(tableClient)
-          .getScanBuilder(tableClient)
-          .withFilter(tableClient, predicate)
+        Table.forPath(engine, path).getLatestSnapshot(engine)
+          .getScanBuilder(engine)
+          .withFilter(engine, predicate)
           .build(),
-        tableClient = tableClient)
+        engine = engine)
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////
+  // Check the includeStats parameter on ScanImpl.getScanFiles(engine, includeStats)
+  //////////////////////////////////////////////////////////////////////////////////////////
+
+  test("check ScanImpl.getScanFiles for includeStats=true") {
+    // When includeStats=true the JSON statistic should always be returned in the scan files
+    withTempDir { tempDir =>
+      spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
+      def checkStatsPresent(scan: Scan): Unit = {
+        val scanFileBatches = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+        scanFileBatches.forEach { batch =>
+          assert(batch.getData().getSchema() == InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS)
+        }
+      }
+      // No query filter
+      checkStatsPresent(
+        latestSnapshot(tempDir.getCanonicalPath)
+          .getScanBuilder(defaultEngine)
+          .build()
+      )
+      // Query filter but no valid data skipping filter
+      checkStatsPresent(
+        latestSnapshot(tempDir.getCanonicalPath)
+          .getScanBuilder(defaultEngine)
+          .withFilter(
+            defaultEngine,
+            greaterThan(
+              new ScalarExpression("+", Seq(col("id"), ofInt(10)).asJava),
+              ofInt(100)
+            )
+          ).build()
+      )
+      // With valid data skipping filter present
+      checkStatsPresent(
+        latestSnapshot(tempDir.getCanonicalPath)
+          .getScanBuilder(defaultEngine)
+          .withFilter(
+            defaultEngine,
+            greaterThan(
+              col("id"),
+              ofInt(0)
+            )
+          ).build()
+      )
+    }
+  }
+
+  Seq(
+    ("version 0 no predicate", None, Some(0), 2),
+    ("latest version (has checkpoint) no predicate", None, None, 4),
+    ("version 0 with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)
+  ).foreach { case (nameSuffix, predicate, snapshotVersion, expectedNumFiles) =>
+    test(s"read scan files with variant - $nameSuffix") {
+      val path = getTestResourceFilePath("spark-variant-checkpoint")
+      val table = Table.forPath(defaultEngine, path)
+      val snapshot = snapshotVersion match {
+        case Some(version) => table.getSnapshotAsOfVersion(defaultEngine, version)
+        case None => table.getLatestSnapshot(defaultEngine)
+      }
+      val snapshotSchema = snapshot.getSchema(defaultEngine)
+
+      val expectedSchema = new StructType()
+        .add("id", LongType.LONG, true)
+        .add("v", VariantType.VARIANT, true)
+        .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
+        .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
+        .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
+        .add(
+          "array_of_struct_of_variants",
+          new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
+          true
+        )
+        .add(
+          "struct_of_array_of_variants",
+          new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
+          true
+        )
+
+      assert(snapshotSchema == expectedSchema)
+
+      val scanBuilder = snapshot.getScanBuilder(defaultEngine)
+      val scan = predicate match {
+        case Some(pred) => scanBuilder.withFilter(defaultEngine, pred).build()
+        case None => scanBuilder.build()
+      }
+
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+
+      assert(scanFiles.next().getRows().toSeq.length == expectedNumFiles)
     }
   }
 }
@@ -1553,12 +1651,12 @@ object ScanSuite {
   }
 
   /**
-   * Returns a custom table client implementation that doesn't allow "add.stats" in the read schema
+   * Returns a custom engine implementation that doesn't allow "add.stats" in the read schema
    * for parquet or json handlers.
    */
-  def tableClientDisallowedStatsReads: TableClient = {
+  def engineDisallowedStatsReads: Engine = {
     val hadoopConf = new Configuration()
-    new DefaultTableClient(hadoopConf) {
+    new DefaultEngine(hadoopConf) {
 
       override def getParquetHandler: ParquetHandler = {
         new DefaultParquetHandler(hadoopConf) {
@@ -1586,9 +1684,9 @@ object ScanSuite {
     }
   }
 
-  def tableClientVerifyJsonParseSchema(verifyFx: StructType => Unit): TableClient = {
+  def engineVerifyJsonParseSchema(verifyFx: StructType => Unit): Engine = {
     val hadoopConf = new Configuration()
-    new DefaultTableClient(hadoopConf) {
+    new DefaultEngine(hadoopConf) {
       override def getJsonHandler: JsonHandler = {
         new DefaultJsonHandler(hadoopConf) {
           override def parseJson(stringVector: ColumnVector, schema: StructType,

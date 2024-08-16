@@ -42,7 +42,9 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
-trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
+trait GeneratedColumnSuiteBase
+    extends GeneratedColumnTest
+    with DeltaExcludedBySparkVersionTestMixinShims {
 
   import GeneratedColumn._
   import testImplicits._
@@ -706,26 +708,104 @@ trait GeneratedColumnSuiteBase extends GeneratedColumnTest {
 
   test("disallow column type evolution") {
     withTableName("disallow_column_type_evolution") { table =>
-      // "CAST(HASH(c1 + 32767s) AS SMALLINT)" is a special expression that returns different
-      // results for SMALLINT and INT. For example, "CAST(hash(32767 + 32767s) AS SMALLINT)" returns
-      // 9876, but "SELECT CAST(hash(32767s + 32767s) AS SMALLINT)" returns 31349. Hence we should
-      // not allow updating column type from SMALLINT to INT.
-      createTable(table, None, "c1 SMALLINT, c2 SMALLINT",
-        Map("c2" -> "CAST(HASH(c1 + 32767s) AS SMALLINT)"), Nil)
+    // "HASH(c1)" returns different results for INT and LONG. For example, "SELECT hash(32767)"
+    // returns 1249274084, but "SELECT hash(32767L)" returns -860381306. Hence we should
+    // not allow updating column type from INT to LONG.
+    createTable(table, None, "c1 INT, c2 INT",
+        Map("c2" -> "HASH(c1)"), Nil)
       val tableSchema = spark.table(table).schema
-      withSQLConf(SQLConf.ANSI_ENABLED.key -> "false") {
-        Seq(32767.toShort).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
-      }
+      Seq(32767).toDF("c1").write.format("delta").mode("append").saveAsTable(table)
       assert(tableSchema == spark.table(table).schema)
-      // Insert an INT to `c1` should fail rather than changing the `c1` type to INT
-      val e = intercept[AnalysisException] {
-        Seq(32767).toDF("c1").write.format("delta").mode("append")
-          .option("mergeSchema", "true")
-          .saveAsTable(table)
-      }.getMessage
-      assert(e.contains("Column c1") &&
-        e.contains("The data type is SMALLINT. It doesn't accept data type INT"))
-      checkAnswer(spark.table(table), Row(32767, 31349) :: Nil)
+      // Insert a LONG to `c1` should fail rather than changing the `c1` type to LONG.
+      checkError(
+        exception = intercept[AnalysisException] {
+          Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
+            .option("mergeSchema", "true")
+            .saveAsTable(table)
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "c1",
+          "columnType" -> "INT",
+          "dataType" -> "BIGINT",
+          "generatedColumns" -> "c2 -> HASH(c1)"
+        ))
+      checkAnswer(spark.table(table), Row(32767, 1249274084) :: Nil)
+    }
+  }
+
+  test("disallow column type evolution - nesting") {
+    withTableName("disallow_column_type_evolution") { table =>
+      createTable(table, None, "a SMALLINT, c1 STRUCT<a: SMALLINT>, c2 INT",
+        Map("c2" -> "HASH(a)"), Nil)
+      val tableSchema = spark.table(table).schema
+      Seq(32767.toShort).toDF("a")
+        .selectExpr("a", "named_struct('a', a) as c1")
+        .write.format("delta").mode("append").saveAsTable(table)
+      assert(tableSchema == spark.table(table).schema)
+
+      // INSERT an INT to `c1.a` should not fail
+      Seq((32767.toShort, 32767)).toDF("a", "c1a")
+        .selectExpr("a", "named_struct('a', c1a) as c1")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+
+      // Insert an INT to `a` should fail rather than changing the `a` type to INT
+      checkError(
+        exception = intercept[AnalysisException] {
+          Seq((32767, 32767)).toDF("a", "c1a")
+            .selectExpr("a", "named_struct('a', c1a) as c1")
+            .write.format("delta").mode("append")
+            .option("mergeSchema", "true")
+            .saveAsTable(table)
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "a",
+          "columnType" -> "SMALLINT",
+          "dataType" -> "INT",
+          "generatedColumns" -> "c2 -> HASH(a)"
+        )
+      )
+    }
+  }
+
+  test("changing the type of a nested field named the same as the generated column") {
+    withTableName("disallow_column_type_evolution") { table =>
+      createTable(table, None, "a INT, t STRUCT<gen: SMALLINT>, gen INT",
+        Map("gen" -> "HASH(a)"), Nil)
+      // Changing the type of `t.gen` should succeed since it's not actually the generated column.
+      Seq((32767, 32767)).toDF("a", "gen")
+        .selectExpr("a", "named_struct('gen', gen) as t")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+      checkAnswer(spark.table(table), Row(32767, Row(32767), 1249274084) :: Nil)
+    }
+  }
+
+  test("changing the type of nested field not referenced by a generated col") {
+    withTableName("disallow_column_type_evolution") { table =>
+      createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen SMALLINT",
+        Map("gen" -> "CAST(HASH(t.a - 10s) AS SMALLINT)"), Nil)
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          Seq((32767.toShort, 32767)).toDF("a", "b")
+            .selectExpr("named_struct('a', a, 'b', b) as t")
+            .write.format("delta").mode("append")
+            .option("mergeSchema", "true")
+            .saveAsTable(table)
+        },
+        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        parameters = Map(
+          "columnName" -> "t",
+          "columnType" -> "STRUCT<a: SMALLINT, b: SMALLINT>",
+          "dataType" -> "STRUCT<a: SMALLINT, b: INT>",
+          "generatedColumns" -> "gen -> CAST(HASH(t.a - 10s) AS SMALLINT)"
+        )
+      )
     }
   }
 

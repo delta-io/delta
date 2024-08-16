@@ -17,6 +17,7 @@
 package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
+import java.util.UUID
 
 import org.apache.spark.sql.delta.{DeltaFileFormat, DeltaLog}
 import org.apache.spark.sql.delta.files.{SupportsRowIndexFilters, TahoeLogFileIndex}
@@ -53,9 +54,13 @@ case class DeltaSharingFileIndex(
     with SupportsRowIndexFilters
     with DeltaFileFormat
     with Logging {
-  private val queryCustomTablePath = client.getProfileProvider.getCustomTablePath(
-    params.path.toString
-  )
+  // Use the head of an uuid as fileIndexId, which will be used in the key of the map from a delta
+  // log path to a deltaLog class, to allow different queries with the same parameters on the
+  // same fileIndex to reuse delta log.
+  // Also, the uuid is used to differentiate different fileIndices on the same table in the same
+  // cluster, the head of an uuid should be sufficient given the low collision chance and small
+  // number of classes that could be created in the same computing environment.
+  private val fileIndexId = UUID.randomUUID().toString().split('-').head
 
   override def spark: SparkSession = params.spark
 
@@ -101,30 +106,39 @@ case class DeltaSharingFileIndex(
       partitionFilters.map(_.sql).mkString(";"),
       dataFilters.map(_.sql).mkString(";"),
       jsonPredicateHints.getOrElse(""),
+      overrideLimit.map(_.toString).getOrElse(""),
       params.deltaSharingTableMetadata.version
-    )
-    val tablePathWithHashIdSuffix = DeltaSharingUtils.getTablePathWithIdSuffix(
-      queryCustomTablePath,
-      queryParamsHashId
     )
     // listFiles will be called twice or more in a spark query, with this check we can avoid
     // duplicated work of making expensive rpc and constructing the delta log.
-    queriedTableQueryIdToDeltaLog.get(tablePathWithHashIdSuffix) match {
-      case Some(deltaLog) => deltaLog
+    val tableKey = DeltaSharingUtils.getTablePathWithIdSuffix(
+      fileIndexId + "." + params.path.toString,
+      queryParamsHashId
+    )
+    queriedTableQueryIdToDeltaLog.get(tableKey) match {
+      case Some(deltaLog) =>
+        logInfo(s"Reusing deltaLog for tableKey:$tableKey.partitionFilters:$partitionFilters," +
+          s"dataFilters:$dataFilters,overrideLimit:$overrideLimit.")
+        deltaLog
       case None =>
-        createDeltaLog(
+        val newDeltaLog = createDeltaLog(
           jsonPredicateHints,
           queryParamsHashId,
-          tablePathWithHashIdSuffix,
           overrideLimit
         )
+        // In theory there should only be one entry in this set since each query creates its own
+        // FileIndex class. This is purged together with the FileIndex class when the query
+        // finishes.
+        queriedTableQueryIdToDeltaLog.put(tableKey, newDeltaLog)
+        logInfo(s"Added new deltaLog for tableKey:$tableKey.partitionFilters:$partitionFilters," +
+          s"dataFilters:$dataFilters,overrideLimit:$overrideLimit.")
+        newDeltaLog
     }
   }
 
   private def createDeltaLog(
       jsonPredicateHints: Option[String],
       queryParamsHashId: String,
-      tablePathWithHashIdSuffix: String,
       overrideLimit: Option[Long]): DeltaLog = {
     //  1. Call client.getFiles.
     val startTime = System.currentTimeMillis()
@@ -144,6 +158,12 @@ case class DeltaSharingFileIndex(
     )
 
     // 2. Prepare a DeltaLog.
+    val tablePathWithHashIdSuffix = DeltaSharingUtils.getTablePathWithIdSuffix(
+      client.getProfileProvider.getCustomTablePath(
+        params.path.toString
+      ),
+      queryParamsHashId
+    )
     val deltaLogMetadata =
       DeltaSharingLogFileSystem.constructLocalDeltaLogAtVersionZero(
         deltaTableFiles.lines,
@@ -152,8 +172,7 @@ case class DeltaSharingFileIndex(
 
     // 3. Register parquet file id to url mapping
     CachedTableManager.INSTANCE.register(
-      // Using params.path instead of queryCustomTablePath because it will be customized
-      // within CachedTableManager.
+      // Using params.path directly because it will be customized within CachedTableManager.
       tablePath = DeltaSharingUtils.getTablePathWithIdSuffix(
         params.path.toString,
         queryParamsHashId
@@ -168,8 +187,7 @@ case class DeltaSharingFileIndex(
         limit = overrideLimit.orElse(limitHint),
         versionAsOf = params.options.versionAsOf,
         timestampAsOf = params.options.timestampAsOf,
-        jsonPredicateHints = jsonPredicateHints,
-        refreshToken = deltaTableFiles.refreshToken
+        jsonPredicateHints = jsonPredicateHints
       ),
       expirationTimestamp =
         if (CachedTableManager.INSTANCE
@@ -186,11 +204,6 @@ case class DeltaSharingFileIndex(
       params.spark,
       DeltaSharingLogFileSystem.encode(tablePathWithHashIdSuffix)
     )
-
-    // In theory there should only be one entry in this set since each query creates its own
-    // FileIndex class. This is purged together with the FileIndex class when the query
-    // finishes.
-    queriedTableQueryIdToDeltaLog.put(tablePathWithHashIdSuffix, deltaLog)
 
     deltaLog
   }

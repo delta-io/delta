@@ -22,6 +22,8 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -33,6 +35,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, Dataset, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -192,6 +195,13 @@ case class DeltaTableV2(
         base.put(TableCatalog.PROP_EXTERNAL, "true")
       }
     }
+    // Don't use [[PROP_CLUSTERING_COLUMNS]] from CatalogTable because it may be stale.
+    // Since ALTER TABLE updates it using an async post-commit hook.
+    clusterBySpec.foreach { clusterBy =>
+      ClusterBySpec.toProperties(clusterBy).foreach { case (key, value) =>
+        base.put(key, value)
+      }
+    }
     Option(initialSnapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
     base.asJava
   }
@@ -277,9 +287,11 @@ case class DeltaTableV2(
    */
   def withOptions(newOptions: Map[String, String]): DeltaTableV2 = {
     val ttSpec = DeltaDataSource.getTimeTravelVersion(newOptions)
-    if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
+
+    // Spark 4.0 and 3.5 handle time travel options differently.
+    DeltaTimeTravelSpecShims.validateTimeTravelSpec(
+      currSpecOpt = timeTravelOpt,
+      newSpecOpt = ttSpec)
 
     val caseInsensitiveNewOptions = new CaseInsensitiveStringMap(newOptions.asJava)
 
@@ -319,6 +331,17 @@ case class DeltaTableV2(
   override def v1Table: CatalogTable = ttSafeCatalogTable.getOrElse {
     throw DeltaErrors.invalidV1TableCall("v1Table", "DeltaTableV2")
   }
+
+  lazy val clusterBySpec: Option[ClusterBySpec] = {
+    // Always get the clustering columns from metadata domain in delta log.
+    if (ClusteredTableUtils.isSupported(initialSnapshot.protocol)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(
+        initialSnapshot)
+      Some(ClusterBySpec.fromColumnNames(clusteringColumns))
+    } else {
+      None
+    }
+  }
 }
 
 object DeltaTableV2 {
@@ -329,7 +352,7 @@ object DeltaTableV2 {
 
   /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 = {
-    resolve(spark, UnresolvedTable(tableId.nameParts, cmd, None), cmd)
+    resolve(spark, UnresolvedTable(tableId.nameParts, cmd), cmd)
   }
 
   /** Applies standard v2 table resolution to an unresolved Delta table plan node */

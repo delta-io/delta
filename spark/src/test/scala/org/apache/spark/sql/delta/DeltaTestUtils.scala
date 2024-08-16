@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.FileStatus
@@ -341,13 +341,13 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
    * Creates an AddFile that can be used for tests where the exact parameters do not matter.
    */
   def createTestAddFile(
-      path: String = "foo",
+      encodedPath: String = "foo",
       partitionValues: Map[String, String] = Map.empty,
       size: Long = 1L,
       modificationTime: Long = 1L,
       dataChange: Boolean = true,
       stats: String = "{\"numRecords\": 1}"): AddFile = {
-    AddFile(path, partitionValues, size, modificationTime, dataChange, stats)
+    AddFile(encodedPath, partitionValues, size, modificationTime, dataChange, stats)
   }
 
   /**
@@ -483,7 +483,8 @@ trait DeltaTestUtilsForTempViews
  * cleaning it up after each test.
  */
 trait DeltaDMLTestUtils
-  extends DeltaTestUtilsBase
+  extends DeltaSQLTestUtils
+  with DeltaTestUtilsBase
   with BeforeAndAfterEach {
   self: SharedSparkSession =>
 

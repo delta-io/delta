@@ -23,13 +23,13 @@ import os
 from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
+from pyspark.errors.exceptions.base import UnsupportedOperationException
 from pyspark.sql import DataFrame, Row
-from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
 from pyspark.sql.utils import AnalysisException, ParseException
 
-from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder
+from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder, IdentityGenerator
 from delta.testing.utils import DeltaTestCase
 
 
@@ -639,6 +639,16 @@ class DeltaTableTestsMixin:
         deltaTable.update(expr("col2 = 11"), {"col1": expr("2")})
         self.__checkAnswer(deltaTable.toDF(), [(2, 12)], schema=["col1", "col2"])
 
+    def __verify_identity_column(self, tableName: str, deltaTable: DeltaTable) -> None:
+        for i in range(2):
+            cmd = "INSERT INTO {table} (val) VALUES ({i})".format(table=tableName, i=i)
+            self.spark.sql(cmd)
+        cmd = "INSERT INTO {table} (id3, val) VALUES (8, 2)".format(table=tableName)
+        self.spark.sql(cmd)
+        self.__checkAnswer(deltaTable.toDF(),
+                           expectedAnswer=[(1, 2, 2, 0), (2, 3, 4, 1), (3, 4, 8, 2)],
+                           schema=["id1", "id2", "id3", "val"])
+
     def __build_delta_table(self, builder: DeltaTableBuilder) -> DeltaTable:
         return builder.addColumn("col1", "int", comment="foo", nullable=False) \
             .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
@@ -697,6 +707,34 @@ class DeltaTableTestsMixin:
                                        [StringType(), LongType(), IntegerType()],
                                        nullables={"key", "value", "value2"},
                                        partitioningColumns=["value", "value2"])
+
+    def test_create_replace_table_with_cluster_by(self) -> None:
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+        with self.table("test"):
+            # verify creating table with list of structFields
+            deltaTable = DeltaTable.create(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
+
+            deltaTable = DeltaTable.replace(self.spark).tableName("test").addColumns(
+                df.schema.fields) \
+                .addColumn("value2", dataType="int") \
+                .clusterBy("value2", "value")\
+                .execute()
+            self.__verify_table_schema("test",
+                                       deltaTable.toDF().schema,
+                                       ["key", "value", "value2"],
+                                       [StringType(), LongType(), IntegerType()],
+                                       nullables={"key", "value", "value2"},
+                                       partitioningColumns=[])
 
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
         with self.table("test"):
@@ -888,6 +926,12 @@ class DeltaTableTestsMixin:
                                        tblComment="comment")
 
     def test_verify_paritionedBy_compatibility(self) -> None:
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[attr-defined]
+
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
                 .addColumn("col1", "int", comment="foo", nullable=False) \
@@ -907,6 +951,41 @@ class DeltaTableTestsMixin:
                                        properties={"foo": "bar"},
                                        partitioningColumns=["col1"],
                                        tblComment="comment")
+
+    def test_create_table_with_identity_column(self) -> None:
+        for ifNotExists in (False, True):
+            tableName = "testTable{}".format(ifNotExists)
+            with self.table(tableName):
+                try:
+                    self.spark.conf.set("spark.databricks.delta.identityColumn.enabled", "true")
+                    builder = (
+                        DeltaTable.createIfNotExists(self.spark)
+                        if ifNotExists
+                        else DeltaTable.create(self.spark))
+                    builder = builder.tableName(tableName)
+                    builder = (
+                        builder.addColumn(
+                            "id1", LongType(), generatedAlwaysAs=IdentityGenerator())
+                        .addColumn(
+                            "id2",
+                            "BIGINT",
+                            generatedAlwaysAs=IdentityGenerator(start=2))
+                        .addColumn(
+                            "id3",
+                            "bigint",
+                            generatedByDefaultAs=IdentityGenerator(start=2, step=2))
+                        .addColumn("val", "bigint", nullable=False))
+
+                    deltaTable = builder.execute()
+                    self.__verify_table_schema(
+                        tableName,
+                        deltaTable.toDF().schema,
+                        ["id1", "id2", "id3", "val"],
+                        [LongType(), LongType(), LongType(), LongType()],
+                        nullables={"id1", "id2", "id3"})
+                    self.__verify_identity_column(tableName, deltaTable)
+                finally:
+                    self.spark.conf.unset("spark.databricks.delta.identityColumn.enabled")
 
     def test_delta_table_builder_with_bad_args(self) -> None:
         builder = DeltaTable.create(self.spark).location(self.tempFile)
@@ -931,10 +1010,13 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.addColumn("a", 1)  # type: ignore[arg-type]
 
-        # bad column datatype - can't be pared
+        # bad column datatype - can't be parsed
         with self.assertRaises(ParseException):
             builder.addColumn("a", "1")
             builder.execute()
+
+        # reset the builder
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
 
         # bad comment
         with self.assertRaises(TypeError):
@@ -943,6 +1025,55 @@ class DeltaTableTestsMixin:
         # bad generatedAlwaysAs
         with self.assertRaises(TypeError):
             builder.addColumn("a", "int", generatedAlwaysAs=1)  # type: ignore[arg-type]
+
+        # bad generatedAlwaysAs - identity column data type must be Long
+        with self.assertRaises(UnsupportedOperationException):
+            builder.addColumn(
+                "a",
+                "int",
+                generatedAlwaysAs=IdentityGenerator()
+            )  # type: ignore[arg-type]
+
+        # bad generatedAlwaysAs - step can't be 0
+        with self.assertRaises(ValueError):
+            builder.addColumn(
+                "a",
+                "bigint",
+                generatedAlwaysAs=IdentityGenerator(step=0)
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - can't be set with generatedAlwaysAs
+        with self.assertRaises(ValueError):
+            builder.addColumn(
+                "a",
+                "bigint",
+                generatedAlwaysAs="",
+                generatedByDefaultAs=IdentityGenerator()
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - argument type must be IdentityGenerator
+        with self.assertRaises(TypeError):
+            builder.addColumn(
+                "a",
+                "bigint",
+                generatedByDefaultAs=""
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - identity column data type must be Long
+        with self.assertRaises(UnsupportedOperationException):
+            builder.addColumn(
+                "a",
+                "int",
+                generatedByDefaultAs=IdentityGenerator()
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - step can't be 0
+        with self.assertRaises(ValueError):
+            builder.addColumn(
+                "a",
+                "bigint",
+                generatedByDefaultAs=IdentityGenerator(step=0)
+            )  # type: ignore[arg-type]
 
         # bad nullable
         with self.assertRaises(TypeError):
@@ -965,6 +1096,16 @@ class DeltaTableTestsMixin:
 
         with self.assertRaises(TypeError):
             builder.partitionedBy([1])  # type: ignore[list-item]
+
+        # bad clusterBy col name
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1)  # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1, "1")   # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy([1])  # type: ignore[list-item]
 
         # bad property key
         with self.assertRaises(TypeError):
