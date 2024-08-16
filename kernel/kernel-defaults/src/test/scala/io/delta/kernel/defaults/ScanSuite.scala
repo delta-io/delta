@@ -1596,14 +1596,14 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   Seq(
-    ("first checkpoint no predicate", None, Some(0), 2),
-    ("latest checkpoint no predicate", None, None, 4),
-    ("first checkpoint with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)
-  ).foreach { case (nameSuffix, predicate, checkpointVersion, expectedNumFiles) =>
+    ("version 0 no predicate", None, Some(0), 2),
+    ("latest version (has checkpoint) no predicate", None, None, 4),
+    ("version 0 with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)
+  ).foreach { case (nameSuffix, predicate, snapshotVersion, expectedNumFiles) =>
     test(s"read scan files with variant - $nameSuffix") {
       val path = getTestResourceFilePath("spark-variant-checkpoint")
       val table = Table.forPath(defaultEngine, path)
-      val snapshot = checkpointVersion match {
+      val snapshot = snapshotVersion match {
         case Some(version) => table.getSnapshotAsOfVersion(defaultEngine, version)
         case None => table.getLatestSnapshot(defaultEngine)
       }
