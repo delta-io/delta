@@ -33,6 +33,7 @@ import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRe
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
@@ -120,7 +121,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     tableProperties: Map[String, String],
     versionAsOf: Option[Long] = None,
     timestampAsOf: Option[String] = None
-  ): DataFrame = withActiveSession(sparkSession) {
+  ): DeltaTable = withActiveSession(sparkSession) {
     val (targetRelation, targetPath) = if (new Path(target).isAbsolute()) {
       (UnresolvedRelation(TableIdentifier(target, Some("delta"))), Some(target))
     } else {
@@ -144,8 +145,18 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       source
     }
 
-    toDataset(sparkSession, CloneTableStatement(maybeTimeTravel,
+    val qe = sparkSession.sessionState.executePlan(CloneTableStatement(maybeTimeTravel,
       targetRelation, false, replace, true, tableProperties.toMap, targetPath))
+
+    // call `QueryExecution.toRDD` to trigger the execution of commands.
+    SQLExecution.withNewExecutionId(qe, Some("clone delta table"))(qe.toRdd)
+
+    // Return DeltaTable Object.
+    if (targetPath.isDefined) {
+      DeltaTable.forPath(sparkSession, targetPath.get)
+    } else {
+      DeltaTable.forName(sparkSession, targetRelation.name)
+    }
   }
 
   protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
