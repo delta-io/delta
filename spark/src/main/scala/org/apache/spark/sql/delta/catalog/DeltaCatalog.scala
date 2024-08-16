@@ -73,7 +73,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   private lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
-    delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog")
+    delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
   }
 
   /**
@@ -195,8 +195,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
       createTableFunc = Option.when(isUnityCatalog && sourceQuery.isEmpty) { v1table =>
-          val t = V1Table(v1Table)
-          super.createTable(ident, t.columns(), t.partitioning, t.properties)
+        val t = V1Table(v1Table)
+        super.createTable(ident, t.columns(), t.partitioning, t.properties)
       }).run(spark)
 
     loadTable(ident)
