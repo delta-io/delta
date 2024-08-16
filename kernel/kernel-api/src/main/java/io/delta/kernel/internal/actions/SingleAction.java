@@ -56,7 +56,7 @@ public class SingleAction {
   public static StructType FULL_SCHEMA =
       new StructType()
           .add("txn", SetTransaction.FULL_SCHEMA)
-          .add("add", AddFile.SCHEMA_WITH_STATS)
+          .add("add", AddFile.FULL_SCHEMA)
           .add("remove", RemoveFile.FULL_SCHEMA)
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
