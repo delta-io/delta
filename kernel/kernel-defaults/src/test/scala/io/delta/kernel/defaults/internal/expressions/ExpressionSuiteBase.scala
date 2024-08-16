@@ -17,6 +17,7 @@ package io.delta.kernel.defaults.internal.expressions
 
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
 import io.delta.kernel.expressions._
 import io.delta.kernel.types._
@@ -62,6 +63,19 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
           actual.getBoolean(rowId) === expected.getBoolean(rowId),
           s"unexpected value at $rowId"
         )
+      }
+    }
+  }
+
+  protected def checkTimestampVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getSize === expected.getSize)
+    for (rowId <- 0 until actual.getSize) {
+      if (expected.isNullAt(rowId)) {
+        assert(actual.isNullAt(rowId), s"Expected null at row $rowId")
+      } else {
+        val expectedValue = getValueAsObject(expected, rowId).asInstanceOf[Long]
+        val actualValue = getValueAsObject(actual, rowId).asInstanceOf[Long]
+        assert(actualValue === expectedValue, s"Unexpected value at row $rowId")
       }
     }
   }

@@ -77,6 +77,12 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED" : {
+    "message" : [
+      "ALTER TABLE CLUSTER BY cannot be applied to a partitioned table."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED" : {
     "message" : [
       "Cannot enable <tableFeature> table feature using ALTER TABLE SET TBLPROPERTIES. Please use CREATE OR REPLACE TABLE CLUSTER BY to create a Delta table with clustering."
@@ -163,6 +169,13 @@
       "Cannot drop bloom filter index on a non indexed column: <columnName>"
     ],
     "sqlState" : "42703"
+  },
+  "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE" : {
+    "message" : [
+      "Cannot drop the CHECK constraints table feature.",
+      "The following constraints must be dropped first: <constraints>."
+    ],
+    "sqlState" : "0AKDE"
   },
   "DELTA_CANNOT_EVALUATE_EXPRESSION" : {
     "message" : [
@@ -352,6 +365,24 @@
       "<targetIdentifier>."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_CLONE_CANNOT_OVERRIDE_COORDINATED_COMMITS" : {
+    "message" : [
+      "Cannot override coordinated commits configurations for an existing target table that already has coordinated commits enabled during CLONE."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_CLONE_CONF_OVERRIDE_NOT_SUPPORTED" : {
+    "message" : [
+      "Configuration \"<configuration>\" cannot be overridden with CLONE command."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_CLONE_MUST_OVERRIDE_ALL_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "During CLONE, either all coordinated commits configurations i.e.\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\" must be overridden or none of them."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
     "message" : [
@@ -649,6 +680,17 @@
     ],
     "sqlState" : "42000"
   },
+  "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING" : {
+    "message" : [
+      "The specified clustering columns do not match the existing clustering columns at <path>.",
+      "== Specified ==",
+      "<specifiedColumns>",
+      "== Existing ==",
+      "<existingColumns>",
+      ""
+    ],
+    "sqlState" : "42KD7"
+  },
   "DELTA_CREATE_TABLE_WITH_DIFFERENT_PARTITIONING" : {
     "message" : [
       "The specified partitioning does not match the existing partitioning at <path>.",
@@ -787,7 +829,7 @@
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
-      "Exceeds char/varchar type length limitation. Failed check: <expr>."
+      "Value \"<value>\" exceeds char/varchar type length limitation. Failed check: <expr>."
     ],
     "sqlState" : "22001"
   },
@@ -924,7 +966,7 @@
   },
   "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED" : {
     "message" : [
-      "History truncation is only relevant for reader features."
+      "The particular feature does not require history truncation."
     ],
     "sqlState" : "0AKDE"
   },
@@ -1064,7 +1106,7 @@
       },
       "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
         "message" : [
-          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table first. Then run REORG PURGE command to purge the Deletion Vectors on the table."
         ]
       },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
@@ -1110,7 +1152,7 @@
       },
       "VERSION_MUTUAL_EXCLUSIVE" : {
         "message" : [
-          "Only one IcebergCompat version can be enabled."
+          "Only one IcebergCompat version can be enabled, please explicitly disable all other IcebergCompat versions that are not needed."
         ]
       },
       "WRONG_REQUIRED_TABLE_PROPERTY" : {
@@ -1121,17 +1163,59 @@
     },
     "sqlState" : "KD00E"
   },
+  "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN is not supported for IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
+  "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY is only supported by Delta."
+    ],
+    "sqlState" : "0AKDD"
+  },
+  "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY cannot be called on non IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
+  "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED" : {
+    "message" : [
+      "Providing values for GENERATED ALWAYS AS IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42808"
+  },
   "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP" : {
     "message" : [
       "IDENTITY column step cannot be 0."
     ],
     "sqlState" : "42611"
   },
+  "DELTA_IDENTITY_COLUMNS_PARTITION_NOT_SUPPORTED" : {
+    "message" : [
+      "PARTITIONED BY IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42601"
+  },
+  "DELTA_IDENTITY_COLUMNS_REPLACE_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "ALTER TABLE REPLACE COLUMNS is not supported for table with IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
   "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE" : {
     "message" : [
       "DataType <dataType> is not supported for IDENTITY columns."
     ],
     "sqlState" : "428H2"
+  },
+  "DELTA_IDENTITY_COLUMNS_UPDATE_NOT_SUPPORTED" : {
+    "message" : [
+      "UPDATE on IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42808"
   },
   "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION" : {
     "message" : [
@@ -2472,20 +2556,6 @@
     ],
     "sqlState" : "0AKDC"
   },
-  "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL" : {
-    "message" : [
-      "",
-      "Your current table protocol version does not support changing column mapping modes",
-      "using <config>.",
-      "",
-      "Required Delta protocol version for column mapping:",
-      "<requiredVersion>",
-      "Your table's current Delta protocol version:",
-      "<currentVersion>",
-      "<advice>"
-    ],
-    "sqlState" : "KD004"
-  },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_SCHEMA_CHANGE" : {
     "message" : [
       "",
@@ -2737,6 +2807,12 @@
       "Table implementation does not support writes: <tableName>"
     ],
     "sqlState" : "42807"
+  },
+  "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR" : {
+    "message" : [
+      "You are trying to perform writes on a table which has been registered with the commit coordinator <coordinatorName>. However, no implementation of this coordinator is available in the current environment and writes without coordinators are not allowed."
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION" : {
     "message" : [

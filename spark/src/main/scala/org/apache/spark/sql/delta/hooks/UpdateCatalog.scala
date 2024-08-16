@@ -24,13 +24,17 @@ import scala.concurrent.{ExecutionContext, Future, TimeoutException}
 import scala.util.Try
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaTableIdentifier, OptimisticTransactionImpl, Snapshot}
 import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import org.apache.commons.lang3.exception.ExceptionUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -123,6 +127,20 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
     return DeltaTableIdentifier.isDeltaPath(spark, table.identifier)
   }
 
+  /** Check if the clustering columns from snapshot doesn't match what's in the table properties. */
+  protected def clusteringColumnsChanged(snapshot: Snapshot): Boolean = {
+    if (!ClusteredTableUtils.isSupported(snapshot.protocol)) {
+      return false
+    }
+    val currentLogicalClusteringNames =
+      ClusteringColumnInfo.extractLogicalNames(snapshot).mkString(",")
+    val clusterBySpecOpt = ClusterBySpec.fromProperties(table.properties)
+
+    // Since we don't remove the clustering columns table property, this can't happen.
+    assert(!(currentLogicalClusteringNames.nonEmpty && clusterBySpecOpt.isEmpty))
+    clusterBySpecOpt.exists(_.columnNames.map(_.toString).mkString(",") !=
+      currentLogicalClusteringNames)
+  }
 
   /** Update the entry in the Catalog to reflect the latest schema and table properties. */
   protected def execute(
@@ -161,6 +179,15 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
               "delta.catalog.update.properties",
               data = loggingData
             )
+          } else if (clusteringColumnsChanged(snapshot)) {
+            // If the clustering columns changed, we'll update the catalog with the new
+            // table properties.
+            updateProperties(spark, snapshot)
+            recordDeltaEvent(
+              snapshot.deltaLog,
+              "delta.catalog.update.clusteringColumns",
+              data = loggingData
+            )
           }
         } catch {
           case NonFatal(e) =>
@@ -171,8 +198,9 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
                 "exceptionMsg" -> ExceptionUtils.getMessage(e),
                 "stackTrace" -> ExceptionUtils.getStackTrace(e))
             )
-            logWarning(s"Failed to update the catalog for ${table.identifier} with the latest " +
-              s"table information.", e)
+            logWarning(log"Failed to update the catalog for " +
+              log"${MDC(DeltaLogKeys.TABLE_NAME, table.identifier)} with the latest " +
+              log"table information.", e)
         }
       }
     }
@@ -259,7 +287,8 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
 }
 
 object UpdateCatalog {
-  private var tp: ExecutionContext = _
+  // Exposed for testing.
+  private[delta] var tp: ExecutionContext = _
 
   // This is the encoding of the database for the Hive MetaStore
   private val latin1 = Charset.forName("ISO-8859-1")
@@ -344,6 +373,14 @@ object UpdateCatalog {
       snapshot.getProperties.toMap ++ Map(
         DeltaConfigs.METASTORE_LAST_UPDATE_VERSION -> snapshot.version.toString,
         DeltaConfigs.METASTORE_LAST_COMMIT_TIMESTAMP -> snapshot.timestamp.toString)
+    if (ClusteredTableUtils.isSupported(snapshot.protocol)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+      val properties = ClusterBySpec.toProperties(
+        ClusterBySpec.fromColumnNames(clusteringColumns))
+      properties.foreach { case (key, value) =>
+        newProperties += (key -> value)
+      }
+    }
     newProperties
   }
 

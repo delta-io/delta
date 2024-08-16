@@ -16,14 +16,14 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.lang.{Double => DoubleJ, Float => FloatJ}
-
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, ExpressionTestUtils, TestRow}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.ColumnMapping
-import io.delta.kernel.internal.util.ColumnMapping.convertToPhysicalSchema
+import io.delta.kernel.internal.util.ColumnMapping.{ColumnMappingMode, convertToPhysicalSchema}
 import io.delta.kernel.types._
 import io.delta.kernel.utils.DataFileStatus
 import org.apache.spark.sql.{functions => sparkfn}
@@ -89,7 +89,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
         )
     },
     // Test cases reading and writing data with field ids. This is for column mapping mode ID.
-    Seq((200, 3), (1024, 1)).map {
+    Seq((1024, 1)).map {
       case (targetFileSize, expParquetFileCount) =>
         (
           "write data with field ids (no stats)", // test name
@@ -153,6 +153,35 @@ class ParquetFileWriterSuite extends AnyFunSuite
           ),
           4 // how many columns have the stats collected from given list above
         )
+    },
+    // Decimal types with various precision and scales
+    Seq((10000, 1)).map {
+      case (targetFileSize, expParquetFileCount) =>
+        (
+          "write decimal various scales and precision (with stats)", // test name
+          "decimal-various-scale-precision",
+          targetFileSize,
+          expParquetFileCount,
+          3, /* expected number of rows written to Parquet files */
+          Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
+          leafLevelPrimitiveColumns(
+            Seq.empty, tableSchema(goldenTablePath("decimal-various-scale-precision"))),
+          29 // how many columns have the stats collected from given list above
+        )
+    },
+    // Read a iceberg compat v2 data with field ids and nested ids, and write it back
+    Seq((200, 1)).map {
+      case (targetFileSize, expParquetFileCount) =>
+        (
+          "write iceberg compat v2 data with field ids (no stats)", // test name
+          "table-with-columnmapping-mode-id", // input table where the data is read
+          targetFileSize,
+          expParquetFileCount,
+          6, /* input table has 6 rows, exp these in output Parquet files */
+          Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
+          Seq.empty, // list of columns to collect statistics on
+          0 // how many columns have the stats collected from given list above
+        )
     }
   ).flatten.foreach {
     case (name, input, fileSize, expFileCount, expRowCount, predicate, statsCols, expStatsColCnt) =>
@@ -163,8 +192,13 @@ class ParquetFileWriterSuite extends AnyFunSuite
           val inputLocation = goldenTablePath(input)
           val schema = tableSchema(inputLocation)
 
-          val physicalSchema = if (hasColumnMappingId(inputLocation)) {
-            convertToPhysicalSchema(schema, schema, ColumnMapping.COLUMN_MAPPING_MODE_ID)
+          val hasColumnMappingId =
+            hasTableProperty(inputLocation, TableConfig.COLUMN_MAPPING_MODE.getKey, "id")
+          val hasIcebergCompatV2 =
+            hasTableProperty(inputLocation, TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")
+
+          val physicalSchema = if (hasColumnMappingId || hasIcebergCompatV2) {
+            convertToPhysicalSchema(schema, schema, ColumnMappingMode.ID)
           } else {
             schema
           }
@@ -183,6 +217,9 @@ class ParquetFileWriterSuite extends AnyFunSuite
           assert(parquetFileRowCount(targetDir) == expRowCount)
 
           verifyContent(targetDir, dataToWrite)
+          if (hasIcebergCompatV2 || hasColumnMappingId) {
+            verifyFieldIds(targetDir, physicalSchema, hasIcebergCompatV2)
+          }
           verifyStatsUsingSpark(targetDir, writeOutput, schema, statsCols, expStatsColCnt)
         }
       }
@@ -318,8 +355,6 @@ class ParquetFileWriterSuite extends AnyFunSuite
     statsColumns: Seq[Column],
     expStatsColCount: Int): Unit = {
 
-    if (statsColumns.isEmpty) return
-
     val actualStatsOutput = actualFileStatuses
       .map { fileStatus =>
         // validate there are no more the expected number of stats columns
@@ -331,8 +366,6 @@ class ParquetFileWriterSuite extends AnyFunSuite
         // Convert to TestRow for comparison with the actual values computing using Spark.
         fileStatus.toTestRow(statsColumns)
       }
-
-    if (expStatsColCount == 0) return
 
     // Use spark to fetch the stats from the parquet files use them as the expected statistics
     // Compare them with the actual stats returned by the Kernel's Parquet writer.

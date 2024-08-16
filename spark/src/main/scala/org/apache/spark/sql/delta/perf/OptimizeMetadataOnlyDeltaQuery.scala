@@ -111,7 +111,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         Seq(InternalRow.fromSeq(rewrittenAggregationValues)))
       r
     } else {
-      logInfo(s"Query can't be optimized using metadata because stats are missing")
+      logInfo("Query can't be optimized using metadata because stats are missing")
       plan
     }
   }

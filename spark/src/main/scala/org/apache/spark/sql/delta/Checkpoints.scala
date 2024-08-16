@@ -25,6 +25,7 @@ import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
@@ -37,6 +38,7 @@ import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
 import org.apache.hadoop.mapreduce.{Job, TaskType}
 
 import org.apache.spark.TaskContext
+import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -274,7 +276,7 @@ trait Checkpoints extends DeltaLogging {
           opType,
           data = Map("exception" -> e.getMessage(), "stackTrace" -> e.getStackTrace())
         )
-        logWarning(s"Error when writing checkpoint-related files", e)
+        logWarning("Error when writing checkpoint-related files", e)
         val throwError = Utils.isTesting ||
           spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
         if (throwError) throw e
@@ -345,11 +347,11 @@ trait Checkpoints extends DeltaLogging {
   }
 
   protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): LastCheckpointInfo = {
-    // With Managed-Commits, commit files are not guaranteed to be backfilled immediately in the
+    // With Coordinated-Commits, commit files are not guaranteed to be backfilled immediately in the
     // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
     // writing the checkpoint file in the log directory before backfilling the relevant commits
     // will leave gaps in the dir structure. This can cause issues for readers that are not
-    // communicating with the commit-owner.
+    // communicating with the commit-coordinator.
     //
     // Sample directory structure with a gap if we don't backfill commit files:
     // _delta_log/
@@ -379,8 +381,9 @@ trait Checkpoints extends DeltaLogging {
         case _: FileNotFoundException =>
           None
         case NonFatal(e) if tries < 3 =>
-          logWarning(s"Failed to parse $LAST_CHECKPOINT. This may happen if there was an error " +
-            "during read operation, or a file appears to be partial. Sleeping and trying again.", e)
+          logWarning(log"Failed to parse ${MDC(DeltaLogKeys.PATH, LAST_CHECKPOINT)}. " +
+            log"This may happen if there was an error during read operation, " +
+            log"or a file appears to be partial. Sleeping and trying again.", e)
           Thread.sleep(1000)
           loadMetadataFromFile(tries + 1)
         case NonFatal(e) =>
@@ -390,7 +393,8 @@ trait Checkpoints extends DeltaLogging {
             data = Map("exception" -> Utils.exceptionString(e))
           )
 
-          logWarning(s"$LAST_CHECKPOINT is corrupted. Will search the checkpoint files directly", e)
+          logWarning(log"${MDC(DeltaLogKeys.PATH, LAST_CHECKPOINT)} is corrupted. " +
+            log"Will search the checkpoint files directly", e)
           // Hit a partial file. This could happen on Azure as overwriting _last_checkpoint file is
           // not atomic. We will try to list all files to find the latest checkpoint and restore
           // LastCheckpointInfo from it.
@@ -460,7 +464,7 @@ trait Checkpoints extends DeltaLogging {
         // available checkpoint.
         .filterNot(cv => cv.version < 0 || cv.version == CheckpointInstance.MaxValue.version)
         .getOrElse {
-          logInfo(s"Try to find Delta last complete checkpoint")
+          logInfo("Try to find Delta last complete checkpoint")
           eventData("listingFromZero") = true.toString
           return findLastCompleteCheckpoint()
         }
@@ -469,7 +473,8 @@ trait Checkpoints extends DeltaLogging {
     eventData("upperBoundCheckpointType") = upperBoundCv.format.name
     var iterations: Long = 0L
     var numFilesScanned: Long = 0L
-    logInfo(s"Try to find Delta last complete checkpoint before version ${upperBoundCv.version}")
+    logInfo(log"Try to find Delta last complete checkpoint before version " +
+      log"${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     var listingEndVersion = upperBoundCv.version
 
     // Do a backward listing from the upperBoundCv version. We list in chunks of 1000 versions.
@@ -512,12 +517,14 @@ trait Checkpoints extends DeltaLogging {
         getLatestCompleteCheckpointFromList(checkpoints, Some(upperBoundCv.version))
       eventData("numFilesScanned") = numFilesScanned.toString
       if (lastCheckpoint.isDefined) {
-        logInfo(s"Delta checkpoint is found at version ${lastCheckpoint.get.version}")
+        logInfo(log"Delta checkpoint is found at version " +
+          log"${MDC(DeltaLogKeys.VERSION, lastCheckpoint.get.version)}")
         return lastCheckpoint
       }
       listingEndVersion = listingEndVersion - 1000
     }
-    logInfo(s"No checkpoint found for Delta table before version ${upperBoundCv.version}")
+    logInfo(log"No checkpoint found for Delta table before version " +
+      log"${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     None
   }
 
@@ -1054,7 +1061,8 @@ object Checkpoints
       try {
         fs.delete(tempPath, false)
       } catch { case NonFatal(e) =>
-        logWarning(s"Error while deleting the temporary checkpoint part file $tempPath", e)
+        logWarning(log"Error while deleting the temporary checkpoint part file " +
+          log"${MDC(DeltaLogKeys.PATH, tempPath)}", e)
       }
     }
   }

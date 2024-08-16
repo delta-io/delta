@@ -24,9 +24,11 @@ import org.apache.spark.sql.delta.IcebergCompat.{getEnabledVersion, getIcebergCo
 import org.apache.spark.sql.delta.UniversalFormat.{icebergEnabled, ICEBERG_FORMAT}
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.Utils.try_element_at
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.functions.col
 
@@ -108,9 +110,11 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
         === icebergCompatVersion.toString)
       .count()
     val numOfAddFiles = snapshot.numOfFiles
-    logInfo(s"For table ${table.tableIdentifier} at version ${snapshot.version}, there are " +
-      s"$numOfAddFiles addFiles, and $numOfAddFilesWithTag addFiles with ICEBERG_COMPAT_VERSION=" +
-      s"$icebergCompatVersion tag.")
+    logInfo(log"For table ${MDC(DeltaLogKeys.TABLE_NAME, table.tableIdentifier)} " +
+      log"at version ${MDC(DeltaLogKeys.VERSION, snapshot.version)}, there are " +
+      log"${MDC(DeltaLogKeys.NUM_FILES, numOfAddFiles)} addFiles, and " +
+      log"${MDC(DeltaLogKeys.NUM_FILES2, numOfAddFilesWithTag)} addFiles with " +
+      log"ICEBERG_COMPAT_VERSION=${MDC(DeltaLogKeys.TAG, icebergCompatVersion)} tag.")
     (numOfAddFiles, numOfAddFilesWithTag)
   }
 
@@ -151,8 +155,9 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
     val didUpdateIcebergCompatVersion =
       if (!currIcebergCompatVersionOpt.contains(targetIcebergCompatVersion)) {
         enableIcebergCompat(target, currIcebergCompatVersionOpt, targetVersionDeltaConfig)
-        logInfo(s"Update table ${target.tableIdentifier} to iceberg compat version = " +
-          s"$targetIcebergCompatVersion successfully.")
+        logInfo(log"Update table ${MDC(DeltaLogKeys.TABLE_NAME, target.tableIdentifier)} " +
+          log"to iceberg compat version = " +
+          log"${MDC(DeltaLogKeys.VERSION, targetIcebergCompatVersion)} successfully.")
         true
       } else {
         false
@@ -166,8 +171,9 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
     //   1. The target iceberg compat version requires rewrite.
     //   2. Not all addFile have ICEBERG_COMPAT_VERSION=targetVersion tag
     val (metricsOpt, didRewrite) = if (versionChangeMayNeedRewrite && !allAddFilesHaveTag) {
-      logInfo(s"Reorg Table ${target.tableIdentifier} to iceberg compat version = " +
-        s"$targetIcebergCompatVersion need rewrite data files.")
+      logInfo(log"Reorg Table ${MDC(DeltaLogKeys.TABLE_NAME, target.tableIdentifier)} to " +
+        log"iceberg compat version = ${MDC(DeltaLogKeys.VERSION, targetIcebergCompatVersion)} " +
+        log"need rewrite data files.")
       val metrics = try {
         optimizeByReorg(sparkSession)
       } catch {
@@ -175,8 +181,9 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
           throw DeltaErrors.icebergCompatDataFileRewriteFailedException(
             targetIcebergCompatVersion, e)
       }
-      logInfo(s"Rewrite table ${target.tableIdentifier} to iceberg compat version = " +
-        s"$targetIcebergCompatVersion successfully.")
+      logInfo(log"Rewrite table ${MDC(DeltaLogKeys.TABLE_NAME, target.tableIdentifier)} " +
+        log"to iceberg compat version = ${MDC(DeltaLogKeys.VERSION,
+          targetIcebergCompatVersion)} successfully.")
       (Some(metrics), true)
     } else {
       (None, false)
@@ -198,8 +205,9 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       val enableUniformConf = Map(
         DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.key -> ICEBERG_FORMAT)
       AlterTableSetPropertiesDeltaCommand(target, enableUniformConf).run(sparkSession)
-      logInfo(s"Enabling universal format with iceberg compat version = " +
-        s"$targetIcebergCompatVersion for table ${target.tableIdentifier} succeeded.")
+      logInfo(log"Enabling universal format with iceberg compat version = " +
+        log"${MDC(DeltaLogKeys.VERSION, targetIcebergCompatVersion)} for table " +
+        log"${MDC(DeltaLogKeys.TABLE_NAME, target.tableIdentifier)} succeeded.")
     }
 
     recordDeltaEvent(updatedSnapshot.deltaLog, "delta.upgradeUniform.success", data = Map(

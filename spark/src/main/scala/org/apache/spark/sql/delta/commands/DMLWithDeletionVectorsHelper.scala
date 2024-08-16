@@ -23,7 +23,6 @@ import scala.collection.generic.Sizing
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
-import org.apache.spark.sql.delta.DeltaConfig
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
@@ -31,7 +30,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.util.{BinPackingIterator, DeltaEncoder, JsonUtils, PathWithFileSystem, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{BinPackingIterator, DeltaEncoder, PathWithFileSystem, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.absolutePath
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -193,8 +192,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
       snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
-    val numModifiedRows: Long = touchedFiles.map(_.numberOfModifiedRows).sum
-    val numRemovedFiles: Long = touchedFiles.count(_.isFullyReplaced())
+    val numModifiedRows = touchedFiles.map(_.numberOfModifiedRows).sum.toLong
+    val numRemovedFiles = touchedFiles.count(_.isFullyReplaced()).toLong
 
     val (fullyRemovedFiles, notFullyRemovedFiles) = touchedFiles.partition(_.isFullyReplaced())
 
@@ -399,7 +398,7 @@ object DeletionVectorBitmapGenerator {
       .withColumn(FILE_NAME_COL, fileNameColumn)
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
-      .filter(new Column(condition))
+      .filter(Column(condition))
       .withColumn(ROW_INDEX_COL, rowIndexColumn)
 
     val df = if (tableHasDVs) {
@@ -407,7 +406,7 @@ object DeletionVectorBitmapGenerator {
       // file its existing DeletionVectorDescriptor
       val basePath = txn.deltaLog.dataPath.toString
       val filePathToDV = candidateFiles.map { add =>
-        val serializedDV = Option(add.deletionVector).map(dvd => JsonUtils.toJson(dvd))
+        val serializedDV = Option(add.deletionVector).map(_.serializeToBase64())
         // Paths in the metadata column are canonicalized. Thus we must canonicalize the DV path.
         FileToDvDescriptor(
           SparkPath.fromPath(absolutePath(basePath, add.path)).urlEncoded,
@@ -662,7 +661,7 @@ object DeletionVectorWriter extends DeltaLogging {
          |It is likely that _metadata.file_path is not encoded by Spark as expected.
          |""".stripMargin)
 
-    val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.fromJson(_))
+    val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.deserializeFromBase64)
     val finalDvDescriptor = fileDvDescriptor match {
       case Some(existingDvDescriptor) if row.deletedRowIndexCount > 0 =>
         // Load the existing bit map

@@ -67,15 +67,16 @@ object AutoCompactUtils extends DeltaLogging {
       partitions: PartitionKeySet): Seq[Expression] = {
     val schema = postCommitSnapshot.metadata.physicalPartitionSchema
     val partitionBranches = partitions.filterNot(_.isEmpty).map { partition =>
-      partition.toSeq
+      partition
+        .toSeq
         .map { case (key, value) =>
           val field = schema(key)
           EqualNullSafe(UnresolvedAttribute.quoted(key), Cast(Literal(value), field.dataType))
         }
-        .reduceLeft[Expression]((l, r) => And(l, r))
+        .reduceLeft[Expression](And.apply)
     }
     if (partitionBranches.size > 1) {
-      Seq(partitionBranches.reduceLeft[Expression]((l, r) => Or(l, r)))
+      Seq(partitionBranches.reduceLeft[Expression](Or.apply))
     } else if (partitionBranches.size == 1) {
       partitionBranches.toList
     } else {
@@ -86,6 +87,9 @@ object AutoCompactUtils extends DeltaLogging {
   /** True if Auto Compaction only runs on modified partitions. */
   def isModifiedPartitionsOnlyAutoCompactEnabled(spark: SparkSession): Boolean =
     spark.sessionState.conf.getConf(DELTA_AUTO_COMPACT_MODIFIED_PARTITIONS_ONLY_ENABLED)
+
+  def isNonBlindAppendAutoCompactEnabled(spark: SparkSession): Boolean =
+    spark.sessionState.conf.getConf(DELTA_AUTO_COMPACT_NON_BLIND_APPEND_ENABLED)
 
   def reservePartitionEnabled(spark: SparkSession): Boolean =
     spark.sessionState.conf.getConf(DELTA_AUTO_COMPACT_RESERVE_PARTITIONS_ENABLED)
@@ -216,8 +220,7 @@ object AutoCompactUtils extends DeltaLogging {
       spark: SparkSession,
       deltaLog: DeltaLog,
       postCommitSnapshot: Snapshot,
-      freePartitionsAddedTo: PartitionKeySet
-    ) = {
+      freePartitionsAddedTo: PartitionKeySet): ChosenPartitionsResult = {
     def getConf[T](entry: ConfigEntry[T]): T = spark.sessionState.conf.getConf(entry)
 
     val minNumFiles = minNumFilesForAutoCompact(spark)
@@ -260,7 +263,8 @@ object AutoCompactUtils extends DeltaLogging {
       } else {
         // If both are disabled, then Auto Compaction should search all partitions of the target
         // table.
-        ChosenPartitionsResult(shouldRunAC = true,
+        ChosenPartitionsResult(
+          shouldRunAC = true,
           chosenPartitions = Set.empty[PartitionKey],
           logMessage = "OnAllPartitions")
       }
@@ -271,7 +275,8 @@ object AutoCompactUtils extends DeltaLogging {
       postCommitSnapshot: Snapshot,
       maxDeletedRowsRatio: Option[Double]) = {
     var partitionsWithDVs = if (maxDeletedRowsRatio.nonEmpty) {
-      postCommitSnapshot.allFiles
+      postCommitSnapshot
+        .allFiles
         .where("deletionVector IS NOT NULL")
         .where(
           s"""
@@ -338,9 +343,7 @@ object AutoCompactUtils extends DeltaLogging {
     // If modified partitions only mode is not enabled, return true to avoid subsequent checking.
     if (!isModifiedPartitionsOnlyAutoCompactEnabled(spark)) return true
 
-    val nonBlindAppendAutoCompactEnabled =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_AUTO_COMPACT_NON_BLIND_APPEND_ENABLED)
-    !(nonBlindAppendAutoCompactEnabled && txn.isBlindAppend)
+    !(isNonBlindAppendAutoCompactEnabled(spark) && txn.isBlindAppend)
   }
 
 }

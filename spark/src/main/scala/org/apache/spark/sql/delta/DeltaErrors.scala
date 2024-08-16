@@ -23,6 +23,7 @@ import java.util.ConcurrentModificationException
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
@@ -333,6 +334,13 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_ADD_CONSTRAINTS",
       messageParameters = Array.empty)
+  }
+
+  def cannotDropCheckConstraintFeature(constraintNames: Seq[String]): AnalysisException = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+      messageParameters = Array(constraintNames.map(formatColumn).mkString(", "))
+    )
   }
 
   def incorrectLogStoreImplementationException(
@@ -2035,41 +2043,18 @@ trait DeltaErrorsBase
         mode.name))
   }
 
-  def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
-    val requiredProtocol = {
-      if (oldProtocol.supportsReaderFeatures || oldProtocol.supportsWriterFeatures) {
-        Protocol(
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-          .withFeature(ColumnMappingTableFeature)
-      } else {
-        ColumnMappingTableFeature.minProtocolVersion
-      }
-    }
-
-    new DeltaColumnMappingUnsupportedException(
-      errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL",
-      messageParameters = Array(
-        s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
-        s"$requiredProtocol",
-        s"$oldProtocol",
-        columnMappingAdviceMessage(requiredProtocol)))
-  }
-
-  private def columnMappingAdviceMessage(
+  protected def columnMappingAdviceMessage(
       requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
+    val readerVersion = requiredProtocol.minReaderVersion
+    val writerVersion = requiredProtocol.minWriterVersion
     s"""
        |Please enable Column Mapping on your Delta table with mapping mode 'name'.
        |You can use one of the following commands.
        |
-       |If your table is already on the required protocol version:
        |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
        |
-       |If your table is not on the required protocol version and requires a protocol upgrade:
-       |ALTER TABLE table_name SET TBLPROPERTIES (
-       |   'delta.columnMapping.mode' = 'name',
-       |   'delta.minReaderVersion' = '${requiredProtocol.minReaderVersion}',
-       |   'delta.minWriterVersion' = '${requiredProtocol.minWriterVersion}')
+       |Note, if your table is not on the required protocol version it will be upgraded.
+       |Column mapping requires at least protocol ($readerVersion, $writerVersion)
        |""".stripMargin
   }
 
@@ -2468,6 +2453,18 @@ trait DeltaErrorsBase
     )
   }
 
+  def identityColumnAlterNonIdentityColumnError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnAlterNonDeltaFormatError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT",
+      messageParameters = Array.empty)
+  }
+
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,
@@ -2477,6 +2474,36 @@ trait DeltaErrorsBase
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
       messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
     )
+  }
+
+  def identityColumnExplicitInsertNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED",
+      messageParameters = Array(colName))
+  }
+
+  def identityColumnAlterColumnNotSupported(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnReplaceColumnsNotSupported(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_REPLACE_COLUMN_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnPartitionNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_PARTITION_NOT_SUPPORTED",
+      messageParameters = Array(colName))
+  }
+
+  def identityColumnUpdateNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_UPDATE_NOT_SUPPORTED",
+      messageParameters = Array(colName))
   }
 
   def activeSparkSessionNotFound(): Throwable = {
@@ -3407,6 +3434,36 @@ trait DeltaErrorsBase
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0008",
       messageParameters = Array(
         UnresolvedAttribute(columnPath).name, schema.treeString, extraErrMsg))
+  }
+
+  def alterTableClusterByOnPartitionedTableException(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED",
+      messageParameters = Array.empty)
+  }
+
+  def createTableWithDifferentClusteringException(
+      path: Path,
+      specifiedClusterBySpec: Option[ClusterBySpec],
+      existingClusterBySpec: Option[ClusterBySpec]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+      messageParameters = Array(
+        path.toString,
+        specifiedClusterBySpec
+          .map(_.columnNames.map(_.toString))
+          .getOrElse(Seq.empty)
+          .mkString(", "),
+        existingClusterBySpec
+          .map(_.columnNames.map(_.toString))
+          .getOrElse(Seq.empty)
+          .mkString(", ")))
+  }
+
+  def unsupportedWritesWithMissingCoordinators(coordinatorName: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+      messageParameters = Array(coordinatorName))
   }
 }
 

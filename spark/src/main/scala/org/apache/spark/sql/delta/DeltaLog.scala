@@ -30,8 +30,8 @@ import scala.util.control.NonFatal
 import com.databricks.spark.util.TagDefinitions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
@@ -194,7 +194,7 @@ class DeltaLog private(
   def startTransaction(
       catalogTableOpt: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    TransactionExecutionObserver.threadObserver.get().startingTransaction {
+    TransactionExecutionObserver.getObserver.startingTransaction {
       new OptimisticTransaction(this, catalogTableOpt, snapshotOpt)
     }
   }
@@ -332,7 +332,7 @@ class DeltaLog private(
   def getChangeLogFiles(
       startVersion: Long,
       failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltasWithVersion = ManagedCommitUtils.commitFilesIterator(this, startVersion)
+    val deltasWithVersion = CoordinatedCommitsUtils.commitFilesIterator(this, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltasWithVersion.map { case (status, version) =>
@@ -430,7 +430,7 @@ class DeltaLog private(
     val protocolEnabledFeatures = targetProtocol.writerFeatureNames
       .flatMap(TableFeature.featureNameToFeature)
     val activeFeatures =
-      Protocol.extractAutomaticallyEnabledFeatures(spark, targetMetadata, Some(targetProtocol))
+      Protocol.extractAutomaticallyEnabledFeatures(spark, targetMetadata, targetProtocol)
     val activeButNotEnabled = activeFeatures.diff(protocolEnabledFeatures)
     if (activeButNotEnabled.nonEmpty) {
       throw DeltaErrors.tableFeatureMismatchException(activeButNotEnabled.map(_.name))

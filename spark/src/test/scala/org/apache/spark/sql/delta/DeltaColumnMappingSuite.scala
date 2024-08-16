@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter
@@ -43,7 +43,10 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 // scalastyle:on import.ordering.noEmptyLine
 
-trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLCommandTest {
+trait DeltaColumnMappingSuiteUtils
+  extends SharedSparkSession
+  with DeltaSQLTestUtils
+  with DeltaSQLCommandTest {
 
 
   protected def supportedModes: Seq[String] = Seq("id", "name")
@@ -1355,18 +1358,6 @@ class DeltaColumnMappingSuite extends QueryTest
     }
   }
 
-  test("legal mode change without explicit upgrade") {
-    val e = intercept[UnsupportedOperationException] {
-      withTable("t1") {
-        createTableWithSQLAPI("t1")
-        alterTableWithProps("t1", props = Map(
-          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
-      }
-    }
-    assert(e.getMessage.contains("Your current table protocol version does not" +
-      " support changing column mapping modes"))
-  }
-
   test("getPhysicalNameFieldMap") {
     // To keep things simple, we use schema `schemaWithPhysicalNamesNested` such that the
     // physical name is just the logical name repeated three times.
@@ -1907,8 +1898,7 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""CREATE TABLE $testTableName
            |USING DELTA
            |TBLPROPERTIES(
-           |'$minReaderKey' = '2',
-           |'$minWriterKey' = '7'
+           |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true'
            |)
            |AS SELECT * FROM RANGE(1)
            |""".stripMargin)
@@ -1920,6 +1910,14 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""ALTER TABLE $testTableName SET TBLPROPERTIES(
            |'$columnMappingMode'='name'
            |)""".stripMargin)
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      assert(deltaLog.update().protocol === Protocol(2, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ColumnMappingTableFeature,
+        RowTrackingFeature
+      )))
     }
   }
 
@@ -1991,6 +1989,57 @@ class DeltaColumnMappingSuite extends QueryTest
         sql(s"SELECT * FROM $tableName WHERE a = 1000"),
         Seq(Row(100, 1000))
       )
+    }
+  }
+
+  testColumnMapping("stream read from column mapping does not leak metadata") { mode =>
+    withTempDir { dir =>
+      val (t1, t2, t3) = (
+        s"t1_${System.currentTimeMillis()}",
+        s"t2_${System.currentTimeMillis()}",
+        s"t3_${System.currentTimeMillis()}"
+      )
+      withTable(t1, t2, t3) {
+        // Create source table with column mapping mode and partitioning
+        sql(
+          s"""CREATE TABLE $t1 (a INT, b STRING)
+             |USING DELTA
+             |PARTITIONED BY (b)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '$mode',
+             |  '${DeltaConfigs.MIN_READER_VERSION.key}' = '2',
+             |  '${DeltaConfigs.MIN_WRITER_VERSION.key}' = '5'
+             |)
+             |""".stripMargin)
+        // Insert data into source table
+        sql(s"INSERT INTO $t1 VALUES (1, 'a'), (2, 'b')")
+
+        // Stream read from source table
+        val streamDf = spark.readStream.format("delta").table(t1)
+        // Should not contain column mapping metadata
+        assert(streamDf.schema.forall(_.metadata.json == "{}"))
+
+        // Create and write to another table
+        // The streaming create-table path is what currently leaks the column mapping metadata
+        // into the target table. If it was writing to an existing table via DeltaSink, it would not
+        // leak because we pruned the column mapping metadata in [[ImplicitMetadataOperations]] when
+        // we update the target metadata.
+        val q = streamDf.writeStream
+          .partitionBy("b")
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .format("delta")
+          .option("checkpointLocation", new File(dir, "_checkpoint1").getCanonicalPath)
+          .toTable(t2)
+        q.awaitTermination()
+
+        // Check target table Delta log
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(t2))
+        assert(deltaLog.update().metadata.schema.forall(_.metadata.json == "{}"))
+        assert(deltaLog.update().metadata.columnMappingMode == NoMapping)
+
+        // Check target table data
+        checkAnswer(spark.table(t2), Seq(Row(1, "a"), Row(2, "b")))
+      }
     }
   }
 }

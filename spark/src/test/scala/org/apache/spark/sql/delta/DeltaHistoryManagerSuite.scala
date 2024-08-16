@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -56,7 +56,7 @@ trait DeltaTimeTravelTests extends QueryTest
     with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils
-    with ManagedCommitBaseSuite {
+    with CoordinatedCommitsBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -66,11 +66,27 @@ trait DeltaTimeTravelTests extends QueryTest
   protected val timeFormatter = new SimpleDateFormat("yyyyMMddHHmmssSSS")
 
   protected def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
-    file.setLastModified(ts)
+    val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
     val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
-    if (crc.exists()) {
-      crc.setLastModified(ts)
+    if (isICTEnabledForNewTables) {
+      InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
+      if (FileNames.isUnbackfilledDeltaFile(filePath)) {
+        // Also change the ICT in the backfilled file if it exists.
+        val backfilledFilePath = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+        val fs = backfilledFilePath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        if (fs.exists(backfilledFilePath)) {
+          InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, backfilledFilePath, Some(ts))
+        }
+      }
+      if (crc.exists()) {
+        InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(ts))
+      }
+    } else {
+      val file = new File(filePath.toUri)
+      file.setLastModified(ts)
+      if (crc.exists()) {
+        crc.setLastModified(ts)
+      }
     }
   }
 
@@ -131,26 +147,14 @@ trait DeltaTimeTravelTests extends QueryTest
           .saveAsTable(table)
       }
       val deltaLog = DeltaLog.forTable(spark, new TableIdentifier(table))
-      val filePath = FileNames.unsafeDeltaFile(deltaLog.logPath, 0)
-      if (isICTEnabledForNewTables) {
-        InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, commits.headOption)
-      } else {
-        val file = new File(filePath.toUri)
-        file.setLastModified(commits.head)
-      }
+      modifyCommitTimestamp(deltaLog, 0, commitList.head)
       commitList = commits.slice(1, commits.length) // we already wrote the first commit here
       var startVersion = deltaLog.snapshot.version + 1
       commitList.foreach { ts =>
         val rangeStart = startVersion * 10
         val rangeEnd = rangeStart + 10
         spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").saveAsTable(table)
-        val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
-        if (isICTEnabledForNewTables) {
-          InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
-        } else {
-          val file = new File(filePath.toUri)
-          file.setLastModified(ts)
-        }
+        modifyCommitTimestamp(deltaLog, startVersion, ts)
         startVersion += 1
       }
     }
@@ -370,7 +374,7 @@ trait DeltaTimeTravelTests extends QueryTest
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        if (managedCommitBackfillBatchSize.exists(_ > 2)) {
+        if (coordinatedCommitsBackfillBatchSize.exists(_ > 2)) {
           assert(e2.getMessage.contains("No commits found at"))
         } else {
           assert(e2.getMessage.contains("No recreatable commits found at"))
@@ -667,14 +671,14 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
   }
 }
 
-class DeltaHistoryManagerWithManagedCommitBatch1Suite extends DeltaHistoryManagerSuite {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
+class DeltaHistoryManagerWithCoordinatedCommitsBatch1Suite extends DeltaHistoryManagerSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaHistoryManagerWithManagedCommitBatch2Suite extends DeltaHistoryManagerSuite {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(2)
+class DeltaHistoryManagerWithCoordinatedCommitsBatch2Suite extends DeltaHistoryManagerSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaHistoryManagerWithManagedCommitBatch100Suite extends DeltaHistoryManagerSuite {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(100)
+class DeltaHistoryManagerWithCoordinatedCommitsBatch100Suite extends DeltaHistoryManagerSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

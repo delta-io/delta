@@ -52,10 +52,7 @@ class DeltaVariantSuite
       sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
-      assert(
-        getProtocolForTable("tbl") ==
-        VariantTypeTableFeature.minProtocolVersion.withFeature(VariantTypeTableFeature)
-      )
+      assert(getProtocolForTable("tbl").readerAndWriterFeatures.contains(VariantTypeTableFeature))
     }
   }
 
@@ -522,7 +519,11 @@ class DeltaVariantSuite
       val insertException = intercept[DeltaInvariantViolationException] {
         sql("INSERT INTO tbl VALUES (cast(null as variant))")
       }
-      checkError(insertException, "DELTA_NOT_NULL_CONSTRAINT_VIOLATED")
+      checkError(
+        insertException,
+        errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        parameters = Map("columnName" -> "v")
+      )
 
       sql("ALTER TABLE tbl ALTER COLUMN v DROP NOT NULL")
       // Inserting null value should work now.
@@ -541,7 +542,14 @@ class DeltaVariantSuite
       val insertException = intercept[DeltaInvariantViolationException] {
         sql("INSERT INTO tbl (select parse_json(cast(id as string)) from range(-1, 0))")
       }
-      checkError(insertException, "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES")
+      checkError(
+        insertException,
+        errorClass = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
+        parameters = Map(
+          "constraintName" -> "variantgtezero",
+          "expression" -> "(variant_get(v, '$', 'INT') >= 0)", "values" -> " - v : -1"
+        )
+      )
 
       sql("ALTER TABLE tbl DROP CONSTRAINT variantGTEZero")
       sql("INSERT INTO tbl (select parse_json(cast(id as string)) from range(-1, 0))")

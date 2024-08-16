@@ -26,11 +26,13 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.json4s.DefaultFormats
+import org.json4s.jackson.JsonMethods._
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
@@ -84,9 +86,6 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       RowIdMetadataStructField.isRowIdColumn(field) ||
       RowCommitVersion.MetadataStructField.isRowCommitVersionColumn(field)
 
-  def satisfiesColumnMappingProtocol(protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(ColumnMappingTableFeature)
-
   /**
    * Allow NameMapping -> NoMapping transition behind a feature flag.
    * Otherwise only NoMapping -> NameMapping is allowed.
@@ -132,33 +131,9 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
 
     val isChangingModeOnExistingTable = oldMappingMode != newMappingMode && !isCreatingNewTable
-    if (isChangingModeOnExistingTable) {
-      if (!allowMappingModeChange(oldMappingMode, newMappingMode)) {
-        throw DeltaErrors.changeColumnMappingModeNotSupported(
-          oldMappingMode.name, newMappingMode.name)
-      } else {
-        // legal mode change, now check if protocol is upgraded before or part of this txn
-        val caseInsensitiveMap = CaseInsensitiveMap(newMetadata.configuration)
-        val minReaderVersion = caseInsensitiveMap
-          .get(Protocol.MIN_READER_VERSION_PROP).map(_.toInt)
-          .getOrElse(oldProtocol.minReaderVersion)
-        val minWriterVersion = caseInsensitiveMap
-          .get(Protocol.MIN_WRITER_VERSION_PROP).map(_.toInt)
-          .getOrElse(oldProtocol.minWriterVersion)
-        var newProtocol = Protocol(minReaderVersion, minWriterVersion)
-        val satisfiesWriterVersion = minWriterVersion >= ColumnMappingTableFeature.minWriterVersion
-        val satisfiesReaderVersion = minReaderVersion >= ColumnMappingTableFeature.minReaderVersion
-        // This is an OR check because `readerFeatures` and `writerFeatures` can independently
-        // support table features.
-        if ((newProtocol.supportsReaderFeatures && satisfiesWriterVersion) ||
-            (newProtocol.supportsWriterFeatures && satisfiesReaderVersion)) {
-          newProtocol = newProtocol.withFeature(ColumnMappingTableFeature)
-        }
-
-        if (!satisfiesColumnMappingProtocol(newProtocol)) {
-          throw DeltaErrors.changeColumnMappingModeOnOldProtocol(oldProtocol)
-        }
-      }
+    if (isChangingModeOnExistingTable && !allowMappingModeChange(oldMappingMode, newMappingMode)) {
+      throw DeltaErrors.changeColumnMappingModeNotSupported(
+        oldMappingMode.name, newMappingMode.name)
     }
 
     val updatedMetadata = updateColumnMappingMetadata(
@@ -187,6 +162,16 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   def getNestedColumnIds(field: StructField): SparkMetadata =
     field.metadata.getMetadata(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
+
+  def getNestedColumnIdsAsLong(field: StructField): Iterable[Long] = {
+    val nestedColumnMetadata = getNestedColumnIds(field)
+    metadataToMap[Map[String, Long]](nestedColumnMetadata).values
+  }
+
+  private def metadataToMap[T <: Map[_, _]](metadata: SparkMetadata)(implicit m: Manifest[T]): T = {
+    implicit val formats: DefaultFormats.type = DefaultFormats
+    parse(metadata.json).extract[T]
+  }
 
   def hasPhysicalName(field: StructField): Boolean =
     field.metadata.contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
@@ -304,6 +289,10 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     SchemaMergingUtils.transformColumns(schema)((_, f, _) => {
       if (hasColumnId(f)) {
         maxId = maxId max getColumnId(f)
+        if (hasNestedColumnIds(f)) {
+          val nestedIds = getNestedColumnIdsAsLong(f)
+          maxId = maxId max (if (nestedIds.nonEmpty) nestedIds.max else 0)
+        }
       }
       f
     })
@@ -511,10 +500,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       throw DeltaErrors.unsupportedColumnMappingMode(columnMappingMode.name)
     }
 
+    val referenceSchemaColumnMap: Map[String, StructField] =
+      SchemaMergingUtils.explode(referenceSchema).map { case (path, field) =>
+        QuotingUtils.quoteNameParts(path).toLowerCase(Locale.ROOT) -> field
+      }.toMap
+
     SchemaMergingUtils.transformColumns(schema) { (path, field, _) =>
       val fullName = path :+ field.name
-      val inSchema = SchemaUtils
-        .findNestedFieldIgnoreCase(referenceSchema, fullName, includeCollections = true)
+      val inSchema =
+        referenceSchemaColumnMap.get(QuotingUtils.quoteNameParts(fullName).toLowerCase(Locale.ROOT))
       inSchema.map { refField =>
         val sparkMetadata = getColumnMappingMetadata(refField, columnMappingMode)
         field.copy(metadata = sparkMetadata, name = getPhysicalName(refField))

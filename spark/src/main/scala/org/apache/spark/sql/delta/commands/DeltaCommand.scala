@@ -25,11 +25,13 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, ResolvedTable, UnresolvedAttribute, UnresolvedRelation}
@@ -355,7 +357,8 @@ trait DeltaCommand extends DeltaLogging {
     for (version <- txnVersionOpt; appId <- txnAppIdOpt) {
       val currentVersion = txn.txnVersion(appId)
       if (currentVersion >= version) {
-        logInfo(s"Already completed batch $version in application $appId. This will be skipped.")
+        logInfo(log"Already completed batch ${MDC(DeltaLogKeys.VERSION, version)} in application " +
+          log"${MDC(DeltaLogKeys.APP_ID, appId)}. This will be skipped.")
         if (isFromSessionConf && sparkSession.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_IDEMPOTENT_DML_AUTO_RESET_ENABLED)) {
           // if we got txnAppId and txnVersion from the session config, we reset the

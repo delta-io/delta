@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{Snapshot, TypeWidening}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 
 import org.apache.spark.sql.{Row, SparkSession}
@@ -97,29 +97,43 @@ sealed trait DeltaReorgOperation {
    * Collects files that need to be processed by the reorg operation from the list of candidate
    * files.
    */
-  def filterFilesToReorg(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile]
+  def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile]
 }
 
 /**
  * Reorg operation to purge files with soft deleted rows.
+ * This operation will also try finding and removing the dropped columns from parquet files,
+ * if ever exists such column that does not present in the current table schema.
  */
-class DeltaPurgeOperation extends DeltaReorgOperation {
-  override def filterFilesToReorg(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] =
-    files.filter { file =>
-      (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
+class DeltaPurgeOperation extends DeltaReorgOperation with ReorgTableHelper {
+  override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
+    : Seq[AddFile] = {
+    val physicalSchema = DeltaColumnMapping.renameColumns(snapshot.schema)
+    val protocol = snapshot.protocol
+    val metadata = snapshot.metadata
+    val filesWithDroppedColumns: Seq[AddFile] =
+      filterParquetFilesOnExecutors(spark, files, snapshot, ignoreCorruptFiles = false) {
+        schema => fileHasExtraColumns(schema, physicalSchema, protocol, metadata)
+      }
+    val filesWithDV: Seq[AddFile] = files.filter { file =>
+        (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
         file.numDeletedRecords > 0L
     }
+    (filesWithDroppedColumns ++ filesWithDV).distinct
+  }
 }
 
 /**
  * Reorg operation to upgrade the iceberg compatibility version of a table.
  */
 class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorgOperation {
-  override def filterFilesToReorg(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] = {
+  override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
+    : Seq[AddFile] = {
     def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
       if (file.tags == null) return true
-      val icebergCompatVersion = file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
-      !icebergCompatVersion.exists(_.toString == icebergCompatVersion)
+      val fileIcebergCompatVersion =
+        file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
+      fileIcebergCompatVersion != icebergCompatVersion.toString
     }
     files.filter(shouldRewriteToBeIcebergCompatible)
   }
@@ -129,7 +143,12 @@ class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorg
  * Internal reorg operation to rewrite files to conform to the current table schema when dropping
  * the type widening table feature.
  */
-class DeltaRewriteTypeWideningOperation extends DeltaReorgOperation {
-  override def filterFilesToReorg(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] =
-    TypeWidening.filterFilesRequiringRewrite(snapshot, files)
+class DeltaRewriteTypeWideningOperation extends DeltaReorgOperation with ReorgTableHelper {
+  override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
+    : Seq[AddFile] = {
+    val physicalSchema = DeltaColumnMapping.renameColumns(snapshot.schema)
+    filterParquetFilesOnExecutors(spark, files, snapshot, ignoreCorruptFiles = false) {
+      schema => fileHasDifferentTypes(schema, physicalSchema)
+    }
+  }
 }

@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.exceptions.TableNotFoundException
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
@@ -182,6 +182,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
       )
     }
+  }
+
+  test(s"end to end: reading decimal-various-scale-precision") {
+    val tablePath = goldenTablePath("decimal-various-scale-precision")
+    val expResults = spark.sql(s"SELECT * FROM delta.`$tablePath`")
+      .collect()
+      .map(TestRow(_))
+
+    checkTable(
+      path = goldenTablePath("decimal-various-scale-precision"),
+      expectedAnswer = expResults
+    )
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -359,7 +371,12 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           TestRow(i.toString, TestRow(i)), // nested_struct
           Seq(i, i + 1), // array_of_prims
           Seq(Seq(i, i + 1), Seq(i + 2, i + 3)), // array_of_arrays
-          Seq(TestRow(i.longValue()), null), // array_of_structs
+          Seq(Map(i -> Seq(2, 3), i + 1 -> Seq(4, 5))), // array_of_map_of_arrays
+          Seq(TestRow(i), TestRow(i)), // array_of_structs
+          TestRow( // struct_of_arrays_maps_of_structs
+            Seq(i, i + 1),
+            Map(Seq(i, i + 1) -> TestRow(i + 2))
+          ),
           Map(
             i -> (i + 1).longValue(),
             (i + 2) -> (i + 3).longValue()
@@ -372,29 +389,13 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
               i.longValue() -> val1,
               (i + 1).longValue() -> val2
             ) // map_of_arrays
-          }
+          },
+          Map( // map_of_maps
+            i.toLong -> Map(i -> i),
+            (i + 1).toLong -> Map(i + 2 -> i)
+          )
         )
-      } ++ (TestRow(
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null
-      ) :: Nil)
+      } ++ Seq(TestRow(Seq.fill(22)(null): _*)) // all nulls row, 22 columns
 
       checkTable(
         path = path,
@@ -499,6 +500,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
+  test(s"table with spaces in the table path") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath + s"/table- -path"
+      spark.sql(s"CREATE TABLE delta.`$target` USING DELTA " +
+        s"SELECT * FROM delta.`${getTestResourceFilePath("basic-with-checkpoint")}`")
+      checkTable(
+        path = target,
+        expectedAnswer = (0 until 150).map(i => TestRow(i.toLong))
+      )
+    }
+  }
+
   test("table with name column mapping mode") {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
@@ -574,10 +587,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("error - version not contiguous") {
-    val e = intercept[IllegalStateException] {
+    val e = intercept[InvalidTableException] {
       latestSnapshot(goldenTablePath("versions-not-contiguous"))
     }
-    assert(e.getMessage.contains("Versions ([0, 2]) are not continuous"))
+    assert(e.getMessage.contains("versions are not continuous: ([0, 2])"))
   }
 
   test("table protocol version greater than reader protocol version") {
@@ -587,6 +600,32 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         .build()
     }
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
+  }
+
+  test("table with void type - throws KernelException") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
+      val e = intercept[KernelException] {
+        latestSnapshot(path)
+      }
+      assert(e.getMessage.contains(
+        "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))
+    }
+  }
+
+  test("read a shallow cloned table") {
+    withTempDir { tempDir =>
+      val target = tempDir.getCanonicalPath
+      val source = goldenTablePath("data-reader-partition-values")
+      spark.sql(s"CREATE TABLE delta.`$target` SHALLOW CLONE delta.`$source`")
+
+      withSparkTimeZone("UTC") {
+        val expAnswer = spark.read.format("delta").load(source).collect().map(TestRow(_)).toSeq
+        assert(expAnswer.size == 3)
+        checkTable(target, expAnswer)
+      }
+    }
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -645,9 +684,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
       val log = org.apache.spark.sql.delta.DeltaLog.forTable(
         spark, new org.apache.hadoop.fs.Path(tablePath))
+      val deltaCommitFileProvider = org.apache.spark.sql.delta.util.DeltaCommitFileProvider(
+        log.unsafeVolatileSnapshot)
       // Delete the log files for versions 0-9, truncating the table history to version 10
       (0 to 9).foreach { i =>
-        val jsonFile = org.apache.spark.sql.delta.util.FileNames.deltaFile(log.logPath, i)
+        val jsonFile = deltaCommitFileProvider.deltaFile(i)
         new File(new org.apache.hadoop.fs.Path(log.logPath, jsonFile).toUri).delete()
       }
       // Create version 11 that overwrites the whole table

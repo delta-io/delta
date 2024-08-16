@@ -187,6 +187,48 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
             print("Failed DynamoDB logstore integration tests tests in %s" % (test_file))
             raise
 
+def run_dynamodb_commit_coordinator_integration_tests(root_dir, version, test_name, extra_maven_repo,
+                                                extra_packages, conf, use_local):
+    print(
+        "\n\n##### Running DynamoDB Commit Coordinator integration tests on version %s #####" % str(version)
+    )
+    clear_artifact_cache()
+    if use_local:
+        run_cmd(["build/sbt", "publishM2"])
+
+    test_dir = path.join(root_dir, \
+        path.join("spark", "src", "main", "java", "io", "delta", "dynamodbcommitcoordinator", "integration_tests"))
+    test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
+                  if path.isfile(path.join(test_dir, f)) and
+                  f.endswith(".py") and not f.startswith("_")]
+
+    python_root_dir = path.join(root_dir, "python")
+    extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
+    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
+    if extra_packages:
+        packages += "," + extra_packages
+
+    conf_args = []
+    if conf:
+        for i in conf:
+            conf_args.extend(["--conf", i])
+
+    repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
+
+    for test_file in test_files:
+        if test_name is not None and test_name not in test_file:
+            print("\nSkipping DynamoDB Commit Coordinator integration tests in %s\n============" % test_file)
+            continue
+        try:
+            cmd = ["spark-submit",
+                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                   "--packages", packages] + repo_args + conf_args + [test_file]
+            print("\nRunning DynamoDB Commit Coordinator integration tests in %s\n=============" % test_file)
+            print("Command: %s" % " ".join(cmd))
+            run_cmd(cmd, stream_output=True)
+        except:
+            print("Failed DynamoDB Commit Coordinator integration tests in %s" % (test_file))
+            raise
 
 def run_s3_log_store_util_integration_tests():
     print("\n\n##### Running S3LogStoreUtil tests #####")
@@ -239,7 +281,7 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
             print("Failed Iceberg tests in %s" % (test_file))
             raise
 
-def run_uniform_hudi_integration_tests(root_dir, version, extra_maven_repo, use_local):
+def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_version, extra_maven_repo, use_local):
     print("\n\n##### Running Uniform hudi tests on version %s #####" % str(version))
     # clear_artifact_cache()
     if use_local:
@@ -256,7 +298,9 @@ def run_uniform_hudi_integration_tests(root_dir, version, extra_maven_repo, use_
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     package = ','.join([
-        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)])
+        "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version),
+        "org.apache.hudi:hudi-spark%s-bundle_2.12:%s" % (spark_version, hudi_version)
+    ])
     jars = path.join(root_dir, "hudi/target/scala-2.12/delta-hudi-assembly_2.12-%s.jar" % (version))
 
     repo = extra_maven_repo if extra_maven_repo else ""
@@ -460,7 +504,13 @@ if __name__ == "__main__":
         required=False,
         default=None,
         nargs="+",
-        help="All `--conf` values passed to `spark-submit` for DynamoDB logstore integration tests")
+        help="All `--conf` values passed to `spark-submit` for DynamoDB logstore/commit-coordinator integration tests")
+    parser.add_argument(
+        "--run-dynamodb-commit-coordinator-integration-tests",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run the DynamoDB Commit Coordinator tests (and only them)")
     parser.add_argument(
         "--run-iceberg-integration-tests",
         required=False,
@@ -483,6 +533,17 @@ if __name__ == "__main__":
         required=False,
         default="1.4.0",
         help="Iceberg Spark Runtime library version")
+    parser.add_argument(
+        "--hudi-spark-version",
+        required=False,
+        default="3.5",
+        help="Spark version for the Hudi library")
+    parser.add_argument(
+        "--hudi-version",
+        required=False,
+        default="0.15.0",
+        help="Hudi library version"
+    )
 
     args = parser.parse_args()
 
@@ -508,12 +569,17 @@ if __name__ == "__main__":
 
     if args.run_uniform_hudi_integration_tests:
         run_uniform_hudi_integration_tests(
-            root_dir, args.version, args.maven_repo, args.use_local)
+            root_dir, args.version, args.hudi_spark_version, args.hudi_version, args.maven_repo, args.use_local)
         quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                                 args.dbb_packages, args.dbb_conf, args.use_local)
+        quit()
+
+    if args.run_dynamodb_commit_coordinator_integration_tests:
+        run_dynamodb_commit_coordinator_integration_tests(root_dir, args.version, args.test, args.maven_repo,
+                                                    args.dbb_packages, args.dbb_conf, args.use_local)
         quit()
 
     if args.s3_log_store_util_only:

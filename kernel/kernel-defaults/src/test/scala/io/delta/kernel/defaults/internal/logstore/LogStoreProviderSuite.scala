@@ -65,7 +65,7 @@ class LogStoreProviderSuite extends AnyFunSuite {
       LogStoreProvider.getLogStore(hadoopConf, "fake")
     )
     assert(e.getMessage.contains(
-      "Can not instantiate `LogStore` class: %s".format("java.lang.String")))
+      "Can not instantiate `LogStore` class (from config): %s".format("java.lang.String")))
   }
 }
 

@@ -27,8 +27,8 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
@@ -46,7 +46,7 @@ import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, SyncIdentity}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
@@ -107,6 +107,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }.toMap
     val (partitionColumns, maybeBucketSpec, maybeClusterBySpec) = convertTransforms(partitions)
     validateClusterBySpec(maybeClusterBySpec, schema)
+    // Check partition columns are not IDENTITY columns.
+    partitionColumns.foreach { colName =>
+      if (ColumnWithDefaultExprUtils.isIdentityColumn(schema(colName))) {
+        throw DeltaErrors.identityColumnPartitionNotSupported(colName)
+      }
+    }
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
@@ -449,7 +455,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     var validatedConfigurations =
       DeltaConfigs.validateConfigurations(tableDesc.properties)
     ClusteredTableUtils.validateExistingTableFeatureProperties(validatedConfigurations)
-    // Add needed configs for Clustered table.
+    // Add needed configs for Clustered table. Note that [[PROP_CLUSTERING_COLUMNS]] can only
+    // be added after [[DeltaConfigs.validateConfigurations]] to avoid non-user configurable check
+    // failure.
     if (maybeClusterBySpec.nonEmpty) {
       validatedConfigurations =
         validatedConfigurations ++
@@ -589,6 +597,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case deltaTable: DeltaTableV2 => deltaTable
       case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
         throw DeltaErrors.alterClusterByNotOnDeltaTableException()
+      case _ if changes.exists(_.isInstanceOf[SyncIdentity]) =>
+        throw DeltaErrors.identityColumnAlterNonDeltaFormatError()
       case _ => return super.alterTable(ident, changes: _*)
     }
 
@@ -668,10 +678,17 @@ class DeltaCatalog extends DelegatingCatalogExtension
           ifExists = true).run(spark)
 
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
+        // TODO: Theoretically we should be able to fetch the snapshot from a txn.
+        val snapshotSchema = table.initialSnapshot.schema
+        val schema = if (!spark.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)) {
+          // Convert (StringType, metadata = 'VARCHAR(n)') into (VARCHAR(n), metadata = '')
+          // so that CHAR/VARCHAR to String conversion can be handled correctly.
+          SchemaUtils.getRawSchemaWithoutCharVarcharMetadata(snapshotSchema)
+        } else {
+          snapshotSchema
+        }
         def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
           columnUpdates.getOrElseUpdate(fieldNames, {
-            // TODO: Theoretically we should be able to fetch the snapshot from a txn.
-            val schema = table.initialSnapshot.schema
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
               spark.sessionState.conf.resolver)
@@ -681,6 +698,22 @@ class DeltaCatalog extends DelegatingCatalogExtension
             }
             field -> None
           })
+        }
+
+        // Any ColumnChange not explicitly on the allowlist is blocked from making changes on
+        // Identity Columns
+        val disallowedColumnChangesOnIdentityColumns = columnChanges.filterNot {
+            case _: UpdateColumnComment | _: UpdateColumnPosition | _: RenameColumn
+                 | _: SyncIdentity => true
+            case _ => false
+        }
+        disallowedColumnChangesOnIdentityColumns.foreach {
+          case change: ColumnChange =>
+            val field = change.fieldNames()
+            val (existingField, _) = getColumn(field)
+            if (ColumnWithDefaultExprUtils.isIdentityColumn(existingField)) {
+              throw DeltaErrors.identityColumnAlterColumnNotSupported()
+            }
         }
 
         columnChanges.foreach {
@@ -709,6 +742,18 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val (oldField, pos) = getColumn(field)
             columnUpdates(field) = oldField.copy(name = rename.newName()) -> pos
 
+          case sync: SyncIdentity =>
+            syncIdentity = true
+            val field = sync.fieldNames
+            val (oldField, pos) = getColumn(field)
+            if (!ColumnWithDefaultExprUtils.isIdentityColumn(oldField)) {
+              throw DeltaErrors.identityColumnAlterNonIdentityColumnError()
+            }
+            // If the IDENTITY column does not allow explicit insert, high water mark should
+            // always be sync'ed and this is an no-op.
+            if (IdentityColumn.allowExplicitInsert(oldField)) {
+              columnUpdates(field) = oldField.copy() -> pos
+            }
 
           case updateDefault: UpdateColumnDefaultValue =>
             val field = updateDefault.fieldNames()
@@ -761,8 +806,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val clusterBySpec = ClusterBySpec(c.clusteringColumns.toSeq)
             validateClusterBySpec(Some(clusterBySpec), table.schema())
           }
-          if (!ClusteredTableUtils.isSupported(table.initialSnapshot.protocol)) {
-            throw DeltaErrors.alterClusterByNotAllowedException()
+          if (table.initialSnapshot.metadata.partitionColumns.nonEmpty) {
+            throw DeltaErrors.alterTableClusterByOnPartitionedTableException()
           }
           AlterTableClusterByDeltaCommand(
             table, c.clusteringColumns.map(_.fieldNames().toSeq).toSeq).run(spark)

@@ -36,10 +36,10 @@ trait ProvidesUniFormConverters { self: DeltaLog =>
     constructor.newInstance(spark)
   } catch {
     case e: ClassNotFoundException =>
-      logError(s"Failed to find Iceberg converter class", e)
+      logError("Failed to find Iceberg converter class", e)
       throw DeltaErrors.icebergClassMissing(spark.sparkContext.getConf, e)
     case e: InvocationTargetException =>
-      logError(s"Got error when creating an Iceberg converter", e)
+      logError("Got error when creating an Iceberg converter", e)
       // The better error is within the cause
       throw ExceptionUtils.getRootCause(e)
   }
@@ -51,10 +51,10 @@ trait ProvidesUniFormConverters { self: DeltaLog =>
     constructor.newInstance(spark)
   } catch {
     case e: ClassNotFoundException =>
-      logError(s"Failed to find Hudi converter class", e)
+      logError("Failed to find Hudi converter class", e)
       throw DeltaErrors.hudiClassMissing(spark.sparkContext.getConf, e)
     case e: InvocationTargetException =>
-      logError(s"Got error when creating an Hudi converter", e)
+      logError("Got error when creating an Hudi converter", e)
       // The better error is within the cause
       throw ExceptionUtils.getRootCause(e)
   }

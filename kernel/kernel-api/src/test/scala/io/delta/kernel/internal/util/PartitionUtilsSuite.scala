@@ -228,6 +228,8 @@ class PartitionUtilsSuite extends AnyFunSuite {
     ofDouble(23423.422233d) -> ("23423.422233", "23423.422233"),
     ofNull(DoubleType.DOUBLE) -> (null, nullFileName),
     ofString("string_val") -> ("string_val", "string_val"),
+    ofString("string_\nval") -> ("string_\nval", "string_%0Aval"),
+    ofString("str=ing_\u0001val") -> ("str=ing_\u0001val", "str%3Ding_%01val"),
     ofNull(StringType.STRING) -> (null, nullFileName),
     ofDecimal(new java.math.BigDecimal("23423.234234"), 15, 7) ->
       ("23423.2342340", "23423.2342340"),
@@ -237,10 +239,10 @@ class PartitionUtilsSuite extends AnyFunSuite {
     ofDate(4234)  -> ("1981-08-05", "1981-08-05"),
     ofNull(DateType.DATE) -> (null, nullFileName),
     ofTimestamp(2342342342232L) ->
-      ("1970-01-28 02:39:02.342232", "1970-01-28+02%3A39%3A02.342232"),
+      ("1970-01-28 02:39:02.342232", "1970-01-28 02%3A39%3A02.342232"),
     ofNull(TimestampType.TIMESTAMP) -> (null, nullFileName),
     ofTimestampNtz(-2342342342L) ->
-      ("1969-12-31 23:20:58.657658", "1969-12-31+23%3A20%3A58.657658"),
+      ("1969-12-31 23:20:58.657658", "1969-12-31 23%3A20%3A58.657658"),
     ofNull(TimestampNTZType.TIMESTAMP_NTZ) -> (null, nullFileName)
   ).foreach { case (literal, (expSerializedValue, expFileName)) =>
     test(s"serialize partition value literal as string: ${literal.getDataType}($literal)") {
@@ -264,7 +266,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
       Map("part1" -> ofInt(12),
         "part3" -> ofTimestamp(234234234L),
         "part2" -> ofString("sss")).asJava)
-    assert(result === "/tmp/root/part1=12/part2=sss/part3=1970-01-01+00%3A03%3A54.234234")
+    assert(result === "/tmp/root/part1=12/part2=sss/part3=1970-01-01 00%3A03%3A54.234234")
   }
 
   private def col(names: String*): Column = {

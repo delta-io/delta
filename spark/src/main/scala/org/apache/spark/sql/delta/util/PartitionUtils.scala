@@ -528,7 +528,7 @@ private[delta] object PartitionUtils {
       timeZone: TimeZone,
       dateFormatter: DateFormatter,
       timestampFormatter: TimestampFormatter): Literal = {
-    val decimalTry = Try {
+    def decimalTry = Try {
       // `BigDecimal` conversion can fail when the `field` is not a form of number.
       val bigDecimal = new JBigDecimal(raw)
       // It reduces the cases for decimals by disallowing values having scale (eg. `1.1`).
@@ -539,7 +539,7 @@ private[delta] object PartitionUtils {
       Literal(bigDecimal)
     }
 
-    val dateTry = Try {
+    def dateTry = Try {
       // try and parse the date, if no exception occurs this is a candidate to be resolved as
       // DateType
       dateFormatter.parse(raw)
@@ -555,7 +555,7 @@ private[delta] object PartitionUtils {
       Literal.create(dateValue, DateType)
     }
 
-    val timestampTry = Try {
+    def timestampTry = Try {
       val unescapedRaw = unescapePathName(raw)
       // try and parse the date, if no exception occurs this is a candidate to be resolved as
       // TimestampType

@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
@@ -295,7 +296,8 @@ case class UpdateCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
 
     val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ totalActions
-    txn.commitIfNeeded(
+    val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val commitVersion = txn.commitIfNeeded(
       actions = finalActions,
       op = DeltaOperations.Update(condition),
       tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
@@ -315,7 +317,10 @@ case class UpdateCommand(
         rewriteTimeMs,
         numDeletionVectorsAdded,
         numDeletionVectorsRemoved,
-        numDeletionVectorsUpdated)
+        numDeletionVectorsUpdated,
+        commitVersion = commitVersion,
+        numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+        numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved)
     )
   }
 
@@ -540,5 +545,11 @@ case class UpdateMetric(
     rewriteTimeMs: Long,
     numDeletionVectorsAdded: Long,
     numDeletionVectorsRemoved: Long,
-    numDeletionVectorsUpdated: Long
+    numDeletionVectorsUpdated: Long,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long] = None
 )

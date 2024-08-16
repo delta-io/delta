@@ -19,36 +19,48 @@ package io.delta.kernel.utils;
 import java.util.Optional;
 
 /**
- * Extends {@link FileStatus} to include additional details such as column level statistics
- * of the data file in the Delta Lake table.
+ * Extends {@link FileStatus} to include additional details such as column level statistics of the
+ * data file in the Delta Lake table.
  */
 public class DataFileStatus extends FileStatus {
 
-    private final Optional<DataFileStatistics> statistics;
+  private final Optional<DataFileStatistics> statistics;
 
-    /**
-     * Create a new instance of {@link DataFileStatus}.
-     *
-     * @param path Fully qualified file path.
-     * @param size File size in bytes.
-     * @param modificationTime Last modification time of the file in epoch milliseconds.
-     * @param statistics Optional column and file level statistics in the data file.
-     */
-    public DataFileStatus(
-            String path,
-            long size,
-            long modificationTime,
-            Optional<DataFileStatistics> statistics) {
-        super(path, size, modificationTime);
-        this.statistics = statistics;
-    }
+  /**
+   * Create a new instance of {@link DataFileStatus}.
+   *
+   * @param path Fully qualified file path.
+   * @param size File size in bytes.
+   * @param modificationTime Last modification time of the file in epoch milliseconds.
+   * @param statistics Optional column and file level statistics in the data file.
+   */
+  public DataFileStatus(
+      String path, long size, long modificationTime, Optional<DataFileStatistics> statistics) {
+    super(path, size, modificationTime);
+    this.statistics = statistics;
+  }
 
-    /**
-     * Get the statistics of the data file encapsulated in this object.
-     *
-     * @return Statistics of the file.
-     */
-    public Optional<DataFileStatistics> getStatistics() {
-        return statistics;
-    }
+  /**
+   * Get the statistics of the data file encapsulated in this object.
+   *
+   * @return Statistics of the file.
+   */
+  public Optional<DataFileStatistics> getStatistics() {
+    return statistics;
+  }
+
+  @Override
+  public String toString() {
+    return "DataFileStatus{"
+        + "path='"
+        + getPath()
+        + '\''
+        + ", size="
+        + getSize()
+        + ", modificationTime="
+        + getModificationTime()
+        + ", statistics="
+        + statistics
+        + '}';
+  }
 }

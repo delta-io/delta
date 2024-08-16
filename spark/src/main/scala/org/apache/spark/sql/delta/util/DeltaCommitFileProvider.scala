@@ -23,11 +23,12 @@ import org.apache.hadoop.fs.Path
 /**
  * Provides access to resolve Delta commit files names based on the commit-version.
  *
- * This class is part of the changes introduced to accommodate the adoption of managed-commits in
- * Delta Lake. Previously, certain code paths assumed the existence of delta files for a specific
- * version at a predictable path `_delta_log/$version.json`. With managed-commits, delta files may
- * alternatively be located at `_delta_log/_commits/$version.$uuid.json`. DeltaCommitFileProvider
- * attempts to locate the correct delta files from the Snapshot's LogSegment.
+ * This class is part of the changes introduced to accommodate the adoption of coordinated-commits
+ * in Delta Lake. Previously, certain code paths assumed the existence of delta files for a specific
+ * version at a predictable path `_delta_log/$version.json`. With coordinated-commits, delta files
+ * may alternatively be located at `_delta_log/_commits/$version.$uuid.json`.
+ * DeltaCommitFileProvider attempts to locate the correct delta files from the Snapshot's
+ * LogSegment.
  *
  * @param logPath The path to the Delta table log directory.
  * @param maxVersionInclusive The maximum version of the Delta table (inclusive).
@@ -49,15 +50,29 @@ case class DeltaCommitFileProvider(
 
   def deltaFile(version: Long): Path = {
     if (version > maxVersionInclusive) {
-      throw new IllegalStateException("Cannot resolve Delta table at version $version as the " +
-        "state is currently at version $maxVersion. The requested version may be incorrect or " +
-        "the state may be outdated. Please verify the requested version, update the state if " +
-        "necessary, and try again")
+      throw new IllegalStateException(s"Cannot resolve Delta table at version $version as the " +
+        s"state is currently at version $maxVersionInclusive. The requested version may be " +
+        s"incorrect or the state may be outdated. Please verify the requested version, update " +
+        s"the state if necessary, and try again")
     }
     uuids.get(version) match {
       case Some(uuid) => FileNames.unbackfilledDeltaFile(resolvedPath, version, Some(uuid))
       case _ => FileNames.unsafeDeltaFile(resolvedPath, version)
     }
+  }
+
+  /**
+   * Lists unbackfilled delta files in a sorted order without incurring additional IO operations.
+   */
+  def listSortedUnbackfilledDeltaFiles(startVersionOpt: Option[Long] = None): Seq[(Long, Path)] = {
+    val minVersion = startVersionOpt.getOrElse(minUnbackfilledVersion)
+    uuids
+      .toSeq
+      .sortBy(_._1)
+      .collect {
+        case (version, uuid) if version >= minVersion =>
+          (version, FileNames.unbackfilledDeltaFile(resolvedPath, version, Some(uuid)))
+      }
   }
 }
 

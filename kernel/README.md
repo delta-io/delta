@@ -68,3 +68,13 @@ We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track commun
 
 # Contributing
 We welcome contributions to Delta Lake and we accept contributions via Pull Requests. See our [CONTRIBUTING.md](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md) for more details. We also adhere to the [Delta Lake Code of Conduct](https://github.com/delta-io/delta/blob/master/CODE_OF_CONDUCT.md).
+
+# Setting up IDE
+
+Java code adheres to the [Google style](https://google.github.io/styleguide/javaguide.html), which is verified via `build/sbt javafmtCheckAll` during builds.
+In order to automatically fix Java code style issues, please use `build/sbt javafmtAll`.
+
+## Configuring Code Formatter for Eclipse/IntelliJ
+
+Follow the instructions for [Eclipse](https://github.com/google/google-java-format#eclipse) or
+[IntelliJ](https://github.com/google/google-java-format#intellij-android-studio-and-other-jetbrains-ides) to install the **google-java-format** plugin (note the required manual actions for IntelliJ).

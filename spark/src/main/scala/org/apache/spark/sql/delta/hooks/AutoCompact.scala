@@ -21,10 +21,12 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.{DeltaOptimizeContext, OptimizeExecutor}
 import org.apache.spark.sql.delta.commands.optimize._
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.AutoCompactPartitionStats
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -156,7 +158,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
         metrics
       } catch {
         case e: Throwable =>
-          logError("Auto Compaction failed with: " + e.getMessage)
+          logError(log"Auto Compaction failed with: ${MDC(DeltaLogKeys.ERROR, e.getMessage)}")
           recordDeltaEvent(
             txn.deltaLog,
             opType = "delta.autoCompaction.error",
@@ -195,15 +197,14 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
       .getOrElse(maxFileSize / 2))
     val maxFileSizeOpt = Some(maxFileSize)
     recordDeltaOperation(deltaLog, s"$opType.execute") {
-      val txn = deltaLog.startTransaction(catalogTable)
       val optimizeContext = DeltaOptimizeContext(
         reorg = None,
         minFileSizeOpt,
         maxFileSizeOpt,
         maxDeletedRowsRatio = maxDeletedRowsRatio
       )
-      val rows = new OptimizeExecutor(spark, txn, partitionPredicates, Seq(), true, optimizeContext)
-        .optimize()
+      val rows = new OptimizeExecutor(spark, deltaLog.update(), catalogTable, partitionPredicates,
+        zOrderByColumns = Seq(), isAutoCompact = true, optimizeContext).optimize()
       val metrics = rows.map(_.getAs[OptimizeMetrics](1))
       recordDeltaEvent(deltaLog, s"$opType.execute.metrics", data = metrics.head)
       metrics

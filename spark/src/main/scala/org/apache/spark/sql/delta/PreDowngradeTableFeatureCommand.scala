@@ -23,9 +23,10 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitUtils
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
@@ -60,6 +61,22 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     }
 
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
+    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    true
+  }
+}
+
+case class TestWriterWithHistoryValidationFeaturePreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+  // To remove the feature we only need to remove the table property.
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    // Make sure feature data/metadata exist before proceeding.
+    if (TestRemovableWriterWithHistoryTruncationFeature.validateRemoval(table.initialSnapshot)) {
+      return false
+    }
+
+    val properties = Seq(TestRemovableWriterWithHistoryTruncationFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
     true
   }
@@ -206,15 +223,15 @@ case class VacuumProtocolCheckPreDowngradeCommand(table: DeltaTableV2)
   override def removeFeatureTracesIfNeeded(): Boolean = false
 }
 
-case class ManagedCommitPreDowngradeCommand(table: DeltaTableV2)
+case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
 
   /**
    * We disable the feature by removing the following table properties:
-   *    1. DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.key
-   *    2. DeltaConfigs.MANAGED_COMMIT_OWNER_CONF.key
-   *    3. DeltaConfigs.MANAGED_COMMIT_TABLE_CONF.key
+   *    1. DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key
+   *    2. DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key
+   *    3. DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key
    * If these properties have been removed but unbackfilled commits are still present, we
    * backfill them.
    *
@@ -227,14 +244,14 @@ case class ManagedCommitPreDowngradeCommand(table: DeltaTableV2)
 
     var traceRemovalNeeded = false
     var exceptionOpt = Option.empty[Throwable]
-    val propertyPresenceLogs = ManagedCommitUtils.TABLE_PROPERTY_KEYS.map( key =>
+    val propertyPresenceLogs = CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.map( key =>
       key -> table.initialSnapshot.metadata.configuration.contains(key).toString
     )
-    if (ManagedCommitUtils.tablePropertiesPresent(table.initialSnapshot.metadata)) {
+    if (CoordinatedCommitsUtils.tablePropertiesPresent(table.initialSnapshot.metadata)) {
       traceRemovalNeeded = true
       try {
         AlterTableUnsetPropertiesDeltaCommand(
-          table, ManagedCommitUtils.TABLE_PROPERTY_KEYS, ifExists = true).run(table.spark)
+          table, CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS, ifExists = true).run(table.spark)
       } catch {
         case NonFatal(e) =>
           exceptionOpt = Some(e)
@@ -243,18 +260,18 @@ case class ManagedCommitPreDowngradeCommand(table: DeltaTableV2)
     var postDisablementUnbackfilledCommitsPresent = false
     if (exceptionOpt.isEmpty) {
       val snapshotAfterDisabling = table.deltaLog.update()
-      assert(snapshotAfterDisabling.tableCommitOwnerClientOpt.isEmpty)
+      assert(snapshotAfterDisabling.getTableCommitCoordinatorForWrites.isEmpty)
       postDisablementUnbackfilledCommitsPresent =
-        ManagedCommitUtils.unbackfilledCommitsPresent(snapshotAfterDisabling)
+        CoordinatedCommitsUtils.unbackfilledCommitsPresent(snapshotAfterDisabling)
       if (postDisablementUnbackfilledCommitsPresent) {
         traceRemovalNeeded = true
-        // Managed commits have already been disabled but there are unbackfilled commits.
-        ManagedCommitUtils.backfillWhenManagedCommitDisabled(snapshotAfterDisabling)
+        // Coordinated commits have already been disabled but there are unbackfilled commits.
+        CoordinatedCommitsUtils.backfillWhenCoordinatedCommitsDisabled(snapshotAfterDisabling)
       }
     }
     recordDeltaEvent(
       table.deltaLog,
-      opType = "delta.managedCommitFeatureRemovalMetrics",
+      opType = "delta.coordinatedCommitsFeatureRemovalMetrics",
       data = Map(
           "downgradeTimeMs" -> TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs),
           "traceRemovalNeeded" -> traceRemovalNeeded.toString,
@@ -309,8 +326,9 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
    * @return Return the number of files rewritten.
    */
   private def rewriteFilesIfNeeded(): Long = {
-    val numFilesToRewrite = TypeWidening.numFilesRequiringRewrite(table.initialSnapshot)
-    if (numFilesToRewrite == 0L) return 0L
+    if (!TypeWideningMetadata.containsTypeWideningMetadata(table.initialSnapshot.schema)) {
+      return 0L
+    }
 
     // Wrap `table` in a ResolvedTable that can be passed to DeltaReorgTableCommand. The catalog &
     // table ID won't be used by DeltaReorgTableCommand.
@@ -323,8 +341,9 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
       reorgTableSpec = DeltaReorgTableSpec(DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None)
     )(Nil)
 
-    reorg.run(table.spark)
-    numFilesToRewrite
+    val rows = reorg.run(table.spark)
+    val metrics = rows.head.getAs[OptimizeMetrics](1)
+    metrics.numFilesRemoved
   }
 
   /**
@@ -374,5 +393,24 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
         .run(spark, removeColumnMappingTableProperty = true)
     }
     true
+  }
+}
+
+case class CheckConstraintsPreDowngradeTableFeatureCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Throws an exception if the table has CHECK constraints, and returns false otherwise (as no
+   * action was required).
+   *
+   * We intentionally error out instead of removing the CHECK constraints here, as dropping a
+   * table feature should not never alter the logical representation of a table (only its physical
+   * representation). Instead, we ask the user to explicitly drop the constraints before the table
+   * feature can be dropped.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val checkConstraintNames = Constraints.getCheckConstraintNames(table.initialSnapshot.metadata)
+    if (checkConstraintNames.isEmpty) return false
+    throw DeltaErrors.cannotDropCheckConstraintFeature(checkConstraintNames)
   }
 }
