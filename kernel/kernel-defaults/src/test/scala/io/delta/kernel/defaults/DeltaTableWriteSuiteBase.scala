@@ -49,7 +49,7 @@ import java.io.File
 import java.nio.file.{Files, Paths}
 import java.util.Optional
 import scala.collection.JavaConverters._
-import scala.collection.immutable.{ListMap, Seq}
+import scala.collection.immutable.ListMap
 
 /**
  * Common utility methods for write test suites.

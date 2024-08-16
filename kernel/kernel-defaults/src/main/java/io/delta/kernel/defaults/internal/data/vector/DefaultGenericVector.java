@@ -152,6 +152,13 @@ public class DefaultGenericVector implements ColumnVector {
   }
 
   @Override
+  public VariantValue getVariant(int rowId) {
+    assertValidRowId(rowId);
+    throwIfUnsafeAccess(VariantType.class, "variant");
+    return (VariantValue) rowIdToValueAccessor.apply(rowId);
+  }
+
+  @Override
   public ColumnVector getChild(int ordinal) {
     throwIfUnsafeAccess(StructType.class, "struct");
     StructType structType = (StructType) dataType;

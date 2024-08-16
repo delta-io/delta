@@ -22,6 +22,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.internal.util.InternalUtils;
@@ -124,6 +125,11 @@ public class DefaultJsonRow implements Row {
   @Override
   public MapValue getMap(int ordinal) {
     return (MapValue) parsedValues[ordinal];
+  }
+
+  @Override
+  public VariantValue getVariant(int ordinal) {
+    throw new UnsupportedOperationException("not yet implemented");
   }
 
   private static void throwIfTypeMismatch(String expType, boolean hasExpType, JsonNode jsonNode) {

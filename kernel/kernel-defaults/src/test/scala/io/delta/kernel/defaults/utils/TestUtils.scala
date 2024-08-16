@@ -24,6 +24,7 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.defaults.VariantShims
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.engine.Engine
@@ -36,7 +37,7 @@ import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
@@ -71,7 +72,7 @@ trait TestUtils extends Assertions with SQLHelper {
         while (iter.hasNext) {
           result.append(iter.next())
         }
-        result
+        result.toSeq
       } finally {
         iter.close()
       }
@@ -173,7 +174,7 @@ trait TestUtils extends Assertions with SQLHelper {
         // for all primitive types
         Seq(new Column((basePath :+ field.getName).asJava.toArray(new Array[String](0))));
       case _ => Seq.empty
-    }
+    }.toSeq
   }
 
   def collectScanFileRows(scan: Scan, engine: Engine = defaultEngine): Seq[Row] = {
@@ -251,7 +252,7 @@ trait TestUtils extends Assertions with SQLHelper {
         }
       }
     }
-    result
+    result.toSeq
   }
 
   def readTableUsingKernel(
@@ -391,6 +392,21 @@ trait TestUtils extends Assertions with SQLHelper {
 
     val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, engine)
     checkAnswer(result, expectedAnswer)
+  }
+
+  /**
+   * Reads the results of the Spark dataframe with Kernel and verifies that the results are
+   * identical.
+   */
+  def checkTableVsSpark(df: DataFrame): Unit = {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      df.write
+        .format("delta")
+        .mode("overwrite")
+        .save(path)
+      checkTable(path, df.collect().map(TestRow(_)))
+    }
   }
 
   def checkAnswer(result: => Seq[Row], expectedAnswer: Seq[TestRow]): Unit = {
@@ -700,7 +716,8 @@ trait TestUtils extends Assertions with SQLHelper {
             toSparkType(field.getDataType),
             field.isNullable
           )
-        })
+        }.toSeq)
+      case VariantType.VARIANT => VariantShims.getSparkVariantType()
     }
   }
 

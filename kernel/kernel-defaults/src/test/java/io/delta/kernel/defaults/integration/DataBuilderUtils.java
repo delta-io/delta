@@ -21,6 +21,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.data.VariantValue;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
 import io.delta.kernel.types.StructType;
 import java.math.BigDecimal;
@@ -163,6 +164,11 @@ public class DataBuilderUtils {
     public MapValue getMap(int ordinal) {
       throw new UnsupportedOperationException(
           "map type unsupported for TestColumnBatchBuilder; use scala test utilities");
+    }
+
+    @Override
+    public VariantValue getVariant(int ordinal) {
+      return (VariantValue) values.get(ordinal);
     }
   }
 }

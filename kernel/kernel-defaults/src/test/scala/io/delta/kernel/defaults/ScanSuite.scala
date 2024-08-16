@@ -18,22 +18,24 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.expressions._
 import io.delta.kernel.internal.util.InternalUtils
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
+import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
-import io.delta.kernel.types.StructType
+import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Scan, Snapshot, Table}
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
-import org.apache.spark.sql.{Row => SparkRow}
+import org.apache.spark.sql.{DataFrame, Row => SparkRow}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.math.{BigDecimal => JBigDecimal}
@@ -41,9 +43,13 @@ import java.sql.Date
 import java.time.temporal.ChronoUnit
 import java.time.{Instant, OffsetDateTime}
 import java.util.Optional
+import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 
-class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
+class ScanSuite extends AnyFunSuite
+  with ExpressionTestUtils
+  with SQLHelper
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import io.delta.kernel.defaults.ScanSuite._
 
@@ -1593,6 +1599,48 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           ).build()
       )
     }
+  }
+
+  testSparkMasterOnly("basic variant") {
+    val df = spark.range(0, 10000).selectExpr(
+      "parse_json(cast(id as string)) as basic_v",
+      "named_struct('v', parse_json(cast(id as string))) as struct_v",
+      "named_struct('v', array(parse_json(cast(id as string)))) as struct_array_v",
+      "named_struct('v', map('key', parse_json(cast(id as string)))) as struct_map_v",
+      "named_struct('top', named_struct('v', parse_json(cast(id as string)))) as struct_struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string))
+      ) as array_v""",
+      """array(
+        named_struct('v', parse_json(cast(id as string))),
+        named_struct('v', parse_json(cast(id as string))),
+        named_struct('v', parse_json(cast(id as string)))
+      ) as array_struct_v""",
+      """array(
+        map('v', parse_json(cast(id as string))),
+        map('k1', parse_json(cast(id as string)), 'k2',  parse_json(cast(id as string))),
+        map('v', parse_json(cast(id as string)))
+      ) as array_map_v""",
+      "map('test', parse_json(cast(id as string))) as map_value_v",
+      "map('test', named_struct('v', parse_json(cast(id as string)))) as map_struct_v"
+    )
+    checkTableVsSpark(df)
+  }
+
+  testSparkMasterOnly("basic null variant") {
+    val df = spark.range(0, 10000).selectExpr(
+      "cast(null as variant) basic_v",
+      "named_struct('v', cast(null as variant)) as struct_v",
+      """array(
+        parse_json(cast(id as string)),
+        parse_json(cast(id as string)),
+        null
+      ) as array_v""",
+      "map('test', cast(null as variant)) as map_value_v"
+    )
+    checkTableVsSpark(df)
   }
 }
 
