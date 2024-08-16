@@ -121,6 +121,22 @@ trait TestUtils extends Assertions with SQLHelper {
     lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
 
+  def withTempDirAndEngine(
+    f: (String, Engine) => Unit, hadoopConf: Map[String, String] = Map.empty): Unit = {
+    val engine = DefaultEngine.create(new Configuration() {
+      {
+        for ((key, value) <- hadoopConf) {
+          set(key, value)
+        }
+        // Set the batch sizes to small so that we get to test the multiple batch/file scenarios.
+        set("delta.kernel.default.parquet.reader.batch-size", "20");
+        set("delta.kernel.default.json.reader.batch-size", "20");
+        set("delta.kernel.default.parquet.writer.targetMaxFileSize", "20");
+      }
+    })
+    withTempDir { dir => f(dir.getAbsolutePath, engine) }
+  }
+
   def withGoldenTable(tableName: String)(testFunc: String => Unit): Unit = {
     val tablePath = GoldenTableUtils.goldenTablePath(tableName)
     testFunc(tablePath)
@@ -137,11 +153,11 @@ trait TestUtils extends Assertions with SQLHelper {
       .getSchema(defaultEngine)
   }
 
-  def hasColumnMappingId(str: String): Boolean = {
-    val table = Table.forPath(defaultEngine, str)
+  def hasTableProperty(tablePath: String, propertyKey: String, expValue: String): Boolean = {
+    val table = Table.forPath(defaultEngine, tablePath)
     val schema = table.getLatestSnapshot(defaultEngine).getSchema(defaultEngine)
     schema.fields().asScala.exists { field =>
-      field.getMetadata.contains(ColumnMapping.COLUMN_MAPPING_ID_KEY)
+      field.getMetadata.getString(propertyKey) == expValue
     }
   }
 

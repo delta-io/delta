@@ -20,6 +20,7 @@ import scala.collection.immutable.NumericRange
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
@@ -252,6 +253,20 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       }
 
       assert(ex.getMessage.contains("Two paths were provided as the CLONE target"))
+    }
+  }
+
+  test("Clone should populate override table properties to catalog") {
+    val source = "source"
+    val target = "target"
+    withTable(source, target) {
+      withSQLConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "false") {
+        spark.range(100).write.format("delta").saveAsTable(source)
+        sql(s"""CREATE TABLE $target SHALLOW CLONE $source tblproperties("abc" = "123")""")
+        val targetCatalogTable =
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(target))
+        targetCatalogTable.properties.get("abc").contains("123")
+      }
     }
   }
 }

@@ -15,23 +15,23 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
+import io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE
+import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
+import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.expressions._
+import io.delta.kernel.internal.util.InternalUtils
+import io.delta.kernel.types._
+import org.scalatest.funsuite.AnyFunSuite
+
 import java.lang.{Boolean => BooleanJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
-
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
-import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
-import io.delta.kernel.expressions._
-import io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE
-import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
-import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.util.InternalUtils
-import io.delta.kernel.types._
-import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
   test("evaluate expression: literal") {
@@ -307,11 +307,85 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "Coalesce is only supported for boolean type expressions")
   }
 
+  test("evaluate expression: TIMEADD with TIMESTAMP columns") {
+    val timestampColumn = timestampVector(Seq[Long](
+      1577836800000000L, // 2020-01-01 00:00:00.000
+      1577836800123456L, // 2020-01-01 00:00:00.123456
+      -1               // Representing null
+    ))
+
+    val durationColumn = longVector(Seq[Long](
+      1000,   // 1 second in milliseconds
+      100,    // 0.1 second in milliseconds
+      -1
+    ): _*)
+
+    val schema = new StructType()
+      .add("timestamp", TimestampType.TIMESTAMP)
+      .add("duration", LongType.LONG)
+
+    val batch = new DefaultColumnarBatch(
+      timestampColumn.getSize, schema, Array(timestampColumn, durationColumn))
+
+    // TimeAdd expression adds milliseconds to timestamps
+    val timeAddExpr = new ScalarExpression(
+      "TIMEADD",
+      util.Arrays.asList(new Column("timestamp"), new Column("duration"))
+    )
+
+    val expectedTimestamps = Seq[Long](
+      1577836801000000L, // 2020-01-01 00:00:01.000
+      1577836800123456L + 100000, // 2020-01-01 00:00:00.123556
+      -1                  // Null should propagate
+    )
+
+    val expOutputVector = timestampVector(expectedTimestamps)
+    val actOutputVector = evaluator(schema, timeAddExpr, TimestampType.TIMESTAMP).eval(batch)
+
+    checkTimestampVectors(actOutputVector, expOutputVector)
+  }
+
+  def checkUnsupportedTimeAddTypes(
+    col1Type: DataType, col2Type: DataType): Unit = {
+    val schema = new StructType()
+      .add("timestamp", col1Type)
+      .add("duration", col2Type)
+    val batch = new DefaultColumnarBatch(5, schema,
+      Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
+
+    val timeAddExpr = new ScalarExpression(
+      "TIMEADD",
+      util.Arrays.asList(new Column("timestamp"), new Column("duration"))
+    )
+
+    val e = intercept[IllegalArgumentException] {
+      val evaluator = new DefaultExpressionEvaluator(schema, timeAddExpr, col1Type)
+      evaluator.eval(batch)
+    }
+    assert(e.getMessage.contains("TIMEADD requires a timestamp and a Long"))
+  }
+
+  // Test to ensure TIMEADD requires the first argument to be a TimestampType
+  // and the second to be a LongType
+  test("TIMEADD with unsupported types") {
+    // Check invalid timestamp column type
+    checkUnsupportedTimeAddTypes(
+      IntegerType.INTEGER, IntegerType.INTEGER)
+
+    // Check invalid duration column type
+    checkUnsupportedTimeAddTypes(
+      TimestampType.TIMESTAMP, StringType.STRING)
+
+    // Check valid type but with unsupported operations
+    checkUnsupportedTimeAddTypes(
+      TimestampType.TIMESTAMP, FloatType.FLOAT)
+  }
+
   test("evaluate expression: like") {
     val col1 = stringVector(Seq[String](
-      "one", "two", "three", "four", null, null, "seven", "eight"))
+      null, "one", "two", "three", "four", null, null, "seven", "eight"))
     val col2 = stringVector(Seq[String](
-      "one", "Two", "thr%", "four%", "f", null, null, "%ght"))
+      null, "one", "Two", "thr%", "four%", "f", null, null, "%ght"))
     val schema = new StructType()
       .add("col1", StringType.STRING)
       .add("col2", StringType.STRING)
@@ -332,25 +406,25 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkLike(
       input,
       like(new Column("col1"), new Column("col2")),
-      Seq[BooleanJ](true, false, true, true, null, null, null, true))
+      Seq[BooleanJ](null, true, false, true, true, null, null, null, true))
 
     // check column expression against literal
     checkLike(
       input,
       like(new Column("col1"), Literal.ofString("t%")),
-      Seq[BooleanJ](false, true, true, false, null, null, false, false))
+      Seq[BooleanJ](null, false, true, true, false, null, null, false, false))
 
     // ends with checks
     checkLike(
       input,
       like(new Column("col1"), Literal.ofString("%t")),
-      Seq[BooleanJ](false, false, false, false, null, null, false, true))
+      Seq[BooleanJ](null, false, false, false, false, null, null, false, true))
 
     // contains checks
     checkLike(
       input,
       like(new Column("col1"), Literal.ofString("%t%")),
-      Seq[BooleanJ](false, true, true, false, null, null, false, true))
+      Seq[BooleanJ](null, false, true, true, false, null, null, false, true))
 
     val dummyInput = new DefaultColumnarBatch(1,
         new StructType().add("dummy", StringType.STRING),

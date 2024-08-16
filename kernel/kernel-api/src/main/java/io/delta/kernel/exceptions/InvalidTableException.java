@@ -16,14 +16,14 @@
 package io.delta.kernel.exceptions;
 
 /**
- * Thrown when an invalid table is encountered; the table's log and/or checkpoint files are
- * in an invalid state.
+ * Thrown when an invalid table is encountered; the table's log and/or checkpoint files are in an
+ * invalid state.
  */
 public class InvalidTableException extends KernelException {
 
-    private static final String message = "Invalid table found at %s: %s";
+  private static final String message = "Invalid table found at %s: %s";
 
-    public InvalidTableException(String tablePath, String reason) {
-        super(String.format(message, tablePath, reason));
-    }
+  public InvalidTableException(String tablePath, String reason) {
+    super(String.format(message, tablePath, reason));
+  }
 }

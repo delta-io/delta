@@ -16,17 +16,32 @@
 
 package org.apache.spark.sql.delta.rowtracking
 
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, RowId, RowTrackingFeature}
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
+import org.apache.spark.sql.delta.actions.{Metadata, RemoveFile}
+import org.apache.spark.sql.delta.commands.backfill.{BackfillBatchIterator, BackfillCommandStats, RowTrackingBackfillBatch, RowTrackingBackfillExecutor}
+import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import io.delta.exceptions.MetadataChangedException
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.dsl.expressions._
+import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.{IntegerType, StructType}
 
 class RowTrackingConflictResolutionSuite extends QueryTest
-  with SharedSparkSession with RowIdTestUtils {
+  with DeletionVectorsTestUtils
+  with SharedSparkSession
+  with RowIdTestUtils {
+
+  override def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
 
   private val testTableName = "test_table"
 
@@ -145,6 +160,256 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       txn.commit(Seq(addFile(filePath)), DeltaOperations.ManualUpdate)
 
       assertRowIdsAreValid(deltaLog)
+    }
+  }
+
+  /**
+   * Setup a test table with four files and return these files to the caller.
+   */
+  private def setupTableAndGetAllFiles(log: DeltaLog): (AddFile, AddFile, AddFile, AddFile) = {
+    val f1 = DeltaTestUtils.createTestAddFile(encodedPath = "a", partitionValues = Map("x" -> "1"))
+    val f2 = DeltaTestUtils.createTestAddFile(encodedPath = "b", partitionValues = Map("x" -> "1"))
+    val f3 = DeltaTestUtils.createTestAddFile(encodedPath = "c", partitionValues = Map("x" -> "2"))
+    val f4 = DeltaTestUtils.createTestAddFile(encodedPath = "d", partitionValues = Map("x" -> "2"))
+
+    val setupActions: Seq[Action] = Seq(
+      Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x")),
+      f1,
+      f2,
+      f3,
+      f4,
+      Action.supportedProtocolVersion().withFeature(RowTrackingFeature)
+    )
+
+    log.startTransaction().commit(setupActions, ManualUpdate)
+
+    (f1, f2, f3, f4)
+  }
+
+  /** Add a dummy DV to a file in a table. */
+  private def addDVToFileInTable(deltaLog: DeltaLog, file: AddFile): (AddFile, RemoveFile) = {
+    val dv = writeDV(deltaLog, RoaringBitmapArray(0L))
+    updateFileDV(file, dv)
+  }
+
+  /** Execute backfill on the table associated with the delta log passed in. */
+  private def executeBackfill(log: DeltaLog, backfillTxn: OptimisticTransaction): Unit = {
+    val maxBatchesInParallel = 1
+    val backfillStats = BackfillCommandStats(
+      backfillTxn.txnId,
+      nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
+      maxNumBatchesInParallel = maxBatchesInParallel)
+    val backfillExecutor = new RowTrackingBackfillExecutor(
+      spark,
+      backfillTxn,
+      FileMetadataMaterializationTracker.noopTracker,
+      maxBatchesInParallel,
+      backfillStats
+    )
+    val filesToBackfill =
+      RowTrackingBackfillExecutor.getCandidateFilesToBackfill(log.update())
+    val batches = new BackfillBatchIterator(
+      filesToBackfill,
+      FileMetadataMaterializationTracker.noopTracker,
+      maxNumFilesPerBin = 4,
+      constructBatch = RowTrackingBackfillBatch(_))
+
+    backfillExecutor.run(batches)
+  }
+
+  /** Check if base row IDs and default row commit versions have been assigned. */
+  def assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles: Seq[AddFile]): Unit = {
+    finalFiles.foreach(addedFile => assert(addedFile.baseRowId.nonEmpty))
+    finalFiles.foreach(addedFile => assert(addedFile.defaultRowCommitVersion.nonEmpty))
+  }
+
+  test("Backfill conflict with a delete, Delete wins") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+
+      // Setup
+      val (file1, file2, file3, file4) = setupTableAndGetAllFiles(log)
+
+      // Start Backfill.
+      val backfillTxn = log.startTransaction()
+
+      // A delete occurs in parallel. Delete wins.
+      val deleteTxn = log.startTransaction()
+      deleteTxn.filterFiles(EqualTo('x, Literal(1)) :: Nil)
+      val deleteActions = Seq(file1.remove, file2.remove)
+      // Truncate is a data-changing operation.
+      deleteTxn.commit(deleteActions, Truncate())
+
+      // Finish backfill.
+      executeBackfill(log, backfillTxn)
+
+      val finalFiles = log.update().allFiles.collect()
+      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles)
+      assertRowIdsAreValid(log)
+      assert(finalFiles.map(_.path).toSet === Seq(file3, file4).map(_.path).toSet)
+    }
+  }
+
+  test("Backfill conflicts with a delete, Backfill wins") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      // Setup
+      val (file1, file2, file3, file4) = setupTableAndGetAllFiles(log)
+
+      // Start delete
+      val deleteTxn = log.startTransaction()
+      deleteTxn.filterFiles(EqualTo('x, Literal(1)) :: Nil)
+
+      // Backfill occurs in parallel and wins.
+      val backfillTxn = log.startTransaction()
+      executeBackfill(log, backfillTxn)
+
+      val deleteActions = Seq(file1.remove, file2.remove)
+      // Truncate is a data-changing operation.
+      deleteTxn.commit(deleteActions, Truncate())
+
+      val finalFiles = log.update().allFiles.collect()
+      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles)
+      assertRowIdsAreValid(log)
+      assert(finalFiles.map(_.path).toSet === Seq(file3, file4).map(_.path).toSet)
+    }
+  }
+
+  test("Backfill conflicts with a DV delete, Delete wins") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+
+      // Setup
+      val (file1, file2, file3, file4) = setupTableAndGetAllFiles(log)
+      enableDeletionVectorsInTable(log)
+
+      // Start Backfill
+      val backfillTxn = log.startTransaction()
+
+      // A delete occurs in parallel. Delete wins.
+      val deleteTxn = log.startTransaction()
+      deleteTxn.filterFiles(EqualTo('x, Literal(1)) :: Nil)
+      val (addFile1WithDV, removeFile1) = addDVToFileInTable(log, file1)
+      val (addFile2WithDV, removeFile2) = addDVToFileInTable(log, file2)
+      val deleteActions = Seq(addFile1WithDV, removeFile1, addFile2WithDV, removeFile2)
+      // Truncate is a data-changing operation.
+      deleteTxn.commit(deleteActions, Truncate())
+
+      // Finish Backfill
+      executeBackfill(log, backfillTxn)
+
+      val finalFiles = log.update().allFiles.collect()
+      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles)
+      assertRowIdsAreValid(log)
+      val allFiles = Seq(file1, file2, file3, file4)
+      assert(finalFiles.map(_.path).toSet === allFiles.map(_.path).toSet)
+    }
+  }
+
+  test("Backfill conflicts with a DV delete, Backfill wins") {
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      // Setup
+      val (file1, file2, file3, file4) = setupTableAndGetAllFiles(log)
+      enableDeletionVectorsInTable(log)
+
+      // Start delete
+      val deleteTxn = log.startTransaction()
+      deleteTxn.filterFiles(EqualTo('x, Literal(1)) :: Nil)
+
+      // Backfill occurs in parallel and wins.
+      val backfillTxn = log.startTransaction()
+      executeBackfill(log, backfillTxn)
+
+      val (addFile1WithDV, removeFile1) = addDVToFileInTable(log, file1)
+      val (addFile2WithDV, removeFile2) = addDVToFileInTable(log, file2)
+      val deleteActions = Seq(addFile1WithDV, removeFile1, addFile2WithDV, removeFile2)
+      // Truncate is a data-changing operation.
+      deleteTxn.commit(deleteActions, Truncate())
+
+      val finalFiles = log.update().allFiles.collect()
+      assertBaseRowIDsAndDefaultRowCommitVersionsAssigned(finalFiles)
+      assertRowIdsAreValid(log)
+      val allFiles = Seq(file1, file2, file3, file4)
+      assert(finalFiles.map(_.path).toSet === allFiles.map(_.path).toSet)
+    }
+  }
+
+  private def addRowTrackingEnabledConfigToMetadata(metadata: Metadata): Metadata = {
+    val newConfigs = metadata.configuration updated
+      (DeltaConfigs.ROW_TRACKING_ENABLED.key, "true")
+    metadata.copy(configuration = newConfigs)
+  }
+
+  private def enableRowTrackingOnlyMetadataUpdate(): Unit = {
+    val txn = deltaLog.startTransaction()
+    val updatedMetadata = addRowTrackingEnabledConfigToMetadata(latestSnapshot.metadata)
+    val tags = Map(DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+    txn.updateMetadata(updatedMetadata)
+    txn.commit(Nil, ManualUpdate, tags)
+  }
+
+  test("RowTrackingEnablementOnly metadata update does not fail transactions "
+      + "that don't do metadata update") {
+    withTestTable {
+      val txn = deltaLog.startTransaction()
+      activateRowTracking()
+      enableRowTrackingOnlyMetadataUpdate()
+
+      val rowTrackingPreserved = rowTrackingMarkedAsPreservedForCommit(deltaLog) {
+        txn.commit(Seq(addFile(path = "file_path")), DeltaOperations.ManualUpdate)
+      }
+
+      assert(!rowTrackingPreserved, "Commits conflicting with a metadata update " +
+          "that enables row tracking only should have row tracking marked as not preserved.")
+
+      assertRowIdsAreValid(deltaLog)
+      assert(RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
+    }
+  }
+
+  test("RowTrackingEnablementOnly metadata update fails transactions "
+      + "that perform a metadata update") {
+    withTestTable {
+      activateRowTracking()
+      val numInitialRecords = 7
+      commitRecords(numInitialRecords)
+
+      val txn = deltaLog.startTransaction()
+      val newConfigs = Map("key" -> "value")
+      val newMetadata = latestSnapshot.metadata.copy(configuration = newConfigs)
+      txn.updateMetadata(newMetadata)
+
+      enableRowTrackingOnlyMetadataUpdate()
+
+      val commitVersionBefore = latestSnapshot.version
+      intercept[MetadataChangedException] {
+        txn.commit(Nil, DeltaOperations.ManualUpdate)
+      }
+      assert(latestSnapshot.version === commitVersionBefore,
+        "the commit should have failed")
+    }
+  }
+
+  test("RowTrackingEnablementOnly metadata update fails another " +
+      "RowTrackingEnablementOnly metadata update") {
+    withTestTable {
+      activateRowTracking()
+      val txn = deltaLog.startTransaction()
+      val newMetadata = addRowTrackingEnabledConfigToMetadata(latestSnapshot.metadata)
+      txn.updateMetadata(newMetadata)
+
+      enableRowTrackingOnlyMetadataUpdate()
+
+      val commitVersionBefore = latestSnapshot.version
+      intercept[MetadataChangedException] {
+        val tags = Map(DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+        txn.commit(Nil, DeltaOperations.ManualUpdate, tags)
+      }
+      assert(latestSnapshot.version === commitVersionBefore,
+        "the commit should have failed")
     }
   }
 }

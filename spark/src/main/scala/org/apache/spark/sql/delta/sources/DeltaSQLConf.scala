@@ -554,6 +554,30 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(5)
 
+  val COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION =
+    buildConf("coordinatedCommits.ignoreMissingCoordinatorImplementation")
+      .internal()
+      .doc("When enabled, reads will not fail if the commit coordinator implementation " +
+        "is missing. Writes will still fail and reads will just rely on backfilled commits. " +
+        "This also means that reads can be stale.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val PARQUET_OUTPUT_TIMESTAMP_TYPE =
+    buildConf("parquet.outputTimestampType")
+      .doc(
+        """
+          |Sets which Parquet timestamp type to use when Spark writes data to Parquet files:
+          |INT96 is a non-standard but commonly used timestamp type in Parquet.
+          |TIMESTAMP_MICROS is a standard timestamp type in Parquet,
+          |which stores number of microseconds from the Unix epoch.
+          |TIMESTAMP_MILLIS is also standard, but with millisecond precision,
+          |which means Spark has to truncate the microsecond portion of its timestamp value.
+          |""".stripMargin)
+      .stringConf
+      .checkValues(Set("INT96", "TIMESTAMP_MICROS", "TIMESTAMP_MILLIS"))
+      .createWithDefaultString("TIMESTAMP_MICROS")
+
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
@@ -653,6 +677,17 @@ trait DeltaSQLConfBase {
       .doc("The file prefix to use in DummyFileManager")
       .stringConf
       .createWithDefault(".s3-optimization-")
+
+  val DELTA_MERGE_ANALYSIS_BATCH_RESOLUTION =
+    buildConf("merge.analysis.batchActionResolution.enabled")
+      .internal()
+      .doc(
+        """
+          | Whether to batch the analysis of all DeltaMergeActions within a clause
+          | during merge's analysis resolution.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
@@ -763,10 +798,29 @@ trait DeltaSQLConfBase {
           "must be a valid StorageLevel")
       .createWithDefault("DISK_ONLY")
 
+  val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_FIRST_RETRY =
+    buildConf("merge.materializeSource.rddStorageLevelFirstRetry")
+      .internal()
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried the first" +
+        "time. Note: will always use disk.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValue( v =>
+        try {
+          StorageLevel.fromString(v).isInstanceOf[StorageLevel]
+        } catch {
+          case _: IllegalArgumentException => true
+        },
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelFirstRetry" """ +
+          "must be a valid StorageLevel")
+      .createWithDefault("DISK_ONLY_2")
+
   val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY =
     buildConf("merge.materializeSource.rddStorageLevelRetry")
       .internal()
-      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried. " +
+      .doc("What StorageLevel to use to persist the source RDD when MERGE is retried after the " +
+        "first retry. The storage level to use for the first retry can be configured using" +
+        """"spark.databricks.delta.merge.materializeSource.rddStorageLevelFirstRetry" """ +
         "Note: will always use disk.")
       .stringConf
       .transform(_.toUpperCase(Locale.ROOT))
@@ -778,7 +832,7 @@ trait DeltaSQLConfBase {
         },
         """"spark.databricks.delta.merge.materializeSource.rddStorageLevelRetry" """ +
           "must be a valid StorageLevel")
-      .createWithDefault("DISK_ONLY_2")
+      .createWithDefault("DISK_ONLY_3")
 
   val MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS =
     buildStaticConf("merge.materializeSource.maxAttempts")
@@ -840,6 +894,82 @@ trait DeltaSQLConfBase {
         .longConf
         .checkValue(_ > 0, "partSize has to be positive")
         .createOptional
+
+  /////////////////////////////////
+  // File Materialization Tracker
+  /////////////////////////////////
+
+  val DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED =
+    buildConf("command.fileMaterializationLimit.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, tracks the file metadata materialized on the driver and restricts the
+          |number of files materialized on the driver to be within the global file
+          |materialization limit.
+       """.stripMargin
+      )
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_COMMAND_FILE_MATERIALIZATION_LIMIT =
+    buildStaticConf("command.fileMaterializationLimit.softMax")
+      .internal()
+      .doc(
+        s"""
+           |The soft limit for the total number of file metadata that can be materialized at once on
+           |the driver. This config will take effect only when
+           |${DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED.key} is enabled.
+        """.stripMargin
+      )
+      .intConf
+      .checkValue(_ >= 0, "'command.fileMaterializationLimit.softMax' must be positive")
+      .createWithDefault(10000000)
+
+  ////////////////////////
+  // BACKFILL
+  ////////////////////////
+
+  val DELTA_ROW_TRACKING_BACKFILL_ENABLED =
+    buildConf("rowTracking.backfill.enabled")
+      .internal()
+      .doc("Whether Row Tracking backfill can be performed.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
+    buildConf("rowTracking.backfill.maxNumBatchesInParallel")
+      .internal()
+      .doc("The maximum number of backfill batches (commits) that can run at the same time " +
+        "from a single RowTrackingBackfillCommand.")
+      .intConf
+      .checkValue(_ > 0, "'backfill.maxNumBatchesInParallel' must be positive.")
+      .createWithDefault(1)
+
+  val DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
+    buildConf("backfill.maxNumBatchesInParallel")
+      .internal()
+      .doc("The maximum number of backfill batches (commits) that can run at the same time " +
+        "from a single BackfillCommand.")
+      .fallbackConf(DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL)
+
+  val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT =
+    buildConf("rowTracking.backfill.maxNumFiles")
+      .internal()
+      .doc("The maximum number of files to include in a single commit when running " +
+        "RowTrackingBackfillCommand. The default maximum aims to keep every " +
+        "delta log entry below 100mb.")
+      .intConf
+      .checkValue(_ > 0, "'backfill.maxNumFiles' must be positive.")
+      .createWithDefault(22000)
+
+  val DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT =
+    buildConf("backfill.maxNumFiles")
+      .internal()
+      .doc("The maximum number of files to include in a single commit when running " +
+        "BackfillCommand. The default maximum aims to keep every " +
+        "delta log entry below 100mb.")
+      .fallbackConf(DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT)
 
   ////////////////////////////////////
   // Checkpoint V2 Specific Configs
@@ -955,7 +1085,7 @@ trait DeltaSQLConfBase {
         | Delta table.
         |""".stripMargin)
       .booleanConf
-      .createWithDefault(Utils.isTesting)
+      .createWithDefault(true)
 
   val DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS =
     buildConf("legacy.storeOptionsAsProperties")

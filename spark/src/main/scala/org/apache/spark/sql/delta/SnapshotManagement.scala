@@ -21,21 +21,22 @@ import java.util.Objects
 import java.util.concurrent.{CompletableFuture, Future}
 import java.util.concurrent.locks.ReentrantLock
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import com.fasterxml.jackson.annotation.JsonIgnore
+import io.delta.storage.commit.{Commit, GetCommitsResponse}
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
@@ -214,7 +215,7 @@ trait SnapshotManagement { self: DeltaLog =>
       // perform an additional listing from the file system because those missing files would be
       // backfilled by now and show up in the file-system.
       // Note: We only care about missing delta files with version <= versionToLoad
-      val areDeltaFilesMissing = unbackfilledCommitsResponse.getCommits.headOption match {
+      val areDeltaFilesMissing = unbackfilledCommitsResponse.getCommits.asScala.headOption match {
         case Some(commit) =>
           // Missing Delta files: [maxDeltaVersionSeen + 1, commit.head.version - 1]
           maxDeltaVersionSeen + 1 < commit.getVersion
@@ -254,7 +255,7 @@ trait SnapshotManagement { self: DeltaLog =>
           additionalLogTuplesFromFsListingOpt.map(_.map(_._3)),
         "maxDeltaVersionSeen" -> maxDeltaVersionSeen,
         "unbackfilledCommitVersions" ->
-          unbackfilledCommitsResponse.getCommits.map(commit => commit.getVersion),
+          unbackfilledCommitsResponse.getCommits.asScala.map(commit => commit.getVersion),
         "latestCommitVersion" -> unbackfilledCommitsResponse.getLatestTableVersion)
       recordDeltaEvent(
         deltaLog = this,
@@ -283,7 +284,7 @@ trait SnapshotManagement { self: DeltaLog =>
         case _ => None
       }
 
-    val unbackfilledCommitsFiltered = unbackfilledCommitsResponse.getCommits
+    val unbackfilledCommitsFiltered = unbackfilledCommitsResponse.getCommits.asScala
       .dropWhile(_.getVersion <= maxDeltaVersionSeen)
       .takeWhile(commit => versionToLoad.forall(commit.getVersion <= _))
       .map(_.getFileStatus)
@@ -1100,7 +1101,9 @@ trait SnapshotManagement { self: DeltaLog =>
       isAsync: Boolean): Snapshot = {
     segmentOpt.map { segment =>
       if (previousSnapshotOpt.exists(_.logSegment == segment)) {
-        previousSnapshotOpt.get
+        val previousSnapshot = previousSnapshotOpt.get
+        previousSnapshot.updateLastKnownBackfilledVersion(segment.lastBackfilledVersionInSegment)
+        previousSnapshot
       } else {
         val newSnapshot = createSnapshot(
           initSegment = segment,
@@ -1414,11 +1417,39 @@ case class LogSegment(
     obj match {
       case other: LogSegment =>
         version == other.version &&
-          lastCommitFileModificationTimestamp == other.lastCommitFileModificationTimestamp &&
-          logPath == other.logPath && checkpointProvider.version == other.checkpointProvider.version
+          logPath == other.logPath &&
+          checkpointProvider.version == other.checkpointProvider.version &&
+          lastMatchingBackfilledCommitIsEqual(other)
       case _ => false
     }
   }
+
+  private def lastMatchingBackfilledCommitIsEqual(other: LogSegment): Boolean = {
+    def fileStatusEquals(fileStatus1: FileStatus, fileStatus2: FileStatus): Boolean = {
+      fileStatus1.getPath == fileStatus2.getPath &&
+        fileStatus1.getLen == fileStatus2.getLen &&
+        fileStatus1.getModificationTime == fileStatus2.getModificationTime
+    }
+
+    val backfilledPrefixThis = deltas.takeWhile(isBackfilledDeltaFile)
+    val backfilledPrefixOther = other.deltas.takeWhile(isBackfilledDeltaFile)
+    val sizeToAnalyze = math.min(backfilledPrefixThis.size, backfilledPrefixOther.size)
+    val backfilledPrefixThisStripped = backfilledPrefixThis.take(sizeToAnalyze)
+    val backfilledPrefixOtherStripped = backfilledPrefixOther.take(sizeToAnalyze)
+    backfilledPrefixThisStripped.zip(backfilledPrefixOtherStripped)
+      .forall { case (delta1, delta2) => fileStatusEquals(delta1, delta2) } &&
+      checkpointProvider.topLevelFiles.size == other.checkpointProvider.topLevelFiles.size &&
+      checkpointProvider.topLevelFiles.zip(other.checkpointProvider.topLevelFiles).forall {
+        case (cp1, cp2) => fileStatusEquals(cp1, cp2)
+      }
+  }
+
+  private[delta] lazy val lastBackfilledVersionInSegment =
+    // This works if the last backfilled file is a minor-compaction, because
+    // FileNames.getFileVersion returns the minor-compaction end version,
+    // which correctly initializes the lastBackfilledVersionInSegment.
+    CoordinatedCommitsUtils.getLastBackfilledFile(deltas).map(getFileVersion)
+      .getOrElse(checkpointProvider.version)
 }
 
 /** Exception thrown When [[TableCommitCoordinatorClient.getCommits]] fails due to any reason. */

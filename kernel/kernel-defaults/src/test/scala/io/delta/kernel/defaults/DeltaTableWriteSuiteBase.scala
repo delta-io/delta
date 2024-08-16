@@ -83,18 +83,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     batchSize = 876,
     numBatches = 7)
 
-  def withTempDirAndEngine(f: (String, Engine) => Unit): Unit = {
-    val engine = DefaultEngine.create(new Configuration() {
-      {
-        // Set the batch sizes to small so that we get to test the multiple batch/file scenarios.
-        set("delta.kernel.default.parquet.reader.batch-size", "20");
-        set("delta.kernel.default.json.reader.batch-size", "20");
-        set("delta.kernel.default.parquet.writer.targetMaxFileSize", "20");
-      }
-    })
-    withTempDir { dir => f(dir.getAbsolutePath, engine) }
-  }
-
   def verifyLastCheckpointMetadata(tablePath: String, checkpointAt: Long, expSize: Long): Unit = {
     val filePath = f"$tablePath/_delta_log/_last_checkpoint"
 
@@ -328,13 +316,16 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def assertMetadataProp(
-    snapshot: SnapshotImpl, key: TableConfig[_ <: Any], expectedValue: Any): Unit = {
-    assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
+    engine: Engine,
+    snapshot: SnapshotImpl,
+    key: TableConfig[_ <: Any],
+    expectedValue: Any): Unit = {
+    assert(key.fromMetadata(engine, snapshot.getMetadata) == expectedValue)
   }
 
   def assertHasNoMetadataProp(
-    snapshot: SnapshotImpl, key: TableConfig[_ <: Any]): Unit = {
-    assertMetadataProp(snapshot, key, Optional.empty())
+    engine: Engine, snapshot: SnapshotImpl, key: TableConfig[_ <: Any]): Unit = {
+    assertMetadataProp(engine, snapshot, key, Optional.empty())
   }
 
   def assertHasWriterFeature(snapshot: SnapshotImpl, writerFeature: String): Unit = {
@@ -361,7 +352,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       .commit(engine, emptyIterable())
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-    assertMetadataProp(snapshot, key, expectedValue)
+    assertMetadataProp(engine, snapshot, key, expectedValue)
   }
 
   def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {

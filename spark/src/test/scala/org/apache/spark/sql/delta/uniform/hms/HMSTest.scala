@@ -16,41 +16,63 @@
 
 package org.apache.spark.sql.delta.uniform.hms
 
+import java.util.concurrent.ConcurrentLinkedQueue
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.hive.conf.HiveConf.ConfVars._
 import org.scalatest.{BeforeAndAfterAll, Suite}
-
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 
+object HMSPool {
+  private val pool = new ConcurrentLinkedQueue[EmbeddedHMS]()
+  private val maxInstances = 5
+
+  def acquire(): EmbeddedHMS = synchronized {
+    while (pool.isEmpty && pool.size >= maxInstances) {
+      wait()
+    }
+    if (pool.isEmpty) {
+      new EmbeddedHMS()
+    } else {
+      pool.poll()
+    }
+  }
+
+  def release(hms: EmbeddedHMS): Unit = synchronized {
+    pool.offer(hms)
+    notify()
+  }
+}
+
 /**
- * Provide support to testcases that need to use HIM
+ * Provide support to testcases that need to use HMS.
  */
 trait HMSTest extends Suite with BeforeAndAfterAll {
+  private var sharedHMS: EmbeddedHMS = _
 
   def withMetaStore(thunk: (Configuration) => Unit): Unit = {
     val conf = sharedHMS.conf()
     thunk(conf)
   }
 
-  private var sharedHMS: EmbeddedHMS = _
-
   protected override def beforeAll(): Unit = {
-    startHMS()
+    sharedHMS = HMSPool.acquire()
+    sharedHMS.start()
     super.beforeAll()
   }
 
   protected override def afterAll(): Unit = {
     super.afterAll()
-    stopHMS()
+    releaseHMS()
   }
 
-  protected def startHMS(): Unit = {
-    sharedHMS = new EmbeddedHMS()
-    sharedHMS.start()
+  protected def releaseHMS(): Unit = {
+    if (sharedHMS != null) {
+      HMSPool.release(sharedHMS)
+      sharedHMS = null
+    }
   }
-
-  protected def stopHMS(): Unit = sharedHMS.stop()
 
   protected def setupSparkConfWithHMS(in: SparkConf): SparkConf = {
     val conf = sharedHMS.conf()

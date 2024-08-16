@@ -21,16 +21,19 @@ import java.util.Optional
 import com.google.protobuf
 import com.google.protobuf.{ByteString, InvalidProtocolBufferException}
 import io.delta.connect.proto
+import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Encoders, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.connect.common.InvalidPlanInput
+import org.apache.spark.sql.connect.common.{DataTypeProtoConverter, InvalidPlanInput}
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.RelationPlugin
+import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
+import org.apache.spark.sql.types.StructType
 
 /**
  * Planner plugin for relation extensions using [[proto.DeltaRelation]].
@@ -57,6 +60,16 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
     relation.getRelationTypeCase match {
       case proto.DeltaRelation.RelationTypeCase.SCAN =>
         transformScan(planner.session, relation.getScan)
+      case proto.DeltaRelation.RelationTypeCase.DESCRIBE_HISTORY =>
+        transformDescribeHistory(planner.session, relation.getDescribeHistory)
+      case proto.DeltaRelation.RelationTypeCase.DESCRIBE_DETAIL =>
+        transformDescribeDetail(planner.session, relation.getDescribeDetail)
+      case proto.DeltaRelation.RelationTypeCase.CONVERT_TO_DELTA =>
+        transformConvertToDelta(planner.session, relation.getConvertToDelta)
+      case proto.DeltaRelation.RelationTypeCase.RESTORE_TABLE =>
+        transformRestoreTable(planner.session, relation.getRestoreTable)
+      case proto.DeltaRelation.RelationTypeCase.IS_DELTA_TABLE =>
+        transformIsDeltaTable(planner.session, relation.getIsDeltaTable)
       case _ =>
         throw InvalidPlanInput(s"Unknown DeltaRelation ${relation.getRelationTypeCase}")
     }
@@ -65,6 +78,65 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   private def transformScan(spark: SparkSession, scan: proto.Scan): LogicalPlan = {
     val deltaTable = transformDeltaTable(spark, scan.getTable)
     deltaTable.toDF.queryExecution.analyzed
+  }
+
+  private def transformDescribeHistory(
+      spark: SparkSession, describeHistory: proto.DescribeHistory): LogicalPlan = {
+    val deltaTable = transformDeltaTable(spark, describeHistory.getTable)
+    deltaTable.history().queryExecution.analyzed
+  }
+
+  private def transformDescribeDetail(
+      spark: SparkSession, describeDetail: proto.DescribeDetail): LogicalPlan = {
+    val deltaTable = transformDeltaTable(spark, describeDetail.getTable)
+    deltaTable.detail().queryExecution.analyzed
+  }
+
+  private def transformConvertToDelta(
+      spark: SparkSession, convertToDelta: proto.ConvertToDelta): LogicalPlan = {
+    val tableIdentifier =
+      spark.sessionState.sqlParser.parseTableIdentifier(convertToDelta.getIdentifier)
+    val partitionSchema = if (convertToDelta.hasPartitionSchemaStruct) {
+      Some(DataTypeProtoConverter.toCatalystType(convertToDelta.getPartitionSchemaStruct)
+        .asInstanceOf[StructType])
+    } else if (convertToDelta.hasPartitionSchemaString) {
+      Some(StructType.fromDDL(convertToDelta.getPartitionSchemaString))
+    } else {
+      None
+    }
+
+    val cvt = ConvertToDeltaCommand(
+      tableIdentifier,
+      partitionSchema,
+      collectStats = true,
+      deltaPath = None)
+    cvt.run(spark)
+
+    val result = if (cvt.isCatalogTable(spark.sessionState.analyzer, tableIdentifier)) {
+      convertToDelta.getIdentifier
+    } else {
+      s"delta.`${tableIdentifier.table}`"
+    }
+    spark.createDataset(result :: Nil)(Encoders.STRING).queryExecution.analyzed
+  }
+
+  private def transformRestoreTable(
+      spark: SparkSession, restoreTable: proto.RestoreTable): LogicalPlan = {
+    val deltaTable = transformDeltaTable(spark, restoreTable.getTable)
+    val df = if (restoreTable.hasVersion) {
+      deltaTable.restoreToVersion(restoreTable.getVersion)
+    } else if (restoreTable.hasTimestamp) {
+      deltaTable.restoreToTimestamp(restoreTable.getTimestamp)
+    } else {
+      throw new RuntimeException()
+    }
+    df.queryExecution.commandExecuted
+  }
+
+  private def transformIsDeltaTable(
+      spark: SparkSession, isDeltaTable: proto.IsDeltaTable): LogicalPlan = {
+    val result = DeltaTable.isDeltaTable(spark, isDeltaTable.getPath)
+    spark.createDataset(result :: Nil)(Encoders.scalaBoolean).queryExecution.analyzed
   }
 }
 

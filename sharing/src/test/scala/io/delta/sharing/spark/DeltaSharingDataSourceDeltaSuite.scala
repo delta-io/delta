@@ -158,6 +158,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               val sharedTableName = s"shared_table_simple_" +
                 s"${skippingEnabled}_${sharingConfig}_$deltaConfig"
               prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+              prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName, limitHint = Some(1))
               prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
               def test(tablePath: String, tableName: String): Unit = {
@@ -329,6 +330,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         // Test for delta format response
         val sharedDeltaTable = "shared_delta_table"
         prepareMockedClientAndFileSystemResult(deltaTableName, sharedDeltaTable)
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedDeltaTable, limitHint = Some(1))
         prepareMockedClientAndFileSystemResult(
           deltaTableName,
           sharedDeltaTable,
@@ -350,6 +352,11 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         prepareMockedClientAndFileSystemResultForParquet(
           deltaTableName,
           sharedParquetTable
+        )
+        prepareMockedClientAndFileSystemResultForParquet(
+          deltaTableName,
+          sharedParquetTable,
+          limitHint = Some(1)
         )
         prepareMockedClientAndFileSystemResultForParquet(
           deltaTableName,
@@ -497,6 +504,55 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               s"share1.default.$sharedTableName"
             )
           }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read data with different filters") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_diff_filter"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "first"), (2, "first")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "second"), (2, "second")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "third"), (2, "third")""")
+
+        val sharedTableName = s"shared_table_filters_diff_filter"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName, limitHint = Some(2))
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+          "true"
+        )
+
+        // The files returned from delta sharing client are the same for these queries.
+        // This is to test the filters are passed correctly to TahoeLogFileIndex for the local delta
+        // log.
+        def testDiffFilter(tablePath: String, tableName: String): Unit = {
+          val df = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+
+          // limit
+          assert(df.limit(2).count() == 2)
+          // full
+          val expectedFull = Seq(
+            Row(1, "first"), Row(1, "second"), Row(1, "third"),
+            Row(2, "first"), Row(2, "second"), Row(2, "third")
+          )
+          checkAnswer(df, expectedFull)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          testDiffFilter(
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName",
+            s"share1.default.$sharedTableName"
+          )
         }
       }
     }
@@ -968,6 +1024,112 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         }
 
         val sharedTableName = "shard_table_cdf_more"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        Seq(0, 10, 20, 30).foreach { startingVersion =>
+          prepareMockedClientAndFileSystemResultForCdf(
+            deltaTableName,
+            sharedTableName,
+            startingVersion
+          )
+
+          val expected = spark.read
+            .format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", startingVersion)
+            .table(deltaTableName)
+
+          def test(tablePath: String): Unit = {
+            val df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(tablePath)
+            checkAnswer(df, expected)
+            assert(df.count() > 0)
+          }
+
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            test(profileFile.getCanonicalPath + s"#share1.default.$sharedTableName")
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read data with special chars") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_special"
+      withTable(deltaTableName) {
+        // scalastyle:off nonascii
+        sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
+               |USING DELTA PARTITIONED BY (c2)
+               |""".stripMargin)
+        // The table operations take about 6~10 seconds.
+        for (i <- 0 to 99) {
+          val iteration = s"iteration $i"
+          val valuesBuilder = Seq.newBuilder[String]
+          for (j <- 0 to 99) {
+            valuesBuilder += s"""(${i * 10 + j}, "$iteration")"""
+          }
+          sql(s"INSERT INTO $deltaTableName VALUES ${valuesBuilder.result().mkString(",")}")
+        }
+
+        val sharedTableName = "shared_table_more"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        val expectedSchema: StructType = new StructType()
+          .add("第一列", IntegerType)
+          .add("c2", StringType)
+        // scalastyle:on nonascii
+        val expected = spark.read.format("delta").table(deltaTableName)
+
+        def test(tablePath: String): Unit = {
+          assert(
+            expectedSchema == spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+              .schema
+          )
+          val df =
+            spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+          checkAnswer(df, expected)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          test(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read cdf with special chars") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_cdf_special"
+      withTable(deltaTableName) {
+        // scalastyle:off nonascii
+        sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
+               |USING DELTA PARTITIONED BY (c2)
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)
+               |""".stripMargin)
+        // The table operations take about 20~30 seconds.
+        for (i <- 0 to 9) {
+          val iteration = s"iteration $i"
+          val valuesBuilder = Seq.newBuilder[String]
+          for (j <- 0 to 49) {
+            valuesBuilder += s"""(${i * 10 + j}, "$iteration")"""
+          }
+          sql(s"INSERT INTO $deltaTableName VALUES ${valuesBuilder.result().mkString(",")}")
+          sql(s"""UPDATE $deltaTableName SET `第一列` = `第一列` + 100 where c2 = "${iteration}"""")
+          // scalastyle:on nonascii
+          sql(s"""DELETE FROM $deltaTableName where c2 = "${iteration}"""")
+        }
+
+        val sharedTableName = "shard_table_cdf_special"
         prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
         Seq(0, 10, 20, 30).foreach { startingVersion =>
           prepareMockedClientAndFileSystemResultForCdf(

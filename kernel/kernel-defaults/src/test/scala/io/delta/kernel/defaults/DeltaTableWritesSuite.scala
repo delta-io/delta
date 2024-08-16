@@ -15,12 +15,10 @@
  */
 package io.delta.kernel.defaults
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
-import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
@@ -29,11 +27,8 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
-import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.actions.{Metadata, SingleAction}
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -42,7 +37,7 @@ import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
+import io.delta.kernel.utils.CloseableIterable
 
 import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
@@ -151,7 +146,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       txn1.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+      assertMetadataProp(engine, ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
       setTablePropAndVerify(
         engine = engine,
@@ -179,7 +174,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         data = Seq(Map.empty[String, Literal] -> dataBatches1)
       )
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assertMetadataProp(engine, ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
 
@@ -202,13 +197,13 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       )
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+      assertMetadataProp(engine, ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
       // Try to commit txn1
       txn1.commit(engine, emptyIterable())
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assertMetadataProp(engine, ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
 
@@ -230,7 +225,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tableProperties =
           Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assertMetadataProp(engine, ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
       assert(getMetadataActionFromCommit(engine, table, 1).isEmpty)
     }
   }
@@ -251,7 +246,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assertMetadataProp(engine, ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
 
       val configurations = ver0Snapshot.getMetadata.getConfiguration
       assert(configurations.containsKey(TableConfig.CHECKPOINT_INTERVAL.getKey))
@@ -1008,5 +1003,257 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
     txnBuilder.build(engine)
+  }
+
+  test("create table with unsupported column mapping mode") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val ex = intercept[InvalidConfigurationValueException] {
+        createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
+          tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "invalid"))
+          .commit(engine, emptyIterable())
+      }
+      assert(ex.getMessage.contains("Invalid value for table property " +
+        "'delta.columnMapping.mode': 'invalid'. Needs to be one of: [none, id, name]."))
+    }
+  }
+
+  test("create table with column mapping mode = none") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "none"))
+        .commit(engine, emptyIterable())
+
+      val table = Table.forPath(engine, tablePath)
+      assert(table.getLatestSnapshot(engine).getSchema(engine).equals(testSchema))
+    }
+  }
+
+  test("cannot update table with unsupported column mapping mode") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+        .commit(engine, emptyIterable())
+
+      val ex = intercept[InvalidConfigurationValueException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
+          .withTableProperties(
+            engine,
+            Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "invalid").asJava)
+          .build(engine)
+      }
+      assert(ex.getMessage.contains("Invalid value for table property " +
+        "'delta.columnMapping.mode': 'invalid'. Needs to be one of: [none, id, name]."))
+    }
+  }
+
+  test("cannot update table with unsupported column mapping mode change") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
+        .commit(engine, emptyIterable())
+
+      val ex = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
+          .withTableProperties(
+            engine,
+            Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "none").asJava)
+          .build(engine)
+      }
+      assert(ex.getMessage.contains("Changing column mapping mode " +
+        "from 'name' to 'none' is not supported"))
+    }
+  }
+
+  test("cannot update column mapping mode from id to name on existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
+
+      val ex = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
+          .withTableProperties(
+            engine,
+            Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name").asJava)
+          .build(engine)
+          .commit(engine, emptyIterable())
+      }
+      assert(ex.getMessage.contains("Changing column mapping mode " +
+        "from 'id' to 'name' is not supported"))
+    }
+  }
+
+  test("cannot update column mapping mode from name to id on existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
+
+      val ex = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
+          .withTableProperties(
+            engine,
+            Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id").asJava)
+          .build(engine)
+          .commit(engine, emptyIterable())
+      }
+      assert(ex.getMessage.contains("Changing column mapping mode " +
+        "from 'name' to 'id' is not supported"))
+    }
+  }
+
+  test("cannot update column mapping mode from none to id on existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty)
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      assert(structType.equals(schema))
+
+      val ex = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
+          .withTableProperties(
+            engine,
+            Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id").asJava)
+          .build(engine)
+          .commit(engine, emptyIterable())
+      }
+      assert(ex.getMessage.contains("Changing column mapping mode " +
+        "from 'none' to 'id' is not supported"))
+    }
+  }
+
+
+  test("unsupported protocol version with column mapping mode and no protocol update in metadata") {
+    // TODO
+  }
+
+  test("unsupported protocol version in existing table and new metadata with column mapping mode") {
+    // TODO
+  }
+
+  test("new table with column mapping mode = name") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
+    }
+  }
+
+  test("new table with column mapping mode = id") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
+    }
+  }
+
+  test("can update existing table to column mapping mode = name") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty)
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      assert(structType.equals(schema))
+
+      table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
+        .withTableProperties(
+          engine,
+          Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name").asJava)
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      val updatedSchema = table.getLatestSnapshot(engine).getSchema(engine)
+      assertColumnMapping(updatedSchema.get("a"), 1, "a")
+      assertColumnMapping(updatedSchema.get("b"), 2, "b")
+    }
+  }
+
+  test("new table with column mapping mode = id and nested schema") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b",
+          new StructType()
+            .add("d", IntegerType.INTEGER, true)
+            .add("e", IntegerType.INTEGER, true))
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
+      val innerStruct = structType.get("b").getDataType.asInstanceOf[StructType]
+      assertColumnMapping(innerStruct.get("d"), 3)
+      assertColumnMapping(innerStruct.get("e"), 4)
+      assertColumnMapping(structType.get("c"), 5)
+    }
+  }
+
+  private def assertColumnMapping(
+    field: StructField,
+    expId: Long,
+    expPhyName: String = "UUID"): Unit = {
+    val meta = field.getMetadata
+    assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
+    // For new tables the physical column name is a UUID. For existing tables, we
+    // try to keep the physical column name same as the one in the schema
+    if (expPhyName == "UUID") {
+      assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY).toString.startsWith("col-"))
+    } else {
+      assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY) == expPhyName)
+    }
   }
 }

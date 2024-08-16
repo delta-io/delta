@@ -16,24 +16,24 @@
 package io.delta.kernel.exceptions;
 
 /**
- * Thrown when Kernel cannot execute the requested operation due to the operation being invalid
- * or unsupported.
+ * Thrown when Kernel cannot execute the requested operation due to the operation being invalid or
+ * unsupported.
  */
 public class KernelException extends RuntimeException {
 
-    public KernelException() {
-        super();
-    }
+  public KernelException() {
+    super();
+  }
 
-    public KernelException(String message) {
-        super(message);
-    }
+  public KernelException(String message) {
+    super(message);
+  }
 
-    public KernelException(Throwable cause) {
-        super(cause);
-    }
+  public KernelException(Throwable cause) {
+    super(cause);
+  }
 
-    public KernelException(String message, Throwable cause) {
-        super(message, cause);
-    }
+  public KernelException(String message, Throwable cause) {
+    super(message, cause);
+  }
 }

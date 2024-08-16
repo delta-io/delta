@@ -77,7 +77,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ver0Snapshot.getTimestamp(engine) === beforeCommitAttemptStartTime + 1)
       assert(
         getInCommitTimestamp(engine, table, version = 0).get === ver0Snapshot.getTimestamp(engine))
-      assertHasWriterFeature(ver0Snapshot, "inCommitTimestamp-preview")
+      assertHasWriterFeature(ver0Snapshot, "inCommitTimestamp")
     }
   }
 
@@ -93,8 +93,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       txn1.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
-      assertHasNoWriterFeature(ver0Snapshot, "inCommitTimestamp-preview")
+      assertMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
+      assertHasNoWriterFeature(ver0Snapshot, "inCommitTimestamp")
       assert(getInCommitTimestamp(engine, table, version = 0).isEmpty)
 
       setTablePropAndVerify(
@@ -106,7 +106,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         expectedValue = true)
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertHasWriterFeature(ver1Snapshot, "inCommitTimestamp-preview")
+      assertHasWriterFeature(ver1Snapshot, "inCommitTimestamp")
       assert(ver1Snapshot.getTimestamp(engine) > ver0Snapshot.getTimestamp(engine))
       assert(
         getInCommitTimestamp(engine, table, version = 1).get === ver1Snapshot.getTimestamp(engine))
@@ -132,7 +132,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val ver1Timestamp = ver1Snapshot.getTimestamp(engine)
-      assert(isICTEnabled(ver1Snapshot.getMetadata))
+      assert(isICTEnabled(engine, ver1Snapshot.getMetadata))
 
       clock.setTime(startTime - 10000)
       appendData(
@@ -168,7 +168,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains(String.format(
         "This table has the feature %s enabled which requires the presence of the " +
           "CommitInfo action in every commit. However, the CommitInfo action is " +
-          "missing from commit version %s.", "inCommitTimestamp-preview", "0")))
+          "missing from commit version %s.", "inCommitTimestamp", "0")))
     }
   }
 
@@ -214,7 +214,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains(String.format(
         "This table has the feature %s enabled which requires the presence of " +
           "inCommitTimestamp in the CommitInfo action. However, this field has not " +
-          "been set in commit version %s.", "inCommitTimestamp-preview", "0")))
+          "been set in commit version %s.", "inCommitTimestamp", "0")))
     }
   }
 
@@ -229,8 +229,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver0Snapshot =
         Table.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertHasNoMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
-      assertHasNoMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
+      assertHasNoMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+      assertHasNoMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
     }
   }
 
@@ -254,12 +254,14 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(engine, ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
+        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(ver1Snapshot.getTimestamp(engine)))
       assertMetadataProp(
+        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -272,12 +274,14 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         data = Seq(Map.empty[String, Literal] -> dataBatches2))
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver2Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(engine, ver2Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
+        engine,
         ver2Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(ver1Snapshot.getTimestamp(engine)))
       assertMetadataProp(
+        engine,
         ver2Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -295,7 +299,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         expectedValue = true)
       val protocol = getProtocolActionFromCommit(engine, table, 0)
       assert(protocol.isDefined)
-      assert(VectorUtils.toJavaList(protocol.get.getArray(3)).contains("inCommitTimestamp-preview"))
+      assert(VectorUtils.toJavaList(protocol.get.getArray(3)).contains("inCommitTimestamp"))
 
       setTablePropAndVerify(
         engine = engine,
@@ -345,9 +349,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
           "  \"name\" : \"id\",\n  \"type\" : \"integer\",\n  \"nullable\" : true, \n" +
           "  \"metadata\" : {}\n} ]\n}', " +
           "partitionColumns=List(), createdTime=Optional[%s], " +
-          "configuration={delta.enableInCommitTimestamps-preview=true, " +
-          "delta.inCommitTimestampEnablementVersion-preview=1, " +
-          "delta.inCommitTimestampEnablementTimestamp-preview=%s}}",
+          "configuration={delta.inCommitTimestampEnablementTimestamp=%s, " +
+          "delta.enableInCommitTimestamps=true, " +
+          "delta.inCommitTimestampEnablementVersion=1}}",
         metadata.getId,
         metadata.getCreatedTime.get,
         inCommitTimestamp.toString))
@@ -374,12 +378,14 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(engine, ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
+        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(getInCommitTimestamp(engine, table, version = 1).get))
       assertMetadataProp(
+        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -391,7 +397,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       verifyWrittenContent(tablePath, testSchema, expData)
       verifyTableProperties(tablePath,
         ListMap(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> true,
-        "delta.feature.inCommitTimestamp-preview" -> "supported",
+        "delta.feature.inCommitTimestamp" -> "supported",
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey
           -> getInCommitTimestamp(engine, table, version = 1).get,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> 1L),
@@ -483,9 +489,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
           engine, winningCommitCount).asInstanceOf[SnapshotImpl]
         val curSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
         val observedEnablementTimestamp =
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(curSnapshot.getMetadata)
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(engine, curSnapshot.getMetadata)
         val observedEnablementVersion =
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(curSnapshot.getMetadata)
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(engine, curSnapshot.getMetadata)
         assert(observedEnablementTimestamp.get === lastSnapshot.getTimestamp(engine) + 1)
         assert(
           observedEnablementTimestamp.get ===
@@ -536,7 +542,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains(String.format(
         "This table has the feature %s enabled which requires the presence of the " +
           "CommitInfo action in every commit. However, the CommitInfo action is " +
-          "missing from commit version %s.", "inCommitTimestamp-preview", "2")))
+          "missing from commit version %s.", "inCommitTimestamp", "2")))
     }
   }
 
