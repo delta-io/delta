@@ -18,8 +18,10 @@ package io.delta.kernel.defaults.internal.parquet
 import io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.pruneSchema
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY
 import io.delta.kernel.types.{ArrayType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StructType}
 import org.apache.parquet.schema.MessageTypeParser
+import org.apache.spark.sql.types.StructField
 import org.scalatest.funsuite.AnyFunSuite
 
 class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
@@ -231,9 +233,134 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
         "optional int64 f02 = 2) with the same field id"))
   }
 
-  private def fieldMetadata(id: Int): FieldMetadata = {
-    FieldMetadata.builder()
-      .putLong(ColumnMapping.PARQUET_FIELD_ID_KEY, id)
+  // icebergCompatV2 tests - nested field ids are converted correctly to parquet schema
+  Seq(
+    (
+      "struct with array and map",
+      // Delta schema - input
+      new StructType()
+        .add("f0",
+          new StructType()
+            .add("f00", new ArrayType(LongType.LONG, false), fieldMetadata(2, ("f00.element", 3)))
+            .add("f01", new MapType(IntegerType.INTEGER, IntegerType.INTEGER, true),
+              fieldMetadata(4, ("f01.key", 5), ("f01.value", 6))),
+          fieldMetadata(1)),
+      // Expected parquet schema
+      MessageTypeParser.parseMessageType(
+        """message DefaultKernelSchema {
+          |  optional group f0 = 1 {
+          |    optional group f00 (LIST) = 2 {
+          |      repeated group list {
+          |        required int64 element = 3;
+          |      }
+          |    }
+          |    optional group f01 (MAP) = 4 {
+          |      repeated group key_value {
+          |        required int32 key = 5;
+          |        optional int32 value = 6;
+          |      }
+          |    }
+          |  }
+          |}""".stripMargin)
+    ),
+    (
+      "top-level array and map columns",
+      // Delta schema - input
+      new StructType()
+        .add("f1",
+          new ArrayType(IntegerType.INTEGER, true),
+          fieldMetadata(1, ("f1.element", 2)))
+        .add("f2",
+          new MapType(
+            new StructType()
+              .add("key_f0", IntegerType.INTEGER, fieldMetadata(6))
+              .add("key_f1", IntegerType.INTEGER, fieldMetadata(7)),
+            IntegerType.INTEGER,
+            true
+          ),
+          fieldMetadata(3, ("f2.key", 4), ("f2.value", 5))),
+      // Expected parquet schema
+      MessageTypeParser.parseMessageType("""message DefaultKernelSchema {
+        |  optional group f1 (LIST) = 1 {
+        |    repeated group list {
+        |      optional int32 element = 2;
+        |    }
+        |  }
+        |  optional group f2 (MAP) = 3 {
+        |    repeated group key_value {
+        |      required group key = 4 {
+        |        optional int32 key_f0 = 6;
+        |        optional int32 key_f1 = 7;
+        |      }
+        |      optional int32 value = 5;
+        |    }
+        |  }
+        |}""".stripMargin)
+    ),
+    (
+      "array/map inside array/map",
+      // Delta schema - input
+      new StructType()
+        .add("f3",
+          new ArrayType(new ArrayType(IntegerType.INTEGER, false), false),
+          fieldMetadata(0, ("f3.element", 1), ("f3.element.element", 2)))
+        .add("f4",
+          new MapType(
+            new MapType(
+              new StructType()
+                .add("key_f0", IntegerType.INTEGER, fieldMetadata(3))
+                .add("key_f1", IntegerType.INTEGER, fieldMetadata(4)),
+              IntegerType.INTEGER,
+              false
+            ),
+            IntegerType.INTEGER,
+            false
+          ),
+          fieldMetadata(5,
+            ("f4.key", 6), ("f4.value", 7), ("f4.key.key", 8), ("f4.key.value", 9))),
+      // Expected parquet schema
+      MessageTypeParser.parseMessageType("""message DefaultKernelSchema {
+        |  optional group f3 (LIST) = 0 {
+        |    repeated group list {
+        |      required group element (LIST) = 1 {
+        |        repeated group list {
+        |          required int32 element = 2;
+        |        }
+        |      }
+        |    }
+        |  }
+        |  optional group f4 (MAP) = 5 {
+        |    repeated group key_value {
+        |      required group key (MAP) = 6 {
+        |        repeated group key_value {
+        |          required group key = 8 {
+        |            optional int32 key_f0 = 3;
+        |            optional int32 key_f1 = 4;
+        |          }
+        |          required int32 value = 9;
+        |        }
+        |      }
+        |      required int32 value = 7;
+        |    }
+        |  }
+        |}""".stripMargin)
+    )
+  ).foreach { case (testName, deltaSchema, expectedParquetSchema) =>
+    test(s"icebergCompatV2 - nested fields are converted to parquet schema - $testName") {
+      val actParquetSchema = ParquetSchemaUtils.toParquetSchema(deltaSchema)
+      assert(actParquetSchema === expectedParquetSchema)
+    }
+  }
+
+  private def fieldMetadata(id: Int, nestedFieldIds: (String, Int) *): FieldMetadata = {
+    val builder = FieldMetadata.builder().putLong(ColumnMapping.PARQUET_FIELD_ID_KEY, id)
+
+    val nestedFiledMetadata = FieldMetadata.builder()
+    nestedFieldIds.foreach { case (nestedColPath, nestedId) =>
+      nestedFiledMetadata.putLong(nestedColPath, nestedId)
+    }
+    builder
+      .putFieldMetadata(PARQUET_FIELD_NESTED_IDS_METADATA_KEY, nestedFiledMetadata.build())
       .build()
   }
 }
