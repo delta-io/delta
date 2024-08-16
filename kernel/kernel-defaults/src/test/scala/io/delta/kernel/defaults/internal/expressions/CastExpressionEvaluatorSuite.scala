@@ -16,14 +16,14 @@
 package io.delta.kernel.defaults.internal.expressions
 
 import io.delta.kernel.data.ColumnVector
-import io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo
+import io.delta.kernel.defaults.internal.expressions.CastExpressionEvaluator.canCastTo
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
-class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
+class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
   private val allowedCasts: Set[(DataType, DataType)] = Set(
     (ByteType.BYTE, ShortType.SHORT),
     (ByteType.BYTE, IntegerType.INTEGER),
@@ -60,7 +60,7 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
       val fromType = castPair._1
       val toType = castPair._2
       val inputVector = testData(87, fromType, (rowId) => rowId % 7 == 0)
-      val outputVector = new ImplicitCastExpression(new Column("id"), toType)
+      val outputVector = new CastExpressionEvaluator(new Column("id"), toType)
         .eval(inputVector)
       checkCastOutput(inputVector, toType, outputVector)
     }

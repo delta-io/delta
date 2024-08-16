@@ -45,7 +45,7 @@ import java.util.*;
  * the same type, but the evaluator expects same type inputs. There could be more use cases, but for
  * now this is the only use case.
  */
-final class ImplicitCastExpression implements Expression {
+final class CastExpressionEvaluator implements Expression {
   private final Expression input;
   private final DataType outputType;
 
@@ -54,7 +54,7 @@ final class ImplicitCastExpression implements Expression {
    * responsibility of the caller to validate the input expression can be cast to the new type using
    * {@link #canCastTo(DataType, DataType)}
    */
-  ImplicitCastExpression(Expression input, DataType outputType) {
+  CastExpressionEvaluator(Expression input, DataType outputType) {
     this.input = requireNonNull(input, "input is null");
     this.outputType = requireNonNull(outputType, "outputType is null");
   }
