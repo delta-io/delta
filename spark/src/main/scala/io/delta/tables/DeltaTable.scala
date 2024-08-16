@@ -567,19 +567,33 @@ class DeltaTable private[tables](
    * Create a shallow clone of this DeltaTable to a new location.
    *
    * @param target The path or table name to create the clone
-   * @param create Whether to create the clone if no table exists
-   * @param replace Whether to replace anything at the destination with the clone
-   * @param ifNotExists Whether to ignore the operation if a table already exists at the path
-   * @param tableProperties Any table properties to override in the clone
    * @since 4.0.0
    */
-  def clone(
-      target: String,
-      create: Boolean = true,
-      replace: Boolean = false,
-      ifNotExists: Boolean = false,
-      tableProperties: Map[String, String] = Map.empty): DataFrame = {
-    executeClone(table, target, create, replace, ifNotExists, tableProperties)
+  def clone(target: String): DataFrame = {
+    clone(target, false)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable to a new location.
+   *
+   * @param target The path or table name to create the clone
+   * @param replace Whether to replace anything at the destination with the clone
+   * @since 4.0.0
+   */
+  def clone(target: String, replace: Boolean): DataFrame = {
+    clone(target, replace, Map.empty)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable to a new location.
+   *
+   * @param target The path or table name to create the clone
+   * @param replace Whether to replace anything at the destination with the clone
+   * @param properties Any table properties to override in the clone
+   * @since 4.0.0
+   */
+  def clone(target: String, replace: Boolean, properties: Map[String, String]): DataFrame = {
+    executeClone(table, target, replace, properties)
   }
 
   /**
@@ -587,21 +601,39 @@ class DeltaTable private[tables](
    *
    * @param version The version of this table to clone from
    * @param target The path or table name to create the clone
-   * @param create Whether to create the clone if no table exists
+   * @since 4.0.0
+   */
+  def cloneAtVersion(version: Long, target: String): DataFrame = {
+    cloneAtVersion(version, target, false)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable at a specific version to a new location.
+   *
+   * @param version The version of this table to clone from
+   * @param target The path or table name to create the clone
    * @param replace Whether to replace anything at the destination with the clone
-   * @param ifNotExists Whether to ignore the operation if a table already exists at the path
-   * @param tableProperties Any table properties to override in the clone
+   * @since 4.0.0
+   */
+  def cloneAtVersion(version: Long, target: String, replace: Boolean): DataFrame = {
+    cloneAtVersion(version, target, replace, Map.empty)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable at a specific version to a new location.
+   *
+   * @param version The version of this table to clone from
+   * @param target The path or table name to create the clone
+   * @param replace Whether to replace anything at the destination with the clone
+   * @param properties Any table properties to override in the clone
    * @since 4.0.0
    */
   def cloneAtVersion(
       version: Long,
       target: String,
-      create: Boolean = true,
-      replace: Boolean = false,
-      ifNotExists: Boolean = false,
-      tableProperties: Map[String, String] = Map.empty): DataFrame = {
-    executeClone(table, target, create, replace, ifNotExists, tableProperties,
-      versionAsOf = Some(version))
+      replace: Boolean,
+      properties: Map[String, String]): DataFrame = {
+    executeClone(table, target, replace, properties, versionAsOf = Some(version))
   }
 
   /**
@@ -609,21 +641,39 @@ class DeltaTable private[tables](
    *
    * @param timestamp The timestamp of this table to clone from
    * @param target The path or table name to create the clone
-   * @param create Whether to create the clone if no table exists
+   * @since 4.0.0
+   */
+  def cloneAtTimestamp(timestamp: String, target: String): DataFrame = {
+    cloneAtTimestamp(timestamp, target, false, Map.empty)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable at a specific timestamp to a new location.
+   *
+   * @param timestamp The timestamp of this table to clone from
+   * @param target The path or table name to create the clone
    * @param replace Whether to replace anything at the destination with the clone
-   * @param ifNotExists Whether to ignore the operation if a table already exists at the path
-   * @param tableProperties Any table properties to override in the clone
+   * @since 4.0.0
+   */
+  def cloneAtTimestamp(timestamp: String, target: String, replace: Boolean): DataFrame = {
+    cloneAtTimestamp(timestamp, target, replace, Map.empty)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable at a specific timestamp to a new location.
+   *
+   * @param timestamp The timestamp of this table to clone from
+   * @param target The path or table name to create the clone
+   * @param replace Whether to replace anything at the destination with the clone
+   * @param properties Any table properties to override in the clone
    * @since 4.0.0
    */
   def cloneAtTimestamp(
       timestamp: String,
       target: String,
-      create: Boolean = true,
-      replace: Boolean = false,
-      ifNotExists: Boolean = false,
-      tableProperties: Map[String, String] = Map.empty): DataFrame = {
-    executeClone(table, target, create, replace, ifNotExists, tableProperties,
-      timestampAsOf = Some(timestamp))
+      replace: Boolean,
+      properties: Map[String, String]): DataFrame = {
+    executeClone(table, target, replace, properties, timestampAsOf = Some(timestamp))
   }
 }
 

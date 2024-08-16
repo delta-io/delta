@@ -38,11 +38,11 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
     }
 
     if (versionAsOf.isDefined) {
-      table.cloneAtVersion(versionAsOf.get, target, isCreate, isReplace, false, tableProperties)
+      table.cloneAtVersion(versionAsOf.get, target, isReplace, tableProperties)
     } else if (timestampAsOf.isDefined) {
-      table.cloneAtTimestamp(timestampAsOf.get, target, isCreate, isReplace, false, tableProperties)
+      table.cloneAtTimestamp(timestampAsOf.get, target, isReplace, tableProperties)
     } else {
-      table.clone(target, isCreate, isReplace, false, tableProperties)
+      table.clone(target, isReplace, tableProperties)
     }
   }
   // scalastyle:on argcount

@@ -116,9 +116,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
   protected def executeClone(
     table: DeltaTableV2,
     target: String,
-    create: Boolean,
     replace: Boolean,
-    ifNotExists: Boolean,
     tableProperties: Map[String, String],
     versionAsOf: Option[Long] = None,
     timestampAsOf: Option[String] = None
@@ -147,7 +145,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     }
 
     toDataset(sparkSession, CloneTableStatement(maybeTimeTravel,
-      targetRelation, ifNotExists, replace, create, tableProperties.toMap, targetPath))
+      targetRelation, false, replace, true, tableProperties.toMap, targetPath))
   }
 
   protected def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {

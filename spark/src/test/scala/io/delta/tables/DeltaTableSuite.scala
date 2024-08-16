@@ -234,7 +234,6 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
   private val publicMethods =
   scala.reflect.runtime.universe.typeTag[io.delta.tables.DeltaTable].tpe.decls
     .filter(_.isPublic)
-    .filter(!_.isSynthetic)
     .map(_.name.toString).toSet
 
   private val ignoreMethods = Seq()
