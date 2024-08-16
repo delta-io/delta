@@ -31,6 +31,13 @@ RUN apt-get install -y git
 # cryptography. Otherwise, building wheels for these packages fails.
 RUN pip3 install --upgrade pip
 
+# Update the pip version to 24.0. By default `pyenv.run` installs the latest pip version
+# available. From version 24.1, `pip` doesn't allow installing python packages
+# with version string containing `-`. In Delta-Spark case, the pypi package generated has
+# `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
+# the`version.sbt` file.
+RUN pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
+
 RUN pip3 install pyspark==3.5.2
 
 RUN pip3 install mypy==0.982
