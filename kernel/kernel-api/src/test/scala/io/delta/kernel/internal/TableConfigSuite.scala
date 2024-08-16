@@ -78,6 +78,24 @@ class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
         TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
         TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true").asJava)
   }
+
+  test("check TableConfig.MAX_COLUMN_ID.editable is false") {
+    val engine = mockEngine(jsonHandler = new KeyValueJsonHandler(Map()))
+
+    val e = intercept[KernelException] {
+      TableConfig.validateProperties(engine,
+        Map(
+          TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
+          TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
+          TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
+          TableConfig.MAX_COLUMN_ID.getKey -> "10").asJava)
+    }
+
+    assert(e.isInstanceOf[KernelException])
+    assert(e.getMessage.toLowerCase() ==
+      s"The Delta table property '${TableConfig.MAX_COLUMN_ID.getKey}'".toLowerCase() +
+      s" is an internal property and cannot be updated.".toLowerCase())
+  }
 }
 
 /**
