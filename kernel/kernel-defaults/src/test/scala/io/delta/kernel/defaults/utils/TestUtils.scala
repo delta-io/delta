@@ -153,11 +153,11 @@ trait TestUtils extends Assertions with SQLHelper {
       .getSchema(defaultEngine)
   }
 
-  def hasColumnMappingId(str: String): Boolean = {
-    val table = Table.forPath(defaultEngine, str)
+  def hasTableProperty(tablePath: String, propertyKey: String, expValue: String): Boolean = {
+    val table = Table.forPath(defaultEngine, tablePath)
     val schema = table.getLatestSnapshot(defaultEngine).getSchema(defaultEngine)
     schema.fields().asScala.exists { field =>
-      field.getMetadata.contains(ColumnMapping.COLUMN_MAPPING_ID_KEY)
+      field.getMetadata.getString(propertyKey) == expValue
     }
   }
 
