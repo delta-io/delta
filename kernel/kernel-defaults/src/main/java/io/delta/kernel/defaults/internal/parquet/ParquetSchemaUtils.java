@@ -422,8 +422,8 @@ class ParquetSchemaUtils {
   }
 
   /**
-   * Validator for checking that the field ids in the schema. As any schema visitor goes through the
-   * schema {@link StructType}, the visitor can call this validator to check:
+   * Validator for checking that the field ids in the schema are valid. Any visitor that recursively
+   * visits the fields in the schema {@link StructType} can call this validator to check:
    *
    * <ul>
    *   <li>Field ids should be unique within the schema.
@@ -444,7 +444,7 @@ class ParquetSchemaUtils {
     AtomicBoolean seenFieldWithNoId = new AtomicBoolean();
     AtomicBoolean seenFieldWithId = new AtomicBoolean();
     AtomicBoolean seenNestedFieldWithId = new AtomicBoolean();
-    AtomicBoolean seemNestedWithWithNoId = new AtomicBoolean();
+    AtomicBoolean seemNestedWithNoId = new AtomicBoolean();
 
     return (fieldIdOpt, isNestedFieldId) -> {
       if (fieldIdOpt.isPresent()) {
@@ -454,7 +454,7 @@ class ParquetSchemaUtils {
         if (isNestedFieldId) {
           seenNestedFieldWithId.set(true);
           checkArgument(
-              !seemNestedWithWithNoId.get() && !seenFieldWithNoId.get(),
+              !seemNestedWithNoId.get() && !seenFieldWithNoId.get(),
               "Some of the fields are missing field ids.\n%s",
               structType);
         } else {
@@ -466,7 +466,7 @@ class ParquetSchemaUtils {
         }
       } else {
         if (isNestedFieldId) {
-          seemNestedWithWithNoId.set(true);
+          seemNestedWithNoId.set(true);
           checkArgument(
               !seenNestedFieldWithId.get() && !seenFieldWithId.get(),
               "Some of the fields are missing field ids.\n%s",
