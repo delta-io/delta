@@ -16,8 +16,8 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
 import static io.delta.kernel.defaults.internal.expressions.CastExpressionEvaluator.canCastTo;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
@@ -171,11 +171,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ExpressionTransformResult visitCast(CastExpressionEvaluator cast) {
-      throw new UnsupportedOperationException("CAST expression is not expected.");
-    }
-
-    @Override
     ExpressionTransformResult visitPartitionValue(PartitionValueExpression partitionValue) {
       ExpressionTransformResult serializedPartValueInput = visit(partitionValue.getInput());
       checkArgument(
@@ -231,6 +226,13 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       Expression child = visit(getUnaryChild(predicate)).expression;
       return new ExpressionTransformResult(
           new Predicate(predicate.getName(), child), BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitCast(Cast cast) {
+      Expression child = visit(getUnaryChild(cast)).expression;
+      return new ExpressionTransformResult(
+          new Cast(child, cast.getOutputType()), cast.getOutputType());
     }
 
     @Override
@@ -318,9 +320,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       Expression right = rightResult.expression;
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
         if (canCastTo(leftResult.outputType, rightResult.outputType)) {
-          left = new CastExpressionEvaluator(left, rightResult.outputType);
+          left = new Cast(left, rightResult.outputType);
         } else if (canCastTo(rightResult.outputType, leftResult.outputType)) {
-          right = new CastExpressionEvaluator(right, leftResult.outputType);
+          right = new Cast(right, leftResult.outputType);
         } else {
           String msg =
               format(
@@ -504,9 +506,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ColumnVector visitCast(CastExpressionEvaluator cast) {
-      ColumnVector inputResult = visit(cast.getInput());
-      return cast.eval(inputResult);
+    ColumnVector visitCast(Cast cast) {
+      ColumnVector inputResult = visit(getUnaryChild(cast));
+      return CastExpressionEvaluator.eval(inputResult, cast.getOutputType());
     }
 
     @Override

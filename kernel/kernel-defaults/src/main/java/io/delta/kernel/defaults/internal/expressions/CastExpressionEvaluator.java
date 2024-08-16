@@ -15,14 +15,18 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 import static java.util.Collections.unmodifiableMap;
-import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.defaults.engine.DefaultExpressionHandler;
-import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.types.DataType;
+import io.delta.kernel.data.MapValue;
+import io.delta.kernel.defaults.internal.DefaultKernelUtils;
+import io.delta.kernel.types.*;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.ZoneOffset;
 import java.util.*;
 
 /**
@@ -37,40 +41,16 @@ import java.util.*;
  *   <li>{@code int} to {@code long, float, double}
  *   <li>{@code long} to {@code float, double}
  *   <li>{@code float} to {@code double}
+ *   <li>{@code date} to {@code timestamp_ntz}
  * </ul>
  *
  * <p>The above list is not exhaustive. Based on the need, we can add more casts.
  *
- * <p>In {@link DefaultExpressionHandler} this is used when the operands of an expression are not of
- * the same type, but the evaluator expects same type inputs. There could be more use cases, but for
- * now this is the only use case.
+ * <p>Numeric values ({@code short, int, long, float, double, decimal}) can also be cast to {@code
+ * decimal} as long as the target type has a precision and scale large enough to hold all values
+ * from the source type.
  */
-final class CastExpressionEvaluator implements Expression {
-  private final Expression input;
-  private final DataType outputType;
-
-  /**
-   * Create a cast around the given input expression to specified output data type. It is the
-   * responsibility of the caller to validate the input expression can be cast to the new type using
-   * {@link #canCastTo(DataType, DataType)}
-   */
-  CastExpressionEvaluator(Expression input, DataType outputType) {
-    this.input = requireNonNull(input, "input is null");
-    this.outputType = requireNonNull(outputType, "outputType is null");
-  }
-
-  public Expression getInput() {
-    return input;
-  }
-
-  public DataType getOutputType() {
-    return outputType;
-  }
-
-  @Override
-  public List<Expression> getChildren() {
-    return Collections.singletonList(input);
-  }
+class CastExpressionEvaluator {
 
   /**
    * Evaluate the given column expression on the input {@link ColumnVector}.
@@ -79,27 +59,38 @@ final class CastExpressionEvaluator implements Expression {
    * @return {@link ColumnVector} result applying target type casting on every element in the input
    *     {@link ColumnVector}.
    */
-  ColumnVector eval(ColumnVector input) {
-    String fromTypeStr = input.getDataType().toString();
-    switch (fromTypeStr) {
-      case "byte":
-        return new ByteUpConverter(outputType, input);
-      case "short":
-        return new ShortUpConverter(outputType, input);
-      case "integer":
-        return new IntUpConverter(outputType, input);
-      case "long":
-        return new LongUpConverter(outputType, input);
-      case "float":
-        return new FloatUpConverter(outputType, input);
-      default:
-        throw new UnsupportedOperationException(
-            format("Cast from %s is not supported", fromTypeStr));
+  static ColumnVector eval(ColumnVector input, DataType outputType) {
+    DataType inputType = input.getDataType();
+
+    if (inputType instanceof ByteType) {
+      return new ByteUpConverter(outputType, input);
+    } else if (inputType instanceof ShortType) {
+      return new ShortUpConverter(outputType, input);
+    } else if (inputType instanceof IntegerType) {
+      return new IntUpConverter(outputType, input);
+    } else if (inputType instanceof LongType) {
+      return new LongUpConverter(outputType, input);
+    } else if (inputType instanceof FloatType) {
+      return new FloatUpConverter(outputType, input);
+    } else if (inputType instanceof DecimalType) {
+      return new DecimalUpConverter(outputType, input);
+    } else if (inputType instanceof DateType) {
+      return new DateUpConverter(outputType, input);
+    } else if (inputType instanceof StructType) {
+      return new StructUpConverter(outputType, input);
+    } else if (inputType instanceof ArrayType) {
+      return new ArrayUpConverter(outputType, input);
+    } else if (inputType instanceof MapType) {
+      return new MapUpConverter(outputType, input);
+    } else {
+      throw new UnsupportedOperationException(format("Cast from %s is not supported", inputType));
     }
   }
 
-  /** Map containing for each type what are the target cast types can be. */
-  private static final Map<String, List<String>> UP_CASTABLE_TYPE_TABLE =
+  /**
+   * Map containing the valid target types for each primitive types. Decimal is handled separately.
+   */
+  private static final Map<String, List<String>> UP_CASTABLE_PRIMITIVE_TYPE_TABLE =
       unmodifiableMap(
           new HashMap<String, List<String>>() {
             {
@@ -108,20 +99,64 @@ final class CastExpressionEvaluator implements Expression {
               this.put("integer", Arrays.asList("long", "float", "double"));
               this.put("long", Arrays.asList("float", "double"));
               this.put("float", Arrays.asList("double"));
+              this.put("date", Arrays.asList("timestamp_ntz"));
             }
           });
 
   /**
-   * Utility method which returns whether the given {@code from} type can be cast to {@code to}
+   * Utility methods which return whether the given {@code from} type can be cast to {@code to}
    * type.
    */
   static boolean canCastTo(DataType from, DataType to) {
+    if (!(from instanceof BasePrimitiveType) || !(to instanceof BasePrimitiveType)) return false;
+
     // TODO: The type name should be a first class method on `DataType` instead of getting it
     // using the `toString`.
     String fromStr = from.toString();
     String toStr = to.toString();
-    return UP_CASTABLE_TYPE_TABLE.containsKey(fromStr)
-        && UP_CASTABLE_TYPE_TABLE.get(fromStr).contains(toStr);
+    return UP_CASTABLE_PRIMITIVE_TYPE_TABLE.containsKey(fromStr)
+        && UP_CASTABLE_PRIMITIVE_TYPE_TABLE.get(fromStr).contains(toStr);
+  }
+
+  static boolean canCastTo(DataType from, DecimalType to) {
+    DecimalType fromDecimalType;
+    if (from instanceof DecimalType) {
+      fromDecimalType = (DecimalType) from;
+    } else if (from instanceof ByteType) {
+      fromDecimalType = DecimalType.BYTE_DECIMAL;
+    } else if (from instanceof ShortType) {
+      fromDecimalType = DecimalType.SHORT_DECIMAL;
+    } else if (from instanceof IntegerType) {
+      fromDecimalType = DecimalType.INT_DECIMAL;
+    } else if (from instanceof LongType) {
+      fromDecimalType = DecimalType.LONG_DECIMAL;
+    } else {
+      return false;
+    }
+
+    int precisionIncrease = to.getPrecision() - fromDecimalType.getPrecision();
+    int scaleIncrease = to.getScale() - fromDecimalType.getScale();
+    return scaleIncrease >= 0 && precisionIncrease >= scaleIncrease;
+  }
+
+  static boolean canCastTo(StructType from, StructType to) {
+    if (from.length() != to.length()) return false;
+
+    for (int i = 0; i < from.length(); i++) {
+      if (!canCastTo(from.at(i).getDataType(), to.at(i).getDataType())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static boolean canCastTo(MapType from, MapType to) {
+    return canCastTo(from.getKeyType(), to.getKeyType())
+        && canCastTo(from.getValueType(), to.getValueType());
+  }
+
+  static boolean canCastTo(ArrayType from, ArrayType to) {
+    return canCastTo(from.getElementType(), to.getElementType());
   }
 
   /** Base class for up casting {@link ColumnVector} data. */
@@ -152,6 +187,13 @@ final class CastExpressionEvaluator implements Expression {
     @Override
     public void close() {
       inputVector.close();
+    }
+
+    protected void checkTargetType(Class<?> expectedType) {
+      checkArgument(
+          expectedType.isInstance(targetType),
+          "Invalid value request for data type",
+          targetType.toString());
     }
   }
 
@@ -184,6 +226,14 @@ final class CastExpressionEvaluator implements Expression {
     public double getDouble(int rowId) {
       return inputVector.getByte(rowId);
     }
+
+    @Override
+    public BigDecimal getDecimal(int rowId) {
+      checkTargetType(DecimalType.class);
+      DecimalType decimalType = (DecimalType) targetType;
+      BigDecimal decimal = new BigDecimal(inputVector.getByte(rowId));
+      return decimal.setScale(decimalType.getScale(), RoundingMode.UNNECESSARY);
+    }
   }
 
   private static class ShortUpConverter extends UpConverter {
@@ -210,6 +260,14 @@ final class CastExpressionEvaluator implements Expression {
     public double getDouble(int rowId) {
       return inputVector.getShort(rowId);
     }
+
+    @Override
+    public BigDecimal getDecimal(int rowId) {
+      checkTargetType(DecimalType.class);
+      DecimalType decimalType = (DecimalType) targetType;
+      BigDecimal decimal = new BigDecimal(inputVector.getShort(rowId));
+      return decimal.setScale(decimalType.getScale(), RoundingMode.UNNECESSARY);
+    }
   }
 
   private static class IntUpConverter extends UpConverter {
@@ -231,6 +289,14 @@ final class CastExpressionEvaluator implements Expression {
     public double getDouble(int rowId) {
       return inputVector.getInt(rowId);
     }
+
+    @Override
+    public BigDecimal getDecimal(int rowId) {
+      checkTargetType(DecimalType.class);
+      DecimalType decimalType = (DecimalType) targetType;
+      BigDecimal decimal = new BigDecimal(inputVector.getInt(rowId));
+      return decimal.setScale(decimalType.getScale(), RoundingMode.UNNECESSARY);
+    }
   }
 
   private static class LongUpConverter extends UpConverter {
@@ -247,6 +313,14 @@ final class CastExpressionEvaluator implements Expression {
     public double getDouble(int rowId) {
       return inputVector.getLong(rowId);
     }
+
+    @Override
+    public BigDecimal getDecimal(int rowId) {
+      checkTargetType(DecimalType.class);
+      DecimalType decimalType = (DecimalType) targetType;
+      BigDecimal decimal = new BigDecimal(inputVector.getLong(rowId));
+      return decimal.setScale(decimalType.getScale(), RoundingMode.UNNECESSARY);
+    }
   }
 
   private static class FloatUpConverter extends UpConverter {
@@ -257,6 +331,108 @@ final class CastExpressionEvaluator implements Expression {
     @Override
     public double getDouble(int rowId) {
       return inputVector.getFloat(rowId);
+    }
+  }
+
+  private static class DecimalUpConverter extends UpConverter {
+    DecimalUpConverter(DataType targetType, ColumnVector inputVector) {
+      super(targetType, inputVector);
+    }
+
+    @Override
+    public BigDecimal getDecimal(int rowId) {
+      checkTargetType(DecimalType.class);
+      DecimalType decimalType = (DecimalType) targetType;
+      return inputVector
+          .getDecimal(rowId)
+          .setScale(decimalType.getScale(), RoundingMode.UNNECESSARY);
+    }
+  }
+
+  private static class DateUpConverter extends UpConverter {
+    DateUpConverter(DataType targetType, ColumnVector inputVector) {
+      super(targetType, inputVector);
+    }
+
+    @Override
+    public long getLong(int rowId) {
+      int days = inputVector.getInt(rowId);
+      return DefaultKernelUtils.daysToMicros(days, ZoneOffset.UTC);
+    }
+  }
+
+  private static class StructUpConverter extends UpConverter {
+    private final StructType structType;
+
+    StructUpConverter(DataType targetType, ColumnVector inputVector) {
+      super(targetType, inputVector);
+      checkTargetType(StructType.class);
+      this.structType = (StructType) targetType;
+    }
+
+    @Override
+    public ColumnVector getChild(int rowId) {
+      return CastExpressionEvaluator.eval(
+          inputVector.getChild(rowId), structType.at(rowId).getDataType());
+    }
+  }
+
+  private static class MapUpConverter extends UpConverter {
+    private final DataType keyType;
+    private final DataType valueType;
+
+    MapUpConverter(DataType targetType, ColumnVector inputVector) {
+      super(targetType, inputVector);
+      checkTargetType(MapType.class);
+      this.keyType = ((MapType) targetType).getKeyType();
+      this.valueType = ((MapType) targetType).getValueType();
+    }
+
+    @Override
+    public MapValue getMap(int rowId) {
+      MapValue childValue = inputVector.getMap(rowId);
+      return new MapValue() {
+        @Override
+        public int getSize() {
+          return childValue.getSize();
+        }
+
+        @Override
+        public ColumnVector getKeys() {
+          return CastExpressionEvaluator.eval(childValue.getKeys(), keyType);
+        }
+
+        @Override
+        public ColumnVector getValues() {
+          return CastExpressionEvaluator.eval(childValue.getValues(), valueType);
+        }
+      };
+    }
+  }
+
+  private static class ArrayUpConverter extends UpConverter {
+    private final DataType elementType;
+
+    ArrayUpConverter(DataType targetType, ColumnVector inputVector) {
+      super(targetType, inputVector);
+      checkTargetType(ArrayType.class);
+      this.elementType = ((ArrayType) targetType).getElementType();
+    }
+
+    @Override
+    public ArrayValue getArray(int rowId) {
+      ArrayValue childValue = inputVector.getArray(rowId);
+      return new ArrayValue() {
+        @Override
+        public int getSize() {
+          return childValue.getSize();
+        }
+
+        @Override
+        public ColumnVector getElements() {
+          return CastExpressionEvaluator.eval(childValue.getElements(), elementType);
+        }
+      };
     }
   }
 }

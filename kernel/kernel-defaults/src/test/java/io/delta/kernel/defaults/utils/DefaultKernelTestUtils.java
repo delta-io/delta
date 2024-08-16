@@ -17,6 +17,7 @@ package io.delta.kernel.defaults.utils;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 
 public class DefaultKernelTestUtils {
@@ -93,6 +94,12 @@ public class DefaultKernelTestUtils {
       return vector.getBinary(rowId);
     } else if (dataType instanceof DecimalType) {
       return vector.getDecimal(rowId);
+    } else if (dataType instanceof StructType) {
+      return VectorUtils.toJavaList(vector, rowId);
+    } else if (dataType instanceof ArrayType) {
+      return VectorUtils.toJavaList(vector.getArray(rowId));
+    } else if (dataType instanceof MapType) {
+      return VectorUtils.toJavaMap(vector.getMap(rowId));
     }
 
     throw new UnsupportedOperationException(dataType + " is not supported yet");

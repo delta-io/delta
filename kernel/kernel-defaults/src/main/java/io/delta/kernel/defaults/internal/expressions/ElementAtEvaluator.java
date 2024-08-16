@@ -22,6 +22,7 @@ import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.Cast;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.internal.util.Utils;
@@ -50,7 +51,7 @@ class ElementAtEvaluator {
 
     if (!keyTypeFromMapInput.equivalent(lookupKeyType)) {
       if (canCastTo(lookupKeyType, keyTypeFromMapInput)) {
-        lookupKey = new CastExpressionEvaluator(lookupKey, keyTypeFromMapInput);
+        lookupKey = new Cast(lookupKey, keyTypeFromMapInput);
       } else {
         String reason =
             format(

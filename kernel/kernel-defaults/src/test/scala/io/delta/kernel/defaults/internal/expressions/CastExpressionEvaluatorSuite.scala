@@ -15,16 +15,22 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import io.delta.kernel.data.ColumnVector
-import io.delta.kernel.defaults.internal.expressions.CastExpressionEvaluator.canCastTo
+import java.math.RoundingMode
+
+import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
+import CastExpressionEvaluator.canCastTo
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.kernel.expressions.Column
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
+import scala.collection.JavaConverters._
 
+/**
+ * Test suite that covers applying cast expressions to [[ColumnVector]]s
+ */
 class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
-  private val allowedCasts: Set[(DataType, DataType)] = Set(
+
+  private val allowedPrimitiveCasts: Set[(DataType, DataType)] = Set(
     (ByteType.BYTE, ShortType.SHORT),
     (ByteType.BYTE, IntegerType.INTEGER),
     (ByteType.BYTE, LongType.LONG),
@@ -42,7 +48,58 @@ class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
 
     (LongType.LONG, FloatType.FLOAT),
     (LongType.LONG, DoubleType.DOUBLE),
-    (FloatType.FLOAT, DoubleType.DOUBLE))
+    (FloatType.FLOAT, DoubleType.DOUBLE),
+
+    (new DecimalType(12, 0), new DecimalType(14, 0)),
+    (new DecimalType(5, 2), new DecimalType(7, 4)),
+    (new DecimalType(35, 5), new DecimalType(38, 6)),
+
+    (ByteType.BYTE, new DecimalType(4, 0)),
+    (ShortType.SHORT, new DecimalType(6, 0)),
+    (IntegerType.INTEGER, new DecimalType(11, 0)),
+    (LongType.LONG, new DecimalType(21, 0))
+  )
+
+  private val allowedNestedCasts: Set[(DataType, DataType)] = Set(
+    // 1-level nesting: cast struct, map and array.
+    (new StructType()
+      .add("a", ByteType.BYTE)
+      .add("b", ShortType.SHORT),
+      new StructType()
+        .add("a", IntegerType.INTEGER)
+        .add("b", LongType.LONG)),
+    (new MapType(LongType.LONG, ByteType.BYTE, false),
+      new MapType(DoubleType.DOUBLE, IntegerType.INTEGER, false)),
+    (new ArrayType(FloatType.FLOAT, false),
+      new ArrayType(DoubleType.DOUBLE, false)),
+
+    // 2-level nesting: cast struct, map and array nested into each others.
+    (new StructType()
+      .add("map", new MapType(IntegerType.INTEGER, ByteType.BYTE, false))
+      .add("array", new ArrayType(IntegerType.INTEGER, false)),
+      new StructType()
+      .add("map", new MapType(DoubleType.DOUBLE, FloatType.FLOAT, false))
+      .add("array", new ArrayType(DoubleType.DOUBLE, false))),
+    (new MapType(
+      new StructType().add("a", FloatType.FLOAT),
+      new ArrayType(ByteType.BYTE, false),
+      false),
+    new MapType(
+      new StructType().add("a", DoubleType.DOUBLE),
+      new ArrayType(DoubleType.DOUBLE, false),
+      false)),
+    (new ArrayType(new StructType().add("a", ShortType.SHORT), false),
+      new ArrayType(new StructType().add("a", FloatType.FLOAT), false)),
+    (new ArrayType(new MapType(ByteType.BYTE, ByteType.BYTE, false), false),
+      new ArrayType(new MapType(LongType. LONG, ShortType.SHORT, false), false))
+  )
+
+  private val allowedCasts: Set[(DataType, DataType)] =
+    allowedPrimitiveCasts ++ allowedNestedCasts ++ Seq(
+      // date -> timestamp_ntz requires converting days to microseconds to compare results and is
+      // tested separately.
+      (DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)
+    )
 
   test("can cast to") {
     Seq.range(0, ALL_TYPES.length).foreach { fromTypeIdx =>
@@ -55,15 +112,30 @@ class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  allowedCasts.foreach { castPair =>
+  (allowedPrimitiveCasts ++ allowedNestedCasts).foreach { castPair =>
     test(s"eval cast expression: ${castPair._1} -> ${castPair._2}") {
       val fromType = castPair._1
       val toType = castPair._2
       val inputVector = testData(87, fromType, (rowId) => rowId % 7 == 0)
-      val outputVector = new CastExpressionEvaluator(new Column("id"), toType)
-        .eval(inputVector)
+      val outputVector = CastExpressionEvaluator.eval(inputVector, toType)
       checkCastOutput(inputVector, toType, outputVector)
     }
+  }
+
+  test(s"eval cast expression: date -> timestamp_ntz") {
+    val inputVector = testData(87, DateType.DATE, (rowId) => rowId % 7 == 0)
+    val outputVector = CastExpressionEvaluator.eval(inputVector, TimestampNTZType.TIMESTAMP_NTZ)
+    val expectedVector = new ColumnVector {
+      override def getDataType: DataType = TimestampNTZType.TIMESTAMP_NTZ
+      override def getSize: Int = inputVector.getSize
+      override def close(): Unit = inputVector.close()
+      override def isNullAt(rowId: Int): Boolean = inputVector.isNullAt(rowId)
+      override def getLong(rowId: Int): Long = {
+        val expectedDays = inputVector.getInt(rowId)
+        expectedDays * 24 * 60 * 60 * 1000000L
+      }
+    }
+    checkCastOutput(expectedVector, TimestampNTZType.TIMESTAMP_NTZ, outputVector)
   }
 
   def testData(size: Int, dataType: DataType, nullability: (Int) => Boolean): ColumnVector = {
@@ -84,7 +156,7 @@ class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
       }
 
       override def getInt(rowId: Int): Int = {
-        assert(dataType === IntegerType.INTEGER)
+        assert(dataType === IntegerType.INTEGER || dataType === DateType.DATE)
         generateValue(rowId).toInt
       }
 
@@ -102,6 +174,60 @@ class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
         assert(dataType === DoubleType.DOUBLE)
         generateValue(rowId)
       }
+
+      override def getDecimal(rowId: Int): java.math.BigDecimal = {
+        dataType match {
+          case d: DecimalType =>
+            new java.math.BigDecimal(generateValue(rowId))
+              .setScale(d.getScale, RoundingMode.HALF_UP)
+          case _ =>
+            fail(s"Wrong type, expected decimal, got $dataType")
+        }
+      }
+
+      override def getChild(ordinal: Int): ColumnVector = {
+        dataType match {
+          case s: StructType =>
+            testData(size, s.at(ordinal).getDataType, nullability = _ => false)
+          case _ =>
+            fail(s"Wrong type, expected struct, got $dataType")
+        }
+      }
+
+      override def getMap(ordinal: Int): MapValue = {
+        dataType match {
+          case s: MapType =>
+            // Use a fixed size of 3 key-value pairs for every map.
+            val size = 3
+            new MapValue() {
+              override def getSize: Int = size
+
+              override def getKeys: ColumnVector =
+                testData(size, s.getKeyType, nullability = _ => false)
+
+              override def getValues: ColumnVector =
+                testData(size, s.getValueType, nullability = _ => false)
+            }
+          case _ =>
+            fail(s"Wrong type, expected map, got $dataType")
+        }
+      }
+
+      override def getArray(ordinal: Int): ArrayValue = {
+        dataType match {
+          case s: ArrayType =>
+            // Use a fixed size of 3 elements for every array.
+            val size = 3
+            new ArrayValue() {
+              override def getSize: Int = size
+
+              override def getElements: ColumnVector =
+                testData(size, s.getElementType, nullability = _ => false)
+            }
+          case _ =>
+            fail(s"Wrong type, expected array, got $dataType")
+        }
+      }
     }
   }
 
@@ -114,7 +240,21 @@ class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
     assert(toType === output.getDataType)
     Seq.range(0, input.getSize).foreach { rowId =>
       assert(input.isNullAt(rowId) === output.isNullAt(rowId))
-      assert(getValueAsObject(input, rowId) === getValueAsObject(output, rowId))
+      assert(asScala(getValueAsObject(input, rowId)) === asScala(getValueAsObject(output, rowId)))
     }
+  }
+
+  // Transforms java types to scala types to allow comparing values that have different data types:
+  // scala only considers the actual values and accepts that types may differ, but java will e.g.
+  // consider that a List[Int] is always different from a List[Long], even if both contain the same
+  // values.
+  private def asScala(value: Any): Any = value match {
+    case null => null
+    case m: java.util.Map[_, _] =>
+      m.entrySet().asScala.map { kv => asScala(kv.getKey) -> asScala(kv.getValue) }.toMap
+    case l: java.util.List[_] =>
+      l.asScala.map(asScala)
+    case d: java.math.BigDecimal => BigDecimal(d)
+    case other => other
   }
 }
