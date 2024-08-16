@@ -312,7 +312,7 @@ class ParquetSchemaUtils {
       MapType mapType,
       String name,
       Repetition repetition) {
-    // We will be supporting the 3-level array structure only. 2-level array structures are
+    // We will be supporting the 3-level map structure only. 2-level map structures are
     // a very old legacy versions of Parquet which Kernel doesn't support writing as.
 
     String keyRelativePath = relativePath + ".key";
