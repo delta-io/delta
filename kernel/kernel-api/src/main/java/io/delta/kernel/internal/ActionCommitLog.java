@@ -42,10 +42,12 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
 /**
- * Stores code to read the raw actions within the *commit files* of the _delta_log. This is used for
+ * Exposes APIs to read the raw actions within the *commit files* of the _delta_log. This is used for
  * CDF, streaming, and more.
  */
 public class ActionCommitLog {
+
+  private ActionCommitLog() {}
 
   /**
    * Represents a Delta action. This is used to request which actions to read from the commit files
@@ -90,8 +92,8 @@ public class ActionCommitLog {
    */
   public static void verifyDeltaVersions(
       List<FileStatus> commitFiles,
-      Long expectedStartVersion,
-      Long expectedEndVersion,
+      long expectedStartVersion,
+      long expectedEndVersion,
       Path tablePath) {
 
     List<Long> commitVersions =
@@ -239,20 +241,18 @@ public class ActionCommitLog {
                               new RuntimeException("Commit files should always have a timestamp"));
               ExpressionEvaluator commitVersionGenerator =
                   wrapEngineException(
-                      () ->
-                          engine
-                              .getExpressionHandler()
-                              .getEvaluator(
-                                  readSchema,
-                                  Literal.ofLong(actionWrapper.getVersion()),
-                                  LongType.LONG),
+                      () -> engine
+                          .getExpressionHandler()
+                          .getEvaluator(
+                              readSchema,
+                              Literal.ofLong(actionWrapper.getVersion()),
+                              LongType.LONG),
                       "Get the expression evaluator for the commit version");
               ExpressionEvaluator commitTimestampGenerator =
                   wrapEngineException(
-                      () ->
-                          engine
-                              .getExpressionHandler()
-                              .getEvaluator(readSchema, Literal.ofLong(timestamp), LongType.LONG),
+                      () -> engine
+                          .getExpressionHandler()
+                          .getEvaluator(readSchema, Literal.ofLong(timestamp), LongType.LONG),
                       "Get the expression evaluator for the commit timestamp");
               ColumnVector commitVersionVector =
                   wrapEngineException(
