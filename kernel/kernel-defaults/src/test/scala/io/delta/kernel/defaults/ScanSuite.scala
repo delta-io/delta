@@ -24,9 +24,9 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.expressions._
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
+import io.delta.kernel.types._
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
-import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Scan, Snapshot, Table}
 import org.apache.hadoop.conf.Configuration
@@ -1592,6 +1592,51 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             )
           ).build()
       )
+    }
+  }
+
+  Seq(
+    ("version 0 no predicate", None, Some(0), 2),
+    ("latest version (has checkpoint) no predicate", None, None, 4),
+    ("version 0 with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)
+  ).foreach { case (nameSuffix, predicate, snapshotVersion, expectedNumFiles) =>
+    test(s"read scan files with variant - $nameSuffix") {
+      val path = getTestResourceFilePath("spark-variant-checkpoint")
+      val table = Table.forPath(defaultEngine, path)
+      val snapshot = snapshotVersion match {
+        case Some(version) => table.getSnapshotAsOfVersion(defaultEngine, version)
+        case None => table.getLatestSnapshot(defaultEngine)
+      }
+      val snapshotSchema = snapshot.getSchema(defaultEngine)
+
+      val expectedSchema = new StructType()
+        .add("id", LongType.LONG, true)
+        .add("v", VariantType.VARIANT, true)
+        .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
+        .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
+        .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
+        .add(
+          "array_of_struct_of_variants",
+          new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
+          true
+        )
+        .add(
+          "struct_of_array_of_variants",
+          new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
+          true
+        )
+
+      assert(snapshotSchema == expectedSchema)
+
+      val scanBuilder = snapshot.getScanBuilder(defaultEngine)
+      val scan = predicate match {
+        case Some(pred) => scanBuilder.withFilter(defaultEngine, pred).build()
+        case None => scanBuilder.build()
+      }
+
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+
+      assert(scanFiles.next().getRows().toSeq.length == expectedNumFiles)
     }
   }
 }
