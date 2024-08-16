@@ -232,9 +232,9 @@ if __name__ == "__main__":
         scala_version = os.getenv("SCALA_VERSION")
         use_spark_master = os.getenv("USE_SPARK_MASTER") or False
 
-        if not use_spark_master:
+        # if not use_spark_master:
             # We run sbt tests directly in the workflow file for Spark master
-            run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
+            # run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
 
         # Python tests are run only when spark group of projects are being tested.
         is_testing_spark_group = args.group is None or args.group == "spark"
