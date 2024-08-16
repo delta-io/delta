@@ -65,6 +65,7 @@ public class TableFeatures {
             case "deletionVectors": // fall through
             case "timestampNtz": // fall through
             case "vacuumProtocolCheck": // fall through
+            case "variantType-preview": // fall through
             case "v2Checkpoint":
               break;
             default:

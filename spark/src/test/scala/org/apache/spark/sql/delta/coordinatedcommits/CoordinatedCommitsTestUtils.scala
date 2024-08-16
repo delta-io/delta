@@ -65,15 +65,17 @@ trait CoordinatedCommitsTestUtils
 
   /**
    * Runs the function `f` with coordinated commits default properties unset.
-   * Any table created in function `f`` won't have coordinated commits enabled by default.
+   * Any table created in function `f` won't have coordinated commits enabled by default.
    */
   def withoutCoordinatedCommitsDefaultTableProperties[T](f: => T): T = {
-    val commitCoordinatorKey = COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey
-    val oldCommitCoordinatorValue = spark.conf.getOption(commitCoordinatorKey)
-    spark.conf.unset(commitCoordinatorKey)
+    val defaultCoordinatedCommitsConfs = CoordinatedCommitsUtils
+      .fetchDefaultCoordinatedCommitsConfigurations(spark, withDefaultKey = true)
+    defaultCoordinatedCommitsConfs.foreach { case (defaultKey, _) =>
+      spark.conf.unset(defaultKey)
+    }
     try { f } finally {
-      oldCommitCoordinatorValue.foreach {
-        spark.conf.set(commitCoordinatorKey, _)
+      defaultCoordinatedCommitsConfs.foreach { case (defaultKey, oldValue) =>
+        spark.conf.set(defaultKey, oldValue)
       }
     }
   }
