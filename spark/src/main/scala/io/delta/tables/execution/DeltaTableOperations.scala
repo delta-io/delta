@@ -155,9 +155,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     SQLExecution.withNewExecutionId(qe, Some("clone delta table"))(qe.toRdd)
 
     if (targetPath.isDefined) {
-      DeltaTable.forPath(sparkSession, targetPath.get)
+      DeltaTable.forPath(sparkSession, target)
     } else {
-      DeltaTable.forName(sparkSession, targetRelation.name)
+      DeltaTable.forName(sparkSession, target)
     }
   }
 
