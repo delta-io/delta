@@ -564,7 +564,7 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Create a shallow clone of this DeltaTable to a new location.
+   *  Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
    * @param target The path or table name to create the clone
    * @since 4.0.0
