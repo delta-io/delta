@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 class CloneTableScalaSuite extends CloneTableSuiteBase
-  with DeltaColumnMappingTestUtils
+  with DeltaColumnMappingTestUtils {
 {
   // scalastyle:off argcount
   override protected def cloneTable(
