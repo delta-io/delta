@@ -52,28 +52,63 @@ class DeltaCommand(google.protobuf.message.Message):
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
 
     CLONE_TABLE_FIELD_NUMBER: builtins.int
+    VACUUM_TABLE_FIELD_NUMBER: builtins.int
+    UPGRADE_TABLE_PROTOCOL_FIELD_NUMBER: builtins.int
+    GENERATE_FIELD_NUMBER: builtins.int
     @property
     def clone_table(self) -> global___CloneTable: ...
+    @property
+    def vacuum_table(self) -> global___VacuumTable: ...
+    @property
+    def upgrade_table_protocol(self) -> global___UpgradeTableProtocol: ...
+    @property
+    def generate(self) -> global___Generate: ...
     def __init__(
         self,
         *,
         clone_table: global___CloneTable | None = ...,
+        vacuum_table: global___VacuumTable | None = ...,
+        upgrade_table_protocol: global___UpgradeTableProtocol | None = ...,
+        generate: global___Generate | None = ...,
     ) -> None: ...
     def HasField(
         self,
         field_name: typing_extensions.Literal[
-            "clone_table", b"clone_table", "command_type", b"command_type"
+            "clone_table",
+            b"clone_table",
+            "command_type",
+            b"command_type",
+            "generate",
+            b"generate",
+            "upgrade_table_protocol",
+            b"upgrade_table_protocol",
+            "vacuum_table",
+            b"vacuum_table",
         ],
     ) -> builtins.bool: ...
     def ClearField(
         self,
         field_name: typing_extensions.Literal[
-            "clone_table", b"clone_table", "command_type", b"command_type"
+            "clone_table",
+            b"clone_table",
+            "command_type",
+            b"command_type",
+            "generate",
+            b"generate",
+            "upgrade_table_protocol",
+            b"upgrade_table_protocol",
+            "vacuum_table",
+            b"vacuum_table",
         ],
     ) -> None: ...
     def WhichOneof(
         self, oneof_group: typing_extensions.Literal["command_type", b"command_type"]
-    ) -> typing_extensions.Literal["clone_table"] | None: ...
+    ) -> (
+        typing_extensions.Literal[
+            "clone_table", "vacuum_table", "upgrade_table_protocol", "generate"
+        ]
+        | None
+    ): ...
 
 global___DeltaCommand = DeltaCommand
 
@@ -177,3 +212,119 @@ class CloneTable(google.protobuf.message.Message):
     ) -> typing_extensions.Literal["version", "timestamp"] | None: ...
 
 global___CloneTable = CloneTable
+
+class VacuumTable(google.protobuf.message.Message):
+    """Command that deletes files and directories in the table that are not needed by the table for
+    maintaining older versions up to the given retention threshold
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    RETENTION_HOURS_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to vacuum."""
+    retention_hours: builtins.float
+    """(Optional) Number of hours retain history for. If not specified, then the default retention
+    period will be used.
+    """
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+        retention_hours: builtins.float | None = ...,
+    ) -> None: ...
+    def HasField(
+        self,
+        field_name: typing_extensions.Literal[
+            "_retention_hours",
+            b"_retention_hours",
+            "retention_hours",
+            b"retention_hours",
+            "table",
+            b"table",
+        ],
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal[
+            "_retention_hours",
+            b"_retention_hours",
+            "retention_hours",
+            b"retention_hours",
+            "table",
+            b"table",
+        ],
+    ) -> None: ...
+    def WhichOneof(
+        self, oneof_group: typing_extensions.Literal["_retention_hours", b"_retention_hours"]
+    ) -> typing_extensions.Literal["retention_hours"] | None: ...
+
+global___VacuumTable = VacuumTable
+
+class UpgradeTableProtocol(google.protobuf.message.Message):
+    """Command to updates the protocol version of the table so that new features can be used."""
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    READER_VERSION_FIELD_NUMBER: builtins.int
+    WRITER_VERSION_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to upgrade the protocol of."""
+    reader_version: builtins.int
+    """(Required) The minimum required reader protocol version."""
+    writer_version: builtins.int
+    """(Required) The minimum required writer protocol version."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+        reader_version: builtins.int = ...,
+        writer_version: builtins.int = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["table", b"table"]
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal[
+            "reader_version",
+            b"reader_version",
+            "table",
+            b"table",
+            "writer_version",
+            b"writer_version",
+        ],
+    ) -> None: ...
+
+global___UpgradeTableProtocol = UpgradeTableProtocol
+
+class Generate(google.protobuf.message.Message):
+    """Command that generates manifest files for a given Delta table."""
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    MODE_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to generate the manifest files for."""
+    mode: builtins.str
+    """(Required) The type of manifest file to be generated."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+        mode: builtins.str = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["table", b"table"]
+    ) -> builtins.bool: ...
+    def ClearField(
+        self, field_name: typing_extensions.Literal["mode", b"mode", "table", b"table"]
+    ) -> None: ...
+
+global___Generate = Generate
