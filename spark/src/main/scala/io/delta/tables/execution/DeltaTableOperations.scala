@@ -130,27 +130,28 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
         .parseTableIdentifier(target)
       (UnresolvedRelation(tableIdentifier), None)
     }
-    val source = DataSourceV2Relation.create(table, None, table.getTableIdentifierIfExists.map(
-      id => Identifier.of(id.database.toArray, id.table)))
+    val sourceRelation = DataSourceV2Relation.create(table, None,
+      table.getTableIdentifierIfExists.map(id => Identifier.of(id.database.toArray, id.table)))
 
-    val maybeTimeTravel = if (timestampAsOf.isDefined || versionAsOf.isDefined) {
+    val maybeTimeTravelSource = if (timestampAsOf.isDefined || versionAsOf.isDefined) {
       TimeTravel(
-        source,
+        sourceRelation,
         timestampAsOf.map(Literal(_)),
         versionAsOf,
         None
       )
     } else {
-      source
+      sourceRelation
     }
 
-    val qe = sparkSession.sessionState.executePlan(CloneTableStatement(maybeTimeTravel,
-      targetRelation, false, replace, true, properties.toMap, targetPath))
+    val clone = CloneTableStatement(maybeTimeTravelSource, targetRelation, false, replace, true,
+      properties.toMap, targetPath)
+
+    val qe = sparkSession.sessionState.executePlan(clone)
 
     // call `QueryExecution.toRDD` to trigger the execution of commands.
     SQLExecution.withNewExecutionId(qe, Some("clone delta table"))(qe.toRdd)
 
-    // Return DeltaTable Object.
     if (targetPath.isDefined) {
       DeltaTable.forPath(sparkSession, targetPath.get)
     } else {
