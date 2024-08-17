@@ -34,7 +34,7 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
     val table = if (sourceIsTable) {
       io.delta.tables.DeltaTable.forName(spark, source)
     } else {
-      io.delta.tables.DeltaTable.forPath(source)
+      io.delta.tables.DeltaTable.forPath(spark, source)
     }
 
     if (versionAsOf.isDefined) {
