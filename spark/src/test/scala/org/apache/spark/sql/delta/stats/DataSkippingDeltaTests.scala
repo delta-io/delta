@@ -619,7 +619,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     misses = Seq(
       "a.d < 0",
       "a.e < 0",
-      "a.f.g < 0",
+      "a.f.g < 0"
     ),
     deltaStatsColNamesOpt = Some("a")
   )
