@@ -505,7 +505,7 @@ class StatsCollectionSuite
     val tableName2 = "delta_table_2"
     test(s"Delta statistic column: invalid data type $invalidType") {
       withTable(tableName1, tableName2) {
-        val columnName = if (typename.equals("ArrayType(IntegerType,true)")) "c2.c61" else "c2"
+        val columnName = "c2"
         val exceptOne = intercept[DeltaIllegalArgumentException] {
           sql(
             s"create table $tableName1 (c1 long, c2 $invalidType) using delta " +
@@ -529,7 +529,7 @@ class StatsCollectionSuite
 
     test(s"Delta statistic column: invalid data type $invalidType in nested column") {
       withTable(tableName1, tableName2) {
-        val columnName = if (typename == "ArrayType(IntegerType,true)") "c2.c21.c61" else "c2.c21"
+        val columnName = "c2.c21"
         val exceptOne = intercept[DeltaIllegalArgumentException] {
           sql(
             s"create table $tableName1 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) " +

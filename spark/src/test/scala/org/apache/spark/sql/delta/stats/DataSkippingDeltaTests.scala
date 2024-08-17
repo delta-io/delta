@@ -606,16 +606,20 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         "b": [1, 2, 3],
         "c": [4, 5, 6],
         "d": 7,
-        "e": 8
+        "e": 8,
+        "f": {
+          "g": 9
+        }
       },
-      "f": 9
+      "i": 10
     }""".replace("\n", ""),
     hits = Seq(
-      "f < 0"
+      "i < 0"
     ),
     misses = Seq(
       "a.d < 0",
-      "a.e < 0"
+      "a.e < 0",
+      "a.f.g < 0",
     ),
     deltaStatsColNamesOpt = Some("a")
   )

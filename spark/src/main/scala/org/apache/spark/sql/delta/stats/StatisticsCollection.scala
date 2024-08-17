@@ -458,18 +458,20 @@ object StatisticsCollection extends DeltaCommand {
    * @param name The name of the data skipping column for validating data type.
    * @param dataType The data type of the data skipping column.
    * @param columnPaths The column paths of all valid fields.
-   * @param inStruct Whether the datatype is inside a struct already, in which case we don't care about the type.
+   * @param insideStruct Whether the datatype is inside a struct already, in which case we don't
+   *                     care about the type.
    */
   private def validateDataSkippingType(
       name: String,
       dataType: DataType,
       columnPaths: ArrayBuffer[String],
-      inStruct: Boolean = false): Unit = dataType match {
+      insideStruct: Boolean = false): Unit = dataType match {
     case s: StructType =>
       s.foreach { field =>
-        validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths, true)
+        validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths,
+          insideStruct = true)
       }
-    case _ if inStruct => columnPaths.append(name)
+    case _ if insideStruct => columnPaths.append(name)
     case SkippingEligibleDataType(_) => columnPaths.append(name)
     case _ =>
       throw new DeltaIllegalArgumentException(
