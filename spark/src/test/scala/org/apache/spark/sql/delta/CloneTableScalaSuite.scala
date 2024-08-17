@@ -32,7 +32,7 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
       isReplace: Boolean = false,
       tableProperties: Map[String, String] = Map.empty): Unit = {
     val table = if (sourceIsTable) {
-      io.delta.tables.DeltaTable.forName(source)
+      io.delta.tables.DeltaTable.forName(spark, source)
     } else {
       io.delta.tables.DeltaTable.forPath(source)
     }
