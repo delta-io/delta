@@ -567,10 +567,12 @@ class DeltaTable private[tables](
    *  Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
    * @param target The path or table name to create the clone
+   * @param replace Whether to replace anything at the destination with the clone
+   * @param properties Any table properties to override in the clone
    * @since 4.0.0
    */
-  def clone(target: String): DeltaTable = {
-    clone(target, false)
+  def clone(target: String, replace: Boolean, properties: Map[String, String]): DeltaTable = {
+    executeClone(table, target, replace, properties)
   }
 
   /**
@@ -588,35 +590,10 @@ class DeltaTable private[tables](
    * Create a shallow clone of this DeltaTable to a new location.
    *
    * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
-   * @param properties Any table properties to override in the clone
    * @since 4.0.0
    */
-  def clone(target: String, replace: Boolean, properties: Map[String, String]): DeltaTable = {
-    executeClone(table, target, replace, properties)
-  }
-
-  /**
-   * Create a shallow clone of this DeltaTable at a specific version to a new location.
-   *
-   * @param version The version of this table to clone from
-   * @param target The path or table name to create the clone
-   * @since 4.0.0
-   */
-  def cloneAtVersion(version: Long, target: String): DeltaTable = {
-    cloneAtVersion(version, target, false)
-  }
-
-  /**
-   * Create a shallow clone of this DeltaTable at a specific version to a new location.
-   *
-   * @param version The version of this table to clone from
-   * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
-   * @since 4.0.0
-   */
-  def cloneAtVersion(version: Long, target: String, replace: Boolean): DeltaTable = {
-    cloneAtVersion(version, target, replace, Map.empty)
+  def clone(target: String): DeltaTable = {
+    clone(target, false)
   }
 
   /**
@@ -637,14 +614,43 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Create a shallow clone of this DeltaTable at a specific version to a new location.
+   *
+   * @param version The version of this table to clone from
+   * @param target The path or table name to create the clone
+   * @param replace Whether to replace anything at the destination with the clone
+   * @since 4.0.0
+   */
+  def cloneAtVersion(version: Long, target: String, replace: Boolean): DeltaTable = {
+    cloneAtVersion(version, target, replace, Map.empty)
+  }
+
+  /**
+   * Create a shallow clone of this DeltaTable at a specific version to a new location.
+   *
+   * @param version The version of this table to clone from
+   * @param target The path or table name to create the clone
+   * @since 4.0.0
+   */
+  def cloneAtVersion(version: Long, target: String): DeltaTable = {
+    cloneAtVersion(version, target, false)
+  }
+
+   /**
    * Create a shallow clone of this DeltaTable at a specific timestamp to a new location.
    *
    * @param timestamp The timestamp of this table to clone from
    * @param target The path or table name to create the clone
+   * @param replace Whether to replace anything at the destination with the clone
+   * @param properties Any table properties to override in the clone
    * @since 4.0.0
    */
-  def cloneAtTimestamp(timestamp: String, target: String): DeltaTable = {
-    cloneAtTimestamp(timestamp, target, false, Map.empty)
+  def cloneAtTimestamp(
+      timestamp: String,
+      target: String,
+      replace: Boolean,
+      properties: Map[String, String]): DeltaTable = {
+    executeClone(table, target, replace, properties, timestampAsOf = Some(timestamp))
   }
 
   /**
@@ -664,16 +670,10 @@ class DeltaTable private[tables](
    *
    * @param timestamp The timestamp of this table to clone from
    * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
-   * @param properties Any table properties to override in the clone
    * @since 4.0.0
    */
-  def cloneAtTimestamp(
-      timestamp: String,
-      target: String,
-      replace: Boolean,
-      properties: Map[String, String]): DeltaTable = {
-    executeClone(table, target, replace, properties, timestampAsOf = Some(timestamp))
+  def cloneAtTimestamp(timestamp: String, target: String): DeltaTable = {
+    cloneAtTimestamp(timestamp, target, false, Map.empty)
   }
 }
 
