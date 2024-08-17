@@ -564,7 +564,7 @@ class DeltaTable private[tables](
   }
 
   /**
-   *  Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
    * @param target The path or table name to create the clone
    * @param replace Whether to replace anything at the destination with the clone
@@ -576,7 +576,7 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Create a shallow clone of this DeltaTable to a new location.
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
    * @param target The path or table name to create the clone
    * @param replace Whether to replace anything at the destination with the clone
@@ -587,7 +587,7 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Create a shallow clone of this DeltaTable to a new location.
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
    * @param target The path or table name to create the clone
    * @since 4.0.0
@@ -597,7 +597,8 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Create a shallow clone of this DeltaTable at a specific version to a new location.
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata.
    *
    * @param version The version of this table to clone from
    * @param target The path or table name to create the clone
@@ -614,7 +615,8 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Create a shallow clone of this DeltaTable at a specific version to a new location.
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata.
    *
    * @param version The version of this table to clone from
    * @param target The path or table name to create the clone
@@ -626,7 +628,8 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Create a shallow clone of this DeltaTable at a specific version to a new location.
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata.
    *
    * @param version The version of this table to clone from
    * @param target The path or table name to create the clone
@@ -637,7 +640,8 @@ class DeltaTable private[tables](
   }
 
    /**
-   * Create a shallow clone of this DeltaTable at a specific timestamp to a new location.
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata.
    *
    * @param timestamp The timestamp of this table to clone from
    * @param target The path or table name to create the clone
@@ -654,7 +658,8 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Create a shallow clone of this DeltaTable at a specific timestamp to a new location.
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata.
    *
    * @param timestamp The timestamp of this table to clone from
    * @param target The path or table name to create the clone
@@ -666,7 +671,8 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Create a shallow clone of this DeltaTable at a specific timestamp to a new location.
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata.
    *
    * @param timestamp The timestamp of this table to clone from
    * @param target The path or table name to create the clone
