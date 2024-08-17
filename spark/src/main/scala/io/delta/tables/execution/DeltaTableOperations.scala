@@ -25,8 +25,8 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.tables.DeltaTable
-
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
@@ -125,31 +125,37 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       Identifier.of(id.database.toArray, id.table))
     val sourceRelation = DataSourceV2Relation.create(table, None, sourceIdentifier)
 
-    val pathBased = new Path(target).isAbsolute()
-    val targetIdentifier = if (pathBased) s"delta.`$target`" else target
-    val targetRelation = UnresolvedRelation(
-      sparkSession.sessionState.sqlParser.parseTableIdentifier(targetIdentifier))
-
-    val maybeTimeTravelSource = if (timestampAsOf.isDefined || versionAsOf.isDefined) {
+    val maybeTimeTravelSource = if (versionAsOf.isDefined || timestampAsOf.isDefined) {
       TimeTravel(
         sourceRelation,
         timestampAsOf.map(Literal(_)),
         versionAsOf,
-        None
+        Some("deltaTable")
       )
     } else {
       sourceRelation
     }
 
-    val clone = CloneTableStatement(maybeTimeTravelSource, targetRelation, false, replace, true,
-      properties.toMap, None)
+    val targetIsAbsolutePath = new Path(target).isAbsolute()
+    val targetIdentifier = if (targetIsAbsolutePath) s"delta.`$target`" else target
+    val targetRelation = UnresolvedRelation(
+      sparkSession.sessionState.sqlParser.parseTableIdentifier(targetIdentifier))
+
+    val clone = CloneTableStatement(
+      maybeTimeTravelSource,
+      targetRelation,
+      ifNotExists = false,
+      replace,
+      isCreateCommand = true,
+      tablePropertyOverrides = properties.toMap,
+      targetLocation = None)
 
     val qe = sparkSession.sessionState.executePlan(clone)
 
     // call `QueryExecution.toRDD` to trigger the execution of commands.
     SQLExecution.withNewExecutionId(qe, Some("clone delta table"))(qe.toRdd)
 
-    if (pathBased) {
+    if (targetIsAbsolutePath) {
       DeltaTable.forPath(sparkSession, target)
     } else {
       DeltaTable.forName(sparkSession, target)
