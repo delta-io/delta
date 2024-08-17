@@ -121,19 +121,14 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       properties: Map[String, String],
       versionAsOf: Option[Long] = None,
       timestampAsOf: Option[String] = None): DeltaTable = withActiveSession(sparkSession) {
-    val (targetRelation, targetPath) = if (new Path(target).isAbsolute()) {
-      (UnresolvedRelation(TableIdentifier(target, Some("delta"))), Some(target))
-    } else {
-      val tableIdentifier = sparkSession
-        .sessionState
-        .sqlParser
-        .parseTableIdentifier(target)
-      (UnresolvedRelation(tableIdentifier), None)
-    }
-
     val sourceIdentifier = table.getTableIdentifierIfExists.map(id =>
       Identifier.of(id.database.toArray, id.table))
     val sourceRelation = DataSourceV2Relation.create(table, None, sourceIdentifier)
+
+    val pathBased = new Path(target).isAbsolute()
+    val targetIdentifier = if (pathBased) s"delta.`$target`" else target
+    val targetRelation = UnresolvedRelation(
+      sparkSession.sessionState.sqlParser.parseTableIdentifier(targetIdentifier))
 
     val maybeTimeTravelSource = if (timestampAsOf.isDefined || versionAsOf.isDefined) {
       TimeTravel(
@@ -147,14 +142,14 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     }
 
     val clone = CloneTableStatement(maybeTimeTravelSource, targetRelation, false, replace, true,
-      properties.toMap, targetPath)
+      properties.toMap, None)
 
     val qe = sparkSession.sessionState.executePlan(clone)
 
     // call `QueryExecution.toRDD` to trigger the execution of commands.
     SQLExecution.withNewExecutionId(qe, Some("clone delta table"))(qe.toRdd)
 
-    if (targetPath.isDefined) {
+    if (pathBased) {
       DeltaTable.forPath(sparkSession, target)
     } else {
       DeltaTable.forName(sparkSession, target)
