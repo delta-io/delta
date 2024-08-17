@@ -130,8 +130,10 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
         .parseTableIdentifier(target)
       (UnresolvedRelation(tableIdentifier), None)
     }
-    val sourceRelation = DataSourceV2Relation.create(table, None,
-      table.getTableIdentifierIfExists.map(id => Identifier.of(id.database.toArray, id.table)))
+
+    val sourceIdentifier = table.getTableIdentifierIfExists.map(id =>
+      Identifier.of(id.database.toArray, id.table))
+    val sourceRelation = DataSourceV2Relation.create(table, None, sourceIdentifier)
 
     val maybeTimeTravelSource = if (timestampAsOf.isDefined || versionAsOf.isDefined) {
       TimeTravel(
