@@ -577,9 +577,9 @@ class DeltaTable private[tables](
    *   Map("foo" -> "bar"))
    * }}}
    *
-   * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
-   * @param properties Any table properties to override in the clone
+   * @param target The path or table name to create the clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
    * @since 3.3.0
    */
   def clone(target: String, replace: Boolean, properties: Map[String, String]): DeltaTable = {
@@ -589,8 +589,8 @@ class DeltaTable private[tables](
   /**
    * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
-   * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
+   * @param target The path or table name to create the clone.
+   * @param replace Whether to replace the destination with the clone command.
    * @since 3.3.0
    */
   def clone(target: String, replace: Boolean): DeltaTable = {
@@ -600,7 +600,7 @@ class DeltaTable private[tables](
   /**
    * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
-   * @param target The path or table name to create the clone
+   * @param target The path or table name to create the clone.
    *
    * @since 3.3.0
    */
@@ -617,16 +617,17 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *  io.delta.tables.DeltaTable.clone(
+   *  io.delta.tables.DeltaTable.cloneAtVersion(
+   *   5,
    *   "/some/path",
    *   true,
    *   Map("foo" -> "bar"))
    * }}}
    *
-   * @param version The version of this table to clone from
-   * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
-   * @param properties Any table properties to override in the clone
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
    *
    * @since 3.3.0
    */
@@ -642,9 +643,9 @@ class DeltaTable private[tables](
    * Clone a DeltaTable at a specific version to a given destination to mirror the existing
    * table's data and metadata.
    *
-   * @param version The version of this table to clone from
-   * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param replace Whether to replace the destination with the clone command.
    *
    * @since 3.3.0
    */
@@ -656,8 +657,8 @@ class DeltaTable private[tables](
    * Clone a DeltaTable at a specific version to a given destination to mirror the existing
    * table's data and metadata.
    *
-   * @param version The version of this table to clone from
-   * @param target The path or table name to create the clone
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
    *
    * @since 3.3.0
    */
@@ -674,16 +675,17 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *  io.delta.tables.DeltaTable.clone(
+   *  io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *   "2019-01-01",
    *   "/some/path",
    *   true,
    *   Map("foo" -> "bar"))
    * }}}
    *
-   * @param timestamp The timestamp of this table to clone from
-   * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
-   * @param properties Any table properties to override in the clone
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
    *
    * @since 3.3.0
    */
@@ -699,9 +701,9 @@ class DeltaTable private[tables](
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
    * table's data and metadata.
    *
-   * @param timestamp The timestamp of this table to clone from
-   * @param target The path or table name to create the clone
-   * @param replace Whether to replace anything at the destination with the clone
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param replace Whether to replace the destination with the clone command.
    *
    * @since 3.3.0
    */
@@ -713,8 +715,8 @@ class DeltaTable private[tables](
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
    * table's data and metadata.
    *
-   * @param timestamp The timestamp of this table to clone from
-   * @param target The path or table name to create the clone
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
    *
    * @since 3.3.0
    */
