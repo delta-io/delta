@@ -299,7 +299,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     // in Spark 3.3. In Spark 3.4 we should have TableIdentifier supporting 3L namespace so we
     // could revert back to that.
     val sourceRelation = new UnresolvedRelation(visitMultipartIdentifier(ctx.source))
-    val maybeTimeTravelSource = maybeTimeTravelChild(ctx.clause, sourceRelation)
+    val maybeTimeTravelSource = maybeTimeTravelChildClone(ctx.clause, sourceRelation)
     val targetRelation = UnresolvedRelation(target.nameParts)
 
     val tablePropertyOverrides = Option(ctx.tableProps)
@@ -442,7 +442,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitRestore(ctx: RestoreContext): LogicalPlan = withOrigin(ctx) {
     val tableRelation = UnresolvedRelation(visitTableIdentifier(ctx.table).nameParts)
-    val timeTravelTableRelation = maybeTimeTravelChild(ctx.clause, tableRelation)
+    val timeTravelTableRelation = maybeTimeTravelChildRestore(ctx.clause, tableRelation)
     RestoreTableStatement(timeTravelTableRelation.asInstanceOf[TimeTravel])
   }
 
@@ -476,7 +476,21 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   /**
    * Time travel the table to the given version or timestamp.
    */
-  private def maybeTimeTravelChild(ctx: TemporalClauseContext, child: LogicalPlan): LogicalPlan = {
+  private def maybeTimeTravelChildClone(
+      ctx: TemporalClauseContext, child: LogicalPlan): LogicalPlan = {
+    if (ctx == null) return child
+    TimeTravel(
+      child,
+      Option(ctx.timestamp).map(token => Literal(token.getText.replaceAll("^'|'$", ""))),
+      Option(ctx.version).map(_.getText.toInt),
+      Some("sql"))
+  }
+
+  /**
+   * Time travel the table to the given version or timestamp.
+   */
+  private def maybeTimeTravelChildRestore(
+      ctx: TemporalClauseContext, child: LogicalPlan): LogicalPlan = {
     if (ctx == null) return child
     TimeTravel(
       child,
