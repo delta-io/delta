@@ -589,7 +589,7 @@ class DeltaTable private[tables](
 
   /**
    * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
-   * 
+   *
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.clone("/some/path", true)
@@ -606,7 +606,7 @@ class DeltaTable private[tables](
 
   /**
    * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
-   * 
+   *
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.clone("/some/path")
@@ -654,7 +654,7 @@ class DeltaTable private[tables](
   /**
    * Clone a DeltaTable at a specific version to a given destination to mirror the existing
    * table's data and metadata.
-   * 
+   *
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.cloneAtVersion(5, "/some/path", true)
@@ -673,7 +673,7 @@ class DeltaTable private[tables](
   /**
    * Clone a DeltaTable at a specific version to a given destination to mirror the existing
    * table's data and metadata.
-   * 
+   *
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.cloneAtVersion(5, "/some/path")
@@ -724,9 +724,9 @@ class DeltaTable private[tables](
   /**
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
    * table's data and metadata.
-   * 
+   *
    * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
-   * 
+   *
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path", true)
@@ -745,9 +745,9 @@ class DeltaTable private[tables](
   /**
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
    * table's data and metadata.
-   * 
+   *
    * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
-   * 
+   *
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path")
