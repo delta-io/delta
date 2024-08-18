@@ -150,10 +150,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
       tablePropertyOverrides = properties.toMap,
       targetLocation = None)
 
-    val qe = sparkSession.sessionState.executePlan(clone)
-
-    // call `QueryExecution.toRDD` to trigger the execution of commands.
-    SQLExecution.withNewExecutionId(qe, Some("clone delta table"))(qe.toRdd)
+    toDataset(sparkSession, clone)
 
     if (targetIsAbsolutePath) {
       io.delta.tables.DeltaTable.forPath(sparkSession, target)
