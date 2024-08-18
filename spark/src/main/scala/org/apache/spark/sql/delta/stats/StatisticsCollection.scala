@@ -458,8 +458,7 @@ object StatisticsCollection extends DeltaCommand {
    * @param name The name of the data skipping column for validating data type.
    * @param dataType The data type of the data skipping column.
    * @param columnPaths The column paths of all valid fields.
-   * @param insideStruct Whether the datatype is inside a struct already, in which case we don't
-   *                     care about the type.
+   * @param insideStruct Tracks if we are inside a struct, in which case all types are valid
    */
   private def validateDataSkippingType(
       name: String,
