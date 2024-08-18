@@ -284,14 +284,6 @@ abstract class CloneTableBase(
     }
   }
 
-  // SparkSession default configurations are used for Commit Coordinator configurations for a new
-  // table created as part of CLONE.
-  private def fetchDefaultCoordinatedCommitsConfigurations(
-      spark: SparkSession): Map[String, String] = {
-    CoordinatedCommitsUtils.TABLE_PROPERTY_CONFS.flatMap { conf =>
-      spark.conf.getOption(conf.defaultTablePropertyKey).map(value => conf.key -> value)
-    }.toMap
-  }
 
   /**
    * Prepares the source metadata by making it compatible with the existing target metadata.
@@ -340,51 +332,28 @@ abstract class CloneTableBase(
     }
   }
 
-  // Priority of Coordinated Commits configurations:
-  // 1: Explicit Configuration overrides provided by the user.
-  // 2: Table properties of the existing target table.
-  // 3: Default SparkSession configurations.
+  /**
+   * Priority of Coordinated Commits configurations:
+   *   - When CLONE into a new table, explicit command specification takes precedence over default
+   *     SparkSession configurations.
+   *   - When CLONE into an existing table, use the existing table's configurations.
+   */
   private def determineCoordinatedCommitsConfigurations(
       spark: SparkSession,
       targetSnapshot: SnapshotDescriptor,
       validatedOverrides: Map[String, String]): Map[String, String] = {
-    // Update clonedMetadata's configuration by replacing coordinated-commits related entries
-    // based on targetSnapshot's configuration
-    val existingTargetConfs: Map[String, String] =
-      if (tableExists(targetSnapshot)) {
-        targetSnapshot.metadata.configuration
-          .filterKeys(CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains)
-          .toMap
-      } else {
-        Map.empty
-      }
-    if (validatedOverrides.nonEmpty) {
-      if (existingTargetConfs.nonEmpty) {
-        throw new DeltaIllegalArgumentException(
-          "DELTA_CLONE_CANNOT_OVERRIDE_COORDINATED_COMMITS",
-          Array.empty)
-      }
-      Seq(
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key,
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key).foreach { key =>
-        if (!validatedOverrides.contains(key)) {
-          throw new DeltaIllegalArgumentException(
-            errorClass = "DELTA_CLONE_MUST_OVERRIDE_ALL_COORDINATED_COMMITS_CONFS",
-            messageParameters = Array.empty)
-        }
-      }
-      Seq(DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key).foreach { key =>
-        if (validatedOverrides.contains(key)) {
-          throw new DeltaIllegalArgumentException(
-            errorClass = "DELTA_CLONE_CONF_OVERRIDE_NOT_SUPPORTED",
-            messageParameters = Array(key))
-        }
-      }
-      validatedOverrides
-    } else if (tableExists(targetSnapshot)) {
-      existingTargetConfs
+    if (tableExists(targetSnapshot)) {
+      assert(validatedOverrides.isEmpty,
+        "Explicit overrides on Coordinated Commits configurations for existing tables" +
+          " are not supported, and should have been caught earlier.")
+      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
+        targetSnapshot.metadata.configuration)
     } else {
-      fetchDefaultCoordinatedCommitsConfigurations(spark)
+      if (validatedOverrides.nonEmpty) {
+        validatedOverrides
+      } else {
+        CoordinatedCommitsUtils.fetchDefaultCoordinatedCommitsConfigurations(spark)
+      }
     }
   }
 
@@ -400,7 +369,7 @@ abstract class CloneTableBase(
 
     // Finalize Coordinated Commits configurations for the target
     val coordinatedCommitsConfigurationOverrides =
-      validatedConfigurations.filterKeys(CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains).toMap
+      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(validatedConfigurations)
     val validatedConfigurationsWithoutCoordinatedCommits =
       validatedConfigurations -- coordinatedCommitsConfigurationOverrides.keys
     val finalCoordinatedCommitsConfigurations = determineCoordinatedCommitsConfigurations(
