@@ -24,7 +24,6 @@ import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
-import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{functions, Column, DataFrame}
@@ -39,7 +38,7 @@ import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 /**
  * Interface to provide the actual implementations of DeltaTable operations.
  */
-trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
+trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaTable =>
 
   protected def executeDelete(condition: Option[Expression]): Unit = improveUnsupportedOpError {
     withActiveSession(sparkSession) {
@@ -120,7 +119,8 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       replace: Boolean,
       properties: Map[String, String],
       versionAsOf: Option[Long] = None,
-      timestampAsOf: Option[String] = None): DeltaTable = withActiveSession(sparkSession) {
+      timestampAsOf: Option[String] = None
+  ): io.delta.tables.DeltaTable = withActiveSession(sparkSession) {
     val sourceIdentifier = table.getTableIdentifierIfExists.map(id =>
       Identifier.of(id.database.toArray, id.table))
     val sourceRelation = DataSourceV2Relation.create(table, None, sourceIdentifier)
@@ -156,9 +156,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
     SQLExecution.withNewExecutionId(qe, Some("clone delta table"))(qe.toRdd)
 
     if (targetIsAbsolutePath) {
-      DeltaTable.forPath(sparkSession, target)
+      io.delta.tables.DeltaTable.forPath(sparkSession, target)
     } else {
-      DeltaTable.forName(sparkSession, target)
+      io.delta.tables.DeltaTable.forName(sparkSession, target)
     }
   }
 
