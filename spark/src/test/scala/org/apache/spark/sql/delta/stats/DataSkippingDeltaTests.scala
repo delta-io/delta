@@ -614,7 +614,9 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "i": 10
     }""".replace("\n", ""),
     hits = Seq(
-      "i < 0"
+      "i < 0",
+      "a.d > 6",
+      "a.f.g < 10"
     ),
     misses = Seq(
       "a.d < 0",
