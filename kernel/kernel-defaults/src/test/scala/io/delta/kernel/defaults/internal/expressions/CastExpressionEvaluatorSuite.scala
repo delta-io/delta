@@ -30,7 +30,22 @@ import scala.collection.JavaConverters._
  */
 class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
 
-  private val allowedPrimitiveCasts: Set[(DataType, DataType)] = Set(
+  private val allowedDecimalCasts: Set[(DataType, DataType)] = Set(
+    (new DecimalType(12, 0), new DecimalType(14, 0)),
+    (new DecimalType(5, 2), new DecimalType(7, 4)),
+    (new DecimalType(35, 5), new DecimalType(38, 6)),
+
+    (ByteType.BYTE, new DecimalType(4, 0)),
+    (ByteType.BYTE, new DecimalType(10, 5)),
+    (ShortType.SHORT, new DecimalType(6, 0)),
+    (ShortType.SHORT, new DecimalType(10, 5)),
+    (IntegerType.INTEGER, new DecimalType(11, 0)),
+    (IntegerType.INTEGER, new DecimalType(20, 5)),
+    (LongType.LONG, new DecimalType(21, 0)),
+    (LongType.LONG, new DecimalType(30, 5))
+  )
+
+  private val allowedPrimitiveCasts: Set[(DataType, DataType)] = allowedDecimalCasts ++ Set(
     (ByteType.BYTE, ShortType.SHORT),
     (ByteType.BYTE, IntegerType.INTEGER),
     (ByteType.BYTE, LongType.LONG),
@@ -49,15 +64,6 @@ class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
     (LongType.LONG, FloatType.FLOAT),
     (LongType.LONG, DoubleType.DOUBLE),
     (FloatType.FLOAT, DoubleType.DOUBLE),
-
-    (new DecimalType(12, 0), new DecimalType(14, 0)),
-    (new DecimalType(5, 2), new DecimalType(7, 4)),
-    (new DecimalType(35, 5), new DecimalType(38, 6)),
-
-    (ByteType.BYTE, new DecimalType(4, 0)),
-    (ShortType.SHORT, new DecimalType(6, 0)),
-    (IntegerType.INTEGER, new DecimalType(11, 0)),
-    (LongType.LONG, new DecimalType(21, 0))
   )
 
   private val allowedNestedCasts: Set[(DataType, DataType)] = Set(
@@ -107,8 +113,15 @@ class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
       Seq.range(0, ALL_TYPES.length).foreach { toTypeIdx =>
         val toType: DataType = ALL_TYPES(toTypeIdx)
         assert(canCastTo(fromType, toType) ===
-          allowedCasts.contains((fromType, toType)))
+          fromType.equals(toType) || allowedCasts.contains((fromType, toType)))
       }
+    }
+  }
+
+  test("can cast to nested and decimal") {
+    (allowedDecimalCasts ++ allowedNestedCasts).foreach { case (from, to) =>
+      assert(canCastTo(from, to), s"Casting $from to $to should be allowed")
+      assert(!canCastTo(to, from), s"Casting $to to $from should not be allowed")
     }
   }
 

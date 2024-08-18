@@ -28,6 +28,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.stream.IntStream;
 
 /**
  * An implicit cast expression to convert the input type to another given type. Here is the valid
@@ -108,17 +109,24 @@ class CastExpressionEvaluator {
    * type.
    */
   static boolean canCastTo(DataType from, DataType to) {
+    if (to instanceof DecimalType) {
+      return canCastToDecimal(from, (DecimalType) to);
+    } else if (to instanceof StructType || to instanceof MapType || to instanceof ArrayType) {
+      return canCastToNestedType(from, to);
+    }
+
     if (!(from instanceof BasePrimitiveType) || !(to instanceof BasePrimitiveType)) return false;
 
     // TODO: The type name should be a first class method on `DataType` instead of getting it
     // using the `toString`.
     String fromStr = from.toString();
     String toStr = to.toString();
-    return UP_CASTABLE_PRIMITIVE_TYPE_TABLE.containsKey(fromStr)
-        && UP_CASTABLE_PRIMITIVE_TYPE_TABLE.get(fromStr).contains(toStr);
+    return from.equals(to)
+        || (UP_CASTABLE_PRIMITIVE_TYPE_TABLE.containsKey(fromStr)
+            && UP_CASTABLE_PRIMITIVE_TYPE_TABLE.get(fromStr).contains(toStr));
   }
 
-  static boolean canCastTo(DataType from, DecimalType to) {
+  private static boolean canCastToDecimal(DataType from, DecimalType to) {
     DecimalType fromDecimalType;
     if (from instanceof DecimalType) {
       fromDecimalType = (DecimalType) from;
@@ -134,29 +142,33 @@ class CastExpressionEvaluator {
       return false;
     }
 
+    // We allow upcasting to a larger scale as long as the precision increases by at least as much
+    // to accommodate all values.
     int precisionIncrease = to.getPrecision() - fromDecimalType.getPrecision();
     int scaleIncrease = to.getScale() - fromDecimalType.getScale();
     return scaleIncrease >= 0 && precisionIncrease >= scaleIncrease;
   }
 
-  static boolean canCastTo(StructType from, StructType to) {
-    if (from.length() != to.length()) return false;
-
-    for (int i = 0; i < from.length(); i++) {
-      if (!canCastTo(from.at(i).getDataType(), to.at(i).getDataType())) {
-        return false;
-      }
+  private static boolean canCastToNestedType(DataType from, DataType to) {
+    if (from instanceof StructType && to instanceof StructType) {
+      StructType fromStruct = (StructType) from;
+      StructType toStruct = (StructType) to;
+      return fromStruct.length() == toStruct.length()
+          && IntStream.range(0, fromStruct.length())
+              .mapToObj(
+                  i -> canCastTo(fromStruct.at(i).getDataType(), toStruct.at(i).getDataType()))
+              .allMatch(result -> result);
+    } else if (from instanceof MapType && to instanceof MapType) {
+      MapType fromMap = (MapType) from;
+      MapType toMap = (MapType) to;
+      return canCastTo(fromMap.getKeyType(), toMap.getKeyType())
+          && canCastTo(fromMap.getValueType(), toMap.getValueType());
+    } else if (from instanceof ArrayType && to instanceof ArrayType) {
+      ArrayType fromArray = (ArrayType) from;
+      ArrayType toArray = (ArrayType) to;
+      return canCastTo(fromArray.getElementType(), toArray.getElementType());
     }
-    return true;
-  }
-
-  static boolean canCastTo(MapType from, MapType to) {
-    return canCastTo(from.getKeyType(), to.getKeyType())
-        && canCastTo(from.getValueType(), to.getValueType());
-  }
-
-  static boolean canCastTo(ArrayType from, ArrayType to) {
-    return canCastTo(from.getElementType(), to.getElementType());
+    return false;
   }
 
   /** Base class for up casting {@link ColumnVector} data. */
