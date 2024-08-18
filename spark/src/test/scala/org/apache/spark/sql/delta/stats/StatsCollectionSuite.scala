@@ -590,7 +590,8 @@ class StatsCollectionSuite
 
   Seq(
     "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
-    "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT"
+    "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT", "STRUCT<c3: BIGINT>",
+    "STRUCT<c3: BIGINT, c4: ARRAY<BIGINT>>"
   ).foreach { validType =>
     val tableName1 = "delta_table_1"
     val tableName2 = "delta_table_2"
