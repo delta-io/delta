@@ -596,6 +596,7 @@ class DeltaTable private[tables](
    *
    * @param target The path or table name to create the clone.
    * @param replace Whether to replace the destination with the clone command.
+   *
    * @since 3.3.0
    */
   def clone(target: String, replace: Boolean): DeltaTable = {
