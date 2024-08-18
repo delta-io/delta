@@ -745,14 +745,14 @@ class DeltaTable private[tables](
    * table's data and metadata.
    * 
    * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
-   *
-   * @param timestamp The timestamp of this table to clone from.
-   * @param target The path or table name to create the clone.
    * 
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path")
    * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
    *
    * @since 3.3.0
    */
