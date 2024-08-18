@@ -690,6 +690,8 @@ class DeltaTable private[tables](
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
    * table's data and metadata.
    *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
+   *
    * Specifying properties here means that the target will override any properties with the same key
    * in the source table with the user-defined properties.
    *
@@ -721,6 +723,8 @@ class DeltaTable private[tables](
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
    * table's data and metadata.
    * 
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
+   * 
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path", true)
@@ -739,6 +743,8 @@ class DeltaTable private[tables](
   /**
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
    * table's data and metadata.
+   * 
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
    *
    * @param timestamp The timestamp of this table to clone from.
    * @param target The path or table name to create the clone.
