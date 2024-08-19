@@ -314,8 +314,8 @@ class AutoCompactSuite extends
     "partition values") { dir =>
       Seq(null, "", " ").map(UTF8String.fromString).zipWithIndex.foreach { case (partValue, i) =>
         val path = new File(dir, i.toString).getCanonicalPath
-        val df1 = spark.range(5).withColumn("part", new Column(Literal(partValue, StringType)))
-        val df2 = spark.range(5, 10).withColumn("part", new Column(Literal("1")))
+        val df1 = spark.range(5).withColumn("part", Column(Literal(partValue, StringType)))
+        val df2 = spark.range(5, 10).withColumn("part", Column(Literal("1")))
         val isLogged = checkAutoOptimizeLogging {
           // repartition to increase number of files written
           df1.union(df2).repartition(4)
