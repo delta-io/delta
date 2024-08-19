@@ -63,7 +63,7 @@ class CastExpressionEvaluatorSuite extends AnyFunSuite with TestUtils {
 
     (LongType.LONG, FloatType.FLOAT),
     (LongType.LONG, DoubleType.DOUBLE),
-    (FloatType.FLOAT, DoubleType.DOUBLE),
+    (FloatType.FLOAT, DoubleType.DOUBLE)
   )
 
   private val allowedNestedCasts: Set[(DataType, DataType)] = Set(
