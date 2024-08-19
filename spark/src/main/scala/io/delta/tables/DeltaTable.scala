@@ -572,7 +572,7 @@ class DeltaTable private[tables](
    * An example would be
    * {{{
    *  io.delta.tables.DeltaTable.clone(
-   *   "/some/path",
+   *   "/some/path/to/table",
    *   true,
    *   Map("foo" -> "bar"))
    * }}}
@@ -592,7 +592,7 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *  io.delta.tables.DeltaTable.clone("/some/path", true)
+   *  io.delta.tables.DeltaTable.clone("/some/path/to/table", true)
    * }}}
    *
    * @param target The path or table name to create the clone.
@@ -609,7 +609,7 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *  io.delta.tables.DeltaTable.clone("/some/path")
+   *  io.delta.tables.DeltaTable.clone("/some/path/to/table")
    * }}}
    *
    * @param target The path or table name to create the clone.
@@ -622,7 +622,7 @@ class DeltaTable private[tables](
 
   /**
    * Clone a DeltaTable at a specific version to a given destination to mirror the existing
-   * table's data and metadata.
+   * table's data and metadata at that version.
    *
    * Specifying properties here means that the target will override any properties with the same key
    * in the source table with the user-defined properties.
@@ -631,7 +631,7 @@ class DeltaTable private[tables](
    * {{{
    *  io.delta.tables.DeltaTable.cloneAtVersion(
    *   5,
-   *   "/some/path",
+   *   "/some/path/to/table",
    *   true,
    *   Map("foo" -> "bar"))
    * }}}
@@ -653,11 +653,11 @@ class DeltaTable private[tables](
 
   /**
    * Clone a DeltaTable at a specific version to a given destination to mirror the existing
-   * table's data and metadata.
+   * table's data and metadata at that version.
    *
    * An example would be
    * {{{
-   *  io.delta.tables.DeltaTable.cloneAtVersion(5, "/some/path", true)
+   *  io.delta.tables.DeltaTable.cloneAtVersion(5, "/some/path/to/table", true)
    * }}}
    *
    * @param version The version of this table to clone from.
@@ -672,11 +672,11 @@ class DeltaTable private[tables](
 
   /**
    * Clone a DeltaTable at a specific version to a given destination to mirror the existing
-   * table's data and metadata.
+   * table's data and metadata at that version.
    *
    * An example would be
    * {{{
-   *  io.delta.tables.DeltaTable.cloneAtVersion(5, "/some/path")
+   *  io.delta.tables.DeltaTable.cloneAtVersion(5, "/some/path/to/table")
    * }}}
    *
    * @param version The version of this table to clone from.
@@ -690,7 +690,7 @@ class DeltaTable private[tables](
 
    /**
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
-   * table's data and metadata.
+   * table's data and metadata at that timestamp.
    *
    * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
    *
@@ -701,7 +701,7 @@ class DeltaTable private[tables](
    * {{{
    *  io.delta.tables.DeltaTable.cloneAtTimestamp(
    *   "2019-01-01",
-   *   "/some/path",
+   *   "/some/path/to/table",
    *   true,
    *   Map("foo" -> "bar"))
    * }}}
@@ -723,13 +723,13 @@ class DeltaTable private[tables](
 
   /**
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
-   * table's data and metadata.
+   * table's data and metadata at that timestamp.
    *
    * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
    *
    * An example would be
    * {{{
-   *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path", true)
+   *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path/to/table", true)
    * }}}
    *
    * @param timestamp The timestamp of this table to clone from.
@@ -744,13 +744,13 @@ class DeltaTable private[tables](
 
   /**
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
-   * table's data and metadata.
+   * table's data and metadata at that timestamp.
    *
    * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
    *
    * An example would be
    * {{{
-   *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path")
+   *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path/to/table")
    * }}}
    *
    * @param timestamp The timestamp of this table to clone from.
