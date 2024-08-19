@@ -470,8 +470,10 @@ object StatisticsCollection extends DeltaCommand {
         validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths,
           insideStruct = true)
       }
-    case _ if insideStruct => columnPaths.append(name)
     case SkippingEligibleDataType(_) => columnPaths.append(name)
+    case d if insideStruct =>
+      logWarning(s"Data skipping is not supported for column $name of type $dataType")
+      columnPaths.append(name)
     case _ =>
       throw new DeltaIllegalArgumentException(
         errorClass = "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE",
