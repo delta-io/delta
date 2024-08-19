@@ -177,6 +177,16 @@ public class TableConfig<T> {
           "Needs to be one of none, id, name.",
           true);
 
+  /** This table property is used to control the maximum column mapping ID. */
+  public static final TableConfig<Long> COLUMN_MAPPING_MAX_COLUMN_ID =
+          new TableConfig<>(
+                  "delta.columnMapping.maxColumnId",
+                  "0",
+                  (engineOpt, v) -> Long.valueOf(v),
+                  value -> value >= 0,
+                  "",
+                  false);
+
   /**
    * Table property that enables modifying the table in accordance with the Delta-Iceberg
    * Compatibility V2 protocol.
@@ -194,16 +204,6 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
-  /** This table property is used to control the maximum column mapping ID. */
-  public static final TableConfig<Long> MAX_COLUMN_ID =
-      new TableConfig<>(
-          "delta.columnMapping.maxColumnId",
-          "0",
-          (engineOpt, v) -> Long.valueOf(v),
-          value -> value >= 0,
-          "",
-          false);
-
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -219,7 +219,7 @@ public class TableConfig<T> {
               addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
-              addConfig(this, MAX_COLUMN_ID);
+              addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
             }
           });
 
@@ -282,16 +282,16 @@ public class TableConfig<T> {
     for (Map.Entry<String, String> kv : configurations.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
-      if (key.startsWith("delta.")) {
+      if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
         TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
         if (tableConfig.editable) {
           tableConfig.validate(engine, value);
           validatedConfigurations.put(tableConfig.getKey(), value);
         } else {
-          throw DeltaErrors.cannotModifyTableProperty(key);
+          throw DeltaErrors.cannotModifyTableProperty(kv.getKey());
         }
       } else {
-        throw DeltaErrors.unknownConfigurationException(key);
+        throw DeltaErrors.unknownConfigurationException(kv.getKey());
       }
     }
     return validatedConfigurations;

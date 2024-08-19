@@ -88,12 +88,13 @@ class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
           TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
           TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
           TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
-          TableConfig.MAX_COLUMN_ID.getKey -> "10").asJava)
+          TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey -> "10").asJava)
     }
 
     assert(e.isInstanceOf[KernelException])
     assert(e.getMessage.toLowerCase() ==
-      s"The Delta table property '${TableConfig.MAX_COLUMN_ID.getKey}'".toLowerCase() +
+      s"The Delta table property ".toLowerCase() +
+      s"'${TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey}'".toLowerCase() +
       s" is an internal property and cannot be updated.".toLowerCase())
   }
 }
