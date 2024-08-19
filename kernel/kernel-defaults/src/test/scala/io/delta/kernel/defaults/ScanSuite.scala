@@ -27,7 +27,7 @@ import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.StringType.STRING
-import io.delta.kernel.types.{StructField, StructType}
+import io.delta.kernel.types.{ArrayType, MapType, StructField, StructType}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.{Scan, Snapshot, Table}
 import org.apache.hadoop.conf.Configuration
@@ -1596,122 +1596,189 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
-  test("read schema same as table schema") {
+  test("valid read schema with primitive types") {
     withTempDir { tempDir =>
       spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
         .write.format("delta").save(tempDir.getCanonicalPath)
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
 
-      snapshot
-        .getScanBuilder(defaultEngine)
-        .withReadSchema(defaultEngine, snapshot.getSchema(defaultEngine))
-    }
-  }
-
-  test("read schema superset of table schema") {
-    withTempDir { tempDir =>
-      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
-        .write.format("delta").save(tempDir.getCanonicalPath)
-
-      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-      val supersetSchema = snapshot.getSchema(defaultEngine)
-        .add(new StructField("c3", INTEGER, true))
-
-      val e = intercept[IllegalArgumentException] {
-        snapshot
-          .getScanBuilder(defaultEngine)
-          .withReadSchema(defaultEngine, supersetSchema)
+      Seq(
+        snapshot.getSchema(defaultEngine),
+        new StructType().add("c2", STRING, true)
+      ).foreach {
+        readSchema =>
+          snapshot
+            .getScanBuilder(defaultEngine)
+            .withReadSchema(defaultEngine, readSchema)
       }
-      assert(e.isInstanceOf[IllegalArgumentException])
-      assert(e.getMessage == s"Field 'c3' is not a table field")
     }
   }
 
-  test("read schema subset of table schema") {
+  test("invalid read schema with primitive types") {
     withTempDir { tempDir =>
       spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
         .write.format("delta").save(tempDir.getCanonicalPath)
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-      val subsetSchema = new StructType().add("c2", STRING, true)
 
-      snapshot
-        .getScanBuilder(defaultEngine)
-        .withReadSchema(defaultEngine, subsetSchema)
-    }
-  }
-
-  test("read schema different than table schema") {
-    withTempDir { tempDir =>
-      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
-        .write.format("delta").save(tempDir.getCanonicalPath)
-
-      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-      val schema = new StructType().add("c2", STRING, true).add("c3", INTEGER, true);
-
-      val e = intercept[IllegalArgumentException] {
-        snapshot
-          .getScanBuilder(defaultEngine)
-          .withReadSchema(defaultEngine, schema)
+      Seq(
+        (
+          snapshot.getSchema(defaultEngine).add(new StructField("c3", INTEGER, true)),
+          "Field 'c3' is not a table field"
+        ),
+        (
+          new StructType().add("c2", STRING, true).add("c3", INTEGER, true),
+          "Field 'c3' is not a table field"
+        ),
+        (
+          new StructType().add("c2", STRING, true).add("c1", INTEGER, true),
+          "Field 'c1' is not a table field"
+        ),
+        (
+          new StructType().add("c2", STRING, true).add("c3", LONG, true),
+          "Field 'c3' is not a table field"
+        ),
+        (
+          new StructType().add("c2", STRING, true).add("c1", LONG, false),
+          "Field 'c1' is not a table field"
+        )
+      ).foreach {
+        case (readSchema, errorMessage) =>
+          val e = intercept[IllegalArgumentException] {
+            snapshot
+              .getScanBuilder(defaultEngine)
+              .withReadSchema(defaultEngine, readSchema)
+          }
+          assert(e.isInstanceOf[IllegalArgumentException])
+          assert(e.getMessage == errorMessage)
       }
-      assert(e.isInstanceOf[IllegalArgumentException])
-      assert(e.getMessage == s"Field 'c3' is not a table field")
     }
   }
 
-  test("read schema differs from table schema in field type") {
+  test("valid read schema with complex types") {
     withTempDir { tempDir =>
-      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
-        .write.format("delta").save(tempDir.getCanonicalPath)
+      val tablePath = tempDir.getCanonicalPath
+      spark.sql(
+        s"""CREATE TABLE delta.`$tablePath`(
+           |c1 map<map<struct<fld1: string, fld2: array<string>>, string>, array<struct<fld1: int, fld2: long>>>,
+           |c2 array<struct<fld1: map<string, array<long>>>>,
+           |c3 string,
+           |c4 long,
+           |c5 struct<fld1: array<string>>
+           |) USING delta""".stripMargin)
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-      val schema = new StructType().add("c2", STRING, true).add("c1", INTEGER, true);
 
-      val e = intercept[IllegalArgumentException] {
-        snapshot
-          .getScanBuilder(defaultEngine)
-          .withReadSchema(defaultEngine, schema)
+      Seq(
+        new StructType()
+          .add("c1", new StructType()
+            .add("key", new StructType()
+              .add("key", new StructType()
+                .add("fld1", STRING, true), true), true), true),
+        new StructType()
+          .add("c1", new StructType()
+            .add("key", new StructType()
+              .add("key", new StructType()
+                .add("fld2", new StructType()
+                  .add("element", STRING, true), true), true), true), true),
+        new StructType()
+          .add("c2", new StructType()
+            .add("element", new StructType()
+             .add("fld1", new StructType()
+              .add("value", new StructType()
+                .add("element", LONG, true), true), true), true), true),
+        new StructType()
+          .add("c3", STRING, true)
+          .add("c4", LONG, true),
+        new StructType()
+          .add("c1", new StructType()
+            .add("key", new StructType()
+              .add("key", new StructType()
+                .add("fld1", STRING, true)
+                .add("fld2", new StructType()
+                  .add("element", STRING, true), true), true), true), true)
+          .add("c4", LONG, true)
+          .add("c3", STRING, true),
+        new StructType()
+          .add("c2", new StructType()
+            .add("element", new StructType()
+              .add("fld1",
+                new MapType(STRING, new ArrayType(LONG, true), true), true), true), true),
+        new StructType()
+          .add("c5", new StructType()
+            .add("fld1", new ArrayType(STRING, true), true), true)
+      ).foreach {
+        readSchema =>
+          snapshot
+            .getScanBuilder(defaultEngine)
+            .withReadSchema(defaultEngine, readSchema)
       }
-      assert(e.isInstanceOf[IllegalArgumentException])
-      assert(e.getMessage == s"Field 'c1' is not a table field")
     }
   }
 
-  test("read schema differs from table schema in field name") {
+  test("invalid read schema with complex types") {
     withTempDir { tempDir =>
-      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
-        .write.format("delta").save(tempDir.getCanonicalPath)
+      val tablePath = tempDir.getCanonicalPath
+      spark.sql(
+        s"""CREATE TABLE delta.`$tablePath`(
+           |c1 map<map<struct<fld1: string, fld2: array<string>>, string>, array<struct<fld1: int, fld2: long>>>,
+           |c2 array<struct<fld1: map<string, array<long>>>>
+           |) USING delta""".stripMargin)
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-      val schema = new StructType().add("c2", STRING, true).add("c3", LONG, true);
 
-      val e = intercept[IllegalArgumentException] {
-        snapshot
-          .getScanBuilder(defaultEngine)
-          .withReadSchema(defaultEngine, schema)
+      Seq(
+        (
+          new StructType()
+            .add("c1", new StructType()
+              .add("key", new StructType()
+                .add("key", new StructType()
+                  .add("fld1", STRING, false), true), true), true), // nullable column
+          "Field 'c1.key.key.fld1' is not a table field"
+        ),
+        (
+          new StructType()
+            .add("c1", new StructType()
+              .add("key", new StructType()
+                .add("key", new StructType()
+                  .add("fld2", STRING, false), true), true), true),
+          "Field 'c1.key.key.fld2' is not a table field"
+        ),
+        (
+          new StructType()
+            .add("c1", new StructType()
+              .add("key", new StructType()
+                .add("key", new StructType()
+                  .add("fld2", new StructType()
+                    .add("element1", STRING, true), true), true), true), true),
+          "Field 'c1.key.key.fld2.element1' is not a table field"
+        ),
+        (
+          new StructType()
+            .add("c2", new StructType()
+              .add("element", new StructType()
+                .add("fld1", new StructType()
+                  .add("value1", new StructType(), true), true), true), true),
+          "Field 'c2.element.fld1.value1' is not a table field"
+        ),
+        (
+          new StructType()
+            .add("c2", new StructType()
+              .add("element", new StructType()
+                .add("fld1", new StructType(), true), true), true),
+          "Field 'c2.element.fld1' is not a table field"
+        )
+      ).foreach {
+        case (readSchema, errorMessage) =>
+          val e = intercept[IllegalArgumentException] {
+            snapshot
+              .getScanBuilder(defaultEngine)
+              .withReadSchema(defaultEngine, readSchema)
+          }
+          assert(e.isInstanceOf[IllegalArgumentException])
+          assert(e.getMessage == errorMessage)
       }
-      assert(e.isInstanceOf[IllegalArgumentException])
-      assert(e.getMessage == s"Field 'c3' is not a table field")
-    }
-  }
-
-  test("read schema differs from the table schema only in that " +
-    "one field is nullable in the read schema but not in the table schema") {
-    withTempDir { tempDir =>
-      spark.createDataFrame(Seq((4L, "d"), (5L, "e"), (6L, "f"))).toDF("c1", "c2")
-        .write.format("delta").save(tempDir.getCanonicalPath)
-
-      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-      val schema = new StructType().add("c2", STRING, true).add("c1", LONG, false);
-
-      val e = intercept[IllegalArgumentException] {
-        snapshot
-          .getScanBuilder(defaultEngine)
-          .withReadSchema(defaultEngine, schema)
-      }
-      assert(e.isInstanceOf[IllegalArgumentException])
-      assert(e.getMessage == s"Field 'c1' is not a table field")
     }
   }
 }

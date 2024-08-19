@@ -109,6 +109,85 @@ public final class StructType extends DataType {
     return new Column(field.getName());
   }
 
+  public void checkNestedFields(StructType fields) {
+    for (StructField field: fields.fields()) {
+      checkFieldInStruct(field, this, new ArrayList<>());
+    }
+  }
+
+  private void checkFields(StructType fields, DataType parent, List<String> path) {
+    String errorMessage = String.format("Field '%s' is not a table field", String.join(".", path));
+    if (fields.fields.isEmpty()) {
+      throw new IllegalArgumentException(errorMessage);
+    }
+
+    for (StructField field : fields.fields) {
+      List<String> pathCopy = new ArrayList<>(path);
+      if (parent instanceof MapType) {
+        checkFieldInMap(field, (MapType) parent, pathCopy);
+      } else if (parent instanceof StructType) {
+        checkFieldInStruct(field, (StructType) parent, pathCopy);
+      } else if (parent instanceof ArrayType) {
+        checkFieldInArray(field, (ArrayType) parent, pathCopy);
+      } else {
+        throw new IllegalArgumentException(errorMessage);
+      }
+    }
+  }
+
+  private void checkFieldInStruct(StructField field, StructType parent, List<String> path) {
+    path.add(field.getName());
+    String errorMessage = String.format("Field '%s' is not a table field", String.join(".", path));
+
+    if (!parent.nameToFieldAndOrdinal.containsKey(field.getName())) {
+      throw new IllegalArgumentException(errorMessage);
+    }
+    if (field.getDataType() instanceof StructType) {
+      if (field.isNullable() != parent.get(field.getName()).isNullable()) {
+        throw new IllegalArgumentException(errorMessage);
+      }
+      checkFields((StructType) field.getDataType(), parent.get(field.getName()).getDataType(), path);
+    } else if (!(field.equals(parent.get(field.getName())))) {
+      throw new IllegalArgumentException(errorMessage);
+    }
+  }
+
+  private void checkFieldInArray(StructField field, ArrayType parent, List<String> path) {
+    path.add(field.getName());
+    String errorMessage = String.format("Field '%s' is not a table field", String.join(".", path));
+
+    if (field.getName() == "element") {
+      if (field.getDataType() instanceof StructType) {
+        checkFields((StructType) field.getDataType(), parent.getElementType(), path);
+      } else if (!(field.equals(parent.getElementField()))) {
+        throw new IllegalArgumentException(errorMessage);
+      }
+    } else {
+      throw new IllegalArgumentException(errorMessage);
+    }
+  }
+
+  private void checkFieldInMap(StructField field, MapType parent, List<String> path) {
+    path.add(field.getName());
+    String errorMessage = String.format("Field '%s' is not a table field", String.join(".", path));
+
+    if (field.getName() == "key") {
+      if (field.getDataType() instanceof StructType) {
+        checkFields((StructType) field.getDataType(), parent.getKeyType(), path);
+      } else if (!field.equals(parent.getKeyField())) {
+        throw new IllegalArgumentException(errorMessage);
+      }
+    } else if (field.getName() == "value") {
+      if (field.getDataType() instanceof StructType) {
+        checkFields((StructType) field.getDataType(), parent.getValueType(), path);
+      } else if (!(field.equals(parent.getValueField()))) {
+        throw new IllegalArgumentException(errorMessage);
+      }
+    } else {
+      throw new IllegalArgumentException(errorMessage);
+    }
+  }
+
   @Override
   public boolean equivalent(DataType dataType) {
     if (!(dataType instanceof StructType)) {

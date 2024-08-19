@@ -69,11 +69,7 @@ public class ScanBuilderImpl implements ScanBuilder {
 
   @Override
   public ScanBuilder withReadSchema(Engine engine, StructType readSchema) {
-    for(StructField field : readSchema.fields()) {
-      if (!snapshotSchema.fields().contains(field)) {
-        throw new IllegalArgumentException(String.format("Field '%s' is not a table field", field.getName()));
-      }
-    }
+    snapshotSchema.checkNestedFields(readSchema);
     this.readSchema = readSchema;
     return this;
   }
