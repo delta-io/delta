@@ -4194,4 +4194,3 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 }
 
 class DeltaProtocolVersionSuite extends DeltaProtocolVersionSuiteBase
-  with DeltaProtocolVersionSuiteEdge
