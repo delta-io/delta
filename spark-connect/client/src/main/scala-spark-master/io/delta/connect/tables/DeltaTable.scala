@@ -68,7 +68,8 @@ class DeltaTable private[tables](
   /**
    * Helper method for the history APIs.
    *
-   * @param limit The number of previous commands to get history for
+   * @param limit The number of previous commands to get history for.
+   *
    * @since 4.0.0
    */
   private def executeHistory(limit: Option[Int]): DataFrame = {
@@ -89,7 +90,8 @@ class DeltaTable private[tables](
    * Get the information of the latest `limit` commits on this table as a Spark DataFrame.
    * The information is in reverse chronological order.
    *
-   * @param limit The number of previous commands to get history for
+   * @param limit The number of previous commands to get history for.
+   *
    * @since 4.0.0
    */
   def history(limit: Int): DataFrame = {
@@ -127,7 +129,8 @@ class DeltaTable private[tables](
   /**
    * Helper method for the delete APIs.
    *
-   * @param condition Boolean SQL expression
+   * @param condition Boolean SQL expression.
+   *
    * @since 4.0.0
    */
   private def executeDelete(condition: Option[Column]): Unit = {
@@ -144,7 +147,8 @@ class DeltaTable private[tables](
   /**
    * Delete data from the table that match the given `condition`.
    *
-   * @param condition Boolean SQL expression
+   * @param condition Boolean SQL expression.
+   *
    * @since 4.0.0
    */
   def delete(condition: String): Unit = {
@@ -154,7 +158,8 @@ class DeltaTable private[tables](
   /**
    * Delete data from the table that match the given `condition`.
    *
-   * @param condition Boolean SQL expression
+   * @param condition Boolean SQL expression.
+   *
    * @since 4.0.0
    */
   def delete(condition: Column): Unit = {
@@ -176,6 +181,7 @@ class DeltaTable private[tables](
    * @param condition boolean expression as Column object specifying which rows to update.
    * @param set       rules to update a row as a Scala map between target column names and
    *                  corresponding update expressions as Column objects.
+   *
    * @since 4.0.0
    */
   private def executeUpdate(condition: Option[Column], set: Map[String, Column]): Unit = {
@@ -209,6 +215,7 @@ class DeltaTable private[tables](
    *
    * @param set rules to update a row as a Scala map between target column names and
    *            corresponding update expressions as Column objects.
+   *
    * @since 4.0.0
    */
   def update(set: Map[String, Column]): Unit = {
@@ -232,6 +239,7 @@ class DeltaTable private[tables](
    *
    * @param set rules to update a row as a Java map between target column names and
    *            corresponding update expressions as Column objects.
+   *
    * @since 4.0.0
    */
   def update(set: java.util.Map[String, Column]): Unit = {
@@ -254,6 +262,7 @@ class DeltaTable private[tables](
    * @param condition boolean expression as Column object specifying which rows to update.
    * @param set       rules to update a row as a Scala map between target column names and
    *                  corresponding update expressions as Column objects.
+   *
    * @since 4.0.0
    */
   def update(condition: Column, set: Map[String, Column]): Unit = {
@@ -280,6 +289,7 @@ class DeltaTable private[tables](
    * @param condition boolean expression as Column object specifying which rows to update.
    * @param set       rules to update a row as a Java map between target column names and
    *                  corresponding update expressions as Column objects.
+   *
    * @since 4.0.0
    */
   def update(condition: Column, set: java.util.Map[String, Column]): Unit = {
@@ -296,6 +306,7 @@ class DeltaTable private[tables](
    *
    * @param set rules to update a row as a Scala map between target column names and
    *            corresponding update expressions as SQL formatted strings.
+   *
    * @since 4.0.0
    */
   def updateExpr(set: Map[String, String]): Unit = {
@@ -316,6 +327,7 @@ class DeltaTable private[tables](
    *
    * @param set rules to update a row as a Java map between target column names and
    *            corresponding update expressions as SQL formatted strings.
+   *
    * @since 4.0.0
    */
   def updateExpr(set: java.util.Map[String, String]): Unit = {
@@ -337,6 +349,7 @@ class DeltaTable private[tables](
    *                  which rows to update.
    * @param set       rules to update a row as a Scala map between target column names and
    *                  corresponding update expressions as SQL formatted strings.
+   *
    * @since 4.0.0
    */
   def updateExpr(condition: String, set: Map[String, String]): Unit = {
@@ -361,6 +374,7 @@ class DeltaTable private[tables](
    *                  which rows to update.
    * @param set       rules to update a row as a Java map between target column names and
    *                  corresponding update expressions as SQL formatted strings.
+   *
    * @since 4.0.0
    */
   def updateExpr(condition: String, set: java.util.Map[String, String]): Unit = {
@@ -372,6 +386,7 @@ class DeltaTable private[tables](
    *
    * @param version The version number of the older version of the table to restore to.
    * @param timestamp The timestamp of the older version of the table to restore to.
+   *
    * @since 4.0.0
    */
   private def executeRestore(version: Option[Long], timestamp: Option[String]): DataFrame = {

@@ -101,7 +101,7 @@ message IsDeltaTable {
   string path = 1;
 }
 
-// Command that deletes data from the target table that matches the given condition
+// Command that deletes data from the target table that matches the given condition.
 //
 // Needs to be a Relation, as it returns a row containing the execution metrics.
 message DeleteFromTable {
