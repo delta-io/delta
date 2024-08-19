@@ -20,6 +20,8 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaConfigs._
+import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -81,31 +83,35 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
   }
 
   test("drop column mapping from a table without table feature") {
-    sql(
-      s"""CREATE TABLE $testTableName
-         |USING delta
-         |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
-         |        '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false',
-         |        'delta.minReaderVersion' = '3',
-         |        'delta.minWriterVersion' = '7')
-         |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
-         |  FROM RANGE(0, $totalRows, 1, $numFiles)
-         |""".stripMargin)
-    testDroppingColumnMapping()
+    withSQLConf(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED.key -> false.toString) {
+      sql(
+        s"""CREATE TABLE $testTableName
+           |USING delta
+           |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
+           |        '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false',
+           |        'delta.minReaderVersion' = '3',
+           |        'delta.minWriterVersion' = '7')
+           |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
+           |  FROM RANGE(0, $totalRows, 1, $numFiles)
+           |""".stripMargin)
+      testDroppingColumnMapping(protocolContainsDVs = false)
+    }
   }
 
   test("drop column mapping from a table with table feature") {
-    sql(
-      s"""CREATE TABLE $testTableName
-         |USING delta
-         |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
-         |        '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false',
-         |        'delta.minReaderVersion' = '3',
-         |        'delta.minWriterVersion' = '7')
-         |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
-         |  FROM RANGE(0, $totalRows, 1, $numFiles)
-         |""".stripMargin)
-    testDroppingColumnMapping()
+    withSQLConf(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED.key -> false.toString) {
+      sql(
+        s"""CREATE TABLE $testTableName
+           |USING delta
+           |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
+           |        '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'true',
+           |        'delta.minReaderVersion' = '3',
+           |        'delta.minWriterVersion' = '7')
+           |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
+           |  FROM RANGE(0, $totalRows, 1, $numFiles)
+           |""".stripMargin)
+      testDroppingColumnMapping(protocolContainsDVs = true)
+    }
   }
 
   test("drop column mapping from a table without column mapping table property") {
@@ -135,20 +141,22 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
   }
 
   test("drop column mapping in id mode") {
-    sql(
-      s"""CREATE TABLE $testTableName
-         |USING delta
-         |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'id',
-         |        '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false',
-         |        'delta.minReaderVersion' = '3',
-         |        'delta.minWriterVersion' = '7')
-         |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
-         |  FROM RANGE(0, $totalRows, 1, $numFiles)
-         |""".stripMargin)
-    testDroppingColumnMapping()
+    withSQLConf(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED.key -> false.toString) {
+      sql(
+        s"""CREATE TABLE $testTableName
+           |USING delta
+           |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'id',
+           |        '${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = 'false',
+           |        'delta.minReaderVersion' = '3',
+           |        'delta.minWriterVersion' = '7')
+           |AS SELECT id as $logicalColumnName, id + 1 as $secondColumn
+           |  FROM RANGE(0, $totalRows, 1, $numFiles)
+           |""".stripMargin)
+      testDroppingColumnMapping(protocolContainsDVs = false)
+    }
   }
 
-  def testDroppingColumnMapping(): Unit = {
+  def testDroppingColumnMapping(protocolContainsDVs: Boolean): Unit = {
     // Verify the input data is as expected.
     val originalData = spark.table(tableName = testTableName).select(logicalColumnName).collect()
     // Add a schema comment and verify it is preserved after the rewrite.
@@ -186,10 +194,10 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     // Verify the schema comment is preserved after the rewrite.
     assert(deltaLog.update().schema.head.getComment().get == comment,
       "Should preserve the schema comment.")
-    verifyDropFeatureTruncateHistory()
+    verifyDropFeatureTruncateHistory(protocolContainsDVs)
   }
 
-  protected def verifyDropFeatureTruncateHistory() = {
+  protected def verifyDropFeatureTruncateHistory(protocolContainsDVs: Boolean) = {
     val deltaLog1 = DeltaLog.forTable(spark, TableIdentifier(tableName = testTableName), clock)
     // Populate the delta cache with the delta log with the right data path so it stores the clock.
     // This is currently the only way to make sure the drop feature command uses the clock.
@@ -209,8 +217,23 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
          |ALTER TABLE $testTableName DROP FEATURE ${ColumnMappingTableFeature.name} TRUNCATE HISTORY
          |""".stripMargin)
     val newSnapshot = deltaLog.update()
-    assert(!newSnapshot.protocol.readerAndWriterFeatures.contains(ColumnMappingTableFeature),
-      "Should drop the feature.")
+
+    val expectedProtocol = if (protocolContainsDVs) {
+      Protocol(
+        minReaderVersion = 3,
+        minWriterVersion = 7,
+        Some(Set(DeletionVectorsTableFeature.name)),
+        Some(Set(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          CheckConstraintsTableFeature,
+          ChangeDataFeedTableFeature,
+          GeneratedColumnsTableFeature,
+          DeletionVectorsTableFeature).map(_.name)))
+    } else {
+      Protocol(1, 4)
+    }
+    assert(newSnapshot.protocol === expectedProtocol)
   }
 
   protected def dropColumnMappingTableFeature(): Unit = {

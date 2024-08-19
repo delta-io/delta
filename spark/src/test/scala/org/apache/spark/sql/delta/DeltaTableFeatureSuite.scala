@@ -335,17 +335,17 @@ class DeltaTableFeatureSuite
         val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
         val protocol = log.update().protocol
         assert(protocol.readerAndWriterFeatureNames === Set(
-          AppendOnlyTableFeature.name,
-          InvariantsTableFeature.name,
-          CheckConstraintsTableFeature.name,
-          GeneratedColumnsTableFeature.name,
-          ChangeDataFeedTableFeature.name,
-          ColumnMappingTableFeature.name,
-          TestLegacyWriterFeature.name,
-          TestRemovableLegacyReaderWriterFeature.name,
-          TestLegacyReaderWriterFeature.name,
-          TestRemovableLegacyWriterFeature.name,
-          TestWriterFeature.name))
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          CheckConstraintsTableFeature,
+          GeneratedColumnsTableFeature,
+          ChangeDataFeedTableFeature,
+          ColumnMappingTableFeature,
+          TestLegacyWriterFeature,
+          TestRemovableLegacyReaderWriterFeature,
+          TestLegacyReaderWriterFeature,
+          TestRemovableLegacyWriterFeature,
+          TestWriterFeature).map(_.name))
       }
     }
   }
@@ -396,12 +396,12 @@ class DeltaTableFeatureSuite
             commandName, targetTableName = "tbl", sourceTableName = "tbl", tblProperties))
           val protocol = log.update().protocol
           assert(protocol.readerAndWriterFeatureNames === Set(
-            AppendOnlyTableFeature.name,
-            InvariantsTableFeature.name,
-            CheckConstraintsTableFeature.name,
-            GeneratedColumnsTableFeature.name,
-            ChangeDataFeedTableFeature.name,
-            TestWriterFeature.name))
+            AppendOnlyTableFeature,
+            InvariantsTableFeature,
+            CheckConstraintsTableFeature,
+            GeneratedColumnsTableFeature,
+            ChangeDataFeedTableFeature,
+            TestWriterFeature).map(_.name))
         }
       }
     }

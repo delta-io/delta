@@ -399,7 +399,7 @@ object Protocol {
       }
 
     // When enabling legacy features, include all preceding legacy features.
-    val implicitFeatures = TableFeatureProtocolUtils.implicitFeatures(allEnabledFeatures)
+    val implicitFeatures = TableFeatureProtocolUtils.implicitlySupportedFeatures(allEnabledFeatures)
 
     (finalReaderVersion, finalWriterVersion,
       allEnabledFeatures ++ implicitFeatures ++ implicitFeaturesFromTableConf)
@@ -430,7 +430,7 @@ object Protocol {
     }
 
     // When enabling legacy features, include all preceding legacy features.
-    val implicitFeatures = TableFeatureProtocolUtils.implicitFeatures(enabledFeatures)
+    val implicitFeatures = TableFeatureProtocolUtils.implicitlySupportedFeatures(enabledFeatures)
 
     (readerVersion, writerVersion, enabledFeatures ++ implicitFeatures)
   }

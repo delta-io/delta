@@ -2407,25 +2407,14 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
            |$featureProperty = "true"
            |)""".stripMargin)
 
-    /*
-    val expectedReaderVersion = Math.max(feature.minReaderVersion, 1)
+    val expectedReaderVersion = Math.max(1, feature.minReaderVersion)
     val expectProtocol = if (feature.isLegacyFeature) {
       Protocol(expectedReaderVersion, feature.minWriterVersion)
     } else {
-     Protocol(
-       expectedReaderVersion,
-       TABLE_FEATURES_MIN_WRITER_VERSION,
-       if (supportsReaderFeatures(expectedReaderVersion)) Some(Set(feature.name)) else None,
-       Some(Set(feature.name, InvariantsTableFeature.name, AppendOnlyTableFeature.name)))
-    }
-    */
-    val expectProtocol = if (feature.isLegacyFeature) {
-      Protocol(Math.max(1, feature.minReaderVersion), feature.minWriterVersion)
-    } else {
-      Protocol(3, 7).withFeatures(Seq(
+      Protocol(expectedReaderVersion, 7).withFeatures(Seq(
         InvariantsTableFeature,
         AppendOnlyTableFeature,
-        feature)).normalized
+        feature))
     }
 
     assert(deltaLog.update().protocol === expectProtocol)
@@ -4205,3 +4194,4 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 }
 
 class DeltaProtocolVersionSuite extends DeltaProtocolVersionSuiteBase
+  with DeltaProtocolVersionSuiteEdge

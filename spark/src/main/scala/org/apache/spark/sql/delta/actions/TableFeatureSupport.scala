@@ -500,9 +500,15 @@ object TableFeatureProtocolUtils {
     ((features.map(_.minReaderVersion) :+ 1).max, (features.map(_.minWriterVersion) :+ 1).max)
 
   /**
-   * Return a set with the implicit features of the provided feature set.
+   * Returns a set of legacy features that contains the input features as well as the
+   * features that will be supported by the protocol as a "byproduct" of supporting the
+   * given legacy `features`.
+   *
+   * As an example, the legacy protocol for supporting ColumnMapping also supports
+   * AppendOnly, Invariants, CheckConstraints, CDF, GeneratedColumns as byproducts and there is
+   * no way to not support them.
    */
-  def implicitFeatures(features: Set[TableFeature]): Set[TableFeature] =
+  def implicitlySupportedFeatures(features: Set[TableFeature]): Set[TableFeature] =
     features.flatMap { f =>
       Protocol(f.minReaderVersion, f.minWriterVersion).implicitlySupportedFeatures
     }
