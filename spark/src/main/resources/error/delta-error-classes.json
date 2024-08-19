@@ -1156,6 +1156,12 @@
           "<schema>"
         ]
       },
+      "UNSUPPORTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "IcebergCompatV<version> does not support the data type <dataType> for partition columns in your schema. Your partition schema:",
+          "<schema>"
+        ]
+      },
       "VERSION_MUTUAL_EXCLUSIVE" : {
         "message" : [
           "Only one IcebergCompat version can be enabled, please explicitly disable all other IcebergCompat versions that are not needed."

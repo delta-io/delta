@@ -3250,6 +3250,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatUnsupportedPartitionDataTypeException(
+      version: Int, dataType: DataType, schema: StructType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_PARTITION_DATA_TYPE",
+      messageParameters = Array(version.toString, version.toString,
+        dataType.typeName, schema.treeString)
+    )
+  }
+
   def icebergCompatMissingRequiredTableFeatureException(
       version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
