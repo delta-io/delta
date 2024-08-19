@@ -935,7 +935,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("Whether Row Tracking backfill can be performed.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
     buildConf("rowTracking.backfill.maxNumBatchesInParallel")

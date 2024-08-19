@@ -26,7 +26,7 @@ import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Dataset, QueryTest, SparkSession}
+import org.apache.spark.sql.{Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
@@ -356,6 +356,128 @@ class DeltaConnectPlannerSuite
       assert(result.length === 1)
       assert(!result.head.getBoolean(0))
     }
+  }
+
+  test("delete without condition") {
+    val tableName = "table"
+    withTable(tableName) {
+      spark.range(end = 1000).write.format("delta").saveAsTable(tableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setDeleteFromTable(
+            proto.DeleteFromTable.newBuilder()
+              .setTarget(createScan(tableName))
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 1000)
+      assert(spark.read.table(tableName).isEmpty)
+    }
+  }
+
+  test("delete with condition") {
+    val tableName = "table"
+    withTable(tableName) {
+      spark.range(end = 1000).write.format("delta").saveAsTable(tableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setDeleteFromTable(
+            proto.DeleteFromTable.newBuilder()
+              .setTarget(createScan(tableName))
+              .setCondition(createExpression("id % 2 = 0"))
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 500)
+      assert(spark.read.table(tableName).count() === 500)
+    }
+  }
+
+  test("update without condition") {
+    val tableName = "target"
+    withTable(tableName) {
+      spark.range(end = 1000).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(tableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setUpdateTable(
+            proto.UpdateTable.newBuilder()
+              .setTarget(createScan(tableName))
+              .addAssignments(createAssignment(field = "value", value = "value + 1"))
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 1000)
+      checkAnswer(
+        spark.read.table(tableName),
+        Seq.tabulate(1000)(i => Row(i, i + 1))
+      )
+    }
+  }
+
+  test("update with condition") {
+    val tableName = "target"
+    withTable(tableName) {
+      spark.range(end = 1000).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(tableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setUpdateTable(
+            proto.UpdateTable.newBuilder()
+              .setTarget(createScan(tableName))
+              .setCondition(createExpression("key % 2 = 0"))
+              .addAssignments(createAssignment(field = "value", value = "value + 1"))
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 500)
+      checkAnswer(
+        spark.read.table(tableName),
+        Seq.tabulate(1000)(i => Row(i, if (i % 2 == 0) i + 1 else i))
+      )
+    }
+  }
+
+  private def createScan(tableName: String): spark_proto.Relation = {
+    createSparkRelation(
+      proto.DeltaRelation.newBuilder()
+        .setScan(
+          proto.Scan.newBuilder()
+            .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+        )
+    )
+  }
+
+  private def createExpression(expr: String): spark_proto.Expression = {
+    spark_proto.Expression.newBuilder()
+      .setExpressionString(
+        spark_proto.Expression.ExpressionString.newBuilder()
+          .setExpression(expr)
+      )
+      .build()
+  }
+
+  private def createAssignment(field: String, value: String): proto.Assignment = {
+    proto.Assignment.newBuilder()
+      .setField(createExpression(field))
+      .setValue(createExpression(value))
+      .build()
   }
 
   private def getTimestampForVersion(log: DeltaLog, version: Long): String = {
