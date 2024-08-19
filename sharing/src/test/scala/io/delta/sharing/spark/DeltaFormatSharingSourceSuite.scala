@@ -16,6 +16,8 @@
 
 package io.delta.sharing.spark
 
+import java.time.LocalDateTime
+
 import org.apache.spark.sql.delta.DeltaIllegalStateException
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOptions.{
@@ -685,6 +687,72 @@ class DeltaFormatSharingSourceSuite
               SKIP_CHANGE_COMMITS_OPTION -> "true"
             ),
             CheckAnswer(1, 2, 3)
+          )
+          assertBlocksAreCleanedUp()
+        }
+      }
+    }
+  }
+
+  test("streaming works with timestampNTZ") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_timestampNTZ"
+      withTable(deltaTableName) {
+        sql(s"CREATE TABLE $deltaTableName(c1 TIMESTAMP_NTZ) USING DELTA")
+        val sharedTableName = "shared_table_timestampNTZ"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(tempDir)
+        val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          def InsertToDeltaTable(values: String): Unit = {
+            sql(s"INSERT INTO $deltaTableName VALUES $values")
+          }
+
+          def processAllAvailableInStream(
+            sourceOptions: Map[String, String],
+            expectations: StreamAction*): Unit = {
+            val df = spark.readStream
+              .format("deltaSharing")
+              .options(sourceOptions)
+              .load(tablePath)
+              .select("c1")
+
+            val base = Seq(StartStream(), ProcessAllAvailable())
+            testStream(df)((base ++ expectations): _*)
+          }
+
+          // Insert at version 1.
+          InsertToDeltaTable("""('2022-01-01 02:03:04.123456')""")
+          // Insert at version 2.
+          InsertToDeltaTable("""('2022-02-02 03:04:05.123456')""")
+
+          prepareMockedClientAndFileSystemResult(
+            deltaTable = deltaTableName,
+            sharedTable = sharedTableName,
+            versionAsOf = Some(2L)
+          )
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          processAllAvailableInStream(
+            Map("responseFormat" -> "delta"),
+            CheckAnswer(
+              LocalDateTime.parse("2022-01-01T02:03:04.123456"),
+              LocalDateTime.parse("2022-02-02T03:04:05.123456")
+            )
+          )
+
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName,
+            sharedTableName,
+            startingVersion = 2,
+            endingVersion = 2
+          )
+          processAllAvailableInStream(
+            Map(
+              "responseFormat" -> "delta",
+              "startingVersion" -> "2"
+            ),
+            CheckAnswer(LocalDateTime.parse("2022-02-02T03:04:05.123456"))
           )
           assertBlocksAreCleanedUp()
         }
