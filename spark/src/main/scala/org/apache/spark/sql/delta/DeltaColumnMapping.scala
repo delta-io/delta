@@ -233,9 +233,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       .build())
   }
 
-  def assignPhysicalNames(schema: StructType): StructType = {
+  def assignPhysicalNames(schema: StructType, reuseLogicalName: Boolean = false): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      if (hasPhysicalName(field)) field else assignPhysicalName(field, generatePhysicalName)
+      if (hasPhysicalName(field)) field else {
+        if (reuseLogicalName) assignPhysicalName(field, field.name)
+        else assignPhysicalName(field, generatePhysicalName)
+      }
     }
   }
 

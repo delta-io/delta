@@ -18,13 +18,16 @@ package org.apache.spark.sql.connect.delta
 
 import java.util.Optional
 
+import scala.collection.JavaConverters._
+
 import com.google.protobuf
 import com.google.protobuf.{ByteString, InvalidProtocolBufferException}
 import io.delta.connect.proto
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.{Encoders, SparkSession}
+import org.apache.spark.sql.{Dataset, Encoders, SparkSession}
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connect.common.{DataTypeProtoConverter, InvalidPlanInput}
 import org.apache.spark.sql.connect.config.Connect
@@ -70,6 +73,10 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
         transformRestoreTable(planner.session, relation.getRestoreTable)
       case proto.DeltaRelation.RelationTypeCase.IS_DELTA_TABLE =>
         transformIsDeltaTable(planner.session, relation.getIsDeltaTable)
+      case proto.DeltaRelation.RelationTypeCase.DELETE_FROM_TABLE =>
+        transformDeleteFromTable(planner, relation.getDeleteFromTable)
+      case proto.DeltaRelation.RelationTypeCase.UPDATE_TABLE =>
+        transformUpdateTable(planner, relation.getUpdateTable)
       case _ =>
         throw InvalidPlanInput(s"Unknown DeltaRelation ${relation.getRelationTypeCase}")
     }
@@ -137,6 +144,39 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       spark: SparkSession, isDeltaTable: proto.IsDeltaTable): LogicalPlan = {
     val result = DeltaTable.isDeltaTable(spark, isDeltaTable.getPath)
     spark.createDataset(result :: Nil)(Encoders.scalaBoolean).queryExecution.analyzed
+  }
+
+  private def transformDeleteFromTable(
+      planner: SparkConnectPlanner, deleteFromTable: proto.DeleteFromTable): LogicalPlan = {
+    val target = planner.transformRelation(deleteFromTable.getTarget)
+    val condition = if (deleteFromTable.hasCondition) {
+      Some(planner.transformExpression(deleteFromTable.getCondition))
+    } else {
+      None
+    }
+    Dataset.ofRows(
+        planner.session, DeleteFromTable(target, condition.getOrElse(Literal.TrueLiteral)))
+      .queryExecution.commandExecuted
+  }
+
+  private def transformUpdateTable(
+      planner: SparkConnectPlanner, updateTable: proto.UpdateTable): LogicalPlan = {
+    val target = planner.transformRelation(updateTable.getTarget)
+    val condition = if (updateTable.hasCondition) {
+      Some(planner.transformExpression(updateTable.getCondition))
+    } else {
+      None
+    }
+    val assignments = updateTable.getAssignmentsList.asScala.map(transformAssignment(planner, _))
+    Dataset.ofRows(planner.session, UpdateTable(target, assignments.toSeq, condition))
+      .queryExecution.commandExecuted
+  }
+
+  private def transformAssignment(
+      planner: SparkConnectPlanner, assignment: proto.Assignment): Assignment = {
+    Assignment(
+      key = planner.transformExpression(assignment.getField),
+      value = planner.transformExpression(assignment.getValue))
   }
 }
 

@@ -19,6 +19,8 @@ syntax = 'proto3';
 package delta.connect;
 
 import "delta/connect/base.proto";
+import "spark/connect/expressions.proto";
+import "spark/connect/relations.proto";
 import "spark/connect/types.proto";
 
 option java_multiple_files = true;
@@ -33,6 +35,8 @@ message DeltaRelation {
     ConvertToDelta convert_to_delta = 4;
     RestoreTable restore_table = 5;
     IsDeltaTable is_delta_table = 6;
+    DeleteFromTable delete_from_table = 7;
+    UpdateTable update_table = 8;
   }
 }
 
@@ -95,4 +99,42 @@ message RestoreTable {
 message IsDeltaTable {
   // (Required) The path to check.
   string path = 1;
+}
+
+// Command that deletes data from the target table that matches the given condition.
+//
+// Needs to be a Relation, as it returns a row containing the execution metrics.
+message DeleteFromTable {
+  // (Required) Target table to delete data from. Must either be a DeltaRelation containing a Scan
+  // or a SubqueryAlias with a DeltaRelation containing a Scan as its input.
+  spark.connect.Relation target = 1;
+
+  // (Optional) Expression returning a boolean.
+  spark.connect.Expression condition = 2;
+}
+
+// Command that updates data in the target table using the given assignments for rows that matches
+// the given condition.
+//
+// Needs to be a Relation, as it returns a row containing the execution metrics.
+message UpdateTable {
+  // (Required) Target table to delete data from. Must either be a DeltaRelation containing a Scan
+  // or a SubqueryAlias with a DeltaRelation containing a Scan as its input.
+  spark.connect.Relation target = 1;
+
+  // (Optional) Condition that determines which rows must be updated.
+  // Must be an expression returning a boolean.
+  spark.connect.Expression condition = 2;
+
+  // (Optional) Set of assignments to apply to the rows matching the condition.
+  repeated Assignment assignments = 3;
+}
+
+// Represents an assignment of a value to a field.
+message Assignment {
+  // (Required) Expression identifying the (struct) field that is assigned a new value.
+  spark.connect.Expression field = 1;
+
+  // (Required) Expression that produces the value to assign to the field.
+  spark.connect.Expression value = 2;
 }
