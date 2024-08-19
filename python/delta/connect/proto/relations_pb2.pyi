@@ -355,7 +355,7 @@ class IsDeltaTable(google.protobuf.message.Message):
 global___IsDeltaTable = IsDeltaTable
 
 class DeleteFromTable(google.protobuf.message.Message):
-    """Command that deletes data from the target table that matches the given condition
+    """Command that deletes data from the target table that matches the given condition.
 
     Needs to be a Relation, as it returns a row containing the execution metrics.
     """
