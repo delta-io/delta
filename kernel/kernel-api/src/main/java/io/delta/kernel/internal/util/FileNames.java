@@ -110,6 +110,15 @@ public final class FileNames {
   }
 
   /**
+   * Returns the prefix of all checkpoint files for the given version. Intended for use with
+   * listFrom to get all files from this version onwards. The returned Path will not exist as a
+   * file.
+   */
+  public static Path checkpointPrefix(Path path, long version) {
+    return new Path(path, String.format("%020d.checkpoint", version));
+  }
+
+  /**
    * Returns the paths for all parts of the checkpoint up to the given version.
    *
    * <p>In a future protocol version we will write this path instead of checkpointFileSingular.

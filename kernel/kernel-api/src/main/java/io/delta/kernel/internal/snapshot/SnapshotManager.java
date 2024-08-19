@@ -31,6 +31,7 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
@@ -231,6 +232,45 @@ public class SnapshotManager {
     logger.info("{}: Last checkpoint metadata file is written for version: {}", tablePath, version);
 
     logger.info("{}: Finished checkpoint for version: {}", tablePath, version);
+    doLogCleanup(engine, checkpointMetaData, snapshot);
+  }
+
+  private void doLogCleanup(
+      Engine engine, CheckpointMetaData checkpointMetaData, SnapshotImpl snapshot)
+      throws IOException {
+    Metadata metadata = snapshot.getMetadata();
+    Boolean enableExpireLogCleanup =
+        TableConfig.ENABLE_EXPIRED_LOG_CLEANUP.fromMetadata(engine, metadata);
+    if (enableExpireLogCleanup) {
+      Long retentionMillis = TableConfig.LOG_RETENTION.fromMetadata(engine, metadata);
+      Long fileCutOffTime = System.currentTimeMillis() - retentionMillis;
+      logger.info(
+          "{}: Starting the deletion of log files older than {}", tablePath, fileCutOffTime);
+      int numDeleted = 0;
+      try (CloseableIterator<FileStatus> files =
+          listExpiredDeltaLogs(engine, checkpointMetaData, fileCutOffTime)) {
+        while (files.hasNext()) {
+          if (engine.getFileSystemClient().delete(files.next().getPath())) {
+            numDeleted++;
+          }
+        }
+      }
+      logger.info("{}: Deleted {} log files older than {}", tablePath, numDeleted, fileCutOffTime);
+    }
+  }
+
+  private CloseableIterator<FileStatus> listExpiredDeltaLogs(
+      Engine engine, CheckpointMetaData checkpointMetaData, Long fileCutOffTime)
+      throws IOException {
+    long threshold = checkpointMetaData.version - 1;
+    return engine
+        .getFileSystemClient()
+        .listFrom(FileNames.checkpointPrefix(logPath, 0).toUri().getPath())
+        .filter(
+            f ->
+                (FileNames.isCheckpointFile(f.getPath()) || FileNames.isCommitFile(f.getPath()))
+                    && FileNames.getFileVersion(new Path(f.getPath())) <= threshold
+                    && f.getModificationTime() <= fileCutOffTime);
   }
 
   ////////////////////
