@@ -179,13 +179,13 @@ public class TableConfig<T> {
 
   /** This table property is used to control the maximum column mapping ID. */
   public static final TableConfig<Long> COLUMN_MAPPING_MAX_COLUMN_ID =
-          new TableConfig<>(
-                  "delta.columnMapping.maxColumnId",
-                  "0",
-                  (engineOpt, v) -> Long.valueOf(v),
-                  value -> value >= 0,
-                  "",
-                  false);
+      new TableConfig<>(
+          "delta.columnMapping.maxColumnId",
+          "0",
+          (engineOpt, v) -> Long.valueOf(v),
+          value -> value >= 0,
+          "",
+          false);
 
   /**
    * Table property that enables modifying the table in accordance with the Delta-Iceberg
