@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.connect.delta
 
+import java.io.File
+import java.text.SimpleDateFormat
 import java.util.UUID
 
 import com.google.protobuf
@@ -24,12 +26,21 @@ import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{QueryTest, SparkSession}
+import org.apache.spark.sql.{Dataset, QueryTest, Row, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.ResolvedTable
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
 import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
+import org.apache.spark.sql.delta.{DeltaHistory, DeltaLog}
+import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.functions._
 
 class DeltaConnectPlannerSuite
   extends QueryTest
@@ -69,8 +80,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(createDummySessionHolder(spark))
-        .transformRelation(input)
+      val result = transform(input)
       val expected = DeltaTable.forName(spark, "table").toDF.queryExecution.analyzed
       comparePlans(result, expected)
     }
@@ -96,10 +106,383 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val result = new SparkConnectPlanner(createDummySessionHolder(spark))
-        .transformRelation(input)
+      val result = transform(input)
       val expected = DeltaTable.forPath(spark, dir.getAbsolutePath).toDF.queryExecution.analyzed
       comparePlans(result, expected)
     }
+  }
+
+  test("convert to delta") {
+    withTempDir { dir =>
+      spark.range(100).write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setConvertToDelta(
+            proto.ConvertToDelta
+              .newBuilder()
+              .setIdentifier(s"parquet.`${dir.getAbsolutePath}`")
+          )
+      )
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+
+      assert(result.length === 1)
+      val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
+      assert(!deltaTable.toDF.isEmpty)
+    }
+  }
+
+  test("convert to delta with partitioning schema string") {
+    withTempDir { dir =>
+      spark.range(100)
+        .select(col("id") % 10 as "part", col("id") as "value")
+        .write
+        .partitionBy("part")
+        .format("parquet")
+        .mode("overwrite")
+        .save(dir.getAbsolutePath)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setConvertToDelta(
+            proto.ConvertToDelta
+              .newBuilder()
+              .setIdentifier(s"parquet.`${dir.getAbsolutePath}`")
+              .setPartitionSchemaString("part LONG")
+          )
+      )
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+
+      assert(result.length === 1)
+      val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
+      assert(!deltaTable.toDF.isEmpty)
+    }
+  }
+
+  test("convert to delta with partitioning schema struct") {
+    withTempDir { dir =>
+      spark.range(100)
+        .select(col("id") % 10 as "part", col("id") as "value")
+        .write
+        .partitionBy("part")
+        .format("parquet")
+        .mode("overwrite")
+        .save(dir.getAbsolutePath)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setConvertToDelta(
+            proto.ConvertToDelta
+              .newBuilder()
+              .setIdentifier(s"parquet.`${dir.getAbsolutePath}`")
+              .setPartitionSchemaStruct(
+                spark_proto.DataType
+                  .newBuilder()
+                  .setStruct(
+                    spark_proto.DataType.Struct
+                      .newBuilder()
+                      .addFields(
+                        spark_proto.DataType.StructField
+                          .newBuilder()
+                          .setName("part")
+                          .setNullable(false)
+                          .setDataType(
+                            spark_proto.DataType
+                              .newBuilder()
+                              .setLong(spark_proto.DataType.Long.newBuilder())
+                          )
+                      )
+                  )
+              )
+          )
+      )
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+
+      assert(result.length === 1)
+      val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
+      assert(!deltaTable.toDF.isEmpty)
+    }
+  }
+
+  test("history") {
+    withTable("table") {
+      DeltaTable.create(spark).tableName(identifier = "table").execute()
+
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setDescribeHistory(
+            proto.DescribeHistory.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName("table"))
+          )
+      )
+
+      val result = transform(input)
+      result match {
+        case lr: LocalRelation if lr.schema == ExpressionEncoder[DeltaHistory]().schema =>
+        case other => fail(s"Unexpected plan: $other")
+      }
+    }
+  }
+
+  test("detail") {
+    withTable("table") {
+      DeltaTable.create(spark).tableName(identifier = "table").execute()
+
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setDescribeDetail(
+            proto.DescribeDetail.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName("table"))
+          )
+      )
+
+      val result = transform(input)
+      val expected = DeltaTable.forName(spark, "table").detail().queryExecution.analyzed
+
+      assert(result.isInstanceOf[DescribeDeltaDetailCommand])
+      val childResult = result.asInstanceOf[DescribeDeltaDetailCommand].child
+      val childExpected = expected.asInstanceOf[DescribeDeltaDetailCommand].child
+
+      assert(childResult.asInstanceOf[ResolvedTable].identifier.name ===
+        childExpected.asInstanceOf[ResolvedTable].identifier.name)
+    }
+  }
+
+  private val expectedRestoreOutputColumns = Seq(
+    "table_size_after_restore",
+    "num_of_files_after_restore",
+    "num_removed_files",
+    "num_restored_files",
+    "removed_files_size",
+    "restored_files_size"
+  )
+
+  test("restore to version number") {
+    withTable("table") {
+      spark.range(start = 0, end = 1000, step = 1, numPartitions = 1)
+        .write.format("delta").saveAsTable("table")
+      spark.range(start = 0, end = 2000, step = 1, numPartitions = 2)
+        .write.format("delta").mode("append").saveAsTable("table")
+
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setRestoreTable(
+            proto.RestoreTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName("table"))
+              .setVersion(0L)
+          )
+      )
+
+      val plan = transform(input)
+      assert(plan.columns.toSeq == expectedRestoreOutputColumns)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(2) === 2) // Two files should have been removed.
+      assert(spark.read.table("table").count() === 1000)
+    }
+  }
+
+  test("restore to timestamp") {
+    withTempDir { dir =>
+      spark.range(start = 0, end = 1000, step = 1, numPartitions = 1)
+        .write.format("delta").save(dir.getAbsolutePath)
+      spark.range(start = 0, end = 2000, step = 1, numPartitions = 2)
+        .write.format("delta").mode("append").save(dir.getAbsolutePath)
+
+      val log = DeltaLog.forTable(spark, dir)
+      val input = createSparkRelation(
+        proto.DeltaRelation
+          .newBuilder()
+          .setRestoreTable(
+            proto.RestoreTable.newBuilder()
+              .setTable(
+                proto.DeltaTable.newBuilder().setPath(
+                  proto.DeltaTable.Path.newBuilder().setPath(dir.getAbsolutePath)
+                )
+              )
+              .setTimestamp(getTimestampForVersion(log, version = 0))
+          )
+      )
+
+      val plan = transform(input)
+      assert(plan.columns.toSeq === expectedRestoreOutputColumns)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(2) === 2) // Two files should have been removed.
+      assert(spark.read.format("delta").load(dir.getAbsolutePath).count() === 1000)
+    }
+  }
+
+  test("isDeltaTable - delta") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(end = 1000).write.format("delta").mode("overwrite").save(path)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setIsDeltaTable(proto.IsDeltaTable.newBuilder().setPath(path))
+      )
+
+      val plan = transform(input)
+      assert(plan.schema.length === 1)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getBoolean(0))
+    }
+  }
+
+  test("isDeltaTable - parquet") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      spark.range(end = 1000).write.format("parquet").mode("overwrite").save(path)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setIsDeltaTable(proto.IsDeltaTable.newBuilder().setPath(path))
+      )
+
+      val plan = transform(input)
+      assert(plan.schema.length === 1)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(!result.head.getBoolean(0))
+    }
+  }
+
+  test("delete without condition") {
+    val tableName = "table"
+    withTable(tableName) {
+      spark.range(end = 1000).write.format("delta").saveAsTable(tableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setDeleteFromTable(
+            proto.DeleteFromTable.newBuilder()
+              .setTarget(createScan(tableName))
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 1000)
+      assert(spark.read.table(tableName).isEmpty)
+    }
+  }
+
+  test("delete with condition") {
+    val tableName = "table"
+    withTable(tableName) {
+      spark.range(end = 1000).write.format("delta").saveAsTable(tableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setDeleteFromTable(
+            proto.DeleteFromTable.newBuilder()
+              .setTarget(createScan(tableName))
+              .setCondition(createExpression("id % 2 = 0"))
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 500)
+      assert(spark.read.table(tableName).count() === 500)
+    }
+  }
+
+  test("update without condition") {
+    val tableName = "target"
+    withTable(tableName) {
+      spark.range(end = 1000).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(tableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setUpdateTable(
+            proto.UpdateTable.newBuilder()
+              .setTarget(createScan(tableName))
+              .addAssignments(createAssignment(field = "value", value = "value + 1"))
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 1000)
+      checkAnswer(
+        spark.read.table(tableName),
+        Seq.tabulate(1000)(i => Row(i, i + 1))
+      )
+    }
+  }
+
+  test("update with condition") {
+    val tableName = "target"
+    withTable(tableName) {
+      spark.range(end = 1000).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(tableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setUpdateTable(
+            proto.UpdateTable.newBuilder()
+              .setTarget(createScan(tableName))
+              .setCondition(createExpression("key % 2 = 0"))
+              .addAssignments(createAssignment(field = "value", value = "value + 1"))
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 500)
+      checkAnswer(
+        spark.read.table(tableName),
+        Seq.tabulate(1000)(i => Row(i, if (i % 2 == 0) i + 1 else i))
+      )
+    }
+  }
+
+  private def createScan(tableName: String): spark_proto.Relation = {
+    createSparkRelation(
+      proto.DeltaRelation.newBuilder()
+        .setScan(
+          proto.Scan.newBuilder()
+            .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+        )
+    )
+  }
+
+  private def createExpression(expr: String): spark_proto.Expression = {
+    spark_proto.Expression.newBuilder()
+      .setExpressionString(
+        spark_proto.Expression.ExpressionString.newBuilder()
+          .setExpression(expr)
+      )
+      .build()
+  }
+
+  private def createAssignment(field: String, value: String): proto.Assignment = {
+    proto.Assignment.newBuilder()
+      .setField(createExpression(field))
+      .setValue(createExpression(value))
+      .build()
+  }
+
+  private def getTimestampForVersion(log: DeltaLog, version: Long): String = {
+    val file = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
+    val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+    sdf.format(file.lastModified())
   }
 }

@@ -65,7 +65,7 @@ class IcebergTable(
       fieldPathToPhysicalName)
 
     // Assign physical names to new columns.
-    DeltaColumnMapping.assignPhysicalNames(mergedSchema)
+    DeltaColumnMapping.assignPhysicalNames(mergedSchema, reuseLogicalName = true)
   }
 
   override val requiredColumnMappingMode: DeltaColumnMappingMode = IdMapping
@@ -82,7 +82,7 @@ class IcebergTable(
       fieldPathToPhysicalName)
 
     // Assign physical names to new partition columns.
-    DeltaColumnMapping.assignPhysicalNames(mergedPartitionSchema)
+    DeltaColumnMapping.assignPhysicalNames(mergedPartitionSchema, reuseLogicalName = true)
   }
 
   val tableSchema: StructType = PartitioningUtils.mergeDataAndPartitionSchema(

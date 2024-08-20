@@ -624,113 +624,144 @@ class GoldenTables extends QueryTest with SharedSparkSession {
   Seq("name", "id").foreach { columnMappingMode =>
     generateGoldenTable(s"table-with-columnmapping-mode-$columnMappingMode") { tablePath =>
       withSQLConf(
-          ("spark.databricks.delta.properties.defaults.columnMapping.mode", columnMappingMode)) {
-        val timeZone = java.util.TimeZone.getTimeZone("UTC")
-        java.util.TimeZone.setDefault(timeZone)
-        import java.sql._
-
-        val decimalType = DecimalType(10, 2)
-
-        val allDataTypes = Seq(
-          ByteType,
-          ShortType,
-          IntegerType,
-          LongType,
-          FloatType,
-          DoubleType,
-          decimalType,
-          BooleanType,
-          StringType,
-          BinaryType,
-          DateType,
-          TimestampType
-        )
-
-        var fields = allDataTypes.map(dt => {
-          val name = if (dt.isInstanceOf[DecimalType]) {
-            "decimal"
-          } else {
-            dt.toString
-          }
-          StructField(name, dt)
-        })
-
-        fields = fields :+ StructField("nested_struct", new StructType()
-          .add("aa", StringType)
-          .add("ac", new StructType()
-            .add("aca", IntegerType)
-          )
-        )
-
-        fields = fields :+ StructField("array_of_prims", ArrayType(IntegerType))
-        fields = fields :+ StructField("array_of_arrays", ArrayType(ArrayType(IntegerType)))
-        fields = fields :+ StructField(
-          "array_of_structs",
-          ArrayType(new StructType().add("ab", LongType)))
-
-        fields = fields :+ StructField(
-          "map_of_prims",
-          MapType(IntegerType, LongType)
-        )
-        fields = fields :+ StructField(
-          "map_of_rows",
-          MapType(IntegerType, new StructType().add("ab", LongType))
-        )
-        fields = fields :+ StructField(
-          "map_of_arrays",
-          MapType(LongType, ArrayType(IntegerType))
-        )
-
-        val schema = StructType(fields)
-
-        def createRow(i: Int): Row = {
-          Row(
-            i.byteValue(),
-            i.shortValue(),
-            i,
-            i.longValue(),
-            i.floatValue(),
-            i.doubleValue(),
-            new java.math.BigDecimal(i),
-            i % 2 == 0, // boolean type
-            i.toString,
-            i.toString.getBytes,
-            Date.valueOf("2021-11-18"),
-            new Timestamp(i),
-            Row(i.toString, Row(i)), // nested_struct
-            scala.Array(i, i + 1), // array_of_prims
-            scala.Array(scala.Array(i, i + 1), scala.Array(i + 2, i + 3)), // array_of_arrays
-            scala.Array(Row(i.longValue()), null), // array_of_structs
-            Map(
-              i -> (i + 1).longValue(),
-              (i + 2) -> (i + 3).longValue()
-            ), // map_of_prims
-            Map(i + 1 -> Row((i * 20).longValue())), // map_of_rows
-            {
-              val val1 = scala.Array(i, null, i + 1)
-              val val2 = scala.Array[Integer]()
-              Map(
-                i.longValue() -> val1,
-                (i + 1).longValue() -> val2
-              ) // map_of_arrays
-            }
-          )
-        }
-
-        def createNullRow(): Row = {
-          Row(null, null, null, null, null, null, null, null, null, null, null, null, null, null,
-            null, null, null, null, null)
-        }
-
-        val rows = Seq.range(0, 5).map(i => createRow(i)) ++ Seq(createNullRow())
-
-        val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
-        df.repartition(2)
-          .write
-          .format("delta")
-          .save(tablePath)
+        ("spark.databricks.delta.properties.defaults.columnMapping.mode", columnMappingMode)) {
+        generateCMIcebegCompatTableHelper(tablePath)
       }
     }
+  }
+
+  generateGoldenTable("table-with-icebegCompatV2Enabled") { tablePath =>
+    withSQLConf(
+      ("spark.databricks.delta.properties.defaults.columnMapping.mode", "id"),
+      ("spark.databricks.delta.properties.defaults.enableIcebergCompatV2", "true")) {
+      generateCMIcebegCompatTableHelper(tablePath)
+    }
+  }
+
+  def generateCMIcebegCompatTableHelper(tablePath: String): Unit = {
+    val timeZone = java.util.TimeZone.getTimeZone("UTC")
+    java.util.TimeZone.setDefault(timeZone)
+    import java.sql._
+
+    val decimalType = DecimalType(10, 2)
+
+    val allDataTypes = Seq(
+      ByteType,
+      ShortType,
+      IntegerType,
+      LongType,
+      FloatType,
+      DoubleType,
+      decimalType,
+      BooleanType,
+      StringType,
+      BinaryType,
+      DateType,
+      TimestampType
+    )
+
+    var fields = allDataTypes.map(dt => {
+      val name = if (dt.isInstanceOf[DecimalType]) {
+        "decimal"
+      } else {
+        dt.toString
+      }
+      StructField(name, dt)
+    })
+
+    fields = fields :+ StructField("nested_struct", new StructType()
+      .add("aa", StringType)
+      .add("ac", new StructType()
+        .add("aca", IntegerType)
+      )
+    )
+
+    fields = fields :+ StructField("array_of_prims", ArrayType(IntegerType))
+    fields = fields :+ StructField("array_of_arrays", ArrayType(ArrayType(IntegerType)))
+    fields = fields :+ StructField("array_of_map_of_arrays",
+      ArrayType(MapType(IntegerType, ArrayType(IntegerType))))
+    fields = fields :+ StructField(
+      "array_of_structs",
+      ArrayType(new StructType().add("ab", IntegerType)))
+    fields = fields :+ StructField(
+      "struct_of_arrays_maps_of_structs",
+      new StructType()
+        .add("aa", ArrayType(IntegerType))
+        .add("ab", MapType(ArrayType(IntegerType), new StructType().add("aca", IntegerType)))
+    )
+
+    fields = fields :+ StructField(
+      "map_of_prims",
+      MapType(IntegerType, LongType)
+    )
+    fields = fields :+ StructField(
+      "map_of_rows",
+      MapType(IntegerType, new StructType().add("ab", LongType))
+    )
+    fields = fields :+ StructField(
+      "map_of_arrays",
+      MapType(LongType, ArrayType(IntegerType))
+    )
+
+    fields = fields :+ StructField(
+      "map_of_maps",
+      MapType(LongType, MapType(IntegerType, IntegerType))
+    )
+
+    val schema = StructType(fields)
+
+    def createRow(i: Int): Row = {
+      Row(
+        i.toByte, // byte
+        i.toShort, // short
+        i, // integer
+        i.toLong, // long
+        i.toFloat, // float
+        i.toDouble, // double
+        new java.math.BigDecimal(i), // decimal
+        i % 2 == 0, // boolean
+        i.toString, // string
+        i.toString.getBytes, // binary
+        Date.valueOf("2021-11-18"), // date
+        new Timestamp(i.toLong), // timestamp
+        Row(i.toString, Row(i)), // nested_struct
+        scala.Array(i, i + 1), // array_of_prims
+        scala.Array(scala.Array(i, i + 1), scala.Array(i + 2, i + 3)), // array_of_arrays
+        scala.Array(
+          Map(i -> scala.Array(2, 3), i + 1 -> scala.Array(4, 5))), // array_of_map_of_arrays
+        scala.Array(Row(i), Row(i)), // array_of_structs
+        Row( // struct_of_arrays_maps_of_structs
+          scala.Array(i, i + 1),
+          Map(scala.Array(i, i + 1) -> Row(i + 2))
+        ),
+        Map(i -> (i + 1).toLong, (i + 2) -> (i + 3).toLong), // map_of_prims
+        Map(i + 1 -> Row((i * 20).toLong)), // map_of_rows
+        {
+          val val1 = scala.Array(i, null, i + 1)
+          val val2 = scala.Array[Integer]()
+          Map(
+            i.longValue() -> val1,
+            (i + 1).longValue() -> val2
+          ) // map_of_arrays
+        },
+        Map( // map_of_maps
+          i.toLong -> Map(i -> i),
+          (i + 1).toLong -> Map(i + 2 -> i)
+        )
+      )
+    }
+
+    def createNullRow(): Row = {
+      Row(Seq.fill(schema.length)(null): _*)
+    }
+
+    val rows = Seq.range(0, 5).map(i => createRow(i)) ++ Seq(createNullRow())
+
+    val df = spark.createDataFrame(spark.sparkContext.parallelize(rows), schema)
+    df.repartition(2)
+      .write
+      .format("delta")
+      .save(tablePath)
   }
 
   /** TEST: DeltaDataReaderSuite > read - date types */

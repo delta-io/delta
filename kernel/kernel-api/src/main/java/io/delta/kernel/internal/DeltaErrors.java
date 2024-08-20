@@ -20,6 +20,7 @@ import static java.lang.String.format;
 import io.delta.kernel.exceptions.*;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
@@ -175,6 +176,13 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
   }
 
+  public static KernelException missingNumRecordsStatsForIcebergCompatV2(
+      DataFileStatus dataFileStatus) {
+    throw new KernelException(
+        format(
+            "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s", dataFileStatus));
+  }
+
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
     String msgT = "Missing partition column '%s' in the data to be written to the table '%s'.";
@@ -197,6 +205,12 @@ public final class DeltaErrors {
   public static KernelException voidTypeEncountered() {
     return new KernelException(
         "Failed to parse the schema. Encountered unsupported Delta data type: VOID");
+  }
+
+  public static KernelException cannotModifyTableProperty(String key) {
+    String msg =
+        format("The Delta table property '%s' is an internal property and cannot be updated.", key);
+    return new KernelException(msg);
   }
 
   public static KernelException unknownConfigurationException(String confKey) {

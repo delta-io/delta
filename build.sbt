@@ -52,7 +52,7 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.2"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
@@ -543,7 +543,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.1.1",
+      "io.delta" %% "delta-sharing-client" % "1.2.0",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -782,22 +782,17 @@ lazy val iceberg = (project in file("iceberg"))
         // - delta-storage will bring in classes: io/delta/storage
         // - delta-spark will bring in classes: io/delta/exceptions/, io/delta/implicits,
         //   io/delta/package, io/delta/sql, io/delta/tables,
-        println(s"Discarding class: io/delta/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("com", "databricks", xs @ _*) =>
         // delta-spark will bring in com/databricks/spark/util
-        println(s"Discarding class: com/databricks/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("org", "apache", "spark", xs @ _*)
         if !deltaIcebergSparkIncludePrefixes.exists { prefix =>
           s"org/apache/spark/${xs.mkString("/")}".startsWith(prefix) } =>
-        println(s"Discarding class: org/apache/spark/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("scoverage", xs @ _*) =>
-        println(s"Discarding class: scoverage/${xs.mkString("/")}")
         MergeStrategy.discard
       case x =>
-        println(s"Including class: $x")
         (assembly / assemblyMergeStrategy).value(x)
     },
     assemblyPackageScala / assembleArtifact := false

@@ -350,17 +350,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
   }
 
   test("read json files") {
-    val testFiles = fsClient.listFrom(getTestResourceFilePath("json-files/1.json"))
-    val actResult = jsonHandler.readJsonFiles(
-      testFiles,
-      new StructType()
-        .add("path", StringType.STRING)
-        .add("size", LongType.LONG)
-        .add("dataChange", BooleanType.BOOLEAN),
-      Optional.empty()
-    ).toSeq.map(batch => TestRow(batch.getRows.next))
-
-    val expResult = Seq(
+    val expResults = Seq(
       TestRow("part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet", 348L, true),
       TestRow("part-00000-cb078bc1-0aeb-46ed-9cf8-74a843b32c8c-c000.snappy.parquet", 687L, true),
       TestRow("part-00001-9bf4b8f8-1b95-411b-bf10-28dc03aa9d2f-c000.snappy.parquet", 705L, true),
@@ -369,8 +359,36 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       TestRow("part-00000-842017c2-3e02-44b5-a3d6-5b9ae1745045-c000.snappy.parquet", 649L, true),
       TestRow("part-00001-e62ca5a1-923c-4ee6-998b-c61d1cfb0b1c-c000.snappy.parquet", 649L, true)
     )
+    Seq(
+      (
+        fsClient.listFrom(getTestResourceFilePath("json-files/1.json")),
+        expResults
+      ),
+      (
+        fsClient.listFrom(getTestResourceFilePath("json-files-with-empty/1.json")),
+        expResults
+      ),
+      (
+        fsClient.listFrom(getTestResourceFilePath("json-files-with-empty/5.json")),
+        expResults.takeRight(2)
+      ),
+      (
+        fsClient.listFrom(getTestResourceFilePath("json-files-all-empty/1.json")),
+        Seq()
+      )
+    ).foreach {
+      case (testFiles, expResults) =>
+        val actResult = jsonHandler.readJsonFiles(
+          testFiles,
+          new StructType()
+            .add("path", StringType.STRING)
+            .add("size", LongType.LONG)
+            .add("dataChange", BooleanType.BOOLEAN),
+          Optional.empty()
+        ).toSeq.map(batch => TestRow(batch.getRows.next))
 
-    checkAnswer(actResult, expResult)
+        checkAnswer(actResult, expResults)
+    }
   }
 
   test("parse json content") {

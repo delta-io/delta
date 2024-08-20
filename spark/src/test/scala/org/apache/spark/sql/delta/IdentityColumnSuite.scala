@@ -16,17 +16,23 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.File
+
 import scala.collection.mutable.ListBuffer
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.{GeneratedAlways, GeneratedAsIdentityType, GeneratedByDefault}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.commons.io.FileUtils
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.types._
 
 /**
@@ -124,15 +130,263 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     }
   }
 
+  test("logging") {
+    withTable(tblName) {
+      val eventsDefinition = Log4jUsageLogger.track {
+        createTable(
+          tblName,
+          Seq(
+            IdentityColumnSpec(
+              GeneratedByDefault,
+              startsWith = Some(1),
+              incrementBy = Some(1),
+              colName = "id1"
+            ),
+            IdentityColumnSpec(
+              GeneratedAlways,
+              startsWith = Some(1),
+              incrementBy = Some(1),
+              colName = "id2"
+            ),
+            IdentityColumnSpec(
+              GeneratedAlways,
+              startsWith = Some(1),
+              incrementBy = Some(1),
+              colName = "id3"
+            ),
+            TestColumnSpec(colName = "value", dataType = IntegerType)
+          )
+        )
+      }.filter { e =>
+        e.tags.get("opType").exists(_ == IdentityColumn.opTypeDefinition)
+      }
+      assert(eventsDefinition.size == 1)
+      assert(JsonUtils.fromJson[Map[String, String]](eventsDefinition.head.blob)
+        .get("numIdentityColumns").exists(_ == "3"))
+
+      val eventsWrite = Log4jUsageLogger.track {
+        sql(s"INSERT INTO $tblName (id1, value) VALUES (1, 10), (2, 20)")
+      }.filter { e =>
+        e.tags.get("opType").exists(_ == IdentityColumn.opTypeWrite)
+      }
+      assert(eventsWrite.size == 1)
+      val data = JsonUtils.fromJson[Map[String, String]](eventsWrite.head.blob)
+      assert(data.get("numInsertedRows").exists(_ == "2"))
+      assert(data.get("generatedIdentityColumnNames").exists(_ == "id2,id3"))
+      assert(data.get("generatedIdentityColumnCount").exists(_ == "2"))
+      assert(data.get("explicitIdentityColumnNames").exists(_ == "id1"))
+      assert(data.get("explicitIdentityColumnCount").exists(_ == "1"))
+    }
+  }
+
+  test("reading table should not see identity column properties") {
+    def verifyNoIdentityColumn(id: Int, f: () => Dataset[_]): Unit = {
+      assert(!ColumnWithDefaultExprUtils.hasIdentityColumn(f().schema), s"test $id failed")
+    }
+
+    withTable(tblName) {
+      createTable(
+        tblName,
+        Seq(
+          IdentityColumnSpec(GeneratedByDefault),
+          TestColumnSpec(colName = "part", dataType = LongType),
+          TestColumnSpec(colName = "value", dataType = StringType)
+        ),
+        partitionedBy = Seq("part")
+      )
+
+      sql(
+        s"""
+           |INSERT INTO $tblName (part, value) VALUES
+           |  (1, "one"),
+           |  (2, "two"),
+           |  (3, "three")
+           |""".stripMargin)
+      val path = DeltaLog.forTable(spark, TableIdentifier(tblName)).dataPath.toString
+
+      val commands: Seq[() => Dataset[_]] = Seq(
+        () => spark.table(tblName),
+        () => sql(s"SELECT * FROM $tblName"),
+        () => sql(s"SELECT * FROM delta.`$path`"),
+        () => spark.read.format("delta").load(path),
+        () => spark.read.format("delta").table(tblName),
+        () => spark.readStream.format("delta").load(path),
+        () => spark.readStream.format("delta").table(tblName)
+      )
+      commands.zipWithIndex.foreach {
+        case (f, id) => verifyNoIdentityColumn(id, f)
+      }
+      withTempDir { checkpointDir =>
+        val q = spark.readStream.format("delta").table(tblName).writeStream
+          .trigger(Trigger.Once)
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .foreachBatch { (df: DataFrame, _: Long) =>
+            assert(!ColumnWithDefaultExprUtils.hasIdentityColumn(df.schema))
+            ()
+          }.start()
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+      withTempDir { outputDir =>
+        withTempDir { checkpointDir =>
+          val q = spark.readStream.format("delta").table(tblName).writeStream
+            .trigger(Trigger.Once)
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("delta")
+            .start(outputDir.getCanonicalPath)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+          val deltaLog = DeltaLog.forTable(spark, outputDir.getCanonicalPath)
+          assert(deltaLog.snapshot.version >= 0)
+          assert(!ColumnWithDefaultExprUtils.hasIdentityColumn(deltaLog.snapshot.schema))
+        }
+      }
+    }
+  }
+
+  private def withWriterVersion5Table(func: String => Unit): Unit = {
+    // The table on the following path is created with the following steps:
+    // (1) Create a table with IDENTITY column using writer version 6
+    //     CREATE TABLE $tblName (
+    //       id BIGINT GENERATED BY DEFAULT AS IDENTITY,
+    //       part INT,
+    //       value STRING
+    //     ) USING delta
+    //     PARTITIONED BY (part)
+    // (2) CTAS from the above table using writer version 5.
+    // This will result in a table created using protocol (1, 2) with IDENTITY columns.
+    val resourcePath = "src/test/resources/delta/identity_test_written_by_version_5"
+    withTempDir { tempDir =>
+      // Prepare a table that has the old writer version and identity columns.
+      FileUtils.copyDirectory(new File(resourcePath), tempDir)
+      val path = tempDir.getCanonicalPath
+      val deltaLog = DeltaLog.forTable(spark, path)
+      // Verify the table has old writer version and identity columns.
+      assert(ColumnWithDefaultExprUtils.hasIdentityColumn(deltaLog.snapshot.schema))
+      val writerVersionOnTable = deltaLog.snapshot.protocol.minWriterVersion
+      assert(writerVersionOnTable < IdentityColumnsTableFeature.minWriterVersion)
+      func(path)
+    }
+  }
+
+  test("compatibility") {
+    withWriterVersion5Table { v5TablePath =>
+      // Verify initial data.
+      checkAnswer(
+        sql(s"SELECT * FROM delta.`$v5TablePath`"),
+        Row(1, 1, "one") :: Row(2, 2, "two") :: Row(4, 3, "three") :: Nil
+      )
+      // Insert new data should generate correct IDENTITY values.
+      sql(s"""INSERT INTO delta.`$v5TablePath` VALUES (5, 5, "five")""")
+      checkAnswer(
+        sql(s"SELECT COUNT(DISTINCT id) FROM delta.`$v5TablePath`"),
+        Row(4L)
+      )
+
+      val deltaLog = DeltaLog.forTable(spark, v5TablePath)
+      val protocolBeforeUpdate = deltaLog.snapshot.protocol
+
+      // ALTER TABLE should drop the IDENTITY columns and keeps the protocol version unchanged.
+      sql(s"ALTER TABLE delta.`$v5TablePath` ADD COLUMNS (value2 DOUBLE)")
+      deltaLog.update()
+      assert(deltaLog.snapshot.protocol == protocolBeforeUpdate)
+      assert(!ColumnWithDefaultExprUtils.hasIdentityColumn(deltaLog.snapshot.schema))
+
+      // Specifying a min writer version should not enable IDENTITY column.
+      sql(s"ALTER TABLE delta.`$v5TablePath` SET TBLPROPERTIES ('delta.minWriterVersion'='4')")
+      deltaLog.update()
+      assert(deltaLog.snapshot.protocol == Protocol(1, 4))
+      assert(!ColumnWithDefaultExprUtils.hasIdentityColumn(deltaLog.snapshot.schema))
+    }
+  }
+
+  for {
+    generatedAsIdentityType <- GeneratedAsIdentityType.values
+  } {
+    test(
+        "replace table with identity column should upgrade protocol, "
+          + s"identityType: $generatedAsIdentityType") {
+      def getProtocolVersions: (Int, Int) = {
+        sql(s"DESC DETAIL $tblName")
+          .select("minReaderVersion", "minWriterVersion")
+          .as[(Int, Int)]
+          .head()
+      }
+
+      withTable(tblName) {
+        createTable(
+          tblName,
+          Seq(
+            TestColumnSpec(colName = "id", dataType = LongType),
+            TestColumnSpec(colName = "value", dataType = IntegerType))
+        )
+        assert(getProtocolVersions == (1, 2) || getProtocolVersions == (2, 5))
+        assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.version == 0)
+
+        replaceTable(
+          tblName,
+          Seq(
+            IdentityColumnSpec(
+              generatedAsIdentityType,
+              startsWith = Some(1),
+              incrementBy = Some(1)
+            ),
+            TestColumnSpec(colName = "value", dataType = IntegerType)
+          )
+        )
+        assert(getProtocolVersions == (1, 6) || getProtocolVersions == (2, 6))
+        assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.version == 1)
+      }
+    }
+  }
+
+  test("identity value start at boundaries") {
+    val starts = Seq(Long.MinValue, Long.MaxValue)
+    val steps = Seq(1, 2, -1, -2)
+    for {
+      generatedAsIdentityType <- GeneratedAsIdentityType.values
+      start <- starts
+      step <- steps
+    } {
+      withTable(tblName) {
+        createTableWithIdColAndIntValueCol(
+          tblName, generatedAsIdentityType, Some(start), Some(step))
+        val table = DeltaLog.forTable(spark, TableIdentifier(tblName))
+        val actualSchema =
+          DeltaColumnMapping.dropColumnMappingMetadata(table.snapshot.metadata.schema)
+        assert(actualSchema === expectedSchema(generatedAsIdentityType, start, step))
+        if ((start < 0L) == (step < 0L)) {
+          // test long underflow and overflow
+          val ex = intercept[org.apache.spark.SparkException](
+            sql(s"INSERT INTO $tblName(value) SELECT 1 UNION ALL SELECT 2")
+          )
+          assert(ex.getMessage.contains("long overflow"))
+        } else {
+          sql(s"INSERT INTO $tblName(value) SELECT 1 UNION ALL SELECT 2")
+          checkAnswer(sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $tblName"), Row(true))
+          sql(s"INSERT INTO $tblName(value) SELECT 1 UNION ALL SELECT 2")
+          checkAnswer(sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $tblName"), Row(true))
+          assert(highWaterMark(table.update(), "id") ===
+            (start + (3 * step)))
+        }
+      }
+    }
+  }
 
   test("restore - positive step") {
     val tableName = "identity_test_tgt"
     withTable(tableName) {
       generateTableWithIdentityColumn(tableName)
       sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
-      sql(s"INSERT INTO $tableName (val) VALUES (6)")
+      sql(s"INSERT INTO $tableName (value) VALUES (6)")
       checkAnswer(
-        sql(s"SELECT key, val FROM $tableName ORDER BY val ASC"),
+        sql(s"SELECT id, value FROM $tableName ORDER BY value ASC"),
         Seq(Row(0, 0), Row(1, 1), Row(2, 2), Row(6, 6))
       )
     }
@@ -143,9 +397,9 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     withTable(tableName) {
       generateTableWithIdentityColumn(tableName, step = -1)
       sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
-      sql(s"INSERT INTO $tableName (val) VALUES (6)")
+      sql(s"INSERT INTO $tableName (value) VALUES (6)")
       checkAnswer(
-        sql(s"SELECT key, val FROM $tableName ORDER BY val ASC"),
+        sql(s"SELECT id, value FROM $tableName ORDER BY value ASC"),
         Seq(Row(0, 0), Row(-1, 1), Row(-2, 2), Row(-6, 6))
       )
     }

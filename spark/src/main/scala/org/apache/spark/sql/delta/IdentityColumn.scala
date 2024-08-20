@@ -44,6 +44,8 @@ object IdentityColumn extends DeltaLogging {
   val opTypeDefinition = "delta.identityColumn.definition"
   // When table with IDENTITY columns are written into.
   val opTypeWrite = "delta.identityColumn.write"
+  // When IDENTITY column update causes transaction to abort.
+  val opTypeAbort = "delta.identityColumn.abort"
 
   // Return true if `field` is an identity column that allows explicit insert. Caller must ensure
   // `isIdentityColumn(field)` is true.
@@ -69,7 +71,7 @@ object IdentityColumn extends DeltaLogging {
 
   // Create a column to generate IDENTITY values for the column `field`.
   def createIdentityColumnGenerationExprAsColumn(field: StructField): Column = {
-    new Column(createIdentityColumnGenerationExpr(field)).alias(field.name)
+    Column(createIdentityColumnGenerationExpr(field)).alias(field.name)
   }
 
   /**
@@ -115,7 +117,7 @@ object IdentityColumn extends DeltaLogging {
     // The expression will be: to_json(array(max(id1), min(id2)))
     val aggregates = identityColumnInfo.map {
       case (name, positiveStep) =>
-        val col = new Column(UnresolvedAttribute.quoted(name))
+        val col = Column(UnresolvedAttribute.quoted(name))
         if (positiveStep) max(col) else min(col)
     }
     val unresolvedExpr = to_json(array(aggregates: _*))
@@ -242,6 +244,10 @@ object IdentityColumn extends DeltaLogging {
         )
       )
     }
+  }
+
+  def logTransactionAbort(deltaLog: DeltaLog): Unit = {
+    recordDeltaEvent(deltaLog, opTypeAbort)
   }
 
   // Calculate the sync'ed IDENTITY high water mark based on actual data and returns a

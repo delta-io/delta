@@ -242,6 +242,9 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     "addFeatureSupport",
     "as",
     "alias",
+    "clone",
+    "cloneAtTimestamp",
+    "cloneAtVersion",
     "delete",
     "detail",
     "generate",
@@ -422,6 +425,80 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     }
   }
 
+  test("clone - with filesystem options") {
+    withTempDir { dir =>
+      val baseDir = fakeFileSystemPath(dir)
+
+      val srcDir = new File(baseDir, "source").getCanonicalPath
+      val dstDir = new File(baseDir, "destination").getCanonicalPath
+
+      spark.range(10).write.options(fakeFileSystemOptions).format("delta").save(srcDir)
+
+      val srcTable =
+        io.delta.tables.DeltaTable.forPath(spark, srcDir, fakeFileSystemOptions)
+      srcTable.clone(dstDir)
+
+      val srcLog = DeltaLog.forTable(spark, new Path(srcDir), fakeFileSystemOptions)
+      val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
+
+      checkAnswer(
+        spark.baseRelationToDataFrame(srcLog.createRelation()),
+        spark.baseRelationToDataFrame(dstLog.createRelation())
+      )
+    }
+  }
+
+  test("cloneAtVersion/timestamp - with filesystem options") {
+    Seq(true, false).foreach { cloneWithVersion =>
+      withTempDir { dir =>
+        val baseDir = fakeFileSystemPath(dir)
+        val fsOptions = fakeFileSystemOptions
+
+        val srcDir = new File(baseDir, "source").getCanonicalPath
+        val dstDir = new File(baseDir, "destination").getCanonicalPath
+
+        val df1 = Seq(1, 2, 3).toDF("id")
+        val df2 = Seq(4, 5).toDF("id")
+        val df3 = Seq(6, 7).toDF("id")
+
+        // version 0.
+        df1.write.format("delta").options(fsOptions).save(srcDir)
+
+        // version 1.
+        df2.write.format("delta").options(fsOptions).mode("append").save(srcDir)
+
+        // version 2.
+        df3.write.format("delta").options(fsOptions).mode("append").save(srcDir)
+
+        val srcTable =
+          io.delta.tables.DeltaTable.forPath(spark, srcDir, fakeFileSystemOptions)
+
+        if (cloneWithVersion) {
+          srcTable.cloneAtVersion(0, dstDir)
+        } else {
+          // clone with timestamp.
+          //
+          // set the time to first file with a early time and verify the delta table can be
+          // restored to it.
+          val desiredTime = "1983-01-01"
+          val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+          val time = format.parse(desiredTime).getTime
+
+          val logPath = new Path(srcDir, "_delta_log")
+          val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
+          assert(file.setLastModified(time))
+          srcTable.cloneAtTimestamp(desiredTime, dstDir)
+        }
+
+        val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
+
+        checkAnswer(
+          df1,
+          spark.baseRelationToDataFrame(dstLog.createRelation())
+        )
+      }
+    }
+  }
 
   test("optimize - with filesystem options") {
     withTempDir { dir =>
