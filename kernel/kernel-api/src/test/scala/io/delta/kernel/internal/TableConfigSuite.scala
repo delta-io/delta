@@ -61,6 +61,42 @@ class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
     }
     assert(e4.getMessage === null)
   }
+
+  test("check TableConfig.editable is true") {
+    val engine = mockEngine(jsonHandler = new KeyValueJsonHandler(Map()))
+
+    TableConfig.validateProperties(engine,
+      Map(
+        TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
+        TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
+        TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
+        TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> "1",
+        TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> "1",
+        TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "{in-memory}",
+        TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{\"1\": \"1\"}",
+        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey -> "{\"1\": \"1\"}",
+        TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
+        TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true").asJava)
+  }
+
+  test("check TableConfig.MAX_COLUMN_ID.editable is false") {
+    val engine = mockEngine(jsonHandler = new KeyValueJsonHandler(Map()))
+
+    val e = intercept[KernelException] {
+      TableConfig.validateProperties(engine,
+        Map(
+          TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
+          TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
+          TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
+          TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey -> "10").asJava)
+    }
+
+    assert(e.isInstanceOf[KernelException])
+    assert(e.getMessage ===
+      s"The Delta table property " +
+      s"'${TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey}'" +
+      s" is an internal property and cannot be updated.")
+  }
 }
 
 /**

@@ -44,6 +44,7 @@ import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.datasources.FileFormatWriter._
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
@@ -261,6 +262,8 @@ object DeltaFileFormatWriter extends LoggingShims {
 
       val jobTrackerID = SparkHadoopWriterUtils.createJobTrackerID(new Date())
       val ret = new Array[WriteTaskResult](rddWithNonEmptyPartitions.partitions.length)
+      val partitionColumnToDataType = description.partitionColumns
+        .map(attr => (attr.name, attr.dataType)).toMap
       sparkSession.sparkContext.runJob(
         rddWithNonEmptyPartitions,
         (taskContext: TaskContext, iter: Iterator[InternalRow]) => {
@@ -272,7 +275,8 @@ object DeltaFileFormatWriter extends LoggingShims {
             sparkAttemptNumber = taskContext.taskAttemptId().toInt & Integer.MAX_VALUE,
             committer,
             iterator = iter,
-            concurrentOutputWriterSpec = concurrentOutputWriterSpec
+            concurrentOutputWriterSpec = concurrentOutputWriterSpec,
+            partitionColumnToDataType
           )
         },
         rddWithNonEmptyPartitions.partitions.indices,
@@ -377,6 +381,14 @@ object DeltaFileFormatWriter extends LoggingShims {
     }
   }
 
+   class PartitionedTaskAttemptContextImpl(
+       conf: Configuration,
+       taskId: TaskAttemptID,
+       partitionColumnToDataType: Map[String, DataType])
+     extends TaskAttemptContextImpl(conf, taskId) {
+     val partitionColToDataType: Map[String, DataType] = partitionColumnToDataType
+  }
+
   /** Writes data out in a single Spark task. */
   private def executeTask(
       description: WriteJobDescription,
@@ -386,7 +398,8 @@ object DeltaFileFormatWriter extends LoggingShims {
       sparkAttemptNumber: Int,
       committer: FileCommitProtocol,
       iterator: Iterator[InternalRow],
-      concurrentOutputWriterSpec: Option[ConcurrentOutputWriterSpec]): WriteTaskResult = {
+      concurrentOutputWriterSpec: Option[ConcurrentOutputWriterSpec],
+      partitionColumnToDataType: Map[String, DataType]): WriteTaskResult = {
 
     val jobId = SparkHadoopWriterUtils.createJobID(jobTrackerID, sparkStageId)
     val taskId = new TaskID(jobId, TaskType.MAP, sparkPartitionId)
@@ -402,7 +415,11 @@ object DeltaFileFormatWriter extends LoggingShims {
       hadoopConf.setBoolean("mapreduce.task.ismap", true)
       hadoopConf.setInt("mapreduce.task.partition", 0)
 
-      new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+      if (partitionColumnToDataType.isEmpty) {
+        new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+      } else {
+        new PartitionedTaskAttemptContextImpl(hadoopConf, taskAttemptId, partitionColumnToDataType)
+      }
     }
 
     committer.setupTask(taskAttemptContext)

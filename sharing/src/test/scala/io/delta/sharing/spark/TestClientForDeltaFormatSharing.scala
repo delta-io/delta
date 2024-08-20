@@ -61,8 +61,12 @@ private[spark] class TestClientForDeltaFormatSharing(
 
   assert(
     responseFormat == DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET ||
-    (readerFeatures.contains("deletionVectors") && readerFeatures.contains("columnMapping")),
-    "deletionVectors and columnMapping should be supported in all types of queries."
+    (
+      readerFeatures.contains("deletionVectors") &&
+      readerFeatures.contains("columnMapping") &&
+      readerFeatures.contains("timestampNtz")
+    ),
+    "deletionVectors, columnMapping, timestampNtz should be supported in all types of queries."
   )
 
   import TestClientForDeltaFormatSharing._

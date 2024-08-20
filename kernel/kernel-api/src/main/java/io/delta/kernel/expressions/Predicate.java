@@ -96,6 +96,11 @@ import java.util.stream.Stream;
  *         <li>SQL semantic: <code>expr LIKE expr</code>
  *         <li>Since version: 3.3.0
  *       </ul>
+ *   <li>Name: <code>IS NOT DISTINCT FROM</code>
+ *       <ul>
+ *         <li>SQL semantic: <code>expr1 IS NOT DISTINCT FROM expr2</code>
+ *         <li>Since version: 3.3.0
+ *       </ul>
  * </ol>
  *
  * @since 3.0.0

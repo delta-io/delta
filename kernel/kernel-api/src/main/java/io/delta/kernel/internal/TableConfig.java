@@ -62,7 +62,8 @@ public class TableConfig<T> {
           (engineOpt, v) -> IntervalParserUtils.safeParseIntervalAsMillis(v),
           value -> value >= 0,
           "needs to be provided as a calendar interval such as '2 weeks'. Months"
-              + " and years are not accepted. You may specify '365 days' for a year instead.");
+              + " and years are not accepted. You may specify '365 days' for a year instead.",
+          true);
 
   /**
    * How often to checkpoint the delta log? For every N (this config) commits to the log, we will
@@ -74,7 +75,8 @@ public class TableConfig<T> {
           "10",
           (engineOpt, v) -> Integer.valueOf(v),
           value -> value > 0,
-          "needs to be a positive integer.");
+          "needs to be a positive integer.",
+          true);
 
   /**
    * This table property is used to track the enablement of the {@code inCommitTimestamps}.
@@ -89,7 +91,8 @@ public class TableConfig<T> {
           "false", /* default values */
           (engineOpt, v) -> Boolean.valueOf(v),
           value -> true,
-          "needs to be a boolean.");
+          "needs to be a boolean.",
+          true);
 
   /**
    * This table property is used to track the version of the table at which {@code
@@ -101,7 +104,8 @@ public class TableConfig<T> {
           null, /* default values */
           (engineOpt, v) -> Optional.ofNullable(v).map(Long::valueOf),
           value -> true,
-          "needs to be a long.");
+          "needs to be a long.",
+          true);
 
   /**
    * This table property is used to track the timestamp at which {@code inCommitTimestamps} were
@@ -114,7 +118,8 @@ public class TableConfig<T> {
           null, /* default values */
           (engineOpt, v) -> Optional.ofNullable(v).map(Long::valueOf),
           value -> true,
-          "needs to be a long.");
+          "needs to be a long.",
+          true);
 
   /*
    * This table property is used to track the commit-coordinator name for this table. If this
@@ -131,7 +136,8 @@ public class TableConfig<T> {
               + "which implementation of commit-coordinator to use when committing "
               + "to this table. If this property is not set, the table will be "
               + "considered as file system table and commits will be done via "
-              + "atomically publishing the commit file.");
+              + "atomically publishing the commit file.",
+          true);
 
   /*
    * This table property is used to track the configuration properties for the commit coordinator
@@ -144,7 +150,8 @@ public class TableConfig<T> {
           TableConfig::parseJSONKeyValueMap,
           value -> true,
           "A string-to-string map of configuration properties for the"
-              + " coordinated commits-coordinator.");
+              + " coordinated commits-coordinator.",
+          true);
 
   /*
    * This property is used by the commit coordinator to uniquely identify and manage the table
@@ -157,7 +164,8 @@ public class TableConfig<T> {
           TableConfig::parseJSONKeyValueMap,
           value -> true,
           "A string-to-string map of configuration properties for"
-              + "  describing the table to commit-coordinator.");
+              + "  describing the table to commit-coordinator.",
+          true);
 
   /** This table property is used to control the column mapping mode. */
   public static final TableConfig<ColumnMappingMode> COLUMN_MAPPING_MODE =
@@ -166,7 +174,18 @@ public class TableConfig<T> {
           "none", /* default values */
           (engineOpt, v) -> ColumnMappingMode.fromTableConfig(v),
           value -> true,
-          "Needs to be one of none, id, name.");
+          "Needs to be one of none, id, name.",
+          true);
+
+  /** This table property is used to control the maximum column mapping ID. */
+  public static final TableConfig<Long> COLUMN_MAPPING_MAX_COLUMN_ID =
+      new TableConfig<>(
+          "delta.columnMapping.maxColumnId",
+          "0",
+          (engineOpt, v) -> Long.valueOf(v),
+          value -> value >= 0,
+          "",
+          false);
 
   /**
    * Table property that enables modifying the table in accordance with the Delta-Iceberg
@@ -182,7 +201,8 @@ public class TableConfig<T> {
           "false",
           (engineOpt, v) -> Boolean.valueOf(v),
           value -> true,
-          "needs to be a boolean.");
+          "needs to be a boolean.",
+          true);
 
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
@@ -199,6 +219,7 @@ public class TableConfig<T> {
               addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
+              addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
             }
           });
 
@@ -206,6 +227,7 @@ public class TableConfig<T> {
   private final String defaultValue;
   private final BiFunction<Engine, String, T> fromString;
   private final Predicate<T> validator;
+  private final boolean editable;
   private final String helpMessage;
 
   private TableConfig(
@@ -213,12 +235,14 @@ public class TableConfig<T> {
       String defaultValue,
       BiFunction<Engine, String, T> fromString,
       Predicate<T> validator,
-      String helpMessage) {
+      String helpMessage,
+      boolean editable) {
     this.key = key;
     this.defaultValue = defaultValue;
     this.fromString = fromString;
     this.validator = validator;
     this.helpMessage = helpMessage;
+    this.editable = editable;
   }
 
   /**
@@ -269,16 +293,16 @@ public class TableConfig<T> {
     for (Map.Entry<String, String> kv : configurations.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
-      if (key.startsWith("delta.")) {
+      if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
         TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
-        if (tableConfig != null) {
+        if (tableConfig.editable) {
           tableConfig.validate(engine, value);
           validatedConfigurations.put(tableConfig.getKey(), value);
         } else {
-          throw DeltaErrors.unknownConfigurationException(key);
+          throw DeltaErrors.cannotModifyTableProperty(kv.getKey());
         }
       } else {
-        throw DeltaErrors.unknownConfigurationException(key);
+        throw DeltaErrors.unknownConfigurationException(kv.getKey());
       }
     }
     return validatedConfigurations;

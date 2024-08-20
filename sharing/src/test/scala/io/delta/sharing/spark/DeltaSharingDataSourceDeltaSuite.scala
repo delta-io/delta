@@ -29,6 +29,7 @@ import org.apache.spark.sql.types.{
   LongType,
   StringType,
   StructType,
+  TimestampNTZType,
   TimestampType
 }
 
@@ -1425,6 +1426,42 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             testReadInlineDV(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
             testReadInlineDVCdf(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
           }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read timestampNTZ table") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_timestampNTZ"
+      withTable(deltaTableName) {
+        sql(s"CREATE TABLE $deltaTableName(c1 TIMESTAMP_NTZ) USING DELTA")
+        sql(s"""INSERT INTO $deltaTableName VALUES ('2022-01-02 03:04:05.123456')""")
+
+        val sharedTableName = "shared_table_timestampNTZ"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        def testReadTimestampNTZ(tablePath: String): Unit = {
+          val expectedSchema: StructType = new StructType()
+            .add("c1", TimestampNTZType)
+          assert(
+            expectedSchema == spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+              .schema
+          )
+          val sharingDf =
+            spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+          val deltaDf = spark.read.format("delta").table(deltaTableName)
+          checkAnswer(sharingDf, deltaDf)
+          assert(sharingDf.count() > 0)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          testReadTimestampNTZ(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
         }
       }
     }

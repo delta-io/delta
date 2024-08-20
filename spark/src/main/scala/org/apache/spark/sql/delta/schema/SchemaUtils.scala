@@ -1239,7 +1239,7 @@ def normalizeColumnNamesInDataType(
   }
 
   def fieldToColumn(field: StructField): Column = {
-    new Column(UnresolvedAttribute.quoted(field.name))
+    Column(UnresolvedAttribute.quoted(field.name))
   }
 
   /**  converting field name to column type with quoted back-ticks */

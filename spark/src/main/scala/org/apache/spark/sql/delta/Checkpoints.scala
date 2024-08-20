@@ -1140,7 +1140,7 @@ object Checkpoints
     val partitionValues = partitionSchema.map { field =>
       val physicalName = DeltaColumnMapping.getPhysicalName(field)
       val attribute = UnresolvedAttribute.quotedString(partitionValuesColName)
-      new Column(Cast(
+      Column(Cast(
         ElementAt(
           attribute,
           Literal(physicalName),
