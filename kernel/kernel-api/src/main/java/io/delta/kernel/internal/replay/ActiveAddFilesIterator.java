@@ -245,7 +245,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
                       .getExpressionHandler()
                       .getEvaluator(
                           finalScanAddFiles.getSchema(),
-                          Literal.ofString(tableRoot.toUri().toString()),
+                          Literal.ofString(tableRoot.toUri().toString(), "UTF8_BINARY"),
                           StringType.STRING),
               "Get the expression evaluator for the table root");
     }

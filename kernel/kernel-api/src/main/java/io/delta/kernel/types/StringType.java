@@ -24,9 +24,16 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class StringType extends BasePrimitiveType {
-  public static final StringType STRING = new StringType();
+  public static final StringType STRING = new StringType("");
 
-  private StringType() {
-    super("string");
+  public StringType(String collationName) {
+    super("string_" + collationName);
+    this.collationName = collationName;
   }
+
+  public String getCollationName() {
+    return collationName;
+  }
+
+  private final String collationName;
 }
