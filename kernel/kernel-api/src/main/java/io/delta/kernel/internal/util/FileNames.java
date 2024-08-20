@@ -166,11 +166,14 @@ public final class FileNames {
   public static boolean isCommitFile(String filePathStr) {
     Path filePath = new Path(filePathStr);
     String fileName = filePath.getName();
-    String fileParentName = filePath.getParent().getName();
-    return DELTA_FILE_PATTERN.matcher(fileName).matches()
-        // If parent is _commits dir, then match against un-backfilled commit file name pattern.
-        || (COMMIT_SUBDIR.equals(fileParentName)
-            && UUID_DELTA_FILE_REGEX.matcher(fileName).matches());
+    if (DELTA_FILE_PATTERN.matcher(fileName).matches()) {
+      return true;
+    } else {
+      String fileParentName = filePath.getParent().getName();
+      // If parent is _commits dir, then match against un-backfilled commit file name pattern.
+      return COMMIT_SUBDIR.equals(fileParentName)
+          && UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
+    }
   }
 
   /**
