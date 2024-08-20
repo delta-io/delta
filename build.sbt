@@ -56,6 +56,9 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.2"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+connectCommon / sparkVersion := getSparkVersion()
+connectClient / sparkVersion := getSparkVersion()
+connectServer / sparkVersion := getSparkVersion()
 sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
