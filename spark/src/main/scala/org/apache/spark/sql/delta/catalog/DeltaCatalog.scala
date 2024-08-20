@@ -38,6 +38,7 @@ import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, De
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.PartitionUtils
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
@@ -194,13 +195,11 @@ class DeltaCatalog extends DelegatingCatalogExtension
       // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
-      createTableFunc = if (isUnityCatalog && sourceQuery.isEmpty) {
-        Some(v1Table => {
+      createTableFunc = Option.when(isUnityCatalog && sourceQuery.isEmpty) {
+        v1Table => {
           val t = V1Table(v1Table)
           super.createTable(ident, t.columns(), t.partitioning, t.properties)
-        })
-      } else {
-        None
+        }
       }).run(spark)
 
     loadTable(ident)
