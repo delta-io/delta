@@ -66,7 +66,8 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
           enableIcebergCompatV2 = icebergCompatV2Enabled),
         testData(includePartitionCols = true),
         /* partition values */
-        Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA")).asJava)
+        Map("state" -> Literal.ofString("CA", "UTF8_BINARY"),
+          "country" -> Literal.ofString("USA", "UTF8_BINARY")).asJava)
 
       transformedDateIter.map(_.getData).forEachRemaining(batch => {
         if (icebergCompatV2Enabled) {

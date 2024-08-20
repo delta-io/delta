@@ -320,7 +320,9 @@ public class PartitionUtils {
       Expression elementAt =
           new ScalarExpression(
               "element_at",
-              asList(scanFilePartitionValuesRef, Literal.ofString(partColPhysicalName, "UTF8_BINARY")));
+              asList(
+                  scanFilePartitionValuesRef,
+                  Literal.ofString(partColPhysicalName, "UTF8_BINARY")));
 
       if (partColType instanceof StringType) {
         return elementAt;
