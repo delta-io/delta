@@ -92,10 +92,10 @@ class TableConfigSuite extends AnyFunSuite with MockEngineUtils {
     }
 
     assert(e.isInstanceOf[KernelException])
-    assert(e.getMessage.toLowerCase() ==
-      s"The Delta table property ".toLowerCase() +
-      s"'${TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey}'".toLowerCase() +
-      s" is an internal property and cannot be updated.".toLowerCase())
+    assert(e.getMessage ===
+      s"The Delta table property " +
+      s"'${TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey}'" +
+      s" is an internal property and cannot be updated.")
   }
 }
 
