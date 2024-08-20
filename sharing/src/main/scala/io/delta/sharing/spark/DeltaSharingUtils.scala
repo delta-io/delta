@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.{
   SnapshotDescriptor,
   TimestampNTZTableFeature
 }
+import org.apache.spark.sql.delta.VariantTypeTableFeature
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
@@ -49,13 +50,15 @@ object DeltaSharingUtils extends Logging {
     Seq(
       DeletionVectorsTableFeature.name,
       ColumnMappingTableFeature.name,
-      TimestampNTZTableFeature.name
+      TimestampNTZTableFeature.name,
+      VariantTypeTableFeature.name
     )
   val SUPPORTED_READER_FEATURES: Seq[String] =
     Seq(
       DeletionVectorsTableFeature.name,
       ColumnMappingTableFeature.name,
-      TimestampNTZTableFeature.name
+      TimestampNTZTableFeature.name,
+      VariantTypeTableFeature.name
     )
 
   // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.

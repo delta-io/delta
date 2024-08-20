@@ -64,9 +64,11 @@ private[spark] class TestClientForDeltaFormatSharing(
     (
       readerFeatures.contains("deletionVectors") &&
       readerFeatures.contains("columnMapping") &&
-      readerFeatures.contains("timestampNtz")
+      readerFeatures.contains("timestampNtz") &&
+      readerFeatures.contains("variantType-preview")
     ),
-    "deletionVectors, columnMapping, timestampNtz should be supported in all types of queries."
+    "deletionVectors, columnMapping, timestampNtz, variantType-preview should be supported in " +
+    "all types of queries."
   )
 
   import TestClientForDeltaFormatSharing._
