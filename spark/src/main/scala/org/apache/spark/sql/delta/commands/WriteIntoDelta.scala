@@ -295,7 +295,7 @@ case class WriteIntoDelta(
             val insertCols = outputCols :+
               lit(CDCReader.CDC_TYPE_INSERT).as(CDCReader.CDC_TYPE_COLUMN_NAME)
             val insertDataCols = outputCols :+
-              new Column(CDCReader.CDC_TYPE_NOT_CDC)
+              Column(CDCReader.CDC_TYPE_NOT_CDC)
                 .as(CDCReader.CDC_TYPE_COLUMN_NAME)
             val packedInserts = array(
               struct(insertCols: _*),
@@ -303,7 +303,7 @@ case class WriteIntoDelta(
             ).expr
 
             dataWithDefaultExprs
-              .select(explode(new Column(packedInserts)).as("packedData"))
+              .select(explode(Column(packedInserts)).as("packedData"))
               .select(
                 (dataWithDefaultExprs.schema.map(_.name) :+ CDCReader.CDC_TYPE_COLUMN_NAME)
                   .map { n => col(s"packedData.`$n`").as(n) }: _*)

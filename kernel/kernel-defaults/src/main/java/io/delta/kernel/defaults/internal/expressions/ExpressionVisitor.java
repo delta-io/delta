@@ -97,6 +97,7 @@ abstract class ExpressionVisitor<R> {
       case "<=":
       case ">":
       case ">=":
+      case "IS NOT DISTINCT FROM":
         return visitComparator(new Predicate(name, children));
       case "ELEMENT_AT":
         return visitElementAt(expression);
@@ -125,6 +126,7 @@ abstract class ExpressionVisitor<R> {
               "Trying to access invalid entry (%d) in list %s",
               index, expressions.stream().map(Object::toString).collect(joining(","))));
     }
+
     Expression elemExpression = expressions.get(index);
     if (!(elemExpression instanceof Predicate)) {
       throw new RuntimeException("Expected a predicate, but got " + elemExpression);
