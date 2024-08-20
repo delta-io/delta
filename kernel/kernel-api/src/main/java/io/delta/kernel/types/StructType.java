@@ -116,8 +116,9 @@ public final class StructType extends DataType {
   }
 
   private void checkFields(StructType fields, DataType parent, List<String> path) {
-    String errorMessage = String.format("Field '%s' is not a table field", String.join(".", path));
-    if (fields.fields.isEmpty()) {
+    String fullPathFieldName = String.join(".", path);
+    String errorMessage = String.format("Field '%s' does not match type", fullPathFieldName);
+    if (fields.fields.isEmpty() && !(parent instanceof StructType)) {
       throw new IllegalArgumentException(errorMessage);
     }
 
@@ -136,54 +137,63 @@ public final class StructType extends DataType {
   }
 
   private void checkFieldInStruct(StructField field, StructType parent, List<String> path) {
-    path.add(field.getName());
-    String errorMessage = String.format("Field '%s' is not a table field", String.join(".", path));
+    String fieldName = field.getName();
+    path.add(fieldName);
+    String fullPathFieldName = String.join(".", path);
 
-    if (!parent.nameToFieldAndOrdinal.containsKey(field.getName())) {
+    if (!parent.nameToFieldAndOrdinal.containsKey(fieldName)) {
+      String errorMessage = String.format("Field '%s' is not a table field", fullPathFieldName);
       throw new IllegalArgumentException(errorMessage);
     }
-    if (field.getDataType() instanceof StructType) {
-      if (field.isNullable() != parent.get(field.getName()).isNullable()) {
-        throw new IllegalArgumentException(errorMessage);
-      }
-      checkFields((StructType) field.getDataType(), parent.get(field.getName()).getDataType(), path);
-    } else if (!(field.equals(parent.get(field.getName())))) {
+    StructField parentField = parent.nameToFieldAndOrdinal.get(fieldName)._1;
+
+    if ((field.getDataType() instanceof StructType) && field.isNullable() == parentField.isNullable()) {
+      checkFields((StructType) field.getDataType(), parentField.getDataType(), path);
+    } else if (!(field.equals(parentField))) {
+      String errorMessage = String.format("Field '%s' does not match type", fullPathFieldName);
       throw new IllegalArgumentException(errorMessage);
     }
   }
 
   private void checkFieldInArray(StructField field, ArrayType parent, List<String> path) {
-    path.add(field.getName());
-    String errorMessage = String.format("Field '%s' is not a table field", String.join(".", path));
+    String fieldName = field.getName();
+    path.add(fieldName);
+    String fullPathFieldName = String.join(".", path);
 
-    if (field.getName() == "element") {
-      if (field.getDataType() instanceof StructType) {
+    if (fieldName == "element") {
+      if ((field.getDataType() instanceof StructType) && field.isNullable() == parent.containsNull()) {
         checkFields((StructType) field.getDataType(), parent.getElementType(), path);
       } else if (!(field.equals(parent.getElementField()))) {
+        String errorMessage = String.format("Field '%s' does not match type", fullPathFieldName);
         throw new IllegalArgumentException(errorMessage);
       }
     } else {
+      String errorMessage = String.format("Field '%s' is not a table field", fullPathFieldName);
       throw new IllegalArgumentException(errorMessage);
     }
   }
 
   private void checkFieldInMap(StructField field, MapType parent, List<String> path) {
-    path.add(field.getName());
-    String errorMessage = String.format("Field '%s' is not a table field", String.join(".", path));
+    String fieldName = field.getName();
+    path.add(fieldName);
+    String fullPathFieldName = String.join(".", path);
 
-    if (field.getName() == "key") {
-      if (field.getDataType() instanceof StructType) {
+    if (fieldName == "key") {
+      if ((field.getDataType() instanceof StructType) && !field.isNullable()) {
         checkFields((StructType) field.getDataType(), parent.getKeyType(), path);
       } else if (!field.equals(parent.getKeyField())) {
+        String errorMessage = String.format("Field '%s' does not match type", fullPathFieldName);
         throw new IllegalArgumentException(errorMessage);
       }
-    } else if (field.getName() == "value") {
-      if (field.getDataType() instanceof StructType) {
+    } else if (fieldName == "value") {
+      if ((field.getDataType() instanceof StructType) && field.isNullable() == parent.isValueContainsNull()) {
         checkFields((StructType) field.getDataType(), parent.getValueType(), path);
       } else if (!(field.equals(parent.getValueField()))) {
+        String errorMessage = String.format("Field '%s' does not match type", fullPathFieldName);
         throw new IllegalArgumentException(errorMessage);
       }
     } else {
+      String errorMessage = String.format("Field '%s' is not a table field", fullPathFieldName);
       throw new IllegalArgumentException(errorMessage);
     }
   }

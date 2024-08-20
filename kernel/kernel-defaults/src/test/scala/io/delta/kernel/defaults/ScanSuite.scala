@@ -1633,7 +1633,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         ),
         (
           new StructType().add("c2", STRING, true).add("c1", INTEGER, true),
-          "Field 'c1' is not a table field"
+          "Field 'c1' does not match type"
         ),
         (
           new StructType().add("c2", STRING, true).add("c3", LONG, true),
@@ -1641,7 +1641,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         ),
         (
           new StructType().add("c2", STRING, true).add("c1", LONG, false),
-          "Field 'c1' is not a table field"
+          "Field 'c1' does not match type"
         )
       ).foreach {
         case (readSchema, errorMessage) =>
@@ -1660,13 +1660,13 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     withTempDir { tempDir =>
       val tablePath = tempDir.getCanonicalPath
       spark.sql(
-        s"""CREATE TABLE delta.`$tablePath`(
+        s"""create table delta.`$tablePath`(
            |c1 map<map<struct<fld1: string, fld2: array<string>>, string>, array<struct<fld1: int, fld2: long>>>,
            |c2 array<struct<fld1: map<string, array<long>>>>,
            |c3 string,
            |c4 long,
            |c5 struct<fld1: array<string>>
-           |) USING delta""".stripMargin)
+           |) using delta""".stripMargin)
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
 
@@ -1675,13 +1675,11 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           .add("c1", new StructType()
             .add("key", new StructType()
               .add("key", new StructType()
-                .add("fld1", STRING, true), true), true), true),
-        new StructType()
-          .add("c1", new StructType()
+                .add("fld1", STRING, true), false), false)
             .add("key", new StructType()
               .add("key", new StructType()
                 .add("fld2", new StructType()
-                  .add("element", STRING, true), true), true), true), true),
+                  .add("element", STRING, true), true), false), false), true),
         new StructType()
           .add("c2", new StructType()
             .add("element", new StructType()
@@ -1697,17 +1695,19 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
               .add("key", new StructType()
                 .add("fld1", STRING, true)
                 .add("fld2", new StructType()
-                  .add("element", STRING, true), true), true), true), true)
+                  .add("element", STRING, true), true), false), false), true)
           .add("c4", LONG, true)
-          .add("c3", STRING, true),
-        new StructType()
+          .add("c3", STRING, true)
           .add("c2", new StructType()
             .add("element", new StructType()
               .add("fld1",
                 new MapType(STRING, new ArrayType(LONG, true), true), true), true), true),
         new StructType()
           .add("c5", new StructType()
-            .add("fld1", new ArrayType(STRING, true), true), true)
+            .add("fld1", new ArrayType(STRING, true), true), true),
+        new StructType()
+          .add("c2", new StructType()
+            .add("element", new StructType(), true), true)
       ).foreach {
         readSchema =>
           snapshot
@@ -1721,10 +1721,11 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     withTempDir { tempDir =>
       val tablePath = tempDir.getCanonicalPath
       spark.sql(
-        s"""CREATE TABLE delta.`$tablePath`(
+        s"""create table delta.`$tablePath`(
            |c1 map<map<struct<fld1: string, fld2: array<string>>, string>, array<struct<fld1: int, fld2: long>>>,
-           |c2 array<struct<fld1: map<string, array<long>>>>
-           |) USING delta""".stripMargin)
+           |c2 array<struct<fld1: map<string, array<long>>>>,
+           |c3 array<string> not null
+           |) using delta""".stripMargin)
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
 
@@ -1734,16 +1735,17 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             .add("c1", new StructType()
               .add("key", new StructType()
                 .add("key", new StructType()
-                  .add("fld1", STRING, false), true), true), true), // nullable column
-          "Field 'c1.key.key.fld1' is not a table field"
+                  .add("fld2", new ArrayType(STRING, false), // nullable column
+                    true), false), false), true),
+          "Field 'c1.key.key.fld2' does not match type"
         ),
         (
           new StructType()
             .add("c1", new StructType()
               .add("key", new StructType()
                 .add("key", new StructType()
-                  .add("fld2", STRING, false), true), true), true),
-          "Field 'c1.key.key.fld2' is not a table field"
+                  .add("fld2", STRING, true), false), false), true),
+          "Field 'c1.key.key.fld2' does not match type"
         ),
         (
           new StructType()
@@ -1751,7 +1753,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
               .add("key", new StructType()
                 .add("key", new StructType()
                   .add("fld2", new StructType()
-                    .add("element1", STRING, true), true), true), true), true),
+                    .add("element1", STRING, true), true), false), false), true),
           "Field 'c1.key.key.fld2.element1' is not a table field"
         ),
         (
@@ -1767,7 +1769,35 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             .add("c2", new StructType()
               .add("element", new StructType()
                 .add("fld1", new StructType(), true), true), true),
-          "Field 'c2.element.fld1' is not a table field"
+          "Field 'c2.element.fld1' does not match type"
+        ),
+        (
+          new StructType()
+            .add("c2", new StructType()
+              .add("element", new StructType(), true), true)
+            .add("c10", STRING, true),
+          "Field 'c10' is not a table field"
+        ),
+        (
+          new StructType()
+            .add("c1", new StructType()
+              .add("key", new StructType()
+                .add("key", new StructType()
+                  .add("fld1", STRING, true)
+                  .add("fld2", new StructType()
+                    .add("element", STRING, true), true), false), true), true),
+          "Field 'c1.key' does not match type"
+        ),
+        (
+          new StructType()
+            .add("c3", new ArrayType(STRING, true), true),
+          "Field 'c3' does not match type"
+        ),
+        (
+          new StructType()
+            .add("c3", new StructType()
+              .add("element", STRING, false), false),
+          "Field 'c3.element' does not match type"
         )
       ).foreach {
         case (readSchema, errorMessage) =>
