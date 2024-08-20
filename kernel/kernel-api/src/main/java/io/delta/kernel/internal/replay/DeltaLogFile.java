@@ -34,12 +34,13 @@ public class DeltaLogFile {
   }
 
   public static DeltaLogFile forCommitOrCheckpoint(FileStatus file) {
+    String filePath = file.getPath();
     String fileName = new Path(file.getPath()).getName();
     LogType logType = null;
     long version = -1;
-    if (FileNames.isCommitFile(fileName)) {
+    if (FileNames.isCommitFile(filePath)) {
       logType = LogType.COMMIT;
-      version = FileNames.deltaVersion(fileName);
+      version = FileNames.deltaVersion(filePath);
     } else if (FileNames.isClassicCheckpointFile(fileName)) {
       logType = LogType.CHECKPOINT_CLASSIC;
       version = FileNames.checkpointVersion(fileName);
