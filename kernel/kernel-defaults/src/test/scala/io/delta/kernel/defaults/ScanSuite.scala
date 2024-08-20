@@ -1662,7 +1662,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       val tablePath = tempDir.getCanonicalPath
       spark.sql(
         s"""create table delta.`$tablePath`(
-           |c1 map<map<struct<fld1: string, fld2: array<string>>, string>, array<struct<fld1: int, fld2: long>>>,
+           |c1 map<map<struct<fld1: string, fld2: array<string>>, string>,
+           | array<struct<fld1: int, fld2: long>>>,
            |c2 array<struct<fld1: map<string, array<long>>>>,
            |c3 string,
            |c4 long,
@@ -1723,7 +1724,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       val tablePath = tempDir.getCanonicalPath
       spark.sql(
         s"""create table delta.`$tablePath`(
-           |c1 map<map<struct<fld1: string, fld2: array<string>>, string>, array<struct<fld1: int, fld2: long>>>,
+           |c1 map<map<struct<fld1: string, fld2: array<string>>, string>,
+           | array<struct<fld1: int, fld2: long>>>,
            |c2 array<struct<fld1: map<string, array<long>>>>,
            |c3 array<string> not null
            |) using delta""".stripMargin)
@@ -1812,7 +1814,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       }
     }
   }
-      
+
   Seq(
     ("version 0 no predicate", None, Some(0), 2),
     ("latest version (has checkpoint) no predicate", None, None, 4),
