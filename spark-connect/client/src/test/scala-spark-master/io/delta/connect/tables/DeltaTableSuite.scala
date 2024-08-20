@@ -22,6 +22,7 @@ import java.text.SimpleDateFormat
 import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.DeltaQueryTest
 
 class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
@@ -152,6 +153,49 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
       assert(!manifestDir.exists())
       table.generate("symlink_format_manifest")
       assert(manifestDir.exists())
+    }
+  }
+
+  test("delete") {
+    val session = spark
+    import session.implicits._
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      Seq(("a", 1), ("b", 2), ("c", 3), ("d", 4)).toDF("key", "value")
+        .write.format("delta").save(path)
+      val deltaTable = DeltaTable.forPath(spark, path)
+
+      deltaTable.delete("key = 'a'")
+      checkAnswer(deltaTable.toDF, Seq(Row("b", 2), Row("c", 3), Row("d", 4)))
+
+      deltaTable.delete(col("key") === lit("b"))
+      checkAnswer(deltaTable.toDF, Seq(Row("c", 3), Row("d", 4)))
+
+      deltaTable.delete()
+      checkAnswer(deltaTable.toDF, Nil)
+    }
+  }
+
+  test("update") {
+    val session = spark
+    import session.implicits._
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      Seq(("a", 1), ("b", 2), ("c", 3), ("d", 4)).toDF("key", "value")
+        .write.format("delta").save(path)
+      val deltaTable = DeltaTable.forPath(spark, path)
+
+      deltaTable.updateExpr("key = 'a' or key = 'b'", Map("value" -> "1"))
+      checkAnswer(deltaTable.toDF, Seq(Row("a", 1), Row("b", 1), Row("c", 3), Row("d", 4)))
+
+      deltaTable.update(col("key") === lit("a") || col("key") === lit("b"), Map("value" -> lit(0)))
+      checkAnswer(deltaTable.toDF, Seq(Row("a", 0), Row("b", 0), Row("c", 3), Row("d", 4)))
+
+      deltaTable.updateExpr(Map("value" -> "-1"))
+      checkAnswer(deltaTable.toDF, Seq(Row("a", -1), Row("b", -1), Row("c", -1), Row("d", -1)))
+
+      deltaTable.update(Map("value" -> lit(37)))
+      checkAnswer(deltaTable.toDF, Seq(Row("a", 37), Row("b", 37), Row("c", 37), Row("d", 37)))
     }
   }
 

@@ -117,18 +117,17 @@ public class DefaultJsonHandler implements JsonHandler {
         // read.
         try {
           if (currentFileReader == null || (nextLine = currentFileReader.readLine()) == null) {
-
-            tryOpenNextFile();
-            if (currentFileReader != null) {
-              nextLine = currentFileReader.readLine();
+            // `nextLine` will initially be null because `currentFileReader` is guaranteed
+            // to be null
+            if (tryOpenNextFile()) {
+              return hasNext();
             }
           }
+          return nextLine != null;
         } catch (IOException ex) {
           throw new KernelEngineException(
               format("Error reading JSON file: %s", currentFile.getPath()), ex);
         }
-
-        return nextLine != null;
       }
 
       @Override
@@ -149,7 +148,7 @@ public class DefaultJsonHandler implements JsonHandler {
         return new DefaultRowBasedColumnarBatch(physicalSchema, rows);
       }
 
-      private void tryOpenNextFile() throws IOException {
+      private boolean tryOpenNextFile() throws IOException {
         Utils.closeCloseables(currentFileReader); // close the current opened file
         currentFileReader = null;
 
@@ -167,6 +166,7 @@ public class DefaultJsonHandler implements JsonHandler {
             throw e;
           }
         }
+        return currentFileReader != null;
       }
     };
   }

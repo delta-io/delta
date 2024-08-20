@@ -376,7 +376,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       colNameToAttribs,
       spark.sessionState.conf.sessionLocalTimeZone)
 
-    df.withColumn("relativePartitionDir", new Column(relativePartitionDirExpression))
+    df.withColumn("relativePartitionDir", Column(relativePartitionDirExpression))
       .drop(colToRenamedCols.map(_._2): _*)
   }
 
