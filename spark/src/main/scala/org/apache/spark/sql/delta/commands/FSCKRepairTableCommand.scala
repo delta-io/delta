@@ -164,14 +164,14 @@ case class FsckRepairTableCommand (
         // Only process the values based on the provided dryRun output limit
         val filesToRemove = if (dryRun) {
           filesToRemoveDS
-            .filter(new Column(incrMissingFilesCountExpr))
+            .filter(Column(incrMissingFilesCountExpr))
             .collect()
             .take(
             sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MAX_NUM_ENTRIES_IN_RESULT))
             .toSeq
         } else {
           filesToRemoveDS
-            .filter(new Column(incrMissingFilesCountExpr))
+            .filter(Column(incrMissingFilesCountExpr))
             .collect()
             .toSeq
         }
