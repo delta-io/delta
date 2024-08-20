@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.UnresolvedDeltaPathOrIdentifier
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{RemoveFile}
-import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DateTimeUtils.NANOS_PER_MILLIS
 import org.apache.spark.sql.delta.util.DeltaFileOperations
@@ -37,7 +36,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.BooleanType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.NullType
-import org.apache.spark.sql.{Row, SparkSession, Column}
+import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.util.SerializableConfiguration
 
 import org.apache.spark.sql.delta.actions.AddFile
@@ -179,9 +178,8 @@ case class FsckRepairTableCommand (
           output
         }).asNondeterministic()
 
-        val numFilesScannedCounter = IncrementMetric(TrueLiteral, metrics("numFilesScanned"))
+        val numFilesScanned = deltaLog.snapshot.numOfFiles
         val allMissingFiles = allFiles
-          .filter(new Column(numFilesScannedCounter))
           .withColumn("deletionVectorInfo",
           absoluteDVPathMissing(col("deletionVector"),
             lit(deltaLog.dataPath.toString)))
@@ -236,6 +234,7 @@ case class FsckRepairTableCommand (
         metrics("executionTimeMs").set(executionTimeMs)
         metrics("numMissingDVs").set(numMissingDVs)
         metrics("numMissingFiles").set(numMissingFiles)
+        metrics("numFilesScanned").set(numFilesScanned)
 
         // Register the metrics
         txn.registerSQLMetrics(sparkSession, metrics)
