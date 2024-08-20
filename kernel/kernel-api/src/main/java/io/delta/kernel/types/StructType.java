@@ -110,7 +110,7 @@ public final class StructType extends DataType {
   }
 
   public void checkNestedFields(StructType fields) {
-    for (StructField field: fields.fields()) {
+    for (StructField field : fields.fields()) {
       checkFieldInStruct(field, this, new ArrayList<>());
     }
   }
@@ -147,7 +147,8 @@ public final class StructType extends DataType {
     }
     StructField parentField = parent.nameToFieldAndOrdinal.get(fieldName)._1;
 
-    if ((field.getDataType() instanceof StructType) && field.isNullable() == parentField.isNullable()) {
+    if ((field.getDataType() instanceof StructType)
+        && field.isNullable() == parentField.isNullable()) {
       checkFields((StructType) field.getDataType(), parentField.getDataType(), path);
     } else if (!(field.equals(parentField))) {
       String errorMessage = String.format("Field '%s' does not match type", fullPathFieldName);
@@ -161,7 +162,8 @@ public final class StructType extends DataType {
     String fullPathFieldName = String.join(".", path);
 
     if (fieldName == "element") {
-      if ((field.getDataType() instanceof StructType) && field.isNullable() == parent.containsNull()) {
+      if ((field.getDataType() instanceof StructType)
+          && field.isNullable() == parent.containsNull()) {
         checkFields((StructType) field.getDataType(), parent.getElementType(), path);
       } else if (!(field.equals(parent.getElementField()))) {
         String errorMessage = String.format("Field '%s' does not match type", fullPathFieldName);
@@ -186,7 +188,8 @@ public final class StructType extends DataType {
         throw new IllegalArgumentException(errorMessage);
       }
     } else if (fieldName == "value") {
-      if ((field.getDataType() instanceof StructType) && field.isNullable() == parent.isValueContainsNull()) {
+      if ((field.getDataType() instanceof StructType)
+          && field.isNullable() == parent.isValueContainsNull()) {
         checkFields((StructType) field.getDataType(), parent.getValueType(), path);
       } else if (!(field.equals(parent.getValueField()))) {
         String errorMessage = String.format("Field '%s' does not match type", fullPathFieldName);

@@ -24,7 +24,6 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
-import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.Optional;
 
