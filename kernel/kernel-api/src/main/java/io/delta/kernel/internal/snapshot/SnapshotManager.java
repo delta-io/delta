@@ -388,7 +388,7 @@ public class SnapshotManager {
     final Tuple2<List<FileStatus>, List<FileStatus>> listedCheckpointAndDeltaFileStatuses =
         ListUtils.partition(
             listedFileStatuses,
-            fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()));
+            fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath())));
     final List<FileStatus> listedCheckpointFileStatuses = listedCheckpointAndDeltaFileStatuses._1;
     final List<FileStatus> listedDeltaFileStatuses = listedCheckpointAndDeltaFileStatuses._2;
 
@@ -403,7 +403,7 @@ public class SnapshotManager {
 
     final List<CheckpointInstance> listedCheckpointInstances =
         listedCheckpointFileStatuses.stream()
-            .map(f -> new CheckpointInstance(f.getPath()))
+            .map(f -> new CheckpointInstance(new Path(f.getPath())))
             .collect(Collectors.toList());
 
     final CheckpointInstance notLaterThanCheckpoint =

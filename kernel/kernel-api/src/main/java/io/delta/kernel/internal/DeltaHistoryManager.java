@@ -16,7 +16,6 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.fs.Path.getName;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
@@ -116,10 +115,10 @@ public final class DeltaHistoryManager {
     try (CloseableIterator<FileStatus> files =
         listFrom(engine, logPath, 0)
             .filter(
-                fs ->
-                    FileNames.isCommitFile(getName(fs.getPath()))
-                        || FileNames.isCheckpointFile(getName(fs.getPath())))) {
-
+                fs -> {
+                  final Path path = new Path(fs.getPath());
+                  return FileNames.isCommitFile(path) || FileNames.isCheckpointFile(path);
+                })) {
       if (!files.hasNext()) {
         // listFrom already throws an error if the directory is truly empty, thus this must
         // be because no files are checkpoint or delta files
@@ -137,8 +136,8 @@ public final class DeltaHistoryManager {
       // remember it and return it once we detect that we've seen a smaller or equal delta
       // version.
       while (files.hasNext()) {
-        String nextFilePath = files.next().getPath();
-        if (FileNames.isCommitFile(getName(nextFilePath))) {
+        final Path nextFilePath = new Path(files.next().getPath());
+        if (FileNames.isCommitFile(nextFilePath)) {
           long version = FileNames.deltaVersion(nextFilePath);
           if (version == 0L) {
             return version;
@@ -193,7 +192,7 @@ public final class DeltaHistoryManager {
       throws TableNotFoundException {
 
     try (CloseableIterator<FileStatus> files =
-        listFrom(engine, logPath, 0).filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))) {
+        listFrom(engine, logPath, 0).filter(fs -> FileNames.isCommitFile(new Path(fs.getPath())))) {
 
       if (files.hasNext()) {
         return FileNames.deltaVersion(files.next().getPath());
@@ -247,7 +246,7 @@ public final class DeltaHistoryManager {
       throws TableNotFoundException {
     CloseableIterator<Commit> commits =
         listFrom(engine, logPath, start)
-            .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
+            .filter(fs -> FileNames.isCommitFile(new Path(fs.getPath())))
             .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
     return monotonizeCommitTimestamps(commits);
   }

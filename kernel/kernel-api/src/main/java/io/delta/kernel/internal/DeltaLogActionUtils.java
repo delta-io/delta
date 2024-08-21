@@ -16,7 +16,6 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
-import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ColumnVector;
@@ -33,7 +32,10 @@ import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
-import io.delta.kernel.types.*;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.FileNotFoundException;
@@ -223,10 +225,10 @@ public class DeltaLogActionUtils {
         final FileStatus fs = fsIter.next();
 
         if (fileTypes.contains(DeltaLogFileType.COMMIT)
-            && FileNames.isCommitFile(getName(fs.getPath()))) {
+            && FileNames.isCommitFile(new Path(fs.getPath()))) {
           // Here, we do nothing (we will consume this file).
         } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
-            && FileNames.isCheckpointFile(getName(fs.getPath()))
+            && FileNames.isCheckpointFile(new Path(fs.getPath()))
             && fs.getSize() > 0) {
           // Checkpoint files of 0 size are invalid but may be ignored silently when read, hence we
           // ignore them so that we never pick up such checkpoints.

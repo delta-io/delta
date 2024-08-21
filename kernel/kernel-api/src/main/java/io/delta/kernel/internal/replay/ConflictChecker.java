@@ -33,6 +33,7 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
@@ -355,7 +356,7 @@ public class ConflictChecker {
       List<FileStatus> winningCommitFiles = new ArrayList<>();
       while (files.hasNext()) {
         FileStatus file = files.next();
-        if (FileNames.isCommitFile(file.getPath())) {
+        if (FileNames.isCommitFile(new Path(file.getPath()))) {
           winningCommitFiles.add(file);
         }
       }

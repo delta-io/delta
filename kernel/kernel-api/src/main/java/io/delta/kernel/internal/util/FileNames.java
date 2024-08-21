@@ -85,9 +85,9 @@ public final class FileNames {
    * upgrade.
    */
   public static long getFileVersion(Path path) {
-    if (isCheckpointFile(path.getName())) {
+    if (isCheckpointFile(path)) {
       return checkpointVersion(path);
-    } else if (isCommitFile(path.getName())) {
+    } else if (isCommitFile(path)) {
       return deltaVersion(path);
       // } else if (isChecksumFile(path)) {
       //    checksumVersion(path);
@@ -190,24 +190,24 @@ public final class FileNames {
   // Is <type> file checkers //
   /////////////////////////////
 
-  public static boolean isCheckpointFile(String path) {
-    return CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
+  public static boolean isCheckpointFile(Path path) {
+    return CHECKPOINT_FILE_PATTERN.matcher(path.getName()).matches();
   }
 
-  public static boolean isClassicCheckpointFile(String path) {
-    return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
+  public static boolean isClassicCheckpointFile(Path path) {
+    return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(path.getName()).matches();
   }
 
-  public static boolean isMultiPartCheckpointFile(String path) {
-    return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
+  public static boolean isMultiPartCheckpointFile(Path path) {
+    return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(path.getName()).matches();
   }
 
-  public static boolean isV2CheckpointFile(String path) {
-    return V2_CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
+  public static boolean isV2CheckpointFile(Path path) {
+    return V2_CHECKPOINT_FILE_PATTERN.matcher(path.getName()).matches();
   }
 
-  public static boolean isCommitFile(String path) {
-    final String fileName = new Path(path).getName();
+  public static boolean isCommitFile(Path path) {
+    final String fileName = path.getName();
     return DELTA_FILE_PATTERN.matcher(fileName).matches()
         || UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
   }

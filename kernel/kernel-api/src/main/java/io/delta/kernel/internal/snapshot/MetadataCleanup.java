@@ -139,12 +139,12 @@ public class MetadataCleanup {
           break;
         }
 
-        if (FileNames.isCommitFile(nextFile.getPath())) {
+        if (FileNames.isCommitFile(new Path(nextFile.getPath()))) {
           // Step 3: If the file is a delta log file, add it to the `potentialFilesToDelete` list
           // We can't delete these files until we encounter a checkpoint later that indicates
           // that the log files are no longer needed.
           potentialLogFilesToDelete.add(nextFile.getPath());
-        } else if (FileNames.isCheckpointFile(nextFile.getPath())) {
+        } else if (FileNames.isCheckpointFile(new Path(nextFile.getPath()))) {
           // Step 4: If the file is a checkpoint file, add it to the `lastSeenCheckpointFiles`
           long newLastSeenCheckpointVersion = FileNames.checkpointVersion(nextFile.getPath());
           checkArgument(

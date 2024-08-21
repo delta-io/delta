@@ -53,7 +53,7 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
 
   public CheckpointInstance(String path) {
     Preconditions.checkArgument(
-        FileNames.isCheckpointFile(path), "not a valid checkpoint file name");
+        FileNames.isCheckpointFile(new Path(path)), "not a valid checkpoint file name");
 
     String[] pathParts = getPathName(path).split("\\.");
 
@@ -79,6 +79,10 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
     } else {
       throw new RuntimeException("Unrecognized checkpoint path format: " + getPathName(path));
     }
+  }
+
+  public CheckpointInstance(Path path) {
+    this(path.getName());
   }
 
   public CheckpointInstance(long version) {
