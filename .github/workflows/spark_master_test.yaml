@@ -52,5 +52,5 @@ jobs:
         run: |
           TEST_PARALLELISM_COUNT=1 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/test
           TEST_PARALLELISM_COUNT=1 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectClient/test
-          TEST_PARALLELISM_COUNT=1 SHARD_ID=${{matrix.shard}} build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
+          TEST_PARALLELISM_COUNT=1 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
         if: steps.git-diff.outputs.diff
