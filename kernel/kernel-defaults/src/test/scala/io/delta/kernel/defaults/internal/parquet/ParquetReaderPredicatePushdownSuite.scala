@@ -238,8 +238,8 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
     ),
     // filter on string type column
     (
-      eq(col("stringCol"), ofString("%05d".format(300))),
-      eq(col("nested", "stringCol"), ofString("%05d".format(300))),
+      eq(col("stringCol"), ofString("%05d".format(300), "UTF8_BINARY")),
+      eq(col("nested", "stringCol"), ofString("%05d".format(300), "UTF8_BINARY")),
       Seq(3) // expected row groups
     ),
     // filter on binary type column
@@ -250,8 +250,8 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
     ),
     // filter on truncated stats string type column
     (
-      gte(col("truncatedStringCol"), ofString("%050d".format(300))),
-      gte(col("nested", "truncatedStringCol"), ofString("%050d".format(300))),
+      gte(col("truncatedStringCol"), ofString("%050d".format(300), "UTF8_BINARY")),
+      gte(col("nested", "truncatedStringCol"), ofString("%050d".format(300), "UTF8_BINARY")),
       // expected row groups
       Seq(3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19) // 7 has all nulls
     ),

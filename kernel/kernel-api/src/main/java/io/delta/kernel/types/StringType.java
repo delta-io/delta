@@ -27,7 +27,7 @@ public class StringType extends BasePrimitiveType {
   public static final StringType STRING = new StringType("UTF8_BINARY");
 
   public StringType(String collationName) {
-    super("string_" + collationName);
+    super("string");
     this.collationName = collationName;
   }
 

@@ -45,7 +45,7 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
     col("as_double") -> (ofDouble(1), ofNull(DoubleType.DOUBLE)),
     // 2021-09-08 in days since epoch 18878
     col("as_date") -> (ofDate(18878 /* daysSinceEpochUTC */), ofNull(DateType.DATE)),
-    col("as_string") -> (ofString("1"), ofNull(StringType.STRING)),
+    col("as_string") -> (ofString("1", "UTF8_BINARY"), ofNull(StringType.STRING)),
     // 2021-09-08 11:11:11 in micros since epoch UTC
     col("as_timestamp") -> (ofTimestamp(1631099471000000L), ofNull(TimestampType.TIMESTAMP)),
     col("as_big_decimal") -> (
@@ -124,23 +124,23 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
     (
       "partition pruning: with predicate on data and partition column mix with AND",
       and(
-        predicate("=", col("as_value"), ofString("1")), // data col filter
+        predicate("=", col("as_value"), ofString("1", "UTF8_BINARY")), // data col filter
         predicate("=", col("as_float"), ofFloat(0)) // partition col filter
       )
     ) -> (
-      predicate("=", col("as_value"), ofString("1")),
+      predicate("=", col("as_value"), ofString("1", "UTF8_BINARY")),
       Seq((18878, "0"))
     ),
 
     (
       "partition pruning: with predicate on data and partition column mix with OR",
       or(
-        predicate("=", col("as_value"), ofString("1")), // data col filter
+        predicate("=", col("as_value"), ofString("1", "UTF8_BINARY")), // data col filter
         predicate("=", col("as_float"), ofFloat(0)) // partition col filter
       )
     ) -> (
       or(
-        predicate("=", col("as_value"), ofString("1")), // data col filter
+        predicate("=", col("as_value"), ofString("1", "UTF8_BINARY")), // data col filter
         predicate("=", col("as_float"), ofFloat(0)) // partition col filter
       ),
       Seq((18878, "0"), (18878, "1"), (null, "2"))
@@ -149,11 +149,11 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
     (
       "partition pruning: partition predicate prunes everything",
       and(
-        predicate("=", col("as_value"), ofString("200")), // data col filter
+        predicate("=", col("as_value"), ofString("200", "UTF8_BINARY")), // data col filter
         predicate("=", col("as_float"), ofFloat(234)) // partition col filter
       )
     ) -> (
-      predicate("=", col("as_value"), ofString("200")),
+      predicate("=", col("as_value"), ofString("200", "UTF8_BINARY")),
       Seq()
     )
   )

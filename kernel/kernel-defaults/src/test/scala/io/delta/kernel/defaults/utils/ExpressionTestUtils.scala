@@ -57,7 +57,7 @@ trait ExpressionTestUtils {
 
   def int(value: Int): Literal = Literal.ofInt(value)
 
-  def str(value: String): Literal = Literal.ofString(value)
+  def str(value: String): Literal = Literal.ofString(value, "UTF8_BINARY")
 
   def unsupported(colName: String): Predicate = predicate("UNSUPPORTED", col(colName));
 
