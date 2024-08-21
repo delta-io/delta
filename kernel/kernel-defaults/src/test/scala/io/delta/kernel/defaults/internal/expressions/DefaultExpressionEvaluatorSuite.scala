@@ -896,7 +896,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   test("evaluate expression: partition_value - invalid serialize value") {
     val inputBatch = zeroColumnBatch(rowCount = 1)
     val (serializedPartVal, partType) = ("23423sdfsdf", IntegerType.INTEGER)
-    val expr = new PartitionValueExpression(Literal.ofString(serializedPartVal, "UTF8_BINARY"), partType)
+    val expr = new PartitionValueExpression(
+      Literal.ofString(serializedPartVal, "UTF8_BINARY"), partType)
     val ex = intercept[IllegalArgumentException] {
       val outputVector = evaluator(inputBatch.getSchema, expr, partType).eval(inputBatch)
       outputVector.getInt(0)
