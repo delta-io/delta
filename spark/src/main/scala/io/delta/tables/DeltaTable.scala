@@ -434,7 +434,7 @@ class DeltaTable private[tables](
    * }}}
    *
    * @param source source Dataframe to be merged.
-   * @param condition boolean expression as SQL formatted string.
+   * @param condition boolean expression as SQL formatted string
    * @since 0.3.0
    */
   def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
@@ -488,7 +488,7 @@ class DeltaTable private[tables](
    * }}}
    *
    * @param source source Dataframe to be merged.
-   * @param condition boolean expression as a Column object.
+   * @param condition boolean expression as a Column object
    * @since 0.3.0
    */
   def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
