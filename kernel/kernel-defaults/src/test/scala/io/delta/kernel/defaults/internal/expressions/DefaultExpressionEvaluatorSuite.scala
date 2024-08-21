@@ -432,7 +432,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     def checkLikeLiteral(left: String, right: String,
         escape: Character = null, expOutput: BooleanJ): Unit = {
-      val expression = like(Literal.ofString(left, "UTF8_BINARY"), Literal.ofString(right, "UTF8_BINARY"), Option(escape))
+      val expression = like(Literal.ofString(left, "UTF8_BINARY"),
+        Literal.ofString(right, "UTF8_BINARY"), Option(escape))
       checkLike(dummyInput, expression, Seq[BooleanJ](expOutput))
     }
 
@@ -545,8 +546,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     assert(inputCountError1.getMessage.contains(inputCountCheckUserMessage))
 
     val inputCountError2 = intercept[UnsupportedOperationException] {
-      val expression = like(List(Literal.ofString("a", "UTF8_BINARY"), Literal.ofString("b", "UTF8_BINARY"),
-        Literal.ofString("c", "UTF8_BINARY"), Literal.ofString("d", "UTF8_BINARY")))
+      val expression = like(List(
+        Literal.ofString("a", "UTF8_BINARY"),
+        Literal.ofString("b", "UTF8_BINARY"),
+        Literal.ofString("c", "UTF8_BINARY"),
+        Literal.ofString("d", "UTF8_BINARY")))
       checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(inputCountError2.getMessage.contains(inputCountCheckUserMessage))
@@ -554,14 +558,20 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // additional escape token checks
     val escapeCharError1 = intercept[UnsupportedOperationException] {
       val expression =
-        like(List(Literal.ofString("a", "UTF8_BINARY"), Literal.ofString("b", "UTF8_BINARY"), Literal.ofString("~~", "UTF8_BINARY")))
+        like(List(
+          Literal.ofString("a", "UTF8_BINARY"),
+          Literal.ofString("b", "UTF8_BINARY"),
+          Literal.ofString("~~", "UTF8_BINARY")))
       checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(escapeCharError1.getMessage.contains(
       "LIKE expects escape token to be a single character"))
 
     val escapeCharError2 = intercept[UnsupportedOperationException] {
-      val expression = like(List(Literal.ofString("a", "UTF8_BINARY"), Literal.ofString("b", "UTF8_BINARY"), Literal.ofInt(1)))
+      val expression = like(List(
+        Literal.ofString("a", "UTF8_BINARY"),
+        Literal.ofString("b", "UTF8_BINARY"),
+        Literal.ofInt(1)))
       checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(escapeCharError2.getMessage.contains(
@@ -572,7 +582,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           new StructType().add("dummy", StringType.STRING),
           Array(stringVector(Seq[String](""))))
     checkLike(emptyInput,
-      like(Literal.ofString("abc", "UTF8_BINARY"), Literal.ofString("abc", "UTF8_BINARY"), Some('_')), Seq[BooleanJ]())
+      like(
+        Literal.ofString("abc", "UTF8_BINARY"),
+        Literal.ofString("abc", "UTF8_BINARY"),
+        Some('_')), Seq[BooleanJ]())
 
     // invalid pattern check
     val invalidPatternError = intercept[IllegalArgumentException] {
@@ -606,7 +619,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofNull(TimestampNTZType.TIMESTAMP_NTZ)
       ),
       (ofDate(-12123), ofDate(123123), ofDate(-12123), ofNull(DateType.DATE)),
-      (ofString("apples", "UTF8_BINARY"), ofString("oranges", "UTF8_BINARY"), ofString("apples", "UTF8_BINARY"), ofNull(StringType.STRING)),
+      (
+        ofString("apples", "UTF8_BINARY"),
+        ofString("oranges", "UTF8_BINARY"),
+        ofString("apples", "UTF8_BINARY"),
+        ofNull(StringType.STRING)),
       (
         ofBinary("apples".getBytes()),
         ofBinary("oranges".getBytes()),
