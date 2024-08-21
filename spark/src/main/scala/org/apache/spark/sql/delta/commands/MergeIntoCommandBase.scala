@@ -65,6 +65,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
   }
 
+  override protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = true
+
   override val (canMergeSchema, canOverwriteSchema) = {
     // Delta options can't be passed to MERGE INTO currently, so they'll always be empty.
     // The methods in options check if user has instructed to turn on schema evolution for this

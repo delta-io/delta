@@ -432,9 +432,9 @@ class DeltaSinkSuite
         .mode("append")
         .save(outputDir.getCanonicalPath)
 
-      // More tests covering type changes can be found in [[DeltaSinkTypeChangeSuite]]. This only
+      // More tests covering type changes can be found in [[DeltaSinkImplicitCastSuite]]. This only
       // covers type changes disabled.
-      withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_TYPE_CHANGES.key -> "false") {
+      withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
         val wrapperException = intercept[StreamingQueryException] {
           val q = dsWriter.start(outputDir.getCanonicalPath)
           inputData.addData(1, 2, 3)

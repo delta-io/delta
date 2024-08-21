@@ -171,7 +171,7 @@ case class DeltaSink(
    * columns to add with schema evolution and reconciles types to match the table types.
    */
   private def getWriteSchema(metadata: Metadata, dataSchema: StructType): StructType = {
-    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_TYPE_CHANGES)) return dataSchema
+    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return dataSchema
 
     if (canOverwriteSchema) return dataSchema
 
@@ -182,21 +182,9 @@ case class DeltaSink(
     )
   }
 
-  /**
-   * Override [[UpdateExpressionsSupport.cast]] to always apply ANSI cast when casting data,
-   * ignoring 'spark.sql.storeAssignmentPolicy' - we don't need to support LEGACY which is a footgun
-   * and STRICT brings little value.
-   */
-  override protected def cast(child: Expression, dataType: DataType, columnName: String)
-    : Expression = {
-    val cast = Cast(child, dataType, Option(conf.sessionLocalTimeZone), ansiEnabled = true)
-    cast.setTagValue(Cast.BY_TABLE_INSERTION, ())
-    TableOutputResolver.checkCastOverflowInTableInsert(cast, columnName)
-  }
-
   /** Casts columns in the given dataframe to match the target schema. */
   private def castDataIfNeeded(data: DataFrame, targetSchema: StructType): DataFrame = {
-    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_TYPE_CHANGES)) return data
+    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return data
 
     // We should respect 'spark.sql.caseSensitive' here but writing to a Delta sink is currently
     // case insensitive so we align with that.

@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 
 import org.apache.spark.{SparkArithmeticException, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, Encoder, Row}
+import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
 import org.apache.spark.sql.execution.streaming.{MemoryStream, StreamExecution}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
@@ -31,13 +32,13 @@ import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException}
 import org.apache.spark.sql.types._
 
 /**
- * Covers handling type differences when writing data to a Delta sink.
+ * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
  */
-abstract class DeltaSinkTypeChangeTest extends DeltaSinkTest {
+abstract class DeltaSinkImplicitCastTest extends DeltaSinkTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_TYPE_CHANGES.key, "true")
+    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
@@ -105,7 +106,7 @@ abstract class DeltaSinkTypeChangeTest extends DeltaSinkTest {
   }
 }
 
-class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
+class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastTest {
   import testImplicits._
 
   test(s"write wider type - long -> int") {
@@ -124,36 +125,70 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("write wider type - long -> int - overflow") {
+  test("write wider type - long -> int - overflow with " +
+    s"storeAssignmentPolicy=${StoreAssignmentPolicy.STRICT}") {
     withDeltaStream[Long] { stream =>
       stream.write(17)("CAST(value AS INT)")
       assert(stream.currentSchema("value").dataType === IntegerType)
       checkAnswer(stream.read(), Row(17))
-
-      // Ensure overflow handling doesn't depend on the value of `spark.sql.storeAssignmentPolicy`.
-      // Delta sink always enforce ANSI casting behavior, which is safe compared to LEGACY and more
-      // flexible than STRICT.
-      for (storeAssignmentPolicy <- StoreAssignmentPolicy.values)
-      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> storeAssignmentPolicy.toString) {
-        withClue(s"storeAssignmentPolicy = $storeAssignmentPolicy") {
-          val ex = intercept[StreamingQueryException] {
-            stream.write(Long.MaxValue)("CAST(value AS LONG)")
-          }
-
-          def getSparkArithmeticException(ex: Throwable): SparkArithmeticException = ex match {
-            case e: SparkArithmeticException => e
-            case e: Throwable if e.getCause != null => getSparkArithmeticException(e.getCause)
-            case e => fail(s"Unexpected exception: $e")
-          }
-          checkError(
-            exception = getSparkArithmeticException(ex),
-            errorClass = "CAST_OVERFLOW_IN_TABLE_INSERT",
-            parameters = Map(
-            "sourceType" -> "\"BIGINT\"",
-            "targetType" -> "\"INT\"",
-            "columnName" -> "`value`")
-          )
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString) {
+        val ex = intercept[StreamingQueryException] {
+          stream.write(Long.MaxValue)("CAST(value AS LONG)")
         }
+        checkError(
+          exception = ex.getCause.asInstanceOf[SparkThrowable],
+          errorClass = "CANNOT_UP_CAST_DATATYPE",
+          parameters = Map(
+            "expression" -> "value",
+            "sourceType" -> toSQLType("BIGINT"),
+            "targetType" -> toSQLType("INT"),
+            "details" -> ("The type path of the target object is:\n\nYou can either add an " +
+              "explicit cast to the input data or choose a higher precision type of the field in " +
+              "the target object")
+          )
+        )
+      }
+    }
+  }
+
+  test("write wider type - long -> int - overflow with " +
+    s"storeAssignmentPolicy=${StoreAssignmentPolicy.ANSI}") {
+    withDeltaStream[Long] { stream =>
+      stream.write(17)("CAST(value AS INT)")
+      assert(stream.currentSchema("value").dataType === IntegerType)
+      checkAnswer(stream.read(), Row(17))
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.ANSI.toString) {
+        val ex = intercept[StreamingQueryException] {
+          stream.write(Long.MaxValue)("CAST(value AS LONG)")
+        }
+
+        def getSparkArithmeticException(ex: Throwable): SparkArithmeticException = ex match {
+          case e: SparkArithmeticException => e
+          case e: Throwable if e.getCause != null => getSparkArithmeticException(e.getCause)
+          case e => fail(s"Unexpected exception: $e")
+        }
+        checkError(
+          exception = getSparkArithmeticException(ex),
+          errorClass = "CAST_OVERFLOW_IN_TABLE_INSERT",
+          parameters = Map(
+          "sourceType" -> "\"BIGINT\"",
+          "targetType" -> "\"INT\"",
+          "columnName" -> "`value`")
+        )
+      }
+    }
+  }
+
+  test("write wider type - long -> int - overflow with " +
+    s"storeAssignmentPolicy=${StoreAssignmentPolicy.LEGACY}") {
+    withDeltaStream[Long] { stream =>
+      stream.write(17)("CAST(value AS INT)")
+      assert(stream.currentSchema("value").dataType === IntegerType)
+      checkAnswer(stream.read(), Row(17))
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+        stream.write(Long.MaxValue)("CAST(value AS LONG)")
+        // LEGACY allows the value to silently overflow.
+        checkAnswer(stream.read(), Row(17) :: Row(-1) :: Nil)
       }
     }
   }
@@ -196,7 +231,7 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("type change in nested struct/array/map") {
+  test("implicit cast in nested struct/array/map") {
     withDeltaStream[Int] { stream =>
       stream.write(17)("named_struct('a', value) AS s")
       assert(stream.currentSchema("s").dataType === new StructType().add("a", IntegerType))
@@ -245,7 +280,7 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("type change on partition value") {
+  test("implicit cast on partition value") {
     withDeltaStream[(String, Int)] { stream =>
       sql(
         s"""
@@ -270,7 +305,7 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("type change with schema evolution") {
+  test("implicit cast with schema evolution") {
     withDeltaStream[(Long, String)] { stream =>
       stream.write((123, "unused"))("CAST(_1 AS DECIMAL(6, 3)) AS a")
       assert(stream.currentSchema === new StructType()
@@ -289,7 +324,7 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("type change with schema overwrite") {
+  test("implicit cast with schema overwrite") {
     withTempDirs { (outputDir, checkpointDir) =>
       val source = MemoryStream[Long]
 
@@ -350,7 +385,7 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
   // Writing to a delta sink is always case insensitive and ignores the value of
   // 'spark.sql.caseSensitive'.
   for (caseSensitive <- Seq(true, false))
-  test(s"type change with case sensitivity, caseSensitive=$caseSensitive") {
+  test(s"implicit cast with case sensitivity, caseSensitive=$caseSensitive") {
     withDeltaStream[Long] { stream =>
       stream.write(17)("CAST(value AS LONG) AS value")
       assert(stream.currentSchema === new StructType().add("value", LongType))
@@ -364,7 +399,7 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("write with type change and missing column") {
+  test("implicit cast and missing column") {
     withDeltaStream[(String, String)] { stream =>
       stream.write(("2024-07-28 12:00:00", "abc"))("CAST(_1 AS TIMESTAMP) AS a", "_2 AS b")
       assert(stream.currentSchema === new StructType()
@@ -386,7 +421,7 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("type change after renaming/dropping columns with column mapping") {
+  test("implicit cast after renaming/dropping columns with column mapping") {
     withDeltaStream[(Int, Int)] { stream =>
       stream.write((1, 100))("_1 AS a", "CAST(_2 AS LONG) AS b")
       assert(stream.currentSchema === new StructType()
@@ -422,8 +457,8 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("disallow type changes with spark.databricks.delta.streaming.sink.allowTypeChanges") {
-    withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_TYPE_CHANGES.key -> "false") {
+  test("disallow implicit cast with spark.databricks.delta.streaming.sink.allowImplicitCasts") {
+    withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
       withDeltaStream[Long] { stream =>
         stream.write(17)("CAST(value AS INT)")
         assert(stream.currentSchema("value").dataType === IntegerType)
@@ -443,11 +478,11 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  for (allowTypeChanges <- Seq(true, false))
-  test(s"schema evolution with case sensitivity and without type change, " +
-    s"allowTypeChanges=$allowTypeChanges") {
+  for (allowImplicitCasts <- Seq(true, false))
+  test(s"schema evolution with case sensitivity and without type mismatch, " +
+    s"allowImplicitCasts=$allowImplicitCasts") {
     withSQLConf(
-      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_TYPE_CHANGES.key -> allowTypeChanges.toString,
+      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> allowImplicitCasts.toString,
       SQLConf.CASE_SENSITIVE.key -> "true",
       DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true"
     ) {
@@ -465,13 +500,17 @@ class DeltaSinkTypeChangeSuite extends DeltaSinkTypeChangeTest {
     }
   }
 
-  test("handling type changes in addBatch") {
+  test("handling type mismatch in addBatch") {
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       sqlContext.sparkContext.setLocalProperty(StreamExecution.QUERY_ID_KEY, "streaming_query")
-      val sink = DeltaSink(sqlContext, deltaLog.dataPath, Seq.empty, OutputMode.Append(),
-        new DeltaOptions(options = Map.empty, conf = spark.sessionState.conf)
+      val sink = DeltaSink(
+        sqlContext,
+        path = deltaLog.dataPath,
+        partitionColumns = Seq.empty,
+        outputMode = OutputMode.Append(),
+        options = new DeltaOptions(options = Map.empty, conf = spark.sessionState.conf)
       )
 
       val schema = new StructType().add("value", IntegerType)
