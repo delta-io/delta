@@ -131,7 +131,7 @@ message UpdateTable {
   repeated Assignment assignments = 3;
 }
 
-// Command that merges a source query/table into a Delta table,
+// Command that merges a source query/table into a Delta table.
 //
 // Needs to be a Relation, as it returns a row containing the execution metrics.
 message MergeIntoTable {

@@ -443,7 +443,7 @@ class UpdateTable(google.protobuf.message.Message):
 global___UpdateTable = UpdateTable
 
 class MergeIntoTable(google.protobuf.message.Message):
-    """Command that merges a source query/table into a Delta table,
+    """Command that merges a source query/table into a Delta table.
 
     Needs to be a Relation, as it returns a row containing the execution metrics.
     """
