@@ -36,12 +36,11 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.tables
+package io.delta.tables
 
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connect.client.{RetryPolicy, SparkConnectClient}
 
 /**
  * An util class to start a local Delta Connect server in a different process for local E2E tests.
@@ -98,14 +97,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
   override def beforeAll(): Unit = {
     super.beforeAll()
     server
-
-    val sparkConnectClient = SparkConnectClient
-      .builder()
-      .userId("test")
-      .port(serverPort)
-      .retryPolicy(RetryPolicy.defaultPolicy())
-
-    spark = SparkSession.builder().client(sparkConnectClient.build()).create()
+    spark = SparkSession.builder().remote(s"sc://localhost:$serverPort").create()
   }
 
   override def afterAll(): Unit = {
