@@ -536,9 +536,8 @@ class DeltaTableTestsMixin:
         deltaTable = DeltaTable.forPath(self.spark, self.tempFile)
         # Enable Change Data Feed
         self.spark.sql(
-          "ALTER TABLE delta.`{}` SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
-            .format(self.tempFile)
-        )
+            "ALTER TABLE delta.`{}` SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+            .format(self.tempFile))
 
         # Perform some operations
         deltaTable.update("id = 1", {"id": "10"})
