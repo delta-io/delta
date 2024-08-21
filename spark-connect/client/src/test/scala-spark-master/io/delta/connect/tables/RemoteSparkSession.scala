@@ -99,13 +99,13 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
   override def beforeAll(): Unit = {
     super.beforeAll()
     server
-    val client = SparkConnectClient
+
+    val sparkConnectClient = SparkConnectClient
       .builder()
       .userId("test")
       .port(serverPort)
       .retryPolicy(RetryPolicy.defaultPolicy())
-
-    spark = SparkSession.builder().client(client.build()).create()
+    spark = SparkSession.builder().client(sparkConnectClient.build()).create()
   }
 
   override def afterAll(): Unit = {
