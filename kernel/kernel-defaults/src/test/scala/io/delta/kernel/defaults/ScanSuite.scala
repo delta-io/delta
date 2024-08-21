@@ -1154,7 +1154,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       "as_short" -> (ofShort(0), ofShort(-1), ofShort(1)),
       "as_float" -> (ofFloat(0), ofFloat(-1), ofFloat(1)),
       "as_double" -> (ofDouble(0), ofDouble(-1), ofDouble(1)),
-      "as_string" -> (ofString("0", "UTF8_BINARY"), ofString("!", "UTF8_BINARY"), ofString("1", "UTF8_BINARY")),
+      "as_string" -> (
+        ofString("0", "UTF8_BINARY"),
+        ofString("!", "UTF8_BINARY"),
+        ofString("1", "UTF8_BINARY")),
       "as_date" -> (ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("1999-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-02")))),
