@@ -16,9 +16,10 @@
 
 package io.delta.tables
 
-import org.apache.spark.sql.delta.tables.RemoteSparkSession
 import java.io.File
 import java.text.SimpleDateFormat
+
+import org.apache.spark.sql.delta.tables.RemoteSparkSession
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.test.DeltaQueryTest

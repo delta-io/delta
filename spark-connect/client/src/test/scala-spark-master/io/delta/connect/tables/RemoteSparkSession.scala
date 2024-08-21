@@ -41,8 +41,7 @@ package org.apache.spark.sql.delta.tables
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.connect.client.SparkConnectClient
-import org.apache.spark.sql.connect.client.RetryPolicy
+import org.apache.spark.sql.connect.client.{RetryPolicy, SparkConnectClient}
 
 /**
  * An util class to start a local Delta Connect server in a different process for local E2E tests.
@@ -105,6 +104,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
       .userId("test")
       .port(serverPort)
       .retryPolicy(RetryPolicy.defaultPolicy())
+
     spark = SparkSession.builder().client(sparkConnectClient.build()).create()
   }
 
