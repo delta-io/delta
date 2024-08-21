@@ -18,9 +18,7 @@ package io.delta.kernel.defaults.internal.data.vector;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.types.DoubleType;
 import io.delta.kernel.types.StringType;
-
 import java.util.Optional;
 
 /** {@link io.delta.kernel.data.ColumnVector} implementation for String type data. */
@@ -35,14 +33,15 @@ public class DefaultStringVector extends AbstractColumnVector {
    *     values in the vector are considered non-null when parameter is empty.
    * @param values column vector values.
    */
-  public DefaultStringVector(int size, Optional<boolean[]> nullability, String[] values, String collationName) {
+  public DefaultStringVector(
+      int size, Optional<boolean[]> nullability, String[] values, String collationName) {
     super(size, new StringType(collationName), nullability);
     this.values = requireNonNull(values, "values is null");
     checkArgument(
-            values.length >= size,
-            "invalid number of values (%s) for given size (%s)",
-            values.length,
-            size);
+        values.length >= size,
+        "invalid number of values (%s) for given size (%s)",
+        values.length,
+        size);
   }
 
   /**
