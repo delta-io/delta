@@ -561,7 +561,7 @@ class DeltaTableTestsMixin:
         for option in [True, "true", "tRuE"]:
             cdf = self.spark.read.format("delta") \
                 .option("readChangeData", option) \
-                .option("startingVersion", "0") \
+                .option("startingVersion", "1") \
                 .load(self.tempFile)
 
             result = [(row.id, row._change_type) for row in cdf.collect()]
