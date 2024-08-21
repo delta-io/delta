@@ -454,6 +454,148 @@ class DeltaConnectPlannerSuite
     }
   }
 
+  test("merge - insert only") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addNotMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setInsertAction(
+                    proto.MergeIntoTable.Action.InsertAction.newBuilder()
+                      .addAssignments(createAssignment(field = "t.key", value = "s.key"))
+                      .addAssignments(createAssignment(field = "t.value", value = "s.value"))
+                  )
+              )
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 50) // num_affected_rows
+      assert(result.head.getLong(1) === 0) // num_updated_rows
+      assert(result.head.getLong(2) === 0) // num_deleted_rows
+      assert(result.head.getLong(3) === 50) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(100)(i => Row(i, i)) ++ Seq.tabulate(50)(i => Row(i + 100, i + 1100))
+      )
+    }
+  }
+
+  test("merge - update only") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setUpdateAction(
+                    proto.MergeIntoTable.Action.UpdateAction.newBuilder()
+                      .addAssignments(createAssignment(field = "t.key", value = "s.key"))
+                      .addAssignments(createAssignment(field = "t.value", value = "s.value"))
+                  )
+              )
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 50) // num_affected_rows
+      assert(result.head.getLong(1) === 50) // num_updated_rows
+      assert(result.head.getLong(2) === 0) // num_deleted_rows
+      assert(result.head.getLong(3) === 0) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(50)(i => Row(i, i)) ++ Seq.tabulate(50)(i => Row(i + 50, i + 1050))
+      )
+    }
+  }
+
+  test("merge - mixed") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setUpdateStarAction(proto.MergeIntoTable.Action.UpdateStarAction.newBuilder())
+              )
+              .addNotMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setInsertStarAction(proto.MergeIntoTable.Action.InsertStarAction.newBuilder())
+              )
+              .addNotMatchedBySourceActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setCondition(createExpression("t.value < 25"))
+                  .setDeleteAction(proto.MergeIntoTable.Action.DeleteAction.newBuilder())
+              )
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 125) // num_affected_rows
+      assert(result.head.getLong(1) === 50) // num_updated_rows
+      assert(result.head.getLong(2) === 25) // num_deleted_rows
+      assert(result.head.getLong(3) === 50) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(25)(i => Row(25 + i, 25 + i)) ++
+          Seq.tabulate(50)(i => Row(i + 50, i + 1050)) ++
+          Seq.tabulate(50)(i => Row(i + 100, i + 1100))
+      )
+    }
+  }
+
   private def createScan(tableName: String): spark_proto.Relation = {
     createSparkRelation(
       proto.DeltaRelation.newBuilder()
@@ -462,6 +604,17 @@ class DeltaConnectPlannerSuite
             .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
         )
     )
+  }
+
+  private def createSubqueryAlias(
+      input: spark_proto.Relation, alias: String): spark_proto.Relation = {
+    spark_proto.Relation.newBuilder()
+      .setSubqueryAlias(
+        spark_proto.SubqueryAlias.newBuilder()
+          .setAlias(alias)
+          .setInput(input)
+      )
+      .build()
   }
 
   private def createExpression(expr: String): spark_proto.Expression = {
