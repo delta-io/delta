@@ -428,7 +428,7 @@ class DeltaTable private[tables](
    * }}}
    *
    * @param source    source Dataframe to be merged.
-   * @param condition boolean expression as SQL formatted string
+   * @param condition boolean expression as SQL formatted string.
    *
    * @since 4.0.0
    */
@@ -483,7 +483,7 @@ class DeltaTable private[tables](
    * }}}
    *
    * @param source    source Dataframe to be merged.
-   * @param condition boolean expression as a Column object
+   * @param condition boolean expression as a Column object.
    *
    * @since 4.0.0
    */
