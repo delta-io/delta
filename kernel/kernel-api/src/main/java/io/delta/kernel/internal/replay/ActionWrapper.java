@@ -19,25 +19,25 @@ import io.delta.kernel.data.ColumnarBatch;
 
 /** Internal wrapper class holding information needed to perform log replay. */
 class ActionWrapper {
-    private final ColumnarBatch columnarBatch;
-    private final boolean isFromCheckpoint;
-    private final long version;
+  private final ColumnarBatch columnarBatch;
+  private final boolean isFromCheckpoint;
+  private final long version;
 
-    ActionWrapper(ColumnarBatch data, boolean isFromCheckpoint, long version) {
-        this.columnarBatch = data;
-        this.isFromCheckpoint = isFromCheckpoint;
-        this.version = version;
-    }
+  ActionWrapper(ColumnarBatch data, boolean isFromCheckpoint, long version) {
+    this.columnarBatch = data;
+    this.isFromCheckpoint = isFromCheckpoint;
+    this.version = version;
+  }
 
-    public ColumnarBatch getColumnarBatch() {
-        return columnarBatch;
-    }
+  public ColumnarBatch getColumnarBatch() {
+    return columnarBatch;
+  }
 
-    public boolean isFromCheckpoint() {
-        return isFromCheckpoint;
-    }
+  public boolean isFromCheckpoint() {
+    return isFromCheckpoint;
+  }
 
-    public long getVersion() {
-        return version;
-    }
+  public long getVersion() {
+    return version;
+  }
 }

@@ -21,14 +21,16 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.DeltaOperations.ROW_TRACKING_BACKFILL_OPERATION_NAME
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.UpdatedActions
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
+import io.delta.storage.commit.UpdatedActions
 import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
@@ -60,7 +62,8 @@ private[delta] case class CurrentTransactionInfo(
     val readSnapshot: Snapshot,
     val commitInfo: Option[CommitInfo],
     val readRowIdHighWatermark: Long,
-    val domainMetadata: Seq[DomainMetadata]) {
+    val domainMetadata: Seq[DomainMetadata],
+    val op: DeltaOperations.Operation) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can
@@ -79,7 +82,7 @@ private[delta] case class CurrentTransactionInfo(
   def getUpdatedActions(
       oldMetadata: Metadata,
       oldProtocol: Protocol): UpdatedActions = {
-    UpdatedActions(commitInfo.get, metadata, protocol, oldMetadata, oldProtocol)
+    new UpdatedActions(commitInfo.get, metadata, protocol, oldMetadata, oldProtocol)
   }
 
   /** Whether this transaction wants to make any [[Metadata]] update */
@@ -96,6 +99,9 @@ private[delta] case class CurrentTransactionInfo(
    */
   val partitionSchemaAtReadTime: StructType = readSnapshot.metadata.partitionSchema
 
+  // Whether this is a row tracking backfill transaction or not.
+  val isRowTrackingBackfillTxn = op.name == ROW_TRACKING_BACKFILL_OPERATION_NAME
+
   def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
 }
 
@@ -111,8 +117,14 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   val protocol: Option[Protocol] = actions.collectFirst { case a: Protocol => a }
   val commitInfo: Option[CommitInfo] = actions.collectFirst { case a: CommitInfo => a }.map(
     ci => ci.copy(version = Some(commitVersion)))
+  // Whether this is a row tracking backfill transaction or not.
+  val isRowTrackingBackfillTxn =
+    commitInfo.exists(_.operation == ROW_TRACKING_BACKFILL_OPERATION_NAME)
   val removedFiles: Seq[RemoveFile] = actions.collect { case a: RemoveFile => a }
   val addedFiles: Seq[AddFile] = actions.collect { case a: AddFile => a }
+  // This is used in resolveRowTrackingBackfillConflicts.
+  lazy val addedFilePathToActionMap: Map[String, AddFile] =
+    addedFiles.map(af => (af.path, af)).toMap
   val isBlindAppendOption: Option[Boolean] = commitInfo.flatMap(_.isBlindAppend)
   val blindAppendAddedFiles: Seq[AddFile] = if (isBlindAppendOption.getOrElse(false)) {
     addedFiles
@@ -127,6 +139,12 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   val onlyAddFiles: Boolean = actions.collect { case f: FileAction => f }
     .forall(_.isInstanceOf[AddFile])
 
+  // This indicates this commit contains metadata action that is solely for the purpose for
+  // updating IDENTITY high water marks. This is used by [[ConflictChecker]] to avoid certain
+  // conflict in [[checkNoMetadataUpdates]].
+  val identityOnlyMetadataUpdate = DeltaCommitTag
+    .getTagValueFromCommitInfo(commitInfo, DeltaSourceUtils.IDENTITY_COMMITINFO_TAG)
+    .exists(_.toBoolean)
 }
 
 private[delta] class ConflictChecker(
@@ -144,6 +162,8 @@ private[delta] class ConflictChecker(
 
   protected lazy val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
+  protected def recordSkippedPhase(phase: String): Unit = timingStats += phase -> 0
+
   /**
    * This function checks conflict of the `initialCurrentTransactionInfo` against the
    * `winningCommitVersion` and returns an updated [[CurrentTransactionInfo]] that represents
@@ -159,6 +179,7 @@ private[delta] class ConflictChecker(
     // Perform cheap check for transaction dependencies before we start checks files.
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
 
+    resolveRowTrackingBackfillConflicts()
     // Row Tracking reconciliation. We perform this before the file checks to ensure that
     // no files have duplicate row IDs and avoid interacting with files that don't comply with
     // the protocol.
@@ -239,11 +260,168 @@ private[delta] class ConflictChecker(
   }
 
   /**
-   * Check if the committed transaction has changed metadata.
+   * RowTrackingBackfill (or backfill for short for this function) is a special operation that
+   * materializes and recommits all existing files in table using one or several commits to ensure
+   * that every AddFile has a base row ID and a default row commit version. When enabling
+   * row tracking on an existing table, the following occurs:
+   *    1. (If necessary) Protocol upgrade + Table Feature Support is added
+   *    2. RowTrackingBackfill commit(s)
+   *    3. Table property and metadata are updated.
+   * RowTrackingBackfill does not do any data change. It doesn't matter whether a file is
+   * recommitted after the table feature support from Backfill or some other concurrent transaction;
+   * every AddFile just needs to have a base row ID and a default row commit version somehow.
+   * However, correctness issues can arise if we don't do the checks in this method.
+   *
+   * Check that RowTrackingBackfill is not resurrecting files that were removed concurrently and
+   * that an AddFile and its corresponding RemoveFile have the same base row ID and
+   * default row commit version. To do this, we:
+   *    1. remove AddFile's from a backfill commit if an AddFile or a RemoveFile with the same path
+   *       was added in the winning concurrent transactions. Files in a winning transaction can be
+   *       removed from backfill because they were already re-committed.
+   *    2. copy over base row IDs and default row commit versions if the current transaction re-adds
+   *       or delete an AddFile with the same path as an Addfile from a winning backfill commit.
    */
+  private def resolveRowTrackingBackfillConflicts(): Unit = {
+    // If row tracking is not supported, there can be no backfill commit.
+    if (!RowTracking.isSupported(currentTransactionInfo.protocol)) {
+      assert(!currentTransactionInfo.isRowTrackingBackfillTxn)
+      assert(!winningCommitSummary.isRowTrackingBackfillTxn)
+      return
+    }
+
+    val timerPhaseName = "checked-row-tracking-backfill"
+    if (currentTransactionInfo.isRowTrackingBackfillTxn) {
+      recordTime(timerPhaseName) {
+        // Any winning commit seen by backfill must have row IDs and row commit versions, because
+        // `reassignOverlappingRowIds` will add a base row ID and `reassignRowCommitVersions`
+        // will add a default row commit versions to all files. So we don't need
+        // Backfill to commit the same file again.
+        val filePathsToRemoveFromBackfill = winningCommitSummary.actions.collect {
+          case a: AddFile => a.path
+          case r: RemoveFile => r.path
+        }.toSet
+
+        // Remove files from this Backfill commit if they were removed or re-committed by
+        // a concurrent winning txn.
+        if (filePathsToRemoveFromBackfill.nonEmpty) {
+          // We keep the Row Tracking high-water mark action here but it might
+          // be outdated since the winning commit could have increased the high-water mark.
+          // We will reassign the current transaction's high water-mark if that is
+          // the case, in `reassignOverlappingRowIds` which is called after
+          // `resolveRowTrackingBackfillConflicts` in `checkConflicts`.
+          val newActions = currentTransactionInfo.actions.filterNot {
+            case a: AddFile => filePathsToRemoveFromBackfill.contains(a.path)
+            case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) => false
+            case _ => throw new IllegalStateException(
+              "RowTrackingBackfill commit has an unexpected action")
+          }
+
+          val newReadFiles = currentTransactionInfo.readFiles.filterNot(
+            a => filePathsToRemoveFromBackfill.contains(a.path))
+
+          currentTransactionInfo = currentTransactionInfo.copy(
+            actions = newActions, readFiles = newReadFiles)
+        }
+      }
+    }
+
+    if (winningCommitSummary.isRowTrackingBackfillTxn) {
+      recordTime(timerPhaseName) {
+        val backfillActionMap = winningCommitSummary.addedFilePathToActionMap
+        // Copy over the base row ID and default row commit version assigned so that the AddFiles
+        // and RemoveFiles have matching base row ID and default row commit version.
+        // If an AddFile is re-committed, it should have the same base row ID and
+        // default row commit version as the one assigned by Backfill.
+        val newActions = currentTransactionInfo.actions.map {
+          case a: AddFile if backfillActionMap.contains(a.path) =>
+            val backfillAction = backfillActionMap(a.path)
+            a.copy(baseRowId = backfillAction.baseRowId,
+              defaultRowCommitVersion = backfillAction.defaultRowCommitVersion)
+          case r: RemoveFile if backfillActionMap.contains(r.path) =>
+            val backfillAction = backfillActionMap(r.path)
+            r.copy(baseRowId = backfillAction.baseRowId,
+              defaultRowCommitVersion = backfillAction.defaultRowCommitVersion)
+          case a => a
+        }
+        currentTransactionInfo = currentTransactionInfo.copy(actions = newActions)
+      }
+    }
+  }
+
+  /**
+   * If the winning commit only does row tracking enablement (i.e. set the table property to
+   * true and assigns materialized row tracking column names), we can safely allow the metadata
+   * update not to fail the current txn if we copy over the table property, materialized column
+   * name assignments and correctly tag the current commit as not preserving row tracking data. It
+   * is not possible to preserve row tracking data prior to the table property being set to true
+   * since there is no guarantee of row tracking data being available on all rows.
+   */
+  protected def tryResolveRowTrackingEnablementOnlyMetadataUpdateConflict(): Boolean = {
+    if (RowTracking.canResolveMetadataUpdateConflict(
+        currentTransactionInfo, winningCommitSummary)) {
+      currentTransactionInfo = RowTracking.resolveRowTrackingEnablementOnlyMetadataUpdateConflict(
+        currentTransactionInfo, winningCommitSummary)
+      return true
+    }
+    false
+  }
+
+  // scalastyle:off line.size.limit
+  /**
+   * Check if the committed transaction has changed metadata.
+   *
+   * We want to deal with (and optimize for) the case where the winning commit's metadata update is
+   * solely for updating IDENTITY high water marks. In addition, we want to allow a metadata update
+   * that only sets the table property for row tracking enablement to true not to fail concurrent
+   * transactions if the current transaction does not do a metadata update.
+   *
+   * The conflict matrix is as follows:
+   *
+   * |                                               | Winning Metadata (id) | Winning Metadata Row Tracking Enablement Only | Winning Metadata (other) | Winning No Metadata |
+   * | --------------------------------------------- | --------------------- | --------------------------------------------- | ------------------------ | ------------------- |
+   * | Current Metadata (id)                         | Conflict              | Conflict (3)                                  | Conflict                 | No conflict         |
+   * | Current Metadata Row Tracking Enablement Only | Conflict (1)          | Conflict (3)                                  | Conflict                 | No conflict         |
+   * | Current Metadata (other)                      | Conflict (1)          | Conflict (3)                                  | Conflict                 | No conflict         |
+   * | Current No Metadata                           | No conflict (2)       | No conflict (4)                               | Conflict                 | No conflict         |
+   *
+   * The differences in cases (1), (2), (3), and (4) are:
+   * (1) This is a case we could have done something to avoid conflict, e.g., current transaction
+   * adds a column, while winning transaction does blind append that generates IDENTITY values. But
+   * it's not a common case and the change to avoid conflict is non-trivial (we have to somehow
+   * merge the metadata from winning txn and current txn). We decide to not do that and let it
+   * conflict.
+   * (2) This is a case that is more common (e.g., current = delete/update, winning = update high
+   * water mark) and we will not let it conflict here. Note that it might still cause conflict in
+   * other conflict checks.
+   * (3) If the current txn changes the metadata too, we will fail the current txn. While it is
+   * possible to copy over the metadata information, this scenario is unlikely to happen in practice
+   * and properly handling this for the many edge case (e.g current txn sets the table property
+   * to false) is risky.
+   * (4) In a row tracking enablement only metadata update, the only difference with the previous
+   * metadata are the row tracking table property and materialized column names. These metadata
+   * information only affect the preservation of row tracking. If we copy over the new metadata
+   * configurations and mark the current txn as not preserving row tracking, then the current txn
+   * is respecting the metadata update and does not need to fail.
+   *
+   */
+  // scalastyle:on line.size.limit
   protected def checkNoMetadataUpdates(): Unit = {
-    // Fail if the metadata is different than what the txn read.
-    if (winningCommitSummary.metadataUpdates.nonEmpty) {
+    // If winning commit does not contain metadata update, no conflict.
+    if (winningCommitSummary.metadataUpdates.isEmpty) return
+
+    if (tryResolveRowTrackingEnablementOnlyMetadataUpdateConflict()) {
+      return
+    }
+
+    // The only case in the remaining cases that we will not conflict is winning commit is
+    // identity only metadata update and current commit has no metadata update.
+    val tolerateIdentityOnlyMetadataUpdate = winningCommitSummary.identityOnlyMetadataUpdate &&
+      !currentTransactionInfo.metadataChanged
+
+    if (!tolerateIdentityOnlyMetadataUpdate) {
+      if (winningCommitSummary.identityOnlyMetadataUpdate) {
+        IdentityColumn.logTransactionAbort(deltaLog)
+      }
       throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
     }
   }
@@ -350,10 +528,32 @@ private[delta] class ConflictChecker(
   }
 
   /**
+   * RowTrackingBackfill does not do any data change. If backfill is the winning commit, the
+   * current transaction does not need to read its AddFiles -- the exact same AddFiles have
+   * already been read. If the current commit is backfill, it doesn't need to read the AddFiles
+   * added by the winning transaction. Any winning transaction seen by backfill will commit base
+   * row IDs and default row commit versions, since backfill is only done after table feature
+   * support is added. Removing duplicate AddFiles is handled in
+   * [[resolveRowTrackingBackfillConflicts]].
+   */
+  protected def skipCheckedAppendsIfExistsRowTrackingBackfillTransaction(): Boolean = {
+    if (winningCommitSummary.isRowTrackingBackfillTxn ||
+        currentTransactionInfo.isRowTrackingBackfillTxn) {
+      recordSkippedPhase("checked-appends")
+      return true
+    }
+    false
+  }
+
+  /**
    * Check if the new files added by the already committed transactions should have been read by
    * the current transaction.
    */
   protected def checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn(): Unit = {
+    if (skipCheckedAppendsIfExistsRowTrackingBackfillTransaction()) {
+      return
+    }
+
     recordTime("checked-appends") {
       // Fail if new files have been added that the txn should have read.
       val addedFilesToCheckForConflicts = isolationLevel match {

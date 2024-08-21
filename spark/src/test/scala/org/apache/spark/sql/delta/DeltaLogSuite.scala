@@ -20,6 +20,7 @@ import java.io.{BufferedReader, File, InputStreamReader, IOException}
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
+import scala.collection.JavaConverters._
 import scala.language.postfixOps
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
@@ -505,9 +506,10 @@ class DeltaLogSuite extends QueryTest
         // file.
         val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
           "tracking-in-memory", Map.empty[String, String], spark)
-        val commitResponse = oc.getCommits(deltaLog.logPath, Map.empty, Some(2))
+        val commitResponse = oc.getCommits(
+          deltaLog.logPath, Map.empty[String, String].asJava, 2, null)
         if (!commitResponse.getCommits.isEmpty) {
-          val path = commitResponse.getCommits.last.getFileStatus.getPath
+          val path = commitResponse.getCommits.asScala.last.getFileStatus.getPath
           fs.delete(path, true)
         }
         // Also deletes it from in-memory commit coordinator.
@@ -617,9 +619,10 @@ class DeltaLogSuite extends QueryTest
         // file.
         val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
           "tracking-in-memory", Map.empty[String, String], spark)
-        val commitResponse = oc.getCommits(log.logPath, Map.empty, Some(1))
+        val commitResponse = oc.getCommits(
+          log.logPath, Map.empty[String, String].asJava, 1, null)
         if (!commitResponse.getCommits.isEmpty) {
-          commitFilePath = commitResponse.getCommits.head.getFileStatus.getPath
+          commitFilePath = commitResponse.getCommits.asScala.head.getFileStatus.getPath
         }
       }
       val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())

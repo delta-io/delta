@@ -126,7 +126,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
             constraints += Constraints.Check(s"Generated Column", EqualNullSafe(column.expr, expr))
             Some(column)
           } else {
-            Some(new Column(expr).alias(f.name))
+            Some(Column(expr).alias(f.name))
           }
         case _ =>
           if (isIdentityColumn(f)) {
@@ -145,7 +145,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
               // we only want to consider columns that are in the data's schema or are generated
               // to allow DataFrame with null columns to be written.
               // The actual check for nullability on data is done in the DeltaInvariantCheckerExec
-              getDefaultValueExprOrNullLit(f, nullAsDefault).map(new Column(_))
+              getDefaultValueExprOrNullLit(f, nullAsDefault).map(Column(_))
             }
           }
       }
@@ -167,12 +167,12 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
 
     val rowIdExprs = data.queryExecution.analyzed.output
       .filter(RowId.RowIdMetadataAttribute.isRowIdColumn)
-      .map(new Column(_))
+      .map(Column(_))
     selectExprs = selectExprs ++ rowIdExprs
 
     val rowCommitVersionExprs = data.queryExecution.analyzed.output
       .filter(RowCommitVersion.MetadataAttribute.isRowCommitVersionColumn)
-      .map(new Column(_))
+      .map(Column(_))
     selectExprs = selectExprs ++ rowCommitVersionExprs
 
     val newData = queryExecution match {

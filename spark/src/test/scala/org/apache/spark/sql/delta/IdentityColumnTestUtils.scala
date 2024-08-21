@@ -77,6 +77,31 @@ trait IdentityColumnTestUtils
     }
   }
 
+  protected def generateTableWithIdentityColumn(tableName: String, step: Long = 1): Unit = {
+    createTableWithIdColAndIntValueCol(
+      tableName,
+      GeneratedAlways,
+      startsWith = Some(0),
+      incrementBy = Some(step)
+    )
+
+    // Insert numRows and make sure they assigned sequential IDs
+    val numRows = 6
+    for (i <- 0 until numRows) {
+      sql(s"INSERT INTO $tableName (value) VALUES ($i)")
+    }
+    val expectedAnswer = for (i <- 0 until numRows) yield Row(i * step, i)
+    checkAnswer(sql(s"SELECT * FROM $tableName ORDER BY value ASC"), expectedAnswer)
+  }
+
+  /**
+   * Retrieves the high watermark information for the given `colName` in the metadata of
+   * given `snapshot`
+   */
+  protected def highWaterMark(snapshot: Snapshot, colName: String): Long = {
+    snapshot.schema(colName).metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
+  }
+
   /**
    * Helper function to validate values of IDENTITY column `id` in table `tableName`. Returns the
    * new high water mark. We use minValue and maxValue to filter column `value` to get the set of
@@ -118,6 +143,31 @@ trait IdentityColumnTestUtils
     // Update high water mark.
     val func = if (step > 0) "MAX" else "MIN"
     sql(s"SELECT $func(id) FROM $tableName").collect().head.getLong(0)
+  }
+
+  /**
+   * Helper function to validate generated identity values in sortedRows.
+   *
+   * @param sortedRows rows of the table sorted by id
+   * @param start start value of the identity column
+   * @param step step value of the identity column
+   * @param expectedLowerBound expected lower bound of the generated values
+   * @param expectedUpperBound expected upper bound of the generated values
+   * @param expectedDistinctCount expected distinct count of the generated values
+   */
+  protected def checkGeneratedIdentityValues(
+      sortedRows: Seq[IdentityColumnTestTableRow],
+      start: Long,
+      step: Long,
+      expectedLowerBound: Long,
+      expectedUpperBound: Long,
+      expectedDistinctCount: Long): Unit = {
+    assert(sortedRows.head.id >= expectedLowerBound)
+    for (row <- sortedRows) {
+      assert((row.id - start) % step === 0)
+    }
+    assert(sortedRows.last.id <= expectedUpperBound)
+    assert(sortedRows.map(_.id).distinct.size === expectedDistinctCount)
   }
 }
 

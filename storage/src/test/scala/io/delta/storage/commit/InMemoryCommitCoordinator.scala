@@ -121,7 +121,7 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
     }
     // Write new commit file in _commits directory
     val fileStatus = CoordinatedCommitsUtils.writeCommitFile(
-      logStore, hadoopConf, logPath.toString, commitVersion, actions, UUID.randomUUID.toString)
+      logStore, hadoopConf, logPath.toString, commitVersion, actions, generateUUID())
     // Do the actual commit
     val commitTimestamp = updatedActions.getCommitInfo.getCommitTimestamp
     val commitResponse = addToMap(logPath, commitVersion, fileStatus, commitTimestamp)
@@ -196,7 +196,7 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
     })
   }
 
-  override def semanticEquals(other: CommitCoordinatorClient): lang.Boolean = this == other
+  override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
 
   /** Backfills a given `fileStatus` to `version`.json */
   protected def backfill(
@@ -216,6 +216,8 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
         logger.info("The backfilled file " + targetFile + " already exists.")
     } finally commitContentIterator.close()
   }
+
+  protected def generateUUID(): String = UUID.randomUUID().toString
 
   private def addToMap(
     logPath: Path,

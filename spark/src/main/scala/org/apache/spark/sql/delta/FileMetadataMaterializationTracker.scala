@@ -22,8 +22,10 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.delta.FileMetadataMaterializationTracker.TaskLevelPermitAllocator
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.sql.SparkSession
 
 /**
  * An instance of this class tracks and controls the materialization usage of a single command
@@ -50,6 +52,21 @@ class FileMetadataMaterializationTracker extends LoggingShims {
   @volatile private var numOverAllocatedPermits: Int = 0
 
   private val materializationMetrics = new FileMetadataMaterializationMetrics()
+
+  /**
+   * @return The collected materialization metrics for this query.
+   */
+  def getMetrics(): FileMetadataMaterializationMetrics = {
+    materializationMetrics
+  }
+
+  /**
+   * Signals to execute the batch early in the event that we overallocated to
+   * materialize a task.
+   */
+  def executeBatchEarly(): Boolean = {
+    numOverAllocatedPermits > 0
+  }
 
   /**
    * A per task permit allocator which allows materializing a new task.
@@ -165,6 +182,69 @@ object FileMetadataMaterializationTracker extends DeltaLogging {
   private[sql] def initializeSemaphoreForTests(semaphore: Semaphore): Unit = {
     globalFileMaterializationLimit.set(semaphore.availablePermits())
     materializationSemaphore = semaphore
+  }
+
+  /**
+   * Initialize materialization semaphore if this is the first query running on the cluster that
+   * uses the file materialization tracker.
+   */
+  private def initializeMaterializationSemaphore(spark: SparkSession): Unit = {
+    if (globalFileMaterializationLimit.compareAndSet(-1, spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_LIMIT))) {
+      if (globalFileMaterializationLimit.get() > 0) {
+        materializationSemaphore = new Semaphore(globalFileMaterializationLimit.get)
+      }
+    }
+  }
+
+  def withTracker(
+      origTxn: OptimisticTransaction,
+      spark: SparkSession,
+      metricsOpType: String)(f: FileMetadataMaterializationTracker => Unit): Unit = {
+    initializeMaterializationSemaphore(spark)
+    val shouldTrack = spark.conf.get(
+      DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED)
+    val tracker = if (shouldTrack) {
+      new FileMetadataMaterializationTracker()
+    } else {
+      logInfo(log"File metadata materialization tracking is disabled for this query." +
+        log" Please set ${MDC(DeltaLogKeys.CONFIG,
+          DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED.key)} " +
+        log"to true to enable it.")
+      noopTracker
+    }
+    try {
+      f(tracker)
+      val trackerMetrics = tracker.getMetrics()
+      logInfo(log"File metadata materialization metrics for the completed query: " +
+        log"${MDC(DeltaLogKeys.METRICS, trackerMetrics)}")
+      recordDeltaEvent(
+        deltaLog = origTxn.deltaLog,
+        opType = metricsOpType,
+        data = trackerMetrics)
+    } finally { tracker.releaseAllPermits()  }
+  }
+
+  /**
+   * @return - return a version of the FileMetadataMaterializationTracker where every operation
+   *         is a noop
+   */
+  val noopTracker:
+      FileMetadataMaterializationTracker = new FileMetadataMaterializationTracker() {
+
+    override def releasePermits(numPermits: Int): Unit = { }
+
+    override def createTaskLevelPermitAllocator() = new TaskLevelPermitAllocator(this) {
+      override def acquirePermit(): Unit = { }
+    }
+
+    override def executeBatchEarly(): Boolean = false
+
+    override def releaseAllPermits(): Unit = { }
+
+    override def getMetrics(): FileMetadataMaterializationMetrics = {
+      new FileMetadataMaterializationMetrics()
+    }
   }
 
   /**

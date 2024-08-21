@@ -169,6 +169,32 @@ trait RowTrackingCompactionTests extends RowTrackingCompactionTestsBase {
       assert(!rowTrackingMarkedAsPreservedForCommit(log)(runCompaction(dir, applyFilter = false)))
     }
   }
+
+  test(s"$commandName preserves row tracking on backfill enabled tables") {
+    withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
+      withTempDir { dir =>
+        createTable(
+          dir,
+          rowTrackingEnabled = false,
+          partitioned = false,
+          withMaterializedRowTrackingColumns = false)
+
+        val log = DeltaLog.forTable(spark, dir)
+        val snapshot = log.update()
+        assert(!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata))
+
+        val numRows = spark.read.format("delta").load(dir.getAbsolutePath).count()
+        validateSuccessfulBackfillMetrics(expectedNumSuccessfulBatches = 1) {
+          triggerBackfillOnTestTableUsingAlterTable(
+            targetTableName = s"delta.`${dir.getAbsolutePath}`",
+            numRowsInTable = numRows.toInt + numSoftDeletedRows,
+            log)
+        }
+
+        checkCompactionRowTrackingPreservation(dir, applyFilter = false)
+      }
+    }
+  }
 }
 
 trait RowTrackingOptimizeTests extends RowTrackingCompactionTests {

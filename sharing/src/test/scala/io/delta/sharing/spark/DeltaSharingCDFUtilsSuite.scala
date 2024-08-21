@@ -83,7 +83,10 @@ class TestDeltaSharingClientForCDFUtils(
     maxFilesPerReq: Int = 100000,
     enableAsyncQuery: Boolean = false,
     asyncQueryPollIntervalMillis: Long = 10000L,
-    asyncQueryMaxDuration: Long = 600000L)
+    asyncQueryMaxDuration: Long = 600000L,
+    tokenExchangeMaxRetries: Int = 5,
+    tokenExchangeMaxRetryDurationInSeconds: Int = 60,
+    tokenRenewalThresholdInSeconds: Int = 600)
     extends DeltaSharingClient {
 
   import CDFTesTUtils._

@@ -15,80 +15,108 @@
  */
 package io.delta.kernel.internal.data;
 
-import java.util.*;
-import java.util.stream.IntStream;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.types.*;
-
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.VectorUtils;
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import io.delta.kernel.types.*;
+import java.util.*;
+import java.util.stream.IntStream;
 
 public class TransactionStateRow extends GenericRow {
-    private static final StructType SCHEMA = new StructType()
-            .add("logicalSchemaString", StringType.STRING)
-            .add("partitionColumns", new ArrayType(StringType.STRING, false))
-            .add("tablePath", StringType.STRING);
+  private static final StructType SCHEMA =
+      new StructType()
+          .add("logicalSchemaString", StringType.STRING)
+          .add("partitionColumns", new ArrayType(StringType.STRING, false /* containsNull */))
+          .add(
+              "configuration",
+              new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */))
+          .add("tablePath", StringType.STRING);
 
-    private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
-            IntStream.range(0, SCHEMA.length())
-                    .boxed()
-                    .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
+  private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
+      IntStream.range(0, SCHEMA.length())
+          .boxed()
+          .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
-    public static TransactionStateRow of(Metadata metadata, String tablePath) {
-        HashMap<Integer, Object> valueMap = new HashMap<>();
-        valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
-        valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
-        valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
-        return new TransactionStateRow(valueMap);
-    }
+  public static TransactionStateRow of(Metadata metadata, String tablePath) {
+    HashMap<Integer, Object> valueMap = new HashMap<>();
+    valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
+    valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
+    valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
+    valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
+    return new TransactionStateRow(valueMap);
+  }
 
-    private TransactionStateRow(HashMap<Integer, Object> valueMap) {
-        super(SCHEMA, valueMap);
-    }
+  private TransactionStateRow(HashMap<Integer, Object> valueMap) {
+    super(SCHEMA, valueMap);
+  }
 
-    /**
-     * Get the logical schema of the table from the transaction state {@link Row} returned by
-     * {@link Transaction#getTransactionState(Engine)}}
-     *
-     * @param engine           {@link Engine} instance to use for parsing the schema
-     * @param transactionState Transaction state state {@link Row}
-     * @return Logical schema of the table as {@link StructType}
-     */
-    public static StructType getLogicalSchema(Engine engine, Row transactionState) {
-        String serializedSchema = transactionState.getString(
-            COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
-        return wrapEngineException(
-            () -> engine.getJsonHandler().deserializeStructType(serializedSchema),
-            "Parsing the schema from the scan state. Schema JSON:\n%s",
-            serializedSchema
-        );
-    }
+  /**
+   * Get the logical schema of the table from the transaction state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}}
+   *
+   * @param engine {@link Engine} instance to use for parsing the schema
+   * @param transactionState Transaction state state {@link Row}
+   * @return Logical schema of the table as {@link StructType}
+   */
+  public static StructType getLogicalSchema(Engine engine, Row transactionState) {
+    String serializedSchema =
+        transactionState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
+    return wrapEngineException(
+        () -> engine.getJsonHandler().deserializeStructType(serializedSchema),
+        "Parsing the schema from the scan state. Schema JSON:\n%s",
+        serializedSchema);
+  }
 
-    /**
-     * Get the list of partition column names from the write state {@link Row} returned by
-     * {@link Transaction#getTransactionState(Engine)}
-     *
-     * @param transactionState Transaction state state {@link Row}
-     * @return List of partition column names according to the scan state.
-     */
-    public static List<String> getPartitionColumnsList(Row transactionState) {
-        return VectorUtils.toJavaList(
-                transactionState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns")));
-    }
+  /**
+   * Get the configuration from the transaction state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState
+   * @return Configuration as a map of key-value pairs.
+   */
+  public static Map<String, String> getConfiguration(Row transactionState) {
+    return VectorUtils.toJavaMap(transactionState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
+  }
 
-    /**
-     * Get the table path from scan state {@link Row} returned by
-     * {@link Transaction#getTransactionState(Engine)}
-     *
-     * @param transactionState Transaction state state {@link Row}
-     * @return Fully qualified path to the location of the table.
-     */
-    public static String getTablePath(Row transactionState) {
-        return transactionState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
-    }
+  /**
+   * Get the iceberg compatibility enabled or not from the transaction state {@link Row} returned by
+   * {@link Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return True if iceberg compatibility is enabled, false otherwise.
+   */
+  public static boolean isIcebergCompatV2Enabled(Row transactionState) {
+    return Boolean.parseBoolean(
+        getConfiguration(transactionState)
+            .getOrDefault(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey(), "false"));
+  }
+
+  /**
+   * Get the list of partition column names from the write state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return List of partition column names according to the scan state.
+   */
+  public static List<String> getPartitionColumnsList(Row transactionState) {
+    return VectorUtils.toJavaList(
+        transactionState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns")));
+  }
+
+  /**
+   * Get the table path from scan state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return Fully qualified path to the location of the table.
+   */
+  public static String getTablePath(Row transactionState) {
+    return transactionState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
+  }
 }

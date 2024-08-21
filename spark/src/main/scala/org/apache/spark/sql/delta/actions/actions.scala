@@ -23,12 +23,12 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import scala.annotation.tailrec
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
-import org.apache.spark.sql.delta.coordinatedcommits.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
@@ -38,6 +38,7 @@ import com.fasterxml.jackson.core.JsonGenerator
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
+import io.delta.storage.commit.actions.{AbstractCommitInfo, AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
@@ -182,9 +183,9 @@ case class Protocol private (
 
   override def getMinWriterVersion: Int = minWriterVersion
 
-  override def getReaderFeatures: Option[Set[String]] = readerFeatures
+  override def getReaderFeatures: java.util.Set[String] = readerFeatures.map(_.asJava).orNull
 
-  override def getWriterFeatures: Option[Set[String]] = writerFeatures
+  override def getWriterFeatures: java.util.Set[String] = writerFeatures.map(_.asJava).orNull
 }
 
 object Protocol {
@@ -1118,15 +1119,15 @@ case class Metadata(
   override def getProvider: String = format.provider
 
   @JsonIgnore
-  override def getFormatOptions: Map[String, String] = format.options
+  override def getFormatOptions: java.util.Map[String, String] = format.options.asJava
 
   override def getSchemaString: String = schemaString
 
-  override def getPartitionColumns: Seq[String] = partitionColumns
+  override def getPartitionColumns: java.util.List[String] = partitionColumns.asJava
 
-  override def getConfiguration: Map[String, String] = configuration
+  override def getConfiguration: java.util.Map[String, String] = configuration.asJava
 
-  override def getCreatedTime: Option[Long] = createdTime
+  override def getCreatedTime: java.lang.Long = createdTime.map(Long.box).orNull
 }
 
 /**
@@ -1422,13 +1423,13 @@ object SingleAction extends Logging {
     org.apache.spark.sql.delta.implicits.addFileEncoder
 
   lazy val nullLitForRemoveFile: Column =
-    new Column(Literal(null, ScalaReflection.schemaFor[RemoveFile].dataType))
+    Column(Literal(null, ScalaReflection.schemaFor[RemoveFile].dataType))
 
   lazy val nullLitForAddCDCFile: Column =
-    new Column(Literal(null, ScalaReflection.schemaFor[AddCDCFile].dataType))
+    Column(Literal(null, ScalaReflection.schemaFor[AddCDCFile].dataType))
 
   lazy val nullLitForMetadataAction: Column =
-    new Column(Literal(null, ScalaReflection.schemaFor[Metadata].dataType))
+    Column(Literal(null, ScalaReflection.schemaFor[Metadata].dataType))
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */

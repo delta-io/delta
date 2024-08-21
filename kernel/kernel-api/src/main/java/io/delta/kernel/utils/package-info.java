@@ -14,7 +14,5 @@
  * limitations under the License.
  */
 
-/**
- * Utilities.
- */
+/** Utilities. */
 package io.delta.kernel.utils;

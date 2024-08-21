@@ -320,18 +320,20 @@ class RowIdSuite extends QueryTest
   }
 
   test("ALTER TABLE cannot enable Row IDs on existing table") {
-    withRowTrackingEnabled(enabled = false) {
-      withTable("tbl") {
-        spark.range(10).write.format("delta").saveAsTable("tbl")
+    withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "false") {
+      withRowTrackingEnabled(enabled = false) {
+        withTable("tbl") {
+          spark.range(10).write.format("delta").saveAsTable("tbl")
 
-        val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
-        assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
+          val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
+          assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
 
-        val err = intercept[UnsupportedOperationException] {
-          sql(s"ALTER TABLE tbl " +
-            s"SET TBLPROPERTIES ('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = true)")
+          val err = intercept[UnsupportedOperationException] {
+            sql(s"ALTER TABLE tbl " +
+              s"SET TBLPROPERTIES ('${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = true)")
+          }
+          assert(err.getMessage === "Cannot enable Row IDs on an existing table.")
         }
-        assert(err.getMessage === "Cannot enable Row IDs on an existing table.")
       }
     }
   }

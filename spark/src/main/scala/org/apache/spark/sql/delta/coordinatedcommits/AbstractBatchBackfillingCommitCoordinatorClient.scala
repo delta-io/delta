@@ -19,13 +19,16 @@ package org.apache.spark.sql.delta.coordinatedcommits
 import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.TransactionExecutionObserver
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, CommitResponse, UpdatedActions}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -62,15 +65,14 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
+      coordinatedCommitsTableConf: java.util.Map[String, String],
       commitVersion: Long,
-      actions: Iterator[String],
+      actions: java.util.Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
     val executionObserver = TransactionExecutionObserver.getObserver
     val tablePath = CoordinatedCommitsUtils.getTablePath(logPath)
     if (commitVersion == 0) {
-      throw CommitFailedException(
-        retryable = false, conflict = false, message = "Commit version 0 must go via filesystem.")
+      throw new JCommitFailedException(false, false, "Commit version 0 must go via filesystem.")
     }
     logInfo(log"Attempting to commit version " +
       log"${MDC(DeltaLogKeys.VERSION, commitVersion)} on table " +
@@ -86,12 +88,13 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
         hadoopConf,
         logPath,
         coordinatedCommitsTableConf,
-        commitVersion - 1)
+        commitVersion - 1,
+        null)
     }
 
     // Write new commit file in _commits directory
     val fileStatus = CoordinatedCommitsUtils.writeCommitFile(
-      logStore, hadoopConf, logPath, commitVersion, actions, generateUUID())
+      logStore, hadoopConf, logPath, commitVersion, actions.asScala, generateUUID())
 
     // Do the actual commit
     val commitTimestamp = updatedActions.getCommitInfo.getCommitTimestamp
@@ -100,7 +103,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
         logStore,
         hadoopConf,
         logPath,
-        coordinatedCommitsTableConf,
+        coordinatedCommitsTableConf.asScala.toMap,
         commitVersion,
         fileStatus,
         commitTimestamp)
@@ -113,8 +116,8 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       backfill(logStore, hadoopConf, logPath, commitVersion, fileStatus)
       val targetFile = FileNames.unsafeDeltaFile(logPath, commitVersion)
       val targetFileStatus = fs.getFileStatus(targetFile)
-      val newCommit = commitResponse.getCommit.copy(fileStatus = targetFileStatus)
-      commitResponse = commitResponse.copy(commit = newCommit)
+      val newCommit = commitResponse.getCommit.withFileStatus(targetFileStatus)
+      commitResponse = new CommitResponse(newCommit)
     } else if (commitVersion % batchSize == 0 || mcToFsConversion) {
       logInfo(log"Making sure commits are backfilled till " +
         log"${MDC(DeltaLogKeys.VERSION, commitVersion)} " +
@@ -124,7 +127,8 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
         hadoopConf,
         logPath,
         coordinatedCommitsTableConf,
-        commitVersion)
+        commitVersion,
+        null)
     }
     logInfo(log"Commit ${MDC(DeltaLogKeys.VERSION, commitVersion)} done successfully on table " +
       log"${MDC(DeltaLogKeys.PATH, tablePath)}")
@@ -147,17 +151,18 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       logStore: LogStore,
       hadoopConf: Configuration,
       logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
+      coordinatedCommitsTableConf: java.util.Map[String, String],
       version: Long,
-      lastKnownBackfilledVersionOpt: Option[Long] = None): Unit = {
+      lastKnownBackfilledVersionOpt: java.lang.Long): Unit = {
     // Confirm the last backfilled version by checking the backfilled delta file's existence.
-    val validLastKnownBackfilledVersionOpt = lastKnownBackfilledVersionOpt.filter { version =>
+    val validLastKnownBackfilledVersionOpt = Option(lastKnownBackfilledVersionOpt)
+        .filter { version =>
       val fs = logPath.getFileSystem(hadoopConf)
       fs.exists(FileNames.unsafeDeltaFile(logPath, version))
     }
-    val startVersionOpt = validLastKnownBackfilledVersionOpt.map(_ + 1)
-    getCommits(logPath, coordinatedCommitsTableConf, startVersionOpt, Some(version))
-      .getCommits
+    val startVersionOpt: Long = validLastKnownBackfilledVersionOpt.map(_ + 1).map(Long.box).orNull
+    getCommits(logPath, coordinatedCommitsTableConf, startVersionOpt, version)
+      .getCommits.asScala
       .foreach { commit =>
         backfill(logStore, hadoopConf, logPath, commit.getVersion, commit.getFileStatus)
     }
@@ -173,12 +178,12 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
     val targetFile = FileNames.unsafeDeltaFile(logPath, version)
     logInfo(log"Backfilling commit ${MDC(DeltaLogKeys.PATH, fileStatus.getPath)} to " +
       log"${MDC(DeltaLogKeys.PATH2, targetFile.toString)}")
-    val commitContentIterator = logStore.readAsIterator(fileStatus, hadoopConf)
+    val commitContentIterator = logStore.read(fileStatus.getPath, hadoopConf)
     try {
       logStore.write(
         targetFile,
         commitContentIterator,
-        overwrite = false,
+        false,
         hadoopConf)
       registerBackfill(logPath, version)
     } catch {

@@ -539,6 +539,35 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
       validateRowCommitVersionsPostMerge()
     }
   }
+
+  test("MERGE preserves Row Tracking on tables enabled using backfill") {
+    withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
+      val SOURCE_TABLE_NAME_FOR_BACKFILL_TEST = "backfilled_source"
+      withTable(SOURCE_TABLE_NAME_FOR_BACKFILL_TEST) {
+        createSourceTable(SOURCE_TABLE_NAME_FOR_BACKFILL_TEST, lastModifiedVersion = 4L)
+
+        withRowTrackingEnabled(enabled = false) {
+          withTestTable(TARGET_TABLE_NAME, partitionedTarget = false, lastModifiedVersion = 2L) {
+            val (log, snapshot) =
+              DeltaLog.forTableWithSnapshot(spark, TableIdentifier(TARGET_TABLE_NAME))
+            assert(!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata))
+            validateSuccessfulBackfillMetrics(expectedNumSuccessfulBatches = 1) {
+              triggerBackfillOnTestTableUsingAlterTable(TARGET_TABLE_NAME, numRows, log)
+            }
+            val preMergeRowIdMapping = getPreMergeRowIdMapping
+
+            executeMerge(
+              TARGET_TABLE_NAME,
+              SOURCE_TABLE_NAME_FOR_BACKFILL_TEST,
+              clauses = update("*"), insert("*"))
+
+            validateRowIdsPostMerge(preMergeRowIdMapping)
+            validateRowCommitVersionsPostMerge()
+          }
+        }
+      }
+    }
+  }
 }
 
 trait RowTrackingMergeDVTests extends RowTrackingMergeSuiteBase

@@ -359,7 +359,7 @@ trait StatisticsCollection extends DeltaLogging {
       schema.flatMap {
         case f @ StructField(name, s: StructType, _, _) =>
           val column = parent.map(_.getItem(name))
-            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+            .getOrElse(Column(UnresolvedAttribute.quoted(name)))
           val stats = collectStats(s, Some(column), parentFields :+ name, function)
           if (stats.nonEmpty) {
             Some(struct(stats: _*) as DeltaColumnMapping.getPhysicalName(f))
@@ -369,7 +369,7 @@ trait StatisticsCollection extends DeltaLogging {
         case f @ StructField(name, _, _, _) =>
           val fieldPath = UnresolvedAttribute(parentFields :+ name).name
           val column = parent.map(_.getItem(name))
-            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+            .getOrElse(Column(UnresolvedAttribute.quoted(name)))
           // alias the column with its physical name
           // Note: explodedDataSchemaNames comes from dataSchema. In the read path, dataSchema comes
           // from the table's metadata.dataSchema, which is the same as tableSchema. In the
@@ -404,6 +404,11 @@ case class DeltaStatsColumnSpec(
 }
 
 object StatisticsCollection extends DeltaCommand {
+
+  val ASCII_MAX_CHARACTER = '\u007F'
+
+  val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
+
   /**
    * The SQL grammar already includes a `multipartIdentifierList` rule for parsing a string into a
    * list of multi-part identifiers. We just expose it here, with a custom parser and AstBuilder.
@@ -769,28 +774,69 @@ object StatisticsCollection extends DeltaCommand {
     txn.commit(newAddFiles, ComputeStats(predicates))
   }
 
-  /**
-   * Helper method to truncate the input string `x` to the given `prefixLen` length, while also
-   * appending the unicode max character to the end of the truncated string. This ensures that any
-   * value in this column is less than or equal to the max.
-   * Note: Input string `x` must be properly encoded in UTF-8.
-   */
-  def truncateMaxStringAgg(prefixLen: Int)(x: String): String = {
-    if (x == null || x.length <= prefixLen) {
-      x
+  def truncateMinStringAgg(prefixLen: Int)(input: String): String = {
+    if (input == null || input.length <= prefixLen) {
+      return input
+    }
+    if (prefixLen <= 0) {
+      return null
+    }
+    if (Character.isHighSurrogate(input.charAt(prefixLen - 1)) &&
+        Character.isLowSurrogate(input.charAt(prefixLen))) {
+      // If the character at prefixLen - 1 is a high surrogate and the next character is a low
+      // surrogate, we need to include the next character in the prefix to ensure that we don't
+      // truncate the string in the middle of a surrogate pair.
+      input.take(prefixLen + 1)
     } else {
-      // Grab the prefix. We want to append `\ufffd` as a tie-breaker, but that is only safe
-      // if the character we truncated was smaller. Keep extending the prefix until that
-      // condition holds, or we run off the end of the string.
-      // scalastyle:off nonascii
-      val tieBreaker = '\ufffd'
-      var ans = x.take(prefixLen) + x.substring(prefixLen).takeWhile(_ >= tieBreaker)
-      // Append a tie-breaker only if we truncated any characters from input string `x`.
-      if (ans.length < x.length) {
-        ans = ans + tieBreaker
-      }
-      ans
-      // scalastyle:off nonascii
+      input.take(prefixLen)
     }
   }
+
+  /**
+   * Helper method to truncate the input string `input` to the given `prefixLen` length, while also
+   * ensuring the any value in this column is less than or equal to the truncated max in UTF-8
+   * encoding.
+   */
+  def truncateMaxStringAgg(prefixLen: Int)(originalMax: String): String = {
+    // scalastyle:off nonascii
+    if (originalMax == null || originalMax.length <= prefixLen) {
+      return originalMax
+    }
+    if (prefixLen <= 0) {
+      return null
+    }
+
+    // Grab the prefix. We want to append max Unicode code point `\uDBFF\uDFFF` as a tie-breaker,
+    // but that is only safe if the character we truncated was smaller in UTF-8 encoded binary
+    // comparison. Keep extending the prefix until that condition holds, or we run off the end of
+    // the string.
+    // We also try to use the ASCII max character `\u007F` as a tie-breaker if possible.
+    val maxLen = getExpansionLimit(prefixLen)
+    // Start with a valid prefix
+    var currLen = truncateMinStringAgg(prefixLen)(originalMax).length
+    while (currLen <= maxLen) {
+      if (currLen >= originalMax.length) {
+        // Return originalMax if we have reached the end of the string
+        return originalMax
+      } else if (currLen + 1 < originalMax.length &&
+          originalMax.substring(currLen, currLen + 2) == UTF8_MAX_CHARACTER) {
+        // Skip the UTF-8 max character. It occupies two characters in a Scala string.
+        currLen += 2
+      } else if (originalMax.charAt(currLen) < ASCII_MAX_CHARACTER) {
+        return originalMax.take(currLen) + ASCII_MAX_CHARACTER
+      } else {
+        return originalMax.take(currLen) + UTF8_MAX_CHARACTER
+      }
+    }
+
+    // Return null when the input string is too long to truncate.
+    null
+    // scalastyle:on nonascii
+  }
+
+  /**
+   * Calculates the upper character limit when constructing a maximum is not possible with only
+   * prefixLen chars.
+   */
+  private def getExpansionLimit(prefixLen: Int): Int = 2 * prefixLen
 }

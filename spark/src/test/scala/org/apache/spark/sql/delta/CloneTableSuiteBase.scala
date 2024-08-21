@@ -27,11 +27,12 @@ import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTr
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
-import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TrackingCommitCoordinatorClient, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.FileNames.{checksumFile, unsafeDeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.storage.commit.CommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 import org.scalatest.Tag
@@ -952,10 +953,10 @@ trait CloneTableSuiteBase extends QueryTest
           isReplace = true,
           tableProperties = properties)
       }
-      assert(e1.getMessage.contains("During CLONE, either all coordinated commits " +
-        "configurations i.e.\"delta.coordinatedCommits.commitCoordinator-preview\", " +
-        "\"delta.coordinatedCommits.commitCoordinatorConf-preview\" must be overridden or none " +
-        "of them."))
+      assert(e1.getMessage.contains("During CREATE with CLONE, either both coordinated commits " +
+        "configurations (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta." +
+        "coordinatedCommits.commitCoordinatorConf-preview\") are set in the command or neither " +
+        "of them. Missing: \"delta.coordinatedCommits.commitCoordinatorConf-preview\"."))
 
       val e2 = intercept[IllegalArgumentException] {
         val properties = Map(
@@ -969,8 +970,8 @@ trait CloneTableSuiteBase extends QueryTest
           isReplace = true,
           tableProperties = properties)
       }
-      assert(e2.getMessage.contains("Configuration \"delta.coordinatedCommits.tableConf-preview\"" +
-        " cannot be overridden with CLONE command."))
+      assert(e2.getMessage.contains("During CREATE with CLONE, configuration \"delta." +
+        "coordinatedCommits.tableConf-preview\" cannot be set from the command."))
 
       val properties = Map(
         DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key ->

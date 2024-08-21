@@ -18,13 +18,17 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.Semaphore
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.concurrent.TimeLimits
 import org.scalatest.time.{Seconds, Span}
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.test.SharedSparkSession
 
-class FileMetadataMaterializationTrackerSuite extends SparkFunSuite with TimeLimits {
-
+class FileMetadataMaterializationTrackerSuite
+    extends SparkFunSuite
+    with TimeLimits
+    with SharedSparkSession {
   test("tracker - unit test") {
 
     def acquireForTask(tracker: FileMetadataMaterializationTracker, numPermits: Int): Unit = {
@@ -35,27 +39,29 @@ class FileMetadataMaterializationTrackerSuite extends SparkFunSuite with TimeLim
     }
 
     // Initialize the semaphore for tests
-    val semaphore = new Semaphore(10)
+    val totalAvailablePermits = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_LIMIT)
+    val semaphore = new Semaphore(totalAvailablePermits)
     FileMetadataMaterializationTracker.initializeSemaphoreForTests(semaphore)
     val tracker = new FileMetadataMaterializationTracker()
 
     // test that acquiring a permit should work and decrement the available permits.
     acquireForTask(tracker, 1)
-    assert(semaphore.availablePermits() === 9)
+    assert(semaphore.availablePermits() === totalAvailablePermits - 1)
 
     // releasing the permit should increment the semaphore's count
     tracker.releasePermits(1)
-    assert(semaphore.availablePermits() === 10)
+    assert(semaphore.availablePermits() === totalAvailablePermits)
 
     // test overallocation
-    acquireForTask(tracker, 11) // allowed to over allocate
+    acquireForTask(tracker, totalAvailablePermits + 1) // allowed to over allocate
     assert(semaphore.availablePermits() === 0)
     assert(semaphore.availablePermits() === 0)
-    tracker.releasePermits(11)
-    assert(semaphore.availablePermits() === 10) // make sure we don't overflow
+    tracker.releasePermits(totalAvailablePermits + 1)
+    assert(semaphore.availablePermits() === totalAvailablePermits) // make sure we don't overflow
 
     // test - wait for other task to release overallocation lock
-    acquireForTask(tracker, 11)
+    acquireForTask(tracker, totalAvailablePermits + 1)
 
     val acquireThread = new Thread() {
       override def run(): Unit = {
@@ -68,14 +74,14 @@ class FileMetadataMaterializationTrackerSuite extends SparkFunSuite with TimeLim
     acquireThread.start()
     Thread.sleep(2000) // Sleep for 2 seconds to make sure the acquireThread is blocked
     assert(acquireThread.isAlive) // acquire thread is actually blocked
-    tracker.releasePermits(11)
+    tracker.releasePermits(totalAvailablePermits + 1)
     failAfter(Span(2, Seconds)) {
       acquireThread.join() // acquire thread should get unblocked
     }
 
     // test releaseAllPermits
-    assert(semaphore.availablePermits() === 9)
+    assert(semaphore.availablePermits() === totalAvailablePermits - 1)
     tracker.releaseAllPermits()
-    assert(semaphore.availablePermits() === 10)
+    assert(semaphore.availablePermits() === totalAvailablePermits)
   }
 }

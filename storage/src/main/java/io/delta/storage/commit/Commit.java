@@ -18,6 +18,8 @@ package io.delta.storage.commit;
 
 import org.apache.hadoop.fs.FileStatus;
 
+import java.util.Objects;
+
 /**
  * Representation of a commit file
  */
@@ -53,5 +55,22 @@ public class Commit {
 
   public Commit withCommitTimestamp(long commitTimestamp) {
       return new Commit(version, fileStatus, commitTimestamp);
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj) return true;
+    if (obj == null || getClass() != obj.getClass()) return false;
+
+    Commit commit = (Commit) obj;
+
+    if (version != commit.version) return false;
+    if (commitTimestamp != commit.commitTimestamp) return false;
+    return Objects.equals(fileStatus, commit.fileStatus);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(version, fileStatus, commitTimestamp);
   }
 }

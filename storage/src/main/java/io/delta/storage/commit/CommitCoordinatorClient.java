@@ -111,7 +111,7 @@ public interface CommitCoordinatorClient {
    * coordinator. Note that returning latestTableVersion as -1 is acceptable only if the commit
    * coordinator never ratified any version, i.e. it never accepted any unbackfilled commit.
    *
-   * @param tablePath The path to the delta log of the table for which the unbackfilled
+   * @param logPath The path to the delta log of the table for which the unbackfilled
    *                  commits should be retrieved.
    * @param tableConf The table configuration that was returned by the commit coordinator
    *                  during registration.
@@ -121,7 +121,7 @@ public interface CommitCoordinatorClient {
    *         tracked by {@link CommitCoordinatorClient}.
    */
   GetCommitsResponse getCommits(
-    Path tablePath,
+    Path logPath,
     Map<String, String> tableConf,
     Long startVersion,
     Long endVersion);
@@ -162,5 +162,5 @@ public interface CommitCoordinatorClient {
    * CommitCoordinatorClient APIs, such as {@link #commit}, {@link #getCommits}, etc. For example,
    * both instances might be pointing to the same underlying endpoint.
    */
-  Boolean semanticEquals(CommitCoordinatorClient other);
+  boolean semanticEquals(CommitCoordinatorClient other);
 }

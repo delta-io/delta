@@ -29,6 +29,7 @@ import org.apache.spark.sql.types.{
   LongType,
   StringType,
   StructType,
+  TimestampNTZType,
   TimestampType
 }
 
@@ -158,6 +159,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               val sharedTableName = s"shared_table_simple_" +
                 s"${skippingEnabled}_${sharingConfig}_$deltaConfig"
               prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+              prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName, limitHint = Some(1))
               prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
               def test(tablePath: String, tableName: String): Unit = {
@@ -329,6 +331,7 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         // Test for delta format response
         val sharedDeltaTable = "shared_delta_table"
         prepareMockedClientAndFileSystemResult(deltaTableName, sharedDeltaTable)
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedDeltaTable, limitHint = Some(1))
         prepareMockedClientAndFileSystemResult(
           deltaTableName,
           sharedDeltaTable,
@@ -350,6 +353,11 @@ trait DeltaSharingDataSourceDeltaSuiteBase
         prepareMockedClientAndFileSystemResultForParquet(
           deltaTableName,
           sharedParquetTable
+        )
+        prepareMockedClientAndFileSystemResultForParquet(
+          deltaTableName,
+          sharedParquetTable,
+          limitHint = Some(1)
         )
         prepareMockedClientAndFileSystemResultForParquet(
           deltaTableName,
@@ -497,6 +505,55 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               s"share1.default.$sharedTableName"
             )
           }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read data with different filters") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_diff_filter"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "first"), (2, "first")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "second"), (2, "second")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "third"), (2, "third")""")
+
+        val sharedTableName = s"shared_table_filters_diff_filter"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName, limitHint = Some(2))
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+          "true"
+        )
+
+        // The files returned from delta sharing client are the same for these queries.
+        // This is to test the filters are passed correctly to TahoeLogFileIndex for the local delta
+        // log.
+        def testDiffFilter(tablePath: String, tableName: String): Unit = {
+          val df = spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+
+          // limit
+          assert(df.limit(2).count() == 2)
+          // full
+          val expectedFull = Seq(
+            Row(1, "first"), Row(1, "second"), Row(1, "third"),
+            Row(2, "first"), Row(2, "second"), Row(2, "third")
+          )
+          checkAnswer(df, expectedFull)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          testDiffFilter(
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName",
+            s"share1.default.$sharedTableName"
+          )
         }
       }
     }
@@ -1369,6 +1426,42 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             testReadInlineDV(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
             testReadInlineDVCdf(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
           }
+        }
+      }
+    }
+  }
+
+  test("DeltaSharingDataSource able to read timestampNTZ table") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_timestampNTZ"
+      withTable(deltaTableName) {
+        sql(s"CREATE TABLE $deltaTableName(c1 TIMESTAMP_NTZ) USING DELTA")
+        sql(s"""INSERT INTO $deltaTableName VALUES ('2022-01-02 03:04:05.123456')""")
+
+        val sharedTableName = "shared_table_timestampNTZ"
+        prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        def testReadTimestampNTZ(tablePath: String): Unit = {
+          val expectedSchema: StructType = new StructType()
+            .add("c1", TimestampNTZType)
+          assert(
+            expectedSchema == spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .load(tablePath)
+              .schema
+          )
+          val sharingDf =
+            spark.read.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
+          val deltaDf = spark.read.format("delta").table(deltaTableName)
+          checkAnswer(sharingDf, deltaDf)
+          assert(sharingDf.count() > 0)
+        }
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          testReadTimestampNTZ(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
         }
       }
     }
