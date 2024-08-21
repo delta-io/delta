@@ -198,7 +198,7 @@ public class CreateTableAndInsertData extends BaseTableWriter {
                             // partition value. Depending upon the parition column type, the
                             // partition value should be created. In this example, the partition
                             // column is of type StringType, so we are creating a string literal.
-                            Literal.ofString(city));
+                            Literal.ofString(city, "UTF8_BINARY"));
 
 
             // First transform the logical data to physical data that needs to be written
