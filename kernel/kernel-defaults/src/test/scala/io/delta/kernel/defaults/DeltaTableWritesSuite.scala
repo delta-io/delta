@@ -179,7 +179,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         Literal.ofString("a", "UTF8_LCASE")).asJava)
       val output = new DefaultExpressionEvaluator(schema,
         scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
-      println(output.getBoolean(0))
     }
   }
 
