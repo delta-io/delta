@@ -388,26 +388,26 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
   }
 
   test("restore - positive step") {
-    val tableName = getRandomTableName
-    withTable(tableName) {
-      generateTableWithIdentityColumn(tableName)
-      sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
-      sql(s"INSERT INTO $tableName (value) VALUES (6)")
+    val tblName = getRandomTableName
+    withTable(tblName) {
+      generateTableWithIdentityColumn(tblName)
+      sql(s"RESTORE TABLE $tblName TO VERSION AS OF 3")
+      sql(s"INSERT INTO $tblName (value) VALUES (6)")
       checkAnswer(
-        sql(s"SELECT id, value FROM $tableName ORDER BY value ASC"),
+        sql(s"SELECT id, value FROM $tblName ORDER BY value ASC"),
         Seq(Row(0, 0), Row(1, 1), Row(2, 2), Row(6, 6))
       )
     }
   }
 
   test("restore - negative step") {
-    val tableName = getRandomTableName
-    withTable(tableName) {
-      generateTableWithIdentityColumn(tableName, step = -1)
-      sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
-      sql(s"INSERT INTO $tableName (value) VALUES (6)")
+    val tblName = getRandomTableName
+    withTable(tblName) {
+      generateTableWithIdentityColumn(tblName, step = -1)
+      sql(s"RESTORE TABLE $tblName TO VERSION AS OF 3")
+      sql(s"INSERT INTO $tblName (value) VALUES (6)")
       checkAnswer(
-        sql(s"SELECT id, value FROM $tableName ORDER BY value ASC"),
+        sql(s"SELECT id, value FROM $tblName ORDER BY value ASC"),
         Seq(Row(0, 0), Row(-1, 1), Row(-2, 2), Row(-6, 6))
       )
     }
