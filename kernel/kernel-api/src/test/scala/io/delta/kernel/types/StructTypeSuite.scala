@@ -223,7 +223,9 @@ class StructTypeSuite extends AnyFunSuite {
         |  "type" : "struct",
         |  "fields" : [ {
         |  "name" : "b1",
-        |  "type" : {"type": "map","keyType": {"type": "array","elementType": {"type": "array","elementType": "string","containsNull": true},"containsNull": true},"valueType": {
+        |  "type" : {"type": "map","keyType": {"type": "array","elementType": """.stripMargin +
+      """{"type": "array","elementType": "string","containsNull": """ +
+      """true},"containsNull": true},"valueType": {
         |  "type" : "struct",
         |  "fields" : [ {
         |  "name" : "c1",
@@ -259,7 +261,8 @@ class StructTypeSuite extends AnyFunSuite {
         |},
         |{
         |  "name" : "a3",
-        |  "type" : {"type": "array","elementType": {"type": "map","keyType": "string","valueType": {
+        |  "type" : {"type": "array","elementType": """.stripMargin +
+      """{"type": "map","keyType": "string","valueType": {
         |  "type" : "struct",
         |  "fields" : [ {
         |  "name" : "b1",
