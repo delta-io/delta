@@ -25,6 +25,7 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class StringType extends BasePrimitiveType {
   public static final StringType STRING = new StringType("UTF8_BINARY");
+  public static final String DEFAULT_COLLATION = "UTF8_BINARY";
 
   public StringType(String collationName) {
     super("string");

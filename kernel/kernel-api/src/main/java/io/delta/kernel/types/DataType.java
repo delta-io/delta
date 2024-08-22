@@ -25,6 +25,9 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public abstract class DataType {
+
+  public static String COLLATIONS_METADATA_KEY = "__COLLATIONS";
+
   /**
    * Convert the data type to Delta protocol specified serialization format.
    *
