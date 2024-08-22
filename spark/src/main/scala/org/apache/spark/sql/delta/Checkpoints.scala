@@ -40,6 +40,7 @@ import org.apache.hadoop.mapreduce.{Job, TaskType}
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}

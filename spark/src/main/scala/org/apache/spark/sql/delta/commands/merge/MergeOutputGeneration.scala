@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._

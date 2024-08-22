@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.StateCache
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{DataFrame, _}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
