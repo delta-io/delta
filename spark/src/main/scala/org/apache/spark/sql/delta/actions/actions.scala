@@ -42,6 +42,7 @@ import io.delta.storage.commit.actions.{AbstractCommitInfo, AbstractMetadata, Ab
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.ColumnExtShim._
 import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
