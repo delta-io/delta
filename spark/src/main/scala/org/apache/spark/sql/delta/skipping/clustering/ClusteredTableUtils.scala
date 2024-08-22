@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DeltaStatistics, StatisticsCollection}
+import org.apache.spark.sql.delta.stats.{DeltaStatistics, SkippingEligibleDataType, StatisticsCollection}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -355,11 +355,26 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   private def validateClusteringColumnsInStatsSchema(
       statsCollection: StatisticsCollection,
       clusteringColumnInfos: Seq[ClusteringColumnInfo]): Unit = {
-    val missingColumn = getClusteringColumnsNotInStatsSchema(statsCollection, clusteringColumnInfos)
-    if (missingColumn.nonEmpty) {
-      // Convert back to logical names.
+    val missingColumns =
+      getClusteringColumnsNotInStatsSchema(statsCollection, clusteringColumnInfos)
+    if (missingColumns.nonEmpty) {
+      // Check DataType eligibility.
+      val missingColumnSet = missingColumns.toSet
+      val missingColumnInfos = clusteringColumnInfos.filter(
+        info => missingColumnSet.contains(info.logicalName))
+      // This assertion must hold since missingColumns are subset of clusteringColumnInfos.
+      assert(missingColumnInfos.length == missingColumns.length)
+      val nonSkippingEligibleMissingColumnInfos =
+        missingColumnInfos.filter(info => !SkippingEligibleDataType(info.dataType))
+      if (nonSkippingEligibleMissingColumnInfos.nonEmpty) {
+        val columnNameWithDataTypes = nonSkippingEligibleMissingColumnInfos
+          .map(info => s"${info.logicalName} : ${info.dataType.sql}")
+          .mkString(", ")
+        throw DeltaErrors.clusteringColumnUnsupportedDataTypes(columnNameWithDataTypes)
+      }
+
       throw DeltaErrors.clusteringColumnMissingStats(
-        missingColumn.mkString(", "),
+        missingColumnSet.mkString(", "),
         statsCollection.statCollectionLogicalSchema.treeString)
     }
   }
