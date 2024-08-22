@@ -34,7 +34,7 @@ from spark.connect import types_pb2 as spark_dot_connect_dot_types__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x1d\x64\x65lta/connect/relations.proto\x12\rdelta.connect\x1a\x18\x64\x65lta/connect/base.proto\x1a\x1fspark/connect/expressions.proto\x1a\x1dspark/connect/relations.proto\x1a\x19spark/connect/types.proto"\x90\x05\n\rDeltaRelation\x12)\n\x04scan\x18\x01 \x01(\x0b\x32\x13.delta.connect.ScanH\x00R\x04scan\x12K\n\x10\x64\x65scribe_history\x18\x02 \x01(\x0b\x32\x1e.delta.connect.DescribeHistoryH\x00R\x0f\x64\x65scribeHistory\x12H\n\x0f\x64\x65scribe_detail\x18\x03 \x01(\x0b\x32\x1d.delta.connect.DescribeDetailH\x00R\x0e\x64\x65scribeDetail\x12I\n\x10\x63onvert_to_delta\x18\x04 \x01(\x0b\x32\x1d.delta.connect.ConvertToDeltaH\x00R\x0e\x63onvertToDelta\x12\x42\n\rrestore_table\x18\x05 \x01(\x0b\x32\x1b.delta.connect.RestoreTableH\x00R\x0crestoreTable\x12\x43\n\x0eis_delta_table\x18\x06 \x01(\x0b\x32\x1b.delta.connect.IsDeltaTableH\x00R\x0cisDeltaTable\x12L\n\x11\x64\x65lete_from_table\x18\x07 \x01(\x0b\x32\x1e.delta.connect.DeleteFromTableH\x00R\x0f\x64\x65leteFromTable\x12?\n\x0cupdate_table\x18\x08 \x01(\x0b\x32\x1a.delta.connect.UpdateTableH\x00R\x0bupdateTable\x12I\n\x10merge_into_table\x18\t \x01(\x0b\x32\x1d.delta.connect.MergeIntoTableH\x00R\x0emergeIntoTableB\x0f\n\rrelation_type"7\n\x04Scan\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table"B\n\x0f\x44\x65scribeHistory\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table"A\n\x0e\x44\x65scribeDetail\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table"\xd1\x01\n\x0e\x43onvertToDelta\x12\x1e\n\nidentifier\x18\x01 \x01(\tR\nidentifier\x12\x38\n\x17partition_schema_string\x18\x02 \x01(\tH\x00R\x15partitionSchemaString\x12Q\n\x17partition_schema_struct\x18\x03 \x01(\x0b\x32\x17.spark.connect.DataTypeH\x00R\x15partitionSchemaStructB\x12\n\x10partition_schema"\x93\x01\n\x0cRestoreTable\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12\x1a\n\x07version\x18\x02 \x01(\x03H\x00R\x07version\x12\x1e\n\ttimestamp\x18\x03 \x01(\tH\x00R\ttimestampB\x16\n\x14version_or_timestamp""\n\x0cIsDeltaTable\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path"{\n\x0f\x44\x65leteFromTable\x12/\n\x06target\x18\x01 \x01(\x0b\x32\x17.spark.connect.RelationR\x06target\x12\x37\n\tcondition\x18\x02 \x01(\x0b\x32\x19.spark.connect.ExpressionR\tcondition"\xb4\x01\n\x0bUpdateTable\x12/\n\x06target\x18\x01 \x01(\x0b\x32\x17.spark.connect.RelationR\x06target\x12\x37\n\tcondition\x18\x02 \x01(\x0b\x32\x19.spark.connect.ExpressionR\tcondition\x12;\n\x0b\x61ssignments\x18\x03 \x03(\x0b\x32\x19.delta.connect.AssignmentR\x0b\x61ssignments"\x8c\n\n\x0eMergeIntoTable\x12/\n\x06target\x18\x01 \x01(\x0b\x32\x17.spark.connect.RelationR\x06target\x12/\n\x06source\x18\x02 \x01(\x0b\x32\x17.spark.connect.RelationR\x06source\x12\x37\n\tcondition\x18\x03 \x01(\x0b\x32\x19.spark.connect.ExpressionR\tcondition\x12M\n\x0fmatched_actions\x18\x04 \x03(\x0b\x32$.delta.connect.MergeIntoTable.ActionR\x0ematchedActions\x12T\n\x13not_matched_actions\x18\x05 \x03(\x0b\x32$.delta.connect.MergeIntoTable.ActionR\x11notMatchedActions\x12\x66\n\x1dnot_matched_by_source_actions\x18\x06 \x03(\x0b\x32$.delta.connect.MergeIntoTable.ActionR\x19notMatchedBySourceActions\x12\x37\n\x15with_schema_evolution\x18\x07 \x01(\x08H\x00R\x13withSchemaEvolution\x88\x01\x01\x1a\xfe\x05\n\x06\x41\x63tion\x12\x37\n\tcondition\x18\x01 \x01(\x0b\x32\x19.spark.connect.ExpressionR\tcondition\x12X\n\rdelete_action\x18\x02 \x01(\x0b\x32\x31.delta.connect.MergeIntoTable.Action.DeleteActionH\x00R\x0c\x64\x65leteAction\x12X\n\rupdate_action\x18\x03 \x01(\x0b\x32\x31.delta.connect.MergeIntoTable.Action.UpdateActionH\x00R\x0cupdateAction\x12\x65\n\x12update_star_action\x18\x04 \x01(\x0b\x32\x35.delta.connect.MergeIntoTable.Action.UpdateStarActionH\x00R\x10updateStarAction\x12X\n\rinsert_action\x18\x05 \x01(\x0b\x32\x31.delta.connect.MergeIntoTable.Action.InsertActionH\x00R\x0cinsertAction\x12\x65\n\x12insert_star_action\x18\x06 \x01(\x0b\x32\x35.delta.connect.MergeIntoTable.Action.InsertStarActionH\x00R\x10insertStarAction\x1a\x0e\n\x0c\x44\x65leteAction\x1aK\n\x0cUpdateAction\x12;\n\x0b\x61ssignments\x18\x01 \x03(\x0b\x32\x19.delta.connect.AssignmentR\x0b\x61ssignments\x1a\x12\n\x10UpdateStarAction\x1aK\n\x0cInsertAction\x12;\n\x0b\x61ssignments\x18\x01 \x03(\x0b\x32\x19.delta.connect.AssignmentR\x0b\x61ssignments\x1a\x12\n\x10InsertStarActionB\r\n\x0b\x61\x63tion_typeB\x18\n\x16_with_schema_evolution"n\n\nAssignment\x12/\n\x05\x66ield\x18\x01 \x01(\x0b\x32\x19.spark.connect.ExpressionR\x05\x66ield\x12/\n\x05value\x18\x02 \x01(\x0b\x32\x19.spark.connect.ExpressionR\x05valueB\x1a\n\x16io.delta.connect.protoP\x01\x62\x06proto3'
+    b'\n\x1d\x64\x65lta/connect/relations.proto\x12\rdelta.connect\x1a\x18\x64\x65lta/connect/base.proto\x1a\x1fspark/connect/expressions.proto\x1a\x1dspark/connect/relations.proto\x1a\x19spark/connect/types.proto"\xc5\x04\n\rDeltaRelation\x12)\n\x04scan\x18\x01 \x01(\x0b\x32\x13.delta.connect.ScanH\x00R\x04scan\x12K\n\x10\x64\x65scribe_history\x18\x02 \x01(\x0b\x32\x1e.delta.connect.DescribeHistoryH\x00R\x0f\x64\x65scribeHistory\x12H\n\x0f\x64\x65scribe_detail\x18\x03 \x01(\x0b\x32\x1d.delta.connect.DescribeDetailH\x00R\x0e\x64\x65scribeDetail\x12I\n\x10\x63onvert_to_delta\x18\x04 \x01(\x0b\x32\x1d.delta.connect.ConvertToDeltaH\x00R\x0e\x63onvertToDelta\x12\x42\n\rrestore_table\x18\x05 \x01(\x0b\x32\x1b.delta.connect.RestoreTableH\x00R\x0crestoreTable\x12\x43\n\x0eis_delta_table\x18\x06 \x01(\x0b\x32\x1b.delta.connect.IsDeltaTableH\x00R\x0cisDeltaTable\x12L\n\x11\x64\x65lete_from_table\x18\x07 \x01(\x0b\x32\x1e.delta.connect.DeleteFromTableH\x00R\x0f\x64\x65leteFromTable\x12?\n\x0cupdate_table\x18\x08 \x01(\x0b\x32\x1a.delta.connect.UpdateTableH\x00R\x0bupdateTableB\x0f\n\rrelation_type"7\n\x04Scan\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table"B\n\x0f\x44\x65scribeHistory\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table"A\n\x0e\x44\x65scribeDetail\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table"\xd1\x01\n\x0e\x43onvertToDelta\x12\x1e\n\nidentifier\x18\x01 \x01(\tR\nidentifier\x12\x38\n\x17partition_schema_string\x18\x02 \x01(\tH\x00R\x15partitionSchemaString\x12Q\n\x17partition_schema_struct\x18\x03 \x01(\x0b\x32\x17.spark.connect.DataTypeH\x00R\x15partitionSchemaStructB\x12\n\x10partition_schema"\x93\x01\n\x0cRestoreTable\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12\x1a\n\x07version\x18\x02 \x01(\x03H\x00R\x07version\x12\x1e\n\ttimestamp\x18\x03 \x01(\tH\x00R\ttimestampB\x16\n\x14version_or_timestamp""\n\x0cIsDeltaTable\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path"{\n\x0f\x44\x65leteFromTable\x12/\n\x06target\x18\x01 \x01(\x0b\x32\x17.spark.connect.RelationR\x06target\x12\x37\n\tcondition\x18\x02 \x01(\x0b\x32\x19.spark.connect.ExpressionR\tcondition"\xb4\x01\n\x0bUpdateTable\x12/\n\x06target\x18\x01 \x01(\x0b\x32\x17.spark.connect.RelationR\x06target\x12\x37\n\tcondition\x18\x02 \x01(\x0b\x32\x19.spark.connect.ExpressionR\tcondition\x12;\n\x0b\x61ssignments\x18\x03 \x03(\x0b\x32\x19.delta.connect.AssignmentR\x0b\x61ssignments"n\n\nAssignment\x12/\n\x05\x66ield\x18\x01 \x01(\x0b\x32\x19.spark.connect.ExpressionR\x05\x66ield\x12/\n\x05value\x18\x02 \x01(\x0b\x32\x19.spark.connect.ExpressionR\x05valueB\x1a\n\x16io.delta.connect.protoP\x01\x62\x06proto3'
 )
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
@@ -43,37 +43,23 @@ if _descriptor._USE_C_DESCRIPTORS == False:
     DESCRIPTOR._options = None
     DESCRIPTOR._serialized_options = b"\n\026io.delta.connect.protoP\001"
     _DELTARELATION._serialized_start = 166
-    _DELTARELATION._serialized_end = 822
-    _SCAN._serialized_start = 824
-    _SCAN._serialized_end = 879
-    _DESCRIBEHISTORY._serialized_start = 881
-    _DESCRIBEHISTORY._serialized_end = 947
-    _DESCRIBEDETAIL._serialized_start = 949
-    _DESCRIBEDETAIL._serialized_end = 1014
-    _CONVERTTODELTA._serialized_start = 1017
-    _CONVERTTODELTA._serialized_end = 1226
-    _RESTORETABLE._serialized_start = 1229
-    _RESTORETABLE._serialized_end = 1376
-    _ISDELTATABLE._serialized_start = 1378
-    _ISDELTATABLE._serialized_end = 1412
-    _DELETEFROMTABLE._serialized_start = 1414
-    _DELETEFROMTABLE._serialized_end = 1537
-    _UPDATETABLE._serialized_start = 1540
-    _UPDATETABLE._serialized_end = 1720
-    _MERGEINTOTABLE._serialized_start = 1723
-    _MERGEINTOTABLE._serialized_end = 3015
-    _MERGEINTOTABLE_ACTION._serialized_start = 2223
-    _MERGEINTOTABLE_ACTION._serialized_end = 2989
-    _MERGEINTOTABLE_ACTION_DELETEACTION._serialized_start = 2766
-    _MERGEINTOTABLE_ACTION_DELETEACTION._serialized_end = 2780
-    _MERGEINTOTABLE_ACTION_UPDATEACTION._serialized_start = 2782
-    _MERGEINTOTABLE_ACTION_UPDATEACTION._serialized_end = 2857
-    _MERGEINTOTABLE_ACTION_UPDATESTARACTION._serialized_start = 2859
-    _MERGEINTOTABLE_ACTION_UPDATESTARACTION._serialized_end = 2877
-    _MERGEINTOTABLE_ACTION_INSERTACTION._serialized_start = 2879
-    _MERGEINTOTABLE_ACTION_INSERTACTION._serialized_end = 2954
-    _MERGEINTOTABLE_ACTION_INSERTSTARACTION._serialized_start = 2956
-    _MERGEINTOTABLE_ACTION_INSERTSTARACTION._serialized_end = 2974
-    _ASSIGNMENT._serialized_start = 3017
-    _ASSIGNMENT._serialized_end = 3127
+    _DELTARELATION._serialized_end = 747
+    _SCAN._serialized_start = 749
+    _SCAN._serialized_end = 804
+    _DESCRIBEHISTORY._serialized_start = 806
+    _DESCRIBEHISTORY._serialized_end = 872
+    _DESCRIBEDETAIL._serialized_start = 874
+    _DESCRIBEDETAIL._serialized_end = 939
+    _CONVERTTODELTA._serialized_start = 942
+    _CONVERTTODELTA._serialized_end = 1151
+    _RESTORETABLE._serialized_start = 1154
+    _RESTORETABLE._serialized_end = 1301
+    _ISDELTATABLE._serialized_start = 1303
+    _ISDELTATABLE._serialized_end = 1337
+    _DELETEFROMTABLE._serialized_start = 1339
+    _DELETEFROMTABLE._serialized_end = 1462
+    _UPDATETABLE._serialized_start = 1465
+    _UPDATETABLE._serialized_end = 1645
+    _ASSIGNMENT._serialized_start = 1647
+    _ASSIGNMENT._serialized_end = 1757
 # @@protoc_insertion_point(module_scope)
