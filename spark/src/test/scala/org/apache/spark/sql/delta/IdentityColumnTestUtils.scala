@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.UUID
+
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.{GeneratedAlways, GeneratedAsIdentityType}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
@@ -30,6 +32,9 @@ trait IdentityColumnTestUtils
     super.sparkConf
       .set(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key, "true")
   }
+
+  protected def getRandomTableName: String =
+    s"identity_test_${UUID.randomUUID()}".replaceAll("-", "_")
 
   protected val unsupportedDataTypes: Seq[DataType] = Seq(
     BooleanType,
