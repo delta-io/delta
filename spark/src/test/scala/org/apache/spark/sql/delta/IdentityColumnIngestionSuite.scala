@@ -32,8 +32,6 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
 
   import testImplicits._
 
-  private val tblName = "identity_test"
-  private val tempTblName = "identity_test_temp"
   private val tempCsvFileName = "test.csv"
 
   /** Helper function to write a single 'value' column into `sourcePath`. */
@@ -93,6 +91,7 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
       batchSize: Int,
       mode: IngestMode.Value): Unit = {
     var highWaterMark = start - step
+    val tblName = getRandomTableName
     withTable(tblName) {
       createTableWithIdColAndIntValueCol(
         tblName, GeneratedAlways, startsWith = Some(start), incrementBy = Some(step))
@@ -105,6 +104,7 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
         val df = (batchStart to batchEnd).toDF("value")
         // Used by insertInto, insertIntoSelect, insertOverwrite, insertOverwriteSelect
         val insertValues = (batchStart to batchEnd).map(v => s"($v)").mkString(",")
+        val tempTblName = s"${getRandomTableName}_temp"
 
         mode match {
           case IngestMode.appendV1 =>
@@ -258,6 +258,7 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
   }
 
   test("explicit insert should not update high water mark") {
+    val tblName = getRandomTableName
     withIdentityColumnTable(GeneratedByDefault, tblName) {
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
       val schema1 = deltaLog.snapshot.metadata.schemaString
