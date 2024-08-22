@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import com.etsy.sbt.checkstyle.CheckstylePlugin.autoImport._
-import org.scalastyle.sbt.ScalastylePlugin.autoImport._
-import sbt._
-import sbt.Keys._
+import com.etsy.sbt.checkstyle.CheckstylePlugin.autoImport.*
+import com.lightbend.sbt.JavaFormatterPlugin.autoImport.javafmtCheckAll
+import org.scalastyle.sbt.ScalastylePlugin.autoImport.*
+import sbt.*
+import sbt.Keys.*
 
 object Checkstyle {
 
@@ -100,4 +101,8 @@ object Checkstyle {
     }
   }
 
+  // Enforce java code style
+  lazy val javafmtCheckSettings = Seq(
+    (Compile / compile) := ((Compile / compile) dependsOn (Compile / javafmtCheckAll)).value
+  )
 }

@@ -157,11 +157,6 @@ lazy val commonSettings = Seq(
   unidocSourceFilePatterns := Nil,
 )
 
-// enforce java code style
-def javafmtCheckSettings() = Seq(
-  (Compile / compile) := ((Compile / compile) dependsOn (Compile / javafmtCheckAll)).value
-)
-
 /**
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
  *       setting macro.
