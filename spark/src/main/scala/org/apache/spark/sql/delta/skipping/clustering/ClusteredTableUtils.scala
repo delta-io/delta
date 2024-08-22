@@ -359,9 +359,8 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
       getClusteringColumnsNotInStatsSchema(statsCollection, clusteringColumnInfos)
     if (missingColumns.nonEmpty) {
       // Check DataType eligibility.
-      val missingColumnSet = missingColumns.toSet
       val missingColumnInfos = clusteringColumnInfos.filter(
-        info => missingColumnSet.contains(info.logicalName))
+        info => missingColumns.contains(info.logicalName))
       // This assertion must hold since missingColumns are subset of clusteringColumnInfos.
       assert(missingColumnInfos.length == missingColumns.length)
       val nonSkippingEligibleMissingColumnInfos =
@@ -374,7 +373,7 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
       }
 
       throw DeltaErrors.clusteringColumnMissingStats(
-        missingColumnSet.mkString(", "),
+        missingColumns.mkString(", "),
         statsCollection.statCollectionLogicalSchema.treeString)
     }
   }
