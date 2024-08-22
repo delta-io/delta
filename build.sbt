@@ -52,13 +52,14 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.2"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
+sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -154,6 +155,11 @@ lazy val commonSettings = Seq(
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
+)
+
+// enforce java code style
+def javafmtCheckSettings() = Seq(
+  (Compile / compile) := ((Compile / compile) dependsOn (Compile / javafmtCheckAll)).value
 )
 
 /**
@@ -534,21 +540,22 @@ lazy val sharing = (project in file("sharing"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    crossSparkSettings(),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.1.0",
+      "io.delta" %% "delta-sharing-client" % "1.2.0",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
     )
   ).configureUnidoc()
 
@@ -558,6 +565,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    javafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
@@ -614,6 +622,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    javafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
@@ -775,22 +784,17 @@ lazy val iceberg = (project in file("iceberg"))
         // - delta-storage will bring in classes: io/delta/storage
         // - delta-spark will bring in classes: io/delta/exceptions/, io/delta/implicits,
         //   io/delta/package, io/delta/sql, io/delta/tables,
-        println(s"Discarding class: io/delta/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("com", "databricks", xs @ _*) =>
         // delta-spark will bring in com/databricks/spark/util
-        println(s"Discarding class: com/databricks/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("org", "apache", "spark", xs @ _*)
         if !deltaIcebergSparkIncludePrefixes.exists { prefix =>
           s"org/apache/spark/${xs.mkString("/")}".startsWith(prefix) } =>
-        println(s"Discarding class: org/apache/spark/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("scoverage", xs @ _*) =>
-        println(s"Discarding class: scoverage/${xs.mkString("/")}")
         MergeStrategy.discard
       case x =>
-        println(s"Including class: $x")
         (assembly / assemblyMergeStrategy).value(x)
     },
     assemblyPackageScala / assembleArtifact := false

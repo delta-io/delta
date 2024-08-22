@@ -16,36 +16,27 @@
 
 package io.delta.kernel.engine.coordinatedcommits.actions;
 
+import io.delta.kernel.annotation.Evolving;
 import java.util.Set;
 
-import io.delta.kernel.annotation.Evolving;
-
 /**
- * Interface for protocol actions in Delta. The protocol defines the requirements
- * that readers and writers of the table need to meet.
+ * Interface for protocol actions in Delta. The protocol defines the requirements that readers and
+ * writers of the table need to meet.
  *
  * @since 3.3.0
  */
 @Evolving
 public interface AbstractProtocol {
 
-    /**
-     * The minimum reader version required to read the table.
-     */
-    int getMinReaderVersion();
+  /** The minimum reader version required to read the table. */
+  int getMinReaderVersion();
 
-    /**
-     * The minimum writer version required to read the table.
-     */
-    int getMinWriterVersion();
+  /** The minimum writer version required to read the table. */
+  int getMinWriterVersion();
 
-    /**
-     * The reader features that need to be supported to read the table.
-     */
-    Set<String> getReaderFeatures();
+  /** The reader features that need to be supported to read the table. */
+  Set<String> getReaderFeatures();
 
-    /**
-     * The writer features that need to be supported to write the table.
-     */
-    Set<String> getWriterFeatures();
+  /** The writer features that need to be supported to write the table. */
+  Set<String> getWriterFeatures();
 }

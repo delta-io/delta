@@ -807,20 +807,13 @@ class DeltaAnalysis(session: SparkSession)
           case Some(existingCatalog) => existingCatalog.identifier
           case None => TableIdentifier(path.toString, Some("delta"))
         }
-        // Reuse the existing schema so that the physical name of columns are consistent
-        val cloneSourceTable = sourceTbl match {
-          case source: CloneIcebergSource =>
-            // Reuse the existing schema so that the physical name of columns are consistent
-            source.copy(tableSchema = Some(deltaTableV2.initialSnapshot.metadata.schema))
-          case other => other
-        }
         val catalogTable = createCatalogTableForCloneCommand(
           path,
           byPath = existingTable.isEmpty,
           tblIdent,
           targetLocation,
           sourceCatalogTable,
-          cloneSourceTable,
+          sourceTbl,
           statement.tablePropertyOverrides)
 
         CreateDeltaTableCommand(
@@ -828,7 +821,7 @@ class DeltaAnalysis(session: SparkSession)
           existingTable,
           saveMode,
           Some(CloneTableCommand(
-            cloneSourceTable,
+            sourceTbl,
             tblIdent,
             statement.tablePropertyOverrides,
             path)),
@@ -1218,7 +1211,15 @@ object DeltaRelation extends DeltaLogging {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       val output = if (CDCReader.isCDCRead(options)) {
         // Handles cdc for the spark.read.options().table() code path
-        toAttributes(relation.schema)
+        // Mapping needed for references to the table's columns coming from Spark Connect.
+        val newOutput = toAttributes(relation.schema)
+        newOutput.map { a =>
+          val existingReference = v2Relation.output
+            .find(e => e.name == a.name && e.dataType == a.dataType && e.nullable == a.nullable)
+          existingReference.map { e =>
+            e.copy(metadata = a.metadata)(exprId = e.exprId, qualifier = e.qualifier)
+          }.getOrElse(a)
+        }
       } else {
         v2Relation.output
       }

@@ -23,12 +23,13 @@ import os
 from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
+from pyspark.errors.exceptions.base import UnsupportedOperationException
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.functions import col, lit, expr, floor
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, DataType
 from pyspark.sql.utils import AnalysisException, ParseException
 
-from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder
+from delta.tables import DeltaTable, DeltaTableBuilder, DeltaOptimizeBuilder, IdentityGenerator
 from delta.testing.utils import DeltaTestCase
 
 
@@ -530,6 +531,41 @@ class DeltaTableTestsMixin:
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
 
+    def test_cdc(self):
+        self.spark.range(0, 5).write.format("delta").save(self.tempFile)
+        deltaTable = DeltaTable.forPath(self.spark, self.tempFile)
+        # Enable Change Data Feed
+        self.spark.sql(
+            "ALTER TABLE delta.`{}` SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+            .format(self.tempFile))
+
+        # Perform some operations
+        deltaTable.update("id = 1", {"id": "10"})
+        deltaTable.delete("id = 2")
+        self.spark.range(5, 10).write.format("delta").mode("append").save(self.tempFile)
+
+        # Check the Change Data Feed
+        expected = [
+            (1, "update_preimage"),
+            (10, "update_postimage"),
+            (2, "delete"),
+            (5, "insert"),
+            (6, "insert"),
+            (7, "insert"),
+            (8, "insert"),
+            (9, "insert")
+        ]
+        # Read Change Data Feed
+        # (Test handling of the option as boolean and string and with different cases)
+        for option in [True, "true", "tRuE"]:
+            cdf = self.spark.read.format("delta") \
+                .option("readChangeData", option) \
+                .option("startingVersion", "1") \
+                .load(self.tempFile)
+
+            result = [(row.id, row._change_type) for row in cdf.collect()]
+            self.assertEqual(sorted(result), sorted(expected))
+
     def test_detail(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)
@@ -637,6 +673,16 @@ class DeltaTableTestsMixin:
         self.spark.sql(cmd)
         deltaTable.update(expr("col2 = 11"), {"col1": expr("2")})
         self.__checkAnswer(deltaTable.toDF(), [(2, 12)], schema=["col1", "col2"])
+
+    def __verify_identity_column(self, tableName: str, deltaTable: DeltaTable) -> None:
+        for i in range(2):
+            cmd = "INSERT INTO {table} (val) VALUES ({i})".format(table=tableName, i=i)
+            self.spark.sql(cmd)
+        cmd = "INSERT INTO {table} (id3, val) VALUES (8, 2)".format(table=tableName)
+        self.spark.sql(cmd)
+        self.__checkAnswer(deltaTable.toDF(),
+                           expectedAnswer=[(1, 2, 2, 0), (2, 3, 4, 1), (3, 4, 8, 2)],
+                           schema=["id1", "id2", "id3", "val"])
 
     def __build_delta_table(self, builder: DeltaTableBuilder) -> DeltaTable:
         return builder.addColumn("col1", "int", comment="foo", nullable=False) \
@@ -941,6 +987,41 @@ class DeltaTableTestsMixin:
                                        partitioningColumns=["col1"],
                                        tblComment="comment")
 
+    def test_create_table_with_identity_column(self) -> None:
+        for ifNotExists in (False, True):
+            tableName = "testTable{}".format(ifNotExists)
+            with self.table(tableName):
+                try:
+                    self.spark.conf.set("spark.databricks.delta.identityColumn.enabled", "true")
+                    builder = (
+                        DeltaTable.createIfNotExists(self.spark)
+                        if ifNotExists
+                        else DeltaTable.create(self.spark))
+                    builder = builder.tableName(tableName)
+                    builder = (
+                        builder.addColumn(
+                            "id1", LongType(), generatedAlwaysAs=IdentityGenerator())
+                        .addColumn(
+                            "id2",
+                            "BIGINT",
+                            generatedAlwaysAs=IdentityGenerator(start=2))
+                        .addColumn(
+                            "id3",
+                            "bigint",
+                            generatedByDefaultAs=IdentityGenerator(start=2, step=2))
+                        .addColumn("val", "bigint", nullable=False))
+
+                    deltaTable = builder.execute()
+                    self.__verify_table_schema(
+                        tableName,
+                        deltaTable.toDF().schema,
+                        ["id1", "id2", "id3", "val"],
+                        [LongType(), LongType(), LongType(), LongType()],
+                        nullables={"id1", "id2", "id3"})
+                    self.__verify_identity_column(tableName, deltaTable)
+                finally:
+                    self.spark.conf.unset("spark.databricks.delta.identityColumn.enabled")
+
     def test_delta_table_builder_with_bad_args(self) -> None:
         builder = DeltaTable.create(self.spark).location(self.tempFile)
 
@@ -964,10 +1045,13 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.addColumn("a", 1)  # type: ignore[arg-type]
 
-        # bad column datatype - can't be pared
+        # bad column datatype - can't be parsed
         with self.assertRaises(ParseException):
             builder.addColumn("a", "1")
             builder.execute()
+
+        # reset the builder
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
 
         # bad comment
         with self.assertRaises(TypeError):
@@ -976,6 +1060,55 @@ class DeltaTableTestsMixin:
         # bad generatedAlwaysAs
         with self.assertRaises(TypeError):
             builder.addColumn("a", "int", generatedAlwaysAs=1)  # type: ignore[arg-type]
+
+        # bad generatedAlwaysAs - identity column data type must be Long
+        with self.assertRaises(UnsupportedOperationException):
+            builder.addColumn(
+                "a",
+                "int",
+                generatedAlwaysAs=IdentityGenerator()
+            )  # type: ignore[arg-type]
+
+        # bad generatedAlwaysAs - step can't be 0
+        with self.assertRaises(ValueError):
+            builder.addColumn(
+                "a",
+                "bigint",
+                generatedAlwaysAs=IdentityGenerator(step=0)
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - can't be set with generatedAlwaysAs
+        with self.assertRaises(ValueError):
+            builder.addColumn(
+                "a",
+                "bigint",
+                generatedAlwaysAs="",
+                generatedByDefaultAs=IdentityGenerator()
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - argument type must be IdentityGenerator
+        with self.assertRaises(TypeError):
+            builder.addColumn(
+                "a",
+                "bigint",
+                generatedByDefaultAs=""
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - identity column data type must be Long
+        with self.assertRaises(UnsupportedOperationException):
+            builder.addColumn(
+                "a",
+                "int",
+                generatedByDefaultAs=IdentityGenerator()
+            )  # type: ignore[arg-type]
+
+        # bad generatedByDefaultAs - step can't be 0
+        with self.assertRaises(ValueError):
+            builder.addColumn(
+                "a",
+                "bigint",
+                generatedByDefaultAs=IdentityGenerator(step=0)
+            )  # type: ignore[arg-type]
 
         # bad nullable
         with self.assertRaises(TypeError):

@@ -935,7 +935,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("Whether Row Tracking backfill can be performed.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
     buildConf("rowTracking.backfill.maxNumBatchesInParallel")
@@ -2025,6 +2025,18 @@ trait DeltaSQLConfBase {
       .doc("If true, post-commit hooks will by default throw an exception when they fail.")
       .booleanConf
       .createWithDefault(Utils.isTesting)
+
+  ///////////
+  // UTC TIMESTAMP PARTITION VALUES
+  ///////////////////
+  val UTC_TIMESTAMP_PARTITION_VALUES = buildConf("write.utcTimestampPartitionValues")
+    .internal()
+    .doc(
+      """
+        | If true, write UTC normalized timestamp partition values to Delta Log.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

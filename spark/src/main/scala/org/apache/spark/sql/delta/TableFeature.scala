@@ -803,7 +803,7 @@ object TypeWideningTableFeature
  * every writer write a monotonically increasing timestamp inside the commit file.
  */
 object InCommitTimestampTableFeature
-  extends WriterFeature(name = "inCommitTimestamp-preview")
+  extends WriterFeature(name = "inCommitTimestamp")
   with FeatureAutomaticallyEnabledByMetadata
   with RemovableFeature {
 

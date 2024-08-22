@@ -24,8 +24,8 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class InvalidConfigurationValueException extends KernelException {
-    public InvalidConfigurationValueException(String key, String value, String helpMessage) {
-        super(String.format(
-                "Invalid value for table property '%s': '%s'. %s", key, value, helpMessage));
-    }
+  public InvalidConfigurationValueException(String key, String value, String helpMessage) {
+    super(
+        String.format("Invalid value for table property '%s': '%s'. %s", key, value, helpMessage));
+  }
 }

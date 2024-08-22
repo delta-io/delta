@@ -66,6 +66,9 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
     }
 
     val targetColNameParts = update.updateColumns.map(DeltaUpdateTable.getTargetColNameParts(_))
+
+    IdentityColumn.blockIdentityColumnUpdate(index.snapshotAtAnalysis.schema, targetColNameParts)
+
     val alignedUpdateExprs = generateUpdateExpressions(
       targetSchema = update.child.schema,
       defaultExprs = update.child.output,

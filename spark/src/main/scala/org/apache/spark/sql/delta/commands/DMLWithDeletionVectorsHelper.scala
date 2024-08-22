@@ -338,7 +338,7 @@ object DeletionVectorBitmapGenerator {
     /** Create a bitmap set aggregator over the given column */
     private def createBitmapSetAggregator(indexColumn: Column): Column = {
       val func = new BitmapAggregator(indexColumn.expr, RoaringBitmapArrayFormat.Portable)
-      new Column(func.toAggregateExpression(isDistinct = false))
+      Column(func.toAggregateExpression(isDistinct = false))
     }
 
     protected def outputColumns: Seq[Column] =

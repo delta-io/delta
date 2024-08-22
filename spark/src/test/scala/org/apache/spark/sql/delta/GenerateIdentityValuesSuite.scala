@@ -44,7 +44,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
     checkAnswer(df.select(count(col(colName))), Row(rowCount))
 
     // Check there is no duplicate.
-    checkAnswer(df.select(count_distinct(new Column(colName))), Row(rowCount))
+    checkAnswer(df.select(count_distinct(Column(colName))), Row(rowCount))
 
     // Check every value follows start and step configuration
     val condViolateConfig = s"($colName - ${identityInfo.start}) % ${identityInfo.step} != 0"
@@ -57,7 +57,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
 
     // When high watermark is empty, the first value should be start.
     if (identityInfo.highWaterMark.isEmpty) {
-      val agg = if (identityInfo.step > 0) min(new Column(colName)) else max(new Column(colName))
+      val agg = if (identityInfo.step > 0) min(Column(colName)) else max(Column(colName))
       checkAnswer(df.select(agg), Row(identityInfo.start))
     }
   }
@@ -72,7 +72,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
       val df = spark.range(1, size + 1, 1, slice).toDF(colName)
       highWaterMarks.foreach { highWaterMark =>
         verifyIdentityValues(
-          df.select(new Column(GenerateIdentityValues(start, step, highWaterMark)).alias(colName)),
+          df.select(Column(GenerateIdentityValues(start, step, highWaterMark)).alias(colName)),
           IdentityInfo(start, step, highWaterMark),
           size
         )
@@ -93,7 +93,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
       val gev = GenerateIdentityValues(start, step, highWaterMark)
       val gev2 = gev.copy()
       verifyIdentityValues(
-        df.select(new Column(
+        df.select(Column(
             If(GreaterThan(col(colName).expr, right = Literal(10)), gev, gev2)).alias(colName)),
         IdentityInfo(start, step, highWaterMark),
         size
@@ -110,7 +110,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
     val df = spark.range(1, size + 1, 1, slice).toDF(colName)
     verifyIdentityValues(
       df.select(
-        new Column(GenerateIdentityValues(start, step, Some(highWaterMark))).alias(colName)),
+        Column(GenerateIdentityValues(start, step, Some(highWaterMark))).alias(colName)),
       IdentityInfo(start, step, Some(highWaterMark)),
       size
     )
@@ -119,7 +119,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
   test("overflow initial value") {
     val events = Log4jUsageLogger.track {
       val df = spark.range(1, 10, 1, 5).toDF(colName)
-        .select(new Column(GenerateIdentityValues(
+        .select(Column(GenerateIdentityValues(
           start = 2,
           step = Long.MaxValue,
           highWaterMarkOpt = Some(2 - Long.MaxValue))))
@@ -137,7 +137,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
   test("overflow next") {
     val events = Log4jUsageLogger.track {
       val df = spark.range(1, 10, 1, 5).toDF(colName)
-        .select(new Column(GenerateIdentityValues(
+        .select(Column(GenerateIdentityValues(
           start = Long.MaxValue - 1,
           step = 2,
           highWaterMarkOpt = Some(Long.MaxValue - 3))))
@@ -155,7 +155,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
   test("invalid high water mark") {
     val df = spark.range(1, 10, 1, 5).toDF(colName)
     intercept[IllegalArgumentException] {
-      df.select(new Column(GenerateIdentityValues(
+      df.select(Column(GenerateIdentityValues(
         start = 1,
         step = 2,
         highWaterMarkOpt = Some(4)))
@@ -166,7 +166,7 @@ class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
   test("invalid step") {
     val df = spark.range(1, 10, 1, 5).toDF(colName)
     intercept[IllegalArgumentException] {
-      df.select(new Column(GenerateIdentityValues(
+      df.select(Column(GenerateIdentityValues(
         start = 1,
         step = 0,
         highWaterMarkOpt = Some(4)))

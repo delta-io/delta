@@ -16,94 +16,82 @@
 package io.delta.kernel.internal.replay;
 
 /**
- * Class capturing various metrics during log replay. This class can be used in places where
- * actions from the logs are replayed, and we want to capture some metrics.
+ * Class capturing various metrics during log replay. This class can be used in places where actions
+ * from the logs are replayed, and we want to capture some metrics.
  */
 public class LogReplayMetrics {
-    /**
-     * Number of `AddFile` actions seen in log replay both from checkpoint files and delta files.
-     */
-    private long numAddFilesSeen = 0;
+  /** Number of `AddFile` actions seen in log replay both from checkpoint files and delta files. */
+  private long numAddFilesSeen = 0;
 
-    /**
-     * Number of `AddFile` actions seen in log replay from delta files.
-     */
-    private long numAddFilesSeenFromDeltaFiles = 0;
+  /** Number of `AddFile` actions seen in log replay from delta files. */
+  private long numAddFilesSeenFromDeltaFiles = 0;
 
-    /**
-     * Number of active `AddFile`s that survived (i.e. belong to the table state) the log replay.
-     */
-    private long numActiveAddFiles = 0;
+  /** Number of active `AddFile`s that survived (i.e. belong to the table state) the log replay. */
+  private long numActiveAddFiles = 0;
 
-    /**
-     * Number of `AddFile`s that are duplicates. Same `AddFile` (with the same path and DV) can be
-     * present in multiple commit files. This happens when stats collection is run on the table in
-     * which the same `AddFile` will be added with `stats` without removing it first.
-     */
-    private long numDuplicateAddFiles = 0;
+  /**
+   * Number of `AddFile`s that are duplicates. Same `AddFile` (with the same path and DV) can be
+   * present in multiple commit files. This happens when stats collection is run on the table in
+   * which the same `AddFile` will be added with `stats` without removing it first.
+   */
+  private long numDuplicateAddFiles = 0;
 
-    /**
-     * Number of `RemoveFile`s seen in log replay both from delta files (not from checkpoint).
-     */
-    private long numTombstonesSeen = 0;
+  /** Number of `RemoveFile`s seen in log replay both from delta files (not from checkpoint). */
+  private long numTombstonesSeen = 0;
 
-    public void incNumAddFilesSeen() {
-        numAddFilesSeen++;
-    }
+  public void incNumAddFilesSeen() {
+    numAddFilesSeen++;
+  }
 
-    public void incNumAddFilesSeenFromDeltaFiles() {
-        numAddFilesSeenFromDeltaFiles++;
-    }
+  public void incNumAddFilesSeenFromDeltaFiles() {
+    numAddFilesSeenFromDeltaFiles++;
+  }
 
-    public void incNumActiveAddFiles() {
-        numActiveAddFiles++;
-    }
+  public void incNumActiveAddFiles() {
+    numActiveAddFiles++;
+  }
 
-    public void incNumDuplicateAddFiles() {
-        numDuplicateAddFiles++;
-    }
+  public void incNumDuplicateAddFiles() {
+    numDuplicateAddFiles++;
+  }
 
-    public void incNumTombstonesSeen() {
-        numTombstonesSeen++;
-    }
+  public void incNumTombstonesSeen() {
+    numTombstonesSeen++;
+  }
 
+  public long getNumAddFilesSeen() {
+    return numAddFilesSeen;
+  }
 
-    public long getNumAddFilesSeen() {
-        return numAddFilesSeen;
-    }
+  public long getNumAddFilesSeenFromDeltaFiles() {
+    return numAddFilesSeenFromDeltaFiles;
+  }
 
-    public long getNumAddFilesSeenFromDeltaFiles() {
-        return numAddFilesSeenFromDeltaFiles;
-    }
+  public long getNumActiveAddFiles() {
+    return numActiveAddFiles;
+  }
 
-    public long getNumActiveAddFiles() {
-        return numActiveAddFiles;
-    }
+  public long getNumDuplicateAddFiles() {
+    return numDuplicateAddFiles;
+  }
 
-    public long getNumDuplicateAddFiles() {
-        return numDuplicateAddFiles;
-    }
+  public long getNumTombstonesSeen() {
+    return numTombstonesSeen;
+  }
 
-    public long getNumTombstonesSeen() {
-        return numTombstonesSeen;
-    }
-
-    /**
-     * Returns a summary of the metrics.
-     */
-    @Override
-    public String toString() {
-        return String.format(
-            "Number of AddFiles seen: %d\n" +
-            "Number of AddFiles seen from delta files: %d\n" +
-            "Number of active AddFiles: %d\n" +
-            "Number of duplicate AddFiles: %d\n" +
-            "Number of tombstones seen: %d\n",
-            numAddFilesSeen,
-            numAddFilesSeenFromDeltaFiles,
-            numActiveAddFiles,
-            numDuplicateAddFiles,
-            numTombstonesSeen
-        );
-    }
+  /** Returns a summary of the metrics. */
+  @Override
+  public String toString() {
+    return String.format(
+        "Number of AddFiles seen: %d\n"
+            + "Number of AddFiles seen from delta files: %d\n"
+            + "Number of active AddFiles: %d\n"
+            + "Number of duplicate AddFiles: %d\n"
+            + "Number of tombstones seen: %d\n",
+        numAddFilesSeen,
+        numAddFilesSeenFromDeltaFiles,
+        numActiveAddFiles,
+        numDuplicateAddFiles,
+        numTombstonesSeen);
+  }
 }

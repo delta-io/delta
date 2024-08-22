@@ -33,7 +33,7 @@ dependencies:
       - packaging==23.2
       - py4j==0.10.9.7
       - pygments==2.16.1
-      - pyspark==3.5.0
+      - pyspark==3.5.2
       - pytz==2023.3.post1
       - requests==2.31.0
       - six==1.16.0
