@@ -25,4 +25,8 @@ object ColumnImplicitsShim {
   implicit class ColumnConstructorExt(c: Column.type) {
     def apply(e: Expression): Column = ExpressionUtils.column(e)
   }
+
+  implicit def expression(column: Column): Expression = {
+    ExpressionUtils.expression(column)
+  }
 }
