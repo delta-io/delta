@@ -40,7 +40,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.ColumnExtShim._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
