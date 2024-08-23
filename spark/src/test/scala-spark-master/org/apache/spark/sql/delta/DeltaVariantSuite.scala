@@ -243,13 +243,8 @@ class DeltaVariantSuite
       }
       checkError(
         e,
-        "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
-        parameters = Map(
-          "columns" -> "v",
-          "schema" -> """#root
-                         # |-- v: variant (nullable = true)
-                         #""".stripMargin('#')
-        )
+        "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
+        parameters = Map("columnsWithDataTypes" -> "v : VARIANT")
       )
     }
   }
