@@ -346,7 +346,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         "Metadata{id='%s', name=Optional.empty, description=Optional.empty, " +
           "format=Format{provider='parquet', options={}}, " +
           "schemaString='{\n  \"type\" : \"struct\",\n  \"fields\" : [ {\n" +
-          "  \"name\" : \"id\",\n  \"type\" : \"integer\",\n  \"nullable\" : true, \n" +
+          "  \"name\" : \"id\",\n  \"type\" : \"integer\",\n  \"nullable\" : true,\n" +
           "  \"metadata\" : {}\n} ]\n}', " +
           "partitionColumns=List(), createdTime=Optional[%s], " +
           "configuration={delta.inCommitTimestampEnablementTimestamp=%s, " +
