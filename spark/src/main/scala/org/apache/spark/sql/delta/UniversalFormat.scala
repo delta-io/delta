@@ -331,3 +331,13 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    */
   def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long]
 }
+
+object IcebergConstants {
+  val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
+  val ICEBERG_PROVIDER = "iceberg"
+  val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+}
+
+object HudiConstants {
+  val HUDI_PROVIDER = "hudi"
+}
