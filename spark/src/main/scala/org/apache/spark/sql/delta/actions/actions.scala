@@ -1424,13 +1424,13 @@ object SingleAction extends Logging {
     org.apache.spark.sql.delta.implicits.addFileEncoder
 
   lazy val nullLitForRemoveFile: Column =
-    Column(Literal(null, ScalaReflection.schemaFor[RemoveFile].dataType))
+    Literal(null, ScalaReflection.schemaFor[RemoveFile].dataType)
 
   lazy val nullLitForAddCDCFile: Column =
-    Column(Literal(null, ScalaReflection.schemaFor[AddCDCFile].dataType))
+    Literal(null, ScalaReflection.schemaFor[AddCDCFile].dataType)
 
   lazy val nullLitForMetadataAction: Column =
-    Column(Literal(null, ScalaReflection.schemaFor[Metadata].dataType))
+    Literal(null, ScalaReflection.schemaFor[Metadata].dataType)
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */

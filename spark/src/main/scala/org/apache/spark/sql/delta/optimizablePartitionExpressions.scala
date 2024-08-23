@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.OptimizablePartitionExpression._
 
 import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnExtShim.expression
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{Cast, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, TruncDate, TruncTimestamp, UnixTimestamp, Year}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
@@ -78,7 +79,7 @@ object OptimizablePartitionExpression {
   /** Provide a convenient method to convert a string to a column expression */
   implicit class ColumnExpression(val colName: String) extends AnyVal {
     // This will always be a top level column so quote it if necessary
-    def toPartCol: Expression = Column(quoteIfNeeded(colName)).expr
+    def toPartCol: Expression = expression(Column(quoteIfNeeded(colName)))
   }
 }
 

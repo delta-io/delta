@@ -307,9 +307,9 @@ case class DeleteCommand(
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(Column(cond))
+                  data.filter(cond)
                     .select(input_file_name())
-                    .filter(Column(incrDeletedCountExpr))
+                    .filter(incrDeletedCountExpr)
                     .distinct()
                     .as[String]
                     .collect()
@@ -452,15 +452,15 @@ case class DeleteCommand(
         // as table data, while all rows which don't match are removed from the rewritten table data
         // but do get included in the output as CDC events.
         baseData
-          .filter(Column(incrTouchedCountExpr))
+          .filter(incrTouchedCountExpr)
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
+            If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE)
           )
       } else {
         baseData
-          .filter(Column(incrTouchedCountExpr))
-          .filter(Column(filterCondition))
+          .filter(incrTouchedCountExpr)
+          .filter(filterCondition)
       }
 
       txn.writeFiles(dfToWrite)

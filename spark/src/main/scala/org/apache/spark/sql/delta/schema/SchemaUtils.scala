@@ -33,6 +33,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnExtShim._
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.AttributeReference
@@ -1239,7 +1240,7 @@ def normalizeColumnNamesInDataType(
   }
 
   def fieldToColumn(field: StructField): Column = {
-    Column(UnresolvedAttribute.quoted(field.name))
+    UnresolvedAttribute.quoted(field.name)
   }
 
   /**  converting field name to column type with quoted back-ticks */

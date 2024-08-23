@@ -29,7 +29,9 @@ import io.delta.tables.{DeltaTable => OSSDeltaTable}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Column, DataFrame, DataFrameWriter, Dataset, QueryTest, Row, SparkSession}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnExtShim._
+import org.apache.spark.sql.{DataFrame, DataFrameWriter, Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
@@ -368,11 +370,11 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
       deltaLog: DeltaLog): Seq[Column] = {
     val schema = deltaLog.update().schema
     columns.map { col =>
-      val newExpr = col.expr.transform {
+      val newExpr = expression(col).transform {
         case a: Attribute =>
           convertColumnNameToAttributeWithPhysicalName(a.name, schema)
       }
-      Column(newExpr)
+      newColumn(newExpr)
     }
   }
 

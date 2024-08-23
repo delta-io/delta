@@ -224,7 +224,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         case Some(exprString) =>
           val expr = parseGenerationExpression(spark, exprString)
           validateColumnReferences(spark, f.name, expr, schema)
-          Column(expr).alias(f.name)
+          expr.alias(f.name)
         case None =>
           // Should not happen
           throw DeltaErrors.expressionsNotFoundInGeneratedColumn(f.name)
@@ -280,7 +280,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val generationExprs = schema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
         val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        Column(expr).alias(col.name)
+        expr.alias(col.name)
       }
     }
     if (generationExprs.isEmpty) {
@@ -329,7 +329,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val partitionGenerationExprs = partitionSchema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
         val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        Column(expr).alias(col.name)
+        expr.alias(col.name)
       }
     }
     if (partitionGenerationExprs.isEmpty) {
