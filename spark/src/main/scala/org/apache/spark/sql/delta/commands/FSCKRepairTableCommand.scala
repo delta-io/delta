@@ -17,15 +17,14 @@
 
 package org.apache.spark.sql.delta.commands
 
+import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, If, Expression, Literal}
-import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.UnresolvedDeltaPathOrIdentifier
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{RemoveFile}
+import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DateTimeUtils.NANOS_PER_MILLIS
 import org.apache.spark.sql.delta.util.DeltaFileOperations
@@ -33,16 +32,11 @@ import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.BooleanType
-import org.apache.spark.sql.types.StringType
-import org.apache.spark.sql.types.NullType
+import org.apache.spark.sql.types.{BooleanType, StringType}
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.util.SerializableConfiguration
+import scala.collection.mutable.HashSet
 
-import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 
 
 trait FsckCommandMetrics { self: RunnableCommand =>
@@ -125,7 +119,7 @@ case class FsckRepairTableCommand (
       catalogTable: Option[CatalogTable]): (Seq[Row], Long, Long) = {
     recordDeltaOperation(deltaLog, "delta.fsck") {
       deltaLog.withNewTransaction(catalogTable) { txn =>
-        val DVRemoveConf =
+        val missingDvMode =
           sparkSession.sessionState.conf.getConf(DeltaSQLConf.FSCK_MISSING_DVS_MODE)
         val startTime = System.nanoTime()
         // scalastyle:off sparkimplicits
@@ -142,25 +136,22 @@ case class FsckRepairTableCommand (
           .withColumn("stats", to_json(struct(col("stats.numRecords") as "numRecords")))
           .as[AddFile]
 
-        // Get the file count for metrics and current time.
-        val currentTimestamp = System.currentTimeMillis()
-
         // get table path
         val path = deltaLog.dataPath
         val deltaHadoopConf = deltaLog.newDeltaHadoopConf()
         val serializableHadoopConf = new SerializableConfiguration(deltaHadoopConf)
 
         // create the UDF to check if a file exists
-        val fileExists = udf((dataPath: String, filePath: String, dryRun: Boolean) => {
+        val fileMissing = udf((dataPath: String, filePath: String, dryRun: Boolean) => {
           try {
             val absolutePath = DeltaFileOperations.absolutePath(dataPath, filePath)
-              absolutePath.getFileSystem(serializableHadoopConf.value).exists(absolutePath)
+            !(absolutePath.getFileSystem(serializableHadoopConf.value).exists(absolutePath))
           } catch {
             // We only catch the exception in dryRun mode so the users can
             // see the missing files. However without dryRun mode, if there are
             // any errors with reading files the command will terminate immediately.
-            case e: Exception if dryRun => true
-            case e: Throwable => throw e
+            case e: Exception if dryRun => false
+            case e: Exception => throw e
           }
         }).asNondeterministic()
 
@@ -183,27 +174,43 @@ case class FsckRepairTableCommand (
           .withColumn("deletionVectorInfo",
           absoluteDVPathMissing(col("deletionVector"),
             lit(deltaLog.dataPath.toString)))
-          .withColumn("dataFileMissing", fileExists(lit(deltaLog.dataPath.toString),
-            col("path"), lit(dryRun)) === false)
+          .withColumn("dataFileMissing", fileMissing(lit(deltaLog.dataPath.toString),
+            col("path"), lit(dryRun)))
           .select("deletionVectorInfo.*", "path", "dataFileMissing")
           .withColumnRenamed("_1", "deletionVectorPath")
           .withColumnRenamed("_2", "deletionVectorFileMissing")
-          .filter(col("dataFileMissing") || col("deletionVectorFileMissing"))
+          .filter(col("dataFileMissing") || col("deletionVectorFileMissing")).collect()
+        val allMissingPaths = HashSet(allMissingFiles.map(row => row.getAs[String]("path")) : _*)
+        val allFilesMap = allFiles.filter(addFile => {
+            allMissingPaths.contains(addFile.path)})
           .collect()
-        val filesToRemove = allMissingFiles.filter(row => row.getBoolean(3) || row.getBoolean(1))
+          .map(addFile => {
+            (addFile.path, addFile)}).toMap[String, AddFile]
+
+        if (allMissingPaths.size != allMissingFiles.length) {
+          throw new IllegalStateException("Expected at most one AddFile per path, "
+                      + "but found more than one.")
+        }
+        // Get start time for metrics.
+        val currentTimestamp = System.currentTimeMillis()
+        val filesToRemove = allMissingFiles
           .map(row => {
-            val file = allFiles.filter(col("path") === row.getString(2)).first()
-            file.removeWithTimestamp(currentTimestamp, false)
+            val file = allFilesMap(row.getAs[String]("path"))
+            val missingDV = row.getAs[Boolean]("deletionVectorFileMissing")
+            val missingFile = row.getAs[Boolean]("dataFileMissing")
+            val dataChange = missingDV && !missingFile
+            file.removeWithTimestamp(currentTimestamp, dataChange)
         })
 
-        val filesToCommit = DVRemoveConf match {
+        val filesToCommit = missingDvMode match {
           case "exception" =>
             val missingDV = allMissingFiles
-              .filter(row => !row.getBoolean(3) && row.getBoolean(1)).headOption
+              .filter(row => !row.getAs[Boolean]("dataFileMissing") &&
+                row.getAs[Boolean]("deletionVectorFileMissing")).headOption
             missingDV match {
               case Some(value) =>
                 if (!dryRun) {
-                  val path = value.getString(2)
+                  val path = value.getAs[String]("deletionVectorPath")
                   throw DeltaErrors.fileNotFoundException(path)
                 }
                 filesToRemove
@@ -215,13 +222,14 @@ case class FsckRepairTableCommand (
             // For files that only have the DV missing, we will add the file
             // with the deletion vector set to null
             val filesToAdd = allMissingFiles
-              .filter(row => !row.getBoolean(3) && row.getBoolean(1))
+              .filter(row => !row.getAs[Boolean]("dataFileMissing") &&
+                row.getAs[Boolean]("deletionVectorFileMissing"))
               .map(row => {
-                val file = allFiles.filter(col("path") === row.getString(2)).first()
-                file.copy(deletionVector = null, modificationTime = currentTimestamp)
+                  val file = allFilesMap(row.getAs[String]("path"))
+                  file.copy(deletionVector = null, modificationTime = currentTimestamp,
+                    dataChange = true)
               })
             val filesToCommit = filesToRemove ++ filesToAdd
-            val output = allMissingFiles
             filesToCommit
         }
 
