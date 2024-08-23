@@ -20,7 +20,9 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.IdentityColumn.IdentityInfo
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{Column, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.expressions.{GreaterThan, If, Literal}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
