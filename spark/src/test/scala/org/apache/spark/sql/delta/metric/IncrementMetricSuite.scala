@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.metric
 
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Column, DataFrame, QueryTest}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, GreaterThan, If, Literal}
 import org.apache.spark.sql.execution.SparkPlan
