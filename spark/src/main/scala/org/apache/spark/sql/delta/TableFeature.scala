@@ -350,6 +350,7 @@ object TableFeature {
       ClusteringTableFeature,
       DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
+      IdentityColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
@@ -381,9 +382,7 @@ object TableFeature {
         TestRemovableLegacyReaderWriterFeature,
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
-        TestWriterFeatureWithTransitiveDependency,
-        // Identity columns are under development and only available in testing.
-        IdentityColumnsTableFeature)
+        TestWriterFeatureWithTransitiveDependency)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
