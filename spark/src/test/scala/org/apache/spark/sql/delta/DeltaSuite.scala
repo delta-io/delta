@@ -1481,7 +1481,7 @@ class DeltaSuite extends QueryTest
         val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
-        val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
+        val filesToCorrupt = inputFiles.filter(_.split("/").last.contains("part-00001"))
         assert(filesToCorrupt.size == 1)
         val fs = tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         filesToCorrupt.foreach { f =>

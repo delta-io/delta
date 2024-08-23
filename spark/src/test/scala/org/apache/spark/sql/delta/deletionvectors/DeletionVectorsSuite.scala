@@ -924,7 +924,7 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
     val files = deltaLog.update().allFiles.collect()
 
     assert(files.length === 1)
-    assertParquetHasMultipleRowGroups(new Path(deltaLog.dataPath, files.head.path))
+    assertParquetHasMultipleRowGroups(files.head.absolutePath(deltaLog))
 
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
@@ -964,7 +964,7 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
         val targetTableDF = selectPredicate.map(targetTable.toDF.filter).getOrElse(targetTable.toDF)
         assertPredicatesArePushedDown(targetTableDF)
         // Make sure there are multiple row groups.
-        assertParquetHasMultipleRowGroups(new Path(files.head.path))
+        assertParquetHasMultipleRowGroups(files.head.toPath)
         // Make sure we have 2 splits.
         assert(targetTableDF.rdd.partitions.size === 2)
 
