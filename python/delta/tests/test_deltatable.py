@@ -531,6 +531,41 @@ class DeltaTableTestsMixin:
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
 
+    def test_cdc(self):
+        self.spark.range(0, 5).write.format("delta").save(self.tempFile)
+        deltaTable = DeltaTable.forPath(self.spark, self.tempFile)
+        # Enable Change Data Feed
+        self.spark.sql(
+            "ALTER TABLE delta.`{}` SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+            .format(self.tempFile))
+
+        # Perform some operations
+        deltaTable.update("id = 1", {"id": "10"})
+        deltaTable.delete("id = 2")
+        self.spark.range(5, 10).write.format("delta").mode("append").save(self.tempFile)
+
+        # Check the Change Data Feed
+        expected = [
+            (1, "update_preimage"),
+            (10, "update_postimage"),
+            (2, "delete"),
+            (5, "insert"),
+            (6, "insert"),
+            (7, "insert"),
+            (8, "insert"),
+            (9, "insert")
+        ]
+        # Read Change Data Feed
+        # (Test handling of the option as boolean and string and with different cases)
+        for option in [True, "true", "tRuE"]:
+            cdf = self.spark.read.format("delta") \
+                .option("readChangeData", option) \
+                .option("startingVersion", "1") \
+                .load(self.tempFile)
+
+            result = [(row.id, row._change_type) for row in cdf.collect()]
+            self.assertEqual(sorted(result), sorted(expected))
+
     def test_detail(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3)])
         dt = DeltaTable.forPath(self.spark, self.tempFile)

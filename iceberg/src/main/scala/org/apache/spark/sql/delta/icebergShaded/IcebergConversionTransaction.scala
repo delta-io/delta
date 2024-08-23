@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaFileProviderUtils, Snapshot}
+import org.apache.spark.sql.delta.{DeltaFileProviderUtils, IcebergConstants, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.icebergShaded.IcebergSchemaUtils._
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
@@ -340,7 +340,7 @@ class IcebergConversionTransaction(
     txn.updateProperties()
       .set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
-      .set(IcebergConverter.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
+      .set(IcebergConstants.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
       .commit()
 
     // We ensure the iceberg txns are serializable by only allowing them to commit against

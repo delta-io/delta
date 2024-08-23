@@ -27,13 +27,13 @@ import org.apache.spark.sql.types._
 
 /**
  * Identity Column test suite for ingestion, including insert-only MERGE.
+ * Tests with identity columns where MERGE does data modification should be
+ * in IdentityColumnDMLSuiteBase.
  */
 trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
 
   import testImplicits._
 
-  private val tblName = "identity_test"
-  private val tempTblName = "identity_test_temp"
   private val tempCsvFileName = "test.csv"
 
   /** Helper function to write a single 'value' column into `sourcePath`. */
@@ -93,6 +93,7 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
       batchSize: Int,
       mode: IngestMode.Value): Unit = {
     var highWaterMark = start - step
+    val tblName = getRandomTableName
     withTable(tblName) {
       createTableWithIdColAndIntValueCol(
         tblName, GeneratedAlways, startsWith = Some(start), incrementBy = Some(step))
@@ -105,6 +106,7 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
         val df = (batchStart to batchEnd).toDF("value")
         // Used by insertInto, insertIntoSelect, insertOverwrite, insertOverwriteSelect
         val insertValues = (batchStart to batchEnd).map(v => s"($v)").mkString(",")
+        val tempTblName = s"${getRandomTableName}_temp"
 
         mode match {
           case IngestMode.appendV1 =>
@@ -257,7 +259,26 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
     }
   }
 
+  test("merge insert") {
+    val testCases = Seq(
+      IngestTestCase(10, 20, 5, 8),
+      IngestTestCase(-5000, 37, 7, 99)
+    )
+    for (tc <- testCases) {
+      testIngestData(tc.start, tc.step, tc.iteration, tc.batchSize, IngestMode.mergeInsert)
+    }
+  }
+
+  test("explicit insert not allowed") {
+    val tblName = getRandomTableName
+    withIdentityColumnTable(GeneratedAlways, tblName) {
+      val ex = intercept[AnalysisException](sql(s"INSERT INTO $tblName values(1,1);"))
+      assert(ex.getMessage.contains("Providing values for GENERATED ALWAYS AS IDENTITY"))
+    }
+  }
+
   test("explicit insert should not update high water mark") {
+    val tblName = getRandomTableName
     withIdentityColumnTable(GeneratedByDefault, tblName) {
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
       val schema1 = deltaLog.snapshot.metadata.schemaString
@@ -271,6 +292,42 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
       sql(s"INSERT INTO $tblName VALUES (1,1);")
       val schema3 = deltaLog.snapshot.metadata.schemaString
       assert(schema2 == schema3)
+    }
+  }
+
+  test("merge command with nondeterministic functions in conditions") {
+    val source = "identity_merge_source"
+    val target = "identity_merge_target"
+    withIdentityColumnTable(GeneratedByDefault, target) {
+      withTable(source) {
+        createTable(
+          source,
+          Seq(
+            TestColumnSpec(colName = "id2", dataType = LongType),
+            TestColumnSpec(colName = "value2", dataType = LongType)
+          )
+        )
+
+        val ex1 = intercept[AnalysisException] {
+          sql(
+            s"""
+               |MERGE INTO $target
+               |  USING $source ON $target.value = $source.value2 + rand()
+               |  WHEN NOT MATCHED THEN INSERT (value) VALUES ($source.value2)
+               |""".stripMargin)
+        }
+        assert(ex1.getMessage.contains("Non-deterministic functions are not supported"))
+        val ex2 = intercept[AnalysisException] {
+          sql(
+            s"""
+               |MERGE INTO $target
+               |  USING $source ON $target.value = $source.value2
+               |  WHEN NOT MATCHED AND $source.value2 = rand()
+               |    THEN INSERT (value) VALUES ($source.value2)
+               |""".stripMargin)
+        }
+        assert(ex2.getMessage.contains("Non-deterministic functions are not supported"))
+      }
     }
   }
 }
