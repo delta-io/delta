@@ -15,5 +15,5 @@
  */
 package org.apache.spark.sql
 
-object ColumnExtShim {
+object ColumnImplicitsShim {
 }
