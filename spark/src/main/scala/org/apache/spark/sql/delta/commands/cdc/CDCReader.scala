@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands.cdc
 import java.sql.Timestamp
 
 import scala.collection.mutable.{ListBuffer, Map => MutableMap}
+import scala.util.Try
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
@@ -973,11 +974,20 @@ trait CDCReaderImpl extends DeltaLogging {
    * Based on the read options passed it indicates whether the read was a cdc read or not.
    */
   def isCDCRead(options: CaseInsensitiveStringMap): Boolean = {
+    // Consistent with DeltaOptions.readChangeFeed,
+    // but CDCReader use CaseInsensitiveStringMap vs. CaseInsensitiveMap used by DataFrameReader.
+    def toBoolean(input: String, name: String): Boolean = {
+      Try(input.toBoolean).toOption.getOrElse {
+        throw DeltaErrors.illegalDeltaOptionException(name, input, "must be 'true' or 'false'")
+      }
+    }
+
     val cdcEnabled = options.containsKey(DeltaDataSource.CDC_ENABLED_KEY) &&
-      options.get(DeltaDataSource.CDC_ENABLED_KEY) == "true"
+      toBoolean(options.get(DeltaDataSource.CDC_ENABLED_KEY), DeltaDataSource.CDC_ENABLED_KEY)
 
     val cdcLegacyConfEnabled = options.containsKey(DeltaDataSource.CDC_ENABLED_KEY_LEGACY) &&
-      options.get(DeltaDataSource.CDC_ENABLED_KEY_LEGACY) == "true"
+      toBoolean(
+        options.get(DeltaDataSource.CDC_ENABLED_KEY_LEGACY), DeltaDataSource.CDC_ENABLED_KEY_LEGACY)
 
     cdcEnabled || cdcLegacyConfEnabled
   }

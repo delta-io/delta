@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -217,7 +219,6 @@ trait DeltaConfigsBase extends DeltaLogging {
       sqlConfs: SQLConf,
       tableConf: Map[String, String],
       ignoreProtocolConfsOpt: Option[Boolean] = None): Map[String, String] = {
-    import scala.collection.JavaConverters._
 
     val ignoreProtocolConfs =
       ignoreProtocolConfsOpt.getOrElse(ignoreProtocolDefaultsIsSet(sqlConfs, tableConf))
@@ -314,6 +315,13 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   def isValidIntervalConfigValue(i: CalendarInterval): Boolean = {
     i.months == 0 && getMicroSeconds(i) >= 0
+  }
+
+  /**
+   * Return all Delta configurations, including both set and unset ones.
+   */
+  def getAllConfigs: Map[String, DeltaConfig[_]] = {
+    entries.asScala.toMap
   }
 
   /**

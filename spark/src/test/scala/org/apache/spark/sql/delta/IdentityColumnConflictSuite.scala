@@ -84,11 +84,10 @@ trait IdentityColumnConflictSuiteBase
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
 
-  val tblName = "identity_conflict_test"
   val colName = "id"
 
   private def setupEmptyTableWithRowTrackingTableFeature(
-      tblIsoLevel: Option[IsolationLevel]): Unit = {
+      tblIsoLevel: Option[IsolationLevel], tblName: String): Unit = {
     val tblPropertiesMap: Map[String, String] = Map(
       TableFeatureProtocolUtils.propertyKey(RowTrackingFeature) -> "supported",
       DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
@@ -142,16 +141,17 @@ trait IdentityColumnConflictSuiteBase
       currentTxn: TransactionConflictTestCase,
       winningTxn: TransactionConflictTestCase,
       tblIsoLevel: Option[IsolationLevel]): Unit = {
+    val tblName = getRandomTableName
     withTable(tblName) {
       // We start with an empty table that has row tracking table feature support and row tracking
       // table property disabled. This way, when we set the table property to true, it will not
       // also do a protocol upgrade and we don't need any backfill commit.
-      setupEmptyTableWithRowTrackingTableFeature(tblIsoLevel)
+      setupEmptyTableWithRowTrackingTableFeature(tblIsoLevel, tblName)
 
       val threadPool =
         ThreadUtils.newDaemonSingleThreadExecutor(threadName = "identity-column-thread-pool")
       var (txnObserver, future) = runQueryWithObserver(
-        name = "current", threadPool, currentTxn.sqlCommand)
+        name = "current", threadPool, currentTxn.sqlCommand.replace("{tblName}", tblName))
 
       // If the current txn is enabling row tracking on an existing table, the first txn is
       // a NOOP since there are no files in the table initially. No commit will be made.
@@ -169,7 +169,7 @@ trait IdentityColumnConflictSuiteBase
       unblockUntilPreCommit(txnObserver)
       busyWaitFor(txnObserver.phases.preparePhase.hasEntered, timeout)
 
-      sql(winningTxn.sqlCommand)
+      sql(winningTxn.sqlCommand.replace("{tblName}", tblName))
 
       val expectedException = expectedExceptionClass(currentTxn, winningTxn)
       val events = Log4jUsageLogger.track {
@@ -211,14 +211,14 @@ trait IdentityColumnConflictSuiteBase
   // System generated IDENTITY value will have a metadata update for IDENTITY high water marks.
   private val generatedIdTestCase = IdentityOnlyMetadataUpdateTestCase(
     name = "generatedId",
-    sqlCommand = s"INSERT INTO $tblName(value) VALUES (1)",
+    sqlCommand = s"INSERT INTO {tblName}(value) VALUES (1)",
     isAppend = true
   )
 
   // SYNC IDENTITY updates the high water mark based on the values in the IDENTITY column.
   private val syncIdentityTestCase = IdentityOnlyMetadataUpdateTestCase(
     name = "syncIdentity",
-    sqlCommand = s"ALTER TABLE $tblName ALTER COLUMN $colName SYNC IDENTITY",
+    sqlCommand = s"ALTER TABLE {tblName} ALTER COLUMN $colName SYNC IDENTITY",
     isAppend = false
   )
 
@@ -226,14 +226,14 @@ trait IdentityColumnConflictSuiteBase
   private val noMetadataUpdateTestCase =
     NoMetadataUpdateTestCase(
       name = "noMetadataUpdate",
-      sqlCommand = s"INSERT INTO $tblName VALUES (1, 1)",
+      sqlCommand = s"INSERT INTO {tblName} VALUES (1, 1)",
       isAppend = true
     )
 
   private val rowTrackingEnablementTestCase = RowTrackingEnablementOnlyTestCase(
       name = "rowTrackingEnablement",
       sqlCommand =
-        s"""ALTER TABLE $tblName
+        s"""ALTER TABLE {tblName}
            |SET TBLPROPERTIES(
            |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true'
            |)""".stripMargin,
@@ -242,7 +242,7 @@ trait IdentityColumnConflictSuiteBase
 
   private val otherMetadataUpdateTestCase = GenericMetadataUpdateTestCase(
       name = "otherMetadataUpdate",
-      sqlCommand = s"ALTER TABLE $tblName ADD COLUMN value2 STRING",
+      sqlCommand = s"ALTER TABLE {tblName} ADD COLUMN value2 STRING",
       isAppend = false
     )
 

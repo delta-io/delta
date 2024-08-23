@@ -56,6 +56,8 @@ import org.apache.spark.sql.types.{LongType, StructType}
  * @param notMatchedBySourceClauses  All info related to not matched by source clauses.
  * @param migratedSchema             The final schema of the target - may be changed by schema
  *                                   evolution.
+ * @param trackHighWaterMarks        The column names for which we will track IDENTITY high water
+ *                                   marks.
  */
 case class MergeIntoCommand(
     @transient source: LogicalPlan,
@@ -67,6 +69,7 @@ case class MergeIntoCommand(
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
     migratedSchema: Option[StructType],
+    trackHighWaterMarks: Set[String] = Set.empty,
     schemaEvolutionEnabled: Boolean = false)
   extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
@@ -106,6 +109,9 @@ case class MergeIntoCommand(
             deltaTxn.metadata.partitionColumns, deltaTxn.metadata.configuration,
             isOverwriteMode = false, rearrangeOnly = false)
         }
+
+        checkIdentityColumnHighWaterMarks(deltaTxn)
+        deltaTxn.setTrackHighWaterMarks(trackHighWaterMarks)
 
         // Materialize the source if needed.
         prepareMergeSource(

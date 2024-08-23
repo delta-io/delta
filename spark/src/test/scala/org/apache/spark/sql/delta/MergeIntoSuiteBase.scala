@@ -3382,6 +3382,48 @@ abstract class MergeIntoSuiteBase
         "Merge command wasn't properly recorded by QueryExecutionListener")
     }
   }
+
+  test("merge on partitioned table with special chars") {
+    withTable("source") {
+      val part1 = "part%1"
+      val part2 = "part%2"
+      val part3 = "part%3"
+      val part4 = "part%4"
+
+      for (part <- Seq(part1, part2, part3)) {
+        spark.range(0, 3, 1, 1)
+          .toDF("key")
+          .withColumn("value", functions.lit(part))
+          .write.format("delta")
+          .partitionBy("value")
+          .mode("append")
+          .save(tempPath)
+      }
+
+      Seq(
+        (0, part1),
+        (0, part2), (1, part2),
+        (0, part3), (1, part3), (2, part3),
+        (0, part4)
+      ).toDF("key", "value").createOrReplaceTempView("source")
+
+      executeMerge(
+        tgt = s"delta.`$tempPath` t",
+        src = "source s",
+        cond = "t.key = s.key AND t.value = s.value",
+        delete(condition = s"s.value = '$part2'"),
+        update(set = s"t.key = -1"),
+        insert("*")
+      )
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(-1, part1) :: Row(1, part1) :: Row(2, part1) ::
+          Row(2, part2) ::
+          Row(-1, part3) :: Row(-1, part3) :: Row(-1, part3) ::
+          Row(0, part4) ::
+          Nil)
+    }
+  }
 }
 
 

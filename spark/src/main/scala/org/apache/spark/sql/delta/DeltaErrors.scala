@@ -3334,6 +3334,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def clusteringColumnUnsupportedDataTypes(clusteringColumnsWithDataTypes: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
+      messageParameters = Array(clusteringColumnsWithDataTypes)
+    )
+  }
+
   def clusteringColumnsMismatchException(
       providedClusteringColumns: String,
       existingClusteringColumns: String): Throwable = {

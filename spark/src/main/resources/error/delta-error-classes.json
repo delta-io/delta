@@ -379,6 +379,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
+    "message" : [
+      "Clustering requires the data types of clustering columns to support data skipping. However the following column(s) '<columnsWithDataTypes>' have unsupported data types for data skipping in Delta."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
     "message" : [
       "The provided clustering columns do not match the existing table's.",
