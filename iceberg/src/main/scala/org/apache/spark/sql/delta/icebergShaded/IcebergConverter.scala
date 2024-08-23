@@ -54,8 +54,6 @@ object IcebergConverter {
    */
   val DELTA_TIMESTAMP_PROPERTY = "delta-timestamp"
 
-  val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
-
   def getLastConvertedDeltaVersion(table: Option[IcebergTable]): Option[Long] =
     table.flatMap(_.properties().asScala.get(DELTA_VERSION_PROPERTY)).map(_.toLong)
 }
