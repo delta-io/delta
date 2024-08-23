@@ -303,7 +303,7 @@ trait IcebergCompatV2EnableUniformByAlterTableSuiteBase extends QueryTest {
     val snapshot = DeltaLog.forTable(spark, new TableIdentifier(id)).update()
     val basePath = snapshot.path.getParent.toString + "/"
     val addFiles: Array[AddFile] = snapshot.allFiles.collect()
-    val parquetPaths: Array[String] = addFiles.map { basePath + _.path }
+    val parquetPaths: Array[String] = addFiles.map { basePath + _.toPath.toString }
     parquetPaths.map { ParquetIcebergCompatV2Utils.getParquetFooter }
   }
 

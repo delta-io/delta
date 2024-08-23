@@ -1168,8 +1168,10 @@ class DeltaColumnMappingSuite extends QueryTest
         checkAnswer(spark.table(tableName),
           Row("str1", 1) :: Row("str2", 2) :: Row("str3", 3) :: Row("str4", 4) :: Nil)
         // both new table writes and appends should use prefix
-        val pattern = s"[A-Za-z0-9]{$prefixLen}/part-.*parquet"
-        assert(snapshot.allFiles.collect().map(_.path).forall(_.matches(pattern)))
+        val pattern = s"[A-Za-z0-9]{$prefixLen}/.*part-.*parquet"
+        for (file <- snapshot.allFiles.collect()) {
+          assert(file.path.matches(pattern))
+        }
       }
     }
   }
@@ -1568,7 +1570,7 @@ class DeltaColumnMappingSuite extends QueryTest
       files.foreach { f =>
         val footer = ParquetFileReader.readFooter(
           log.newDeltaHadoopConf(),
-          new Path(log.dataPath, f.path),
+          f.absolutePath(log),
           ParquetMetadataConverter.NO_FILTER)
         footer.getFileMetaData.getSchema.getFields.asScala.foreach(f =>
           // getId.intValue will throw NPE if field id does not exist
