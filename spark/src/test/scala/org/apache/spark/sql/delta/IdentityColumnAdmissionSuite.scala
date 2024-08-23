@@ -309,6 +309,56 @@ trait IdentityColumnAdmissionSuiteBase
       }
     }
   }
+
+  test("merge") {
+    for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val source = s"${getRandomTableName}_source"
+      val target = s"${getRandomTableName}_target"
+      withIdentityColumnTable(generatedAsIdentityType, target) {
+        withTable(source) {
+          sql(
+            s"""
+               |CREATE TABLE $source (
+               |  value INT,
+               |  id BIGINT
+               |) USING delta
+               |""".stripMargin)
+          sql(
+            s"""
+               |INSERT INTO $source VALUES (1, 100), (2, 200), (3, 300)
+               |""".stripMargin)
+          sql(
+            s"""
+               |INSERT INTO $target(value) VALUES (2), (3), (4)
+               |""".stripMargin)
+
+          val updateStmt =
+            s"""
+               |MERGE INTO $target
+               |  USING $source on $target.value = $source.value
+               |  WHEN MATCHED THEN UPDATE SET *
+               |""".stripMargin
+          val updateEx = intercept[DeltaAnalysisException](sql(updateStmt))
+          assert(updateEx.getMessage.contains("UPDATE on IDENTITY column"))
+
+          val insertStmt =
+            s"""
+               |MERGE INTO $target
+               |  USING $source on $target.value = $source.value
+               |  WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin
+
+          if (generatedAsIdentityType == GeneratedAlways) {
+            val insertEx = intercept[DeltaAnalysisException](sql(insertStmt))
+            assert(
+              insertEx.getMessage.contains("Providing values for GENERATED ALWAYS AS IDENTITY"))
+          } else {
+            sql(insertStmt)
+          }
+        }
+      }
+    }
+  }
 }
 
 class IdentityColumnAdmissionScalaSuite
