@@ -123,7 +123,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     // We can't use filter() directly on the expression because that will prevent
     // column pruning. We don't need the SOURCE_ROW_PRESENT_COL so we immediately drop it.
     val sourceDF = getMergeSource.df
-      .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
+      .withColumn(SOURCE_ROW_PRESENT_COL, incrSourceRowCountExpr)
       .filter(SOURCE_ROW_PRESENT_COL)
       .drop(SOURCE_ROW_PRESENT_COL)
     val targetPlan =
@@ -137,7 +137,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       .withColumn(FILE_NAME_COL, input_file_name())
 
     val joinToFindTouchedFiles =
-      sourceDF.join(targetDF, Column(condition), joinType)
+      sourceDF.join(targetDF, condition, joinType)
 
     // UDFs to records touched files names and add them to the accumulator
     val recordTouchedFileName =
@@ -151,7 +151,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     // Process the matches from the inner join to record touched files and find multiple matches
     val collectTouchedFiles = joinToFindTouchedFiles
       .select(col(ROW_ID_COL),
-        recordTouchedFileName(col(FILE_NAME_COL), Column(matchedPredicate)).as("one"))
+        recordTouchedFileName(col(FILE_NAME_COL), matchedPredicate).as("one"))
 
     // Calculate frequency of matches per source row
     val matchedRowCounts = collectTouchedFiles.groupBy(ROW_ID_COL).agg(sum("one").as("count"))
@@ -247,7 +247,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
    */
   protected def generateFilterForModifiedRows(): Expression = {
     val matchedExpression = if (matchedClauses.nonEmpty) {
-      And(Column(condition).expr, clauseDisjunction(matchedClauses))
+      And(newColumn(condition).expr, clauseDisjunction(matchedClauses))
     } else {
       Literal.FalseLiteral
     }
@@ -359,7 +359,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         sourceDF = sourceDF.withColumn(SOURCE_ROW_INDEX_COL, monotonically_increasing_id())
       }
       val left = sourceDF
-          .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
+          .withColumn(SOURCE_ROW_PRESENT_COL, incrSourceRowCountExpr)
           // In some cases, the optimizer (incorrectly) decides to omit the metrics column.
           // This causes issues in the source determinism validation. We work around the issue by
           // adding a redundant dummy filter to make sure the column is not pruned.
@@ -372,7 +372,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       } else {
         targetDF
       }
-      left.join(right, Column(condition), joinType)
+      left.join(right, condition, joinType)
     }
 
     val joinedDF =
@@ -380,7 +380,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         joinedBaseDF
       } else {
         val filter = Or(generateFilterForModifiedRows(), generateFilterForNewRows())
-        joinedBaseDF.filter(Column(filter))
+        joinedBaseDF.filter(newColumn(filter))
       }
 
     // Precompute conditions in matched and not matched clauses and generate
@@ -518,7 +518,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
 
     val joinedDF = getMergeSource.df
       .withColumn(SOURCE_ROW_PRESENT_COL, lit(true))
-      .join(targetDF, Column(condition), joinType)
+      .join(targetDF, condition, joinType)
 
     val modifiedRowsFilter = generateFilterForModifiedRows()
     val matchedDVResult =

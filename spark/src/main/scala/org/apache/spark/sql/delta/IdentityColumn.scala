@@ -72,7 +72,7 @@ object IdentityColumn extends DeltaLogging {
 
   // Create a column to generate IDENTITY values for the column `field`.
   def createIdentityColumnGenerationExprAsColumn(field: StructField): Column = {
-    Column(createIdentityColumnGenerationExpr(field)).alias(field.name)
+    createIdentityColumnGenerationExpr(field).alias(field.name)
   }
 
   /**
@@ -118,7 +118,7 @@ object IdentityColumn extends DeltaLogging {
     // The expression will be: to_json(array(max(id1), min(id2)))
     val aggregates = identityColumnInfo.map {
       case (name, positiveStep) =>
-        val col = Column(UnresolvedAttribute.quoted(name))
+        val col = UnresolvedAttribute.quoted(name)
         if (positiveStep) max(col) else min(col)
     }
     val unresolvedExpr = to_json(array(aggregates: _*))

@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnExtShim._
 import org.apache.spark.sql.catalyst.expressions.{Alias, CaseWhen, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 
@@ -72,7 +73,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       val mergeSource = getMergeSource
       // Expression to update metrics.
       val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
-      val sourceDF = filterSource(mergeSource.df.filter(Column(incrSourceRowCountExpr)))
+      val sourceDF = filterSource(mergeSource.df.filter(incrSourceRowCountExpr))
 
       var dataSkippedFiles: Option[Seq[AddFile]] = None
       val preparedSourceDF = if (filterMatchedRows) {
@@ -91,7 +92,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
           dataSkippedFiles.get,
           columnsToDrop = Nil)
         val targetDF = Dataset.ofRows(spark, targetPlan)
-        sourceDF.join(targetDF, Column(condition), "leftanti")
+        sourceDF.join(targetDF, condition, "leftanti")
       } else {
         sourceDF
       }
@@ -128,7 +129,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     // If there is only one insert clause, then filter out the source rows that do not
     // satisfy the clause condition because those rows will not be written out.
     if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {
-      source.filter(Column(notMatchedClauses.head.condition.get))
+      source.filter(notMatchedClauses.head.condition.get)
     } else {
       source
     }
@@ -193,7 +194,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       } else {
         expr
       }
-      Column(Alias(exprAfterPassthru, name)())
+      newColumn(Alias(exprAfterPassthru, name)())
     }
   }
 
@@ -263,7 +264,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       seqToString(outputExprs))
 
     outputExprs.zip(outputColNames).map { case (expr, name) =>
-      Column(Alias(expr, name)())
+      newColumn(Alias(expr, name)())
     }
   }
 }

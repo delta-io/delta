@@ -1057,7 +1057,7 @@ case class AlterTableAddConstraintDeltaCommand(
       val unresolvedExpr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
 
       try {
-        df.where(Column(unresolvedExpr)).queryExecution.analyzed
+        df.where(unresolvedExpr).queryExecution.analyzed
       } catch {
         case a: AnalysisException
             if a.errorClass.contains("DATATYPE_MISMATCH.FILTER_NOT_BOOLEAN") =>
@@ -1072,7 +1072,7 @@ case class AlterTableAddConstraintDeltaCommand(
       recordDeltaOperation(
           txn.snapshot.deltaLog,
           "delta.ddl.alter.addConstraint.checkExisting") {
-        val n = df.where(Column(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr)))).count()
+        val n = df.where(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr))).count()
 
         if (n > 0) {
           throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)

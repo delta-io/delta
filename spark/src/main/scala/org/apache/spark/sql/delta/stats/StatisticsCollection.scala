@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnExtShim._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
@@ -358,8 +359,8 @@ trait StatisticsCollection extends DeltaLogging {
       function: PartialFunction[(Column, StructField, Boolean), Column]): Seq[Column] = {
       schema.flatMap {
         case f @ StructField(name, s: StructType, _, _) =>
-          val column = parent.map(_.getItem(name))
-            .getOrElse(Column(UnresolvedAttribute.quoted(name)))
+          val column: Column = parent.map(_.getItem(name))
+            .getOrElse(UnresolvedAttribute.quoted(name))
           val stats = collectStats(s, Some(column), parentFields :+ name, function)
           if (stats.nonEmpty) {
             Some(struct(stats: _*) as DeltaColumnMapping.getPhysicalName(f))
@@ -368,8 +369,8 @@ trait StatisticsCollection extends DeltaLogging {
           }
         case f @ StructField(name, _, _, _) =>
           val fieldPath = UnresolvedAttribute(parentFields :+ name).name
-          val column = parent.map(_.getItem(name))
-            .getOrElse(Column(UnresolvedAttribute.quoted(name)))
+          val column: Column = parent.map(_.getItem(name))
+            .getOrElse(UnresolvedAttribute.quoted(name))
           // alias the column with its physical name
           // Note: explodedDataSchemaNames comes from dataSchema. In the read path, dataSchema comes
           // from the table's metadata.dataSchema, which is the same as tableSchema. In the

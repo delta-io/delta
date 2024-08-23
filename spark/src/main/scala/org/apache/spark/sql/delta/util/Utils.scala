@@ -21,7 +21,9 @@ import scala.util.Random
 import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.actions.Metadata
 
-import org.apache.spark.sql.{Column, Dataset}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnExtShim._
+import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.expressions.ElementAt
 import org.apache.spark.sql.functions.lit
 
@@ -64,7 +66,7 @@ object Utils {
    * otherwise.
    */
   def try_element_at(mapColumn: Column, key: Any): Column = {
-    Column {
+    newColumn {
       ElementAt(mapColumn.expr, lit(key).expr, failOnError = false)
     }
   }

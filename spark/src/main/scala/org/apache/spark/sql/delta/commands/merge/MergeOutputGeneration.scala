@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnExtShim._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -82,7 +83,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // Add the columns to the given `sourceDF` to precompute clause conditions
     val sourceWithPrecompConditions = {
       val newCols = preComputedClauseConditions.map { case (colName, conditionExpr) =>
-        Column(conditionExpr).as(colName)
+        newColumn(conditionExpr).as(colName)
       }.toSeq
       sourceDF.select(col("*") +: newCols: _*)
     }
@@ -203,14 +204,14 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         /*  otherwise  */ matchedExprs(i))
       if (rowIdColumnExpressionOpt.exists(_.name == name)) {
         // Add Row ID metadata to allow writing the column.
-        Column(Alias(caseWhen, name)(
+        newColumn(Alias(caseWhen, name)(
           explicitMetadata = Some(RowId.columnMetadata(name))))
       } else if (rowCommitVersionColumnExpressionOpt.exists(_.name == name)) {
         // Add Row Commit Versions metadata to allow writing the column.
-        Column(Alias(caseWhen, name)(
+        newColumn(Alias(caseWhen, name)(
           explicitMetadata = Some(RowCommitVersion.columnMetadata(name))))
       } else {
-        Column(Alias(caseWhen, name)())
+        newColumn(Alias(caseWhen, name)())
       }
     }
     logDebug("writeAllChanges: join output expressions\n\t" + seqToString(outputCols.map(_.expr)))
@@ -393,7 +394,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     import org.apache.spark.sql.delta.commands.cdc.CDCReader._
     // The main partition just needs to swap in the CDC_TYPE_NOT_CDC value.
     val mainDataOutput =
-      outputCols.dropRight(1) :+ Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      outputCols.dropRight(1) :+ CDC_TYPE_NOT_CDC.as(CDC_TYPE_COLUMN_NAME)
 
     // Deleted rows are sent to the CDC partition instead of the main partition. These rows are
     // marked as dropped, we need to retain them while incrementing the original metric column
@@ -408,7 +409,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     val cdcNoopExprs = noopCopyExprs.dropRight(2) :+
       Literal.FalseLiteral :+ Literal(CDC_TYPE_UPDATE_PREIMAGE)
     val updatePreimageCdcOutput = cdcNoopExprs.zipWithIndex.map {
-      case (e, i) => Column(Alias(e, outputColNames(i))())
+      case (e, i) => newColumn(Alias(e, outputColNames(i))())
     }
 
     // To avoid duplicate evaluation of nondeterministic column values such as
@@ -420,7 +421,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // main data rows stay the same.
 
     val cdcTypeCol = outputCols.last
-    val cdcArray = Column(CaseWhen(Seq(
+    val cdcArray = newColumn(CaseWhen(Seq(
       EqualNullSafe(cdcTypeCol.expr, Literal(CDC_TYPE_INSERT)) -> array(
         struct(outputCols: _*)).expr,
 
@@ -436,7 +437,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       array(struct(mainDataOutput: _*)).expr
     ))
 
-    val cdcToMainDataArray = Column(If(
+    val cdcToMainDataArray = If(
       Or(
         EqualNullSafe(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME").expr,
           Literal(CDC_TYPE_INSERT)),
@@ -448,10 +449,10 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
           outputColNames
             .dropRight(1)
             .map { n => col(s"packedCdc.`$n`") }
-            :+ Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME): _*)
+            :+ CDC_TYPE_NOT_CDC.as(CDC_TYPE_COLUMN_NAME): _*)
       ).expr,
       array(col("packedCdc")).expr
-    ))
+    )
 
     if (deduplicateDeletes.enabled) {
       deduplicateCDFDeletes(

@@ -971,7 +971,7 @@ object DeltaLog extends DeltaLogging {
       partitionFilters
     }
     val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = Column(expr)
+    val columnFilter = expr
     files.filter(columnFilter)
   }
 

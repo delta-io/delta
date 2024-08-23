@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.metric
 
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Column, DataFrame, QueryTest}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnExtShim.newColumn
+import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, GreaterThan, If, Literal}
 import org.apache.spark.sql.execution.SparkPlan
@@ -51,10 +53,10 @@ abstract class IncrementMetricSuiteBase extends QueryTest with SharedSparkSessio
     val havingIncrement = IncrementMetric(
       GreaterThan(UnresolvedAttribute("s"), Literal(10)), metric)
     val df = testDf
-      .filter(Column(increment))
-      .groupBy(Column(groupByKey).as("gby"))
+      .filter(newColumn(increment))
+      .groupBy(newColumn(groupByKey).as("gby"))
       .agg(sum("a").as("s"))
-      .filter(Column(havingIncrement))
+      .filter(newColumn(havingIncrement))
     val numGroups = df.collect().size
     validatePlan(df.queryExecution.executedPlan)
 
@@ -73,10 +75,10 @@ abstract class IncrementMetricSuiteBase extends QueryTest with SharedSparkSessio
     val ifCondition: Expression = ('a < Literal(20)).expr
     val conditional = If(ifCondition, incrementTrueBranch, incrementFalseBranch)
     val df = testDf
-      .filter(Column(incrementPreFilter))
+      .filter(newColumn(incrementPreFilter))
       .filter('a < 25)
-      .filter(Column(increment))
-      .filter(Column(conditional))
+      .filter(newColumn(increment))
+      .filter(newColumn(conditional))
     val numRows = df.collect().size
     validatePlan(df.queryExecution.executedPlan)
 

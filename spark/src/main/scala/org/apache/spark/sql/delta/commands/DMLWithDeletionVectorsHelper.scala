@@ -339,7 +339,7 @@ object DeletionVectorBitmapGenerator {
     /** Create a bitmap set aggregator over the given column */
     private def createBitmapSetAggregator(indexColumn: Column): Column = {
       val func = new BitmapAggregator(indexColumn.expr, RoaringBitmapArrayFormat.Portable)
-      Column(func.toAggregateExpression(isDistinct = false))
+      func.toAggregateExpression(isDistinct = false)
     }
 
     protected def outputColumns: Seq[Column] =
@@ -399,7 +399,7 @@ object DeletionVectorBitmapGenerator {
       .withColumn(FILE_NAME_COL, fileNameColumn)
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
-      .filter(Column(condition))
+      .filter(condition)
       .withColumn(ROW_INDEX_COL, rowIndexColumn)
 
     val df = if (tableHasDVs) {
