@@ -17,8 +17,19 @@ package org.apache.spark.sql
 
 import org.apache.spark.sql.catalyst.expressions.Expression
 
+/**
+ * This shim is introduced to due to breaking `Column` API changes in Spark master with
+ * apache/spark#47785. It removed the following two APIs (both of which are already
+ * available in 3.5 and not needed to be shimmed):
+ * - `Column.expr`
+ * - `Column.apply(Expression)`
+ */
 object ColumnImplicitsShim {
-  implicit def expression(column: Column): Expression = {
+  /**
+   * Implicitly convert a [[Column]] to an [[Expression]]. Sometimes the `Column.expr` extension
+   * above conflicts other implicit conversions, so this method can be explicitly used.
+   */
+  def expression(column: Column): Expression = {
     column.expr
   }
 }

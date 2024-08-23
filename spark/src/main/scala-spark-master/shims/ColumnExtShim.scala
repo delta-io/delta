@@ -18,15 +18,36 @@ package org.apache.spark.sql
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.internal.ExpressionUtils
 
+/**
+ * This shim is introduced to due to breaking `Column` API changes in Spark master with
+ * apache/spark#47785. It removed the following two APIs:
+ * - `Column.expr` - Replaced with `ExpressionUtils.expression(column)`
+ * - `Column.apply(Expression)` - Replaced with `ExpressionUtils.column(e)`
+ */
 object ColumnImplicitsShim {
-  implicit class ColumnExprExt(val column: Column) {
+
+  /**
+   * Extend [[Column]] to provide `expr` method to get the [[Expression]].
+   * This avoids changing every `Column.expr` to `ExpressionUtils.expression(column)`.
+   *
+   * @param column The column to get the expression from.
+   */
+  implicit class ColumnExprExt(val column: Column) extends AnyVal {
     def expr: Expression = ExpressionUtils.expression(column)
   }
-  implicit class ColumnConstructorExt(c: Column.type) {
+
+  /**
+   * Provide an implicit constructor to create a [[Column]] from an [[Expression]].
+   */
+  implicit class ColumnConstructorExt(val c: Column.type) extends AnyVal {
     def apply(e: Expression): Column = ExpressionUtils.column(e)
   }
 
-  implicit def expression(column: Column): Expression = {
+  /**
+   * Implicitly convert a [[Column]] to an [[Expression]]. Sometimes the `Column.expr` extension
+   * above conflicts other implicit conversions, so this method can be explicitly used.
+   */
+  def expression(column: Column): Expression = {
     ExpressionUtils.expression(column)
   }
 }
