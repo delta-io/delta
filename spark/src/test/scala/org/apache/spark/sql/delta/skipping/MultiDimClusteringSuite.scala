@@ -24,7 +24,6 @@ import scala.util.Random
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
-import org.apache.spark.sql.ColumnExtShim._
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.test.SharedSparkSession

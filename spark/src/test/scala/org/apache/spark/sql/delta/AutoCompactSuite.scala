@@ -33,9 +33,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.ColumnExtShim._
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.test.SharedSparkSession
@@ -316,8 +314,8 @@ class AutoCompactSuite extends
     "partition values") { dir =>
       Seq(null, "", " ").map(UTF8String.fromString).zipWithIndex.foreach { case (partValue, i) =>
         val path = new File(dir, i.toString).getCanonicalPath
-        val df1 = spark.range(5).withColumn("part", newColumn(Literal(partValue, StringType)))
-        val df2 = spark.range(5, 10).withColumn("part", newColumn(Literal("1")))
+        val df1 = spark.range(5).withColumn("part", Column(Literal(partValue, StringType)))
+        val df2 = spark.range(5, 10).withColumn("part", Column(Literal("1")))
         val isLogged = checkAutoOptimizeLogging {
           // repartition to increase number of files written
           df1.union(df2).repartition(4)

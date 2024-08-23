@@ -27,7 +27,7 @@ import org.apache.spark.sql.types.StringType
 
 /** Functions for multi-dimensional clustering of the data */
 object MultiDimClusteringFunctions {
-  private def withExpr(expr: Expression): Column = expr
+  private def withExpr(expr: Expression): Column = Column(expr)
 
   /**
    * Conceptually range-partitions the domain of values of the given column into `numPartitions`

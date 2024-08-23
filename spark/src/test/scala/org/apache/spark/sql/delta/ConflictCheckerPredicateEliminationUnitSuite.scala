@@ -19,9 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.ColumnExtShim.{expression, newColumn}
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{Column, QueryTest}
 import org.apache.spark.sql.catalyst.dsl.expressions.DslExpression
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, Rand, ScalarSubquery}
 import org.apache.spark.sql.functions.{col, udf}
@@ -36,20 +34,20 @@ class ConflictCheckerPredicateEliminationUnitSuite
   with SharedSparkSession
   with ConflictCheckerPredicateElimination {
 
-  val simpleExpressionA: Expression = expression(col("a") === 1)
-  val simpleExpressionB: Expression = expression(col("b") === "test")
+  val simpleExpressionA: Expression = (col("a") === 1).expr
+  val simpleExpressionB: Expression = (col("b") === "test").expr
 
-  val deterministicExpression: Expression = expression((col("c") > 5L))
-  val nonDeterministicExpression: Expression = expression(col("c") > expression(newColumn(Rand(0))))
+  val deterministicExpression: Expression = (col("c") > 5L).expr
+  val nonDeterministicExpression: Expression = (col("c") > Column(Rand(0))).expr
   lazy val deterministicSubquery: Expression = {
     val df = spark.sql("SELECT 5")
     df.collect()
-    expression(col("c")) > ScalarSubquery(df.queryExecution.analyzed)
+    col("c").expr > ScalarSubquery(df.queryExecution.analyzed)
   }
   lazy val nonDeterministicSubquery: Expression = {
     val df = spark.sql("SELECT rand()")
     df.collect()
-    expression(col("c")) > ScalarSubquery(df.queryExecution.analyzed)
+    col("c").expr > ScalarSubquery(df.queryExecution.analyzed)
   }
 
   private def defaultEliminationFunction(e: Seq[Expression]): PredicateElimination = {
@@ -169,7 +167,7 @@ class ConflictCheckerPredicateEliminationUnitSuite
       .asNondeterministic()
       .withName("sensitive_udf_name")
     checkEliminationResult(
-      predicate = simpleExpressionA && expression(col("c") > random()),
+      predicate = simpleExpressionA && (col("c") > random()).expr,
       expected = PredicateElimination(
         newPredicates = Seq(simpleExpressionA),
         eliminatedPredicates = Seq("scalaudf")))

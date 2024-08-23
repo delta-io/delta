@@ -51,7 +51,6 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkException
 import org.apache.spark.internal.{MDC, MessageWithContext}
-import org.apache.spark.sql.ColumnExtShim._
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._

@@ -15,14 +15,5 @@
  */
 package org.apache.spark.sql
 
-import org.apache.spark.sql.catalyst.expressions.Expression
-
 object ColumnExtShim {
-  implicit def newColumn(expr: Expression): Column = {
-    Column(expr)
-  }
-
-  implicit def expression(column: Column): Expression = {
-    column.expr
-  }
 }

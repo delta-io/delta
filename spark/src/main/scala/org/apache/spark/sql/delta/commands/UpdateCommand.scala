@@ -184,9 +184,9 @@ case class UpdateCommand(
         val incrUpdatedCountExpr = IncrementMetric(TrueLiteral, metrics("numUpdatedRows"))
         val pathsToRewrite =
           withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
-            data.filter(updateCondition)
+            data.filter(Column(updateCondition))
               .select(input_file_name())
-              .filter(incrUpdatedCountExpr)
+              .filter(Column(incrUpdatedCountExpr))
               .distinct()
               .as[String]
               .collect()
@@ -358,13 +358,13 @@ case class UpdateCommand(
       updateExpressions)
 
     val targetDfWithEvaluatedCondition = {
-      val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, condition)
+      val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, Column(condition))
       val copyAndUpdateRowsDf = if (copyUnmodifiedRows) {
         evalDf
       } else {
         evalDf.filter(Column(UpdateCommand.CONDITION_COLUMN_NAME))
       }
-      copyAndUpdateRowsDf.filter(incrTouchedCountExpr)
+      copyAndUpdateRowsDf.filter(Column(incrTouchedCountExpr))
     }
 
     val updatedDataFrame = UpdateCommand.withUpdatedColumns(
@@ -433,19 +433,19 @@ object UpdateCommand {
       shouldOutputCdc: Boolean): DataFrame = {
     val resultDf = if (shouldOutputCdc) {
       val namedUpdateCols = updateExpressions.zip(originalExpressions).map {
-        case (expr, targetCol) => expr.as(targetCol.name, targetCol.metadata)
+        case (expr, targetCol) => Column(expr).as(targetCol.name, targetCol.metadata)
       }
 
       // Build an array of output rows to be unpacked later. If the condition is matched, we
       // generate CDC pre and postimages in addition to the final output row; if the condition
       // isn't matched, we just generate a rewritten no-op row without any CDC events.
-      val preimageCols = originalExpressions.map(newColumn(_)) :+
+      val preimageCols = originalExpressions.map(Column(_)) :+
         lit(CDC_TYPE_UPDATE_PREIMAGE).as(CDC_TYPE_COLUMN_NAME)
       val postimageCols = namedUpdateCols :+
         lit(CDC_TYPE_UPDATE_POSTIMAGE).as(CDC_TYPE_COLUMN_NAME)
-      val notCdcCol = CDC_TYPE_NOT_CDC.as(CDC_TYPE_COLUMN_NAME)
+      val notCdcCol = Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
       val updatedDataCols = namedUpdateCols :+ notCdcCol
-      val noopRewriteCols = originalExpressions.map(newColumn(_)) :+ notCdcCol
+      val noopRewriteCols = originalExpressions.map(Column(_)) :+ notCdcCol
       val packedUpdates = array(
         struct(preimageCols: _*),
         struct(postimageCols: _*),
@@ -466,7 +466,7 @@ object UpdateCommand {
         a => col(s"packedData.`${a.name}`").as(a.name, a.metadata)
       }
       dfWithEvaluatedCondition
-        .select(explode(packedData).as("packedData"))
+        .select(explode(Column(packedData)).as("packedData"))
         .select(finalColumns: _*)
     } else {
       val finalCols = updateExpressions.zip(originalExpressions).map { case (update, original) =>
@@ -475,7 +475,7 @@ object UpdateCommand {
         } else {
           If(UnresolvedAttribute(CONDITION_COLUMN_NAME), update, original)
         }
-        updated.as(original.name, original.metadata)
+        Column(updated).as(original.name, original.metadata)
       }
 
       dfWithEvaluatedCondition.select(finalCols: _*)
