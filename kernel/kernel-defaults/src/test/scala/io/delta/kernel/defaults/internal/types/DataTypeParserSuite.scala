@@ -16,11 +16,11 @@
 package io.delta.kernel.defaults.internal.types
 
 import scala.reflect.ClassTag
-
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.scalatest.funsuite.AnyFunSuite
-
 import io.delta.kernel.types._
+
+import java.util
 
 class DataTypeParserSuite extends AnyFunSuite {
 
@@ -29,7 +29,7 @@ class DataTypeParserSuite extends AnyFunSuite {
   private val objectMapper = new ObjectMapper()
 
   private def parse(json: String): DataType = {
-    DataTypeParser.parseDataType(objectMapper.readTree(json))
+    DataTypeParser.parseDataType(objectMapper.readTree(json), "", new util.HashMap())
   }
 
   private def checkDataType(dataTypeString: String, expectedDataType: DataType): Unit = {
@@ -111,6 +111,51 @@ class DataTypeParserSuite extends AnyFunSuite {
         assert(parsedType == expectedType)
       }
     }
+  }
+
+  test("parseDataType: complex types with collated strings") {
+    val json = structTypeJson(Seq(
+      structFieldJson("a1", "\"string\"", true),
+      structFieldJson("a2", structTypeJson(Seq(
+        structFieldJson("b1", mapTypeJson(
+          arrayTypeJson(arrayTypeJson("\"string\"", true), true),
+          structTypeJson(Seq(
+            structFieldJson("c1", "\"string\"", false,
+              metadataJson = Some("{\"__COLLATIONS\" : {\"c1\" : \"UTF8_LCASE\"}}")),
+            structFieldJson("c2", "\"string\"", true,
+              metadataJson = Some("{\"__COLLATIONS\" : {\"c1\" : \"UNICODE\"}}")),
+            structFieldJson("c3", "\"string\"", true)
+          )), true
+        ), true),
+        structFieldJson("b2", "\"long\"", true))), true,
+        metadataJson = Some("{\"__COLLATIONS\" : {\"b1.key.element.element\" : \"UTF8_LCASE\"}}")),
+      structFieldJson("a3", arrayTypeJson(
+        mapTypeJson(
+          "\"string\"",
+          structTypeJson(Seq(
+            structFieldJson("b1", "\"string\"", false,
+              metadataJson = Some("{\"__COLLATIONS\" : {\"a3.element.key\" : \"UNICODE_CI\"}}")))),
+          false), false), true,
+        metadataJson = Some("{\"__COLLATIONS\" : {\"a3.element.key\" : \"UNICODE_CI\"}}"))
+    ))
+    val structType = new StructType()
+      .add("a1", StringType.STRING, true)
+      .add("a2", new StructType()
+        .add("b1", new MapType(
+          new ArrayType(
+            new ArrayType(
+              new StringType("UTF8_LCASE"), true), true),
+          new StructType()
+            .add("c1", new StringType("UTF8_LCASE"), false)
+            .add("c2", new StringType("UNICODE"), true)
+            .add("c3", StringType.STRING), true))
+        .add("b2", LongType.LONG), true)
+      .add("a3", new ArrayType(
+        new MapType(
+          new StringType("UNICODE_CI"),
+          new StructType()
+            .add("b1", new StringType("UTF8_LCASE"), false), false), false), true)
+    assert(parse(json) == structType)
   }
 
   test("parseDataType: special characters for column name") {
