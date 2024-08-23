@@ -15,5 +15,10 @@
  */
 package org.apache.spark.sql
 
+import org.apache.spark.sql.catalyst.expressions.Expression
+
 object ColumnImplicitsShim {
+  implicit def expression(column: Column): Expression = {
+    column.expr
+  }
 }

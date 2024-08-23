@@ -370,7 +370,13 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
       deltaLog: DeltaLog): Seq[Column] = {
     val schema = deltaLog.update().schema
     columns.map { col =>
-      val newExpr = col.expr.transform {
+      // Implicit `Column.expr` doesn't work due to ambiguity
+      // both method ColumnExprExt in object ColumnImplicitsShim of type
+      //   (column: org.apache.spark.sql.Column):
+      //   org.apache.spark.sql.ColumnImplicitsShim.ColumnExprExt
+      // and method toRichColumn in object testImplicits of type
+      //   (c: org.apache.spark.sql.Column): org.apache.spark.sql.SparkSession#RichColumn
+      val newExpr = expression(col).transform {
         case a: Attribute =>
           convertColumnNameToAttributeWithPhysicalName(a.name, schema)
       }
