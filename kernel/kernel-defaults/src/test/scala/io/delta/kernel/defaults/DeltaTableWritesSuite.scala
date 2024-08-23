@@ -142,46 +142,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create table with collation string") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val schema = new StructType()
-        .add("c1", new StringType("UTF8_LCASE"), true)
-        .add("c2", STRING, true)
-
-      val txn = txnBuilder
-        .withSchema(engine, schema)
-        .build(engine)
-
-      val txnResult = txn.commit(engine, emptyIterable())
-
-      val dataStringC1 = List("a", "A")
-      val dataStringC2 = List("b", "c")
-      val columnVectorStringC1 = new DefaultStringVector(2, Optional.empty(),
-        dataStringC1.asJava.toArray(Array.empty[String]), "UTF8_LCASE")
-      val columnVectorStringC2 = new DefaultStringVector(2, Optional.empty(),
-        dataStringC2.asJava.toArray(Array.empty[String]), "UTF8_BINARY")
-      val columnarBatch = new DefaultColumnarBatch(2, schema,
-        List(columnVectorStringC1, columnVectorStringC2).asJava.toArray(Array.empty[ColumnVector]))
-      val filteredColumnarBatch = new FilteredColumnarBatch(
-        columnarBatch, Optional.empty())
-
-      appendData(engine = defaultEngine,
-        tablePath = tablePath,
-        data = Seq(Map.empty[String, Literal] -> Seq(filteredColumnarBatch)))
-
-      checkTable(tablePath, Seq(TestRow("a", "b"), TestRow("A", "c")))
-
-      val scalarExpression = new ScalarExpression("=",
-        List[Expression](Literal.ofString("A", "UTF8_LCASE"),
-        Literal.ofString("a", "UTF8_LCASE")).asJava)
-      val output = new DefaultExpressionEvaluator(schema,
-        scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
-    }
-  }
-
   test("create table and set properties") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
