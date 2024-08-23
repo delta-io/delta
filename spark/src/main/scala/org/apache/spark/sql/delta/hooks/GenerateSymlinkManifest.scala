@@ -31,7 +31,6 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
-import org.apache.spark.sql.ColumnExtShim._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -377,7 +376,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       colNameToAttribs,
       spark.sessionState.conf.sessionLocalTimeZone)
 
-    df.withColumn("relativePartitionDir", relativePartitionDirExpression)
+    df.withColumn("relativePartitionDir", Column(relativePartitionDirExpression))
       .drop(colToRenamedCols.map(_._2): _*)
   }
 
