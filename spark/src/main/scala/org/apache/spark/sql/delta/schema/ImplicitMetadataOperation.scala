@@ -24,12 +24,11 @@ import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
-
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{DataType, StructType}
 
 /**
  * A trait that writers into Delta can extend to update the schema and/or partitioning of the table.
@@ -228,6 +227,108 @@ object ImplicitMetadataOperation {
   }
 
   /**
+   * Check whether there are dependant (CHECK) constraints for
+   * the provided `currentDt`; if so, throw an error indicating
+   * the constraint data type mismatch.
+   *
+   * @param spark the spark session used.
+   * @param path the full column path.
+   * @param metadata the metadata used for checking dependant (CHECK) constraints.
+   * @param currentDt the current data type.
+   * @param updateDt the updated data type.
+   */
+  private def checkDependentConstraints(
+      spark: SparkSession,
+      path: Seq[String],
+      metadata: Metadata,
+      currentDt: DataType,
+      updateDt: DataType): Unit = {
+    val dependentConstraints =
+      Constraints.findDependentConstraints(spark, path, metadata)
+    if (dependentConstraints.nonEmpty) {
+      throw DeltaErrors.constraintDataTypeMismatch(
+        path,
+        currentDt,
+        updateDt,
+        dependentConstraints
+      )
+    }
+  }
+
+  /**
+   * Check whether there are dependant generated columns for
+   * the provided `currentDt`; if so, throw an error indicating
+   * the generated columns data type mismatch.
+   *
+   * @param spark the spark session used.
+   * @param path the full column path.
+   * @param protocol the protocol used.
+   * @param metadata the metadata used for checking dependant generated columns.
+   * @param currentDt the current data type.
+   * @param updateDt the updated data type.
+   */
+  private def checkDependentGeneratedColumns(
+      spark: SparkSession,
+      path: Seq[String],
+      protocol: Protocol,
+      metadata: Metadata,
+      currentDt: DataType,
+      updateDt: DataType): Unit = {
+    val dependentGeneratedColumns = SchemaUtils.findDependentGeneratedColumns(
+      spark, path, protocol, metadata.schema)
+    if (dependentGeneratedColumns.nonEmpty) {
+      throw DeltaErrors.generatedColumnsDataTypeMismatch(
+        path,
+        currentDt,
+        updateDt,
+        dependentGeneratedColumns
+      )
+    }
+  }
+
+  /**
+   * If the provided data types are `StructType`, check whether the nested/inner fields
+   * of the struct are being referenced by CHECK constraints or generated columns.
+   * It is worth noting that we only care about the inner fields of `StructType`,
+   * for all the other types, e.g., `MapType` or `ArrayType`, we will directly check
+   * the dependant constraints and generated columns without inspecting the inner fields.
+   *
+   * @param spark the spark session used.
+   * @param protocol the protocol used.
+   * @param path the full column path.
+   * @param from the current data type.
+   * @param to the updated data type.
+   * @param metadata the metadata used for checking constraints and generated columns.
+   */
+  private def checkReferencedByCheckConstraintsOrGeneratedColumns(
+      spark: SparkSession,
+      protocol: Protocol,
+      path: Seq[String],
+      from: DataType,
+      to: DataType,
+      metadata: Metadata): Unit = (from, to) match {
+    // we only check for (nested) struct fields
+    case (StructType(fromFields), StructType(toFields)) =>
+      fromFields.zip(toFields).foreach { case (fromField, toField) =>
+        checkReferencedByCheckConstraintsOrGeneratedColumns(
+          spark = spark,
+          protocol = protocol,
+          path = path :+ fromField.name,
+          from = fromField.dataType,
+          to = toField.dataType,
+          metadata = metadata
+        )
+      }
+    case (fromDataType, toDataType) =>
+      // this could potentially be the nested fields inside a struct with type evolution,
+      // we need to check for the dependant constraints and generated columns.
+      if (fromDataType != toDataType) {
+        checkDependentConstraints(spark, path, metadata, fromDataType, toDataType)
+        checkDependentGeneratedColumns(spark, path, protocol, metadata, fromDataType, toDataType)
+      }
+  }
+
+  /**
    * Finds all fields that change between the current schema and the new data schema and fail if any
    * of them are referenced by check constraints or generated columns.
    */
@@ -236,42 +337,23 @@ object ImplicitMetadataOperation {
       protocol: Protocol,
       metadata: actions.Metadata,
       dataSchema: StructType): Unit =
-  SchemaMergingUtils.transformColumns(metadata.schema, dataSchema) {
-    case (fieldPath, currentField, Some(updateField), _)
-      // This condition is actually too strict, structs may be identified as changing because one
-      // of their field is changing even though that field isn't referenced by any constraint or
-      // generated column. This is intentional to keep the check simple and robust, esp. since it
-      // aligns with the historical behavior of this check.
-      if !SchemaMergingUtils.equalsIgnoreCaseAndCompatibleNullability(
-        currentField.dataType,
-        updateField.dataType
-      ) =>
-        val columnPath = fieldPath :+ currentField.name
-        // check if the field to change is referenced by check constraints
-        val dependentConstraints =
-          Constraints.findDependentConstraints(sparkSession, columnPath, metadata)
-        if (dependentConstraints.nonEmpty) {
-          throw DeltaErrors.constraintDataTypeMismatch(
-            columnPath,
-            currentField.dataType,
-            updateField.dataType,
-            dependentConstraints
-          )
-        }
-        // check if the field to change is referenced by any generated columns
-        val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
-          sparkSession, columnPath, protocol, metadata.schema)
-        if (dependentGenCols.nonEmpty) {
-          throw DeltaErrors.generatedColumnsDataTypeMismatch(
-            columnPath,
-            currentField.dataType,
-            updateField.dataType,
-            dependentGenCols
-          )
-        }
-      // We don't transform the schema but just perform checks, the returned field won't be used
-      // anyway.
-      updateField
-    case (_, field, _, _) => field
-  }
+    SchemaMergingUtils.transformColumns(metadata.schema, dataSchema) {
+      case (fieldPath, currentField, Some(updateField), _)
+        if !SchemaMergingUtils.equalsIgnoreCaseAndCompatibleNullability(
+          currentField.dataType,
+          updateField.dataType
+        ) =>
+        checkReferencedByCheckConstraintsOrGeneratedColumns(
+          spark = sparkSession,
+          protocol = protocol,
+          path = fieldPath :+ currentField.name,
+          from = currentField.dataType,
+          to = updateField.dataType,
+          metadata = metadata
+        )
+        // We don't transform the schema but just perform checks, the returned field won't be used
+        // anyway.
+        updateField
+      case (_, field, _, _) => field
+    }
 }
