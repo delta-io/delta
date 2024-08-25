@@ -143,7 +143,8 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
             "columnType" -> "TINYINT",
             "dataType" -> "INT",
             "generatedColumns" -> "gen -> hash(a.x)"
-          ))
+          )
+        )
 
         // changing the type of struct field `a.y` when it's not
         // the field referenced by the generated column is allowed.
@@ -183,7 +184,8 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
             "columnType" -> "TINYINT",
             "dataType" -> "INT",
             "generatedColumns" -> "gen -> hash(a.x.z)"
-          ))
+          )
+        )
 
         // changing the type of struct field `a.y` when it's not
         // the field referenced by the generated column is allowed.

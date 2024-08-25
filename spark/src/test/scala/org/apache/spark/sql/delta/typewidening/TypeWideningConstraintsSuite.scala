@@ -137,7 +137,8 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
             "columnType" -> "TINYINT",
             "dataType" -> "INT",
             "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
-          ))
+          )
+        )
 
         // changing the type of struct field `a.y` when it's not
         // the field referenced by the CHECK constraint is allowed.
@@ -171,7 +172,8 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
             "columnType" -> "TINYINT",
             "dataType" -> "INT",
             "constraints" -> "delta.constraints.ck -> hash ( a . x . z ) > 0"
-          ))
+          )
+        )
 
         // changing the type of struct field `a.y` and `a.x.h` when it's not
         // the field referenced by the CHECK constraint is allowed.
