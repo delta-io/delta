@@ -254,8 +254,7 @@ object DataTypeParserSuite {
     (
       structTypeJson(Seq(
         structFieldJson("a1", structTypeJson(Seq(
-          structFieldJson(
-            "b1", "\"string\"", true,
+          structFieldJson("b1", "\"string\"", true,
             metadataJson = Some("{\"__COLLATIONS\" : {\"b1\" : \"UNICODE\"}}")))), true),
         structFieldJson("a2", structTypeJson(Seq(
           structFieldJson("b1", arrayTypeJson("\"string\"", false), true,
@@ -294,18 +293,14 @@ object DataTypeParserSuite {
                 metadataJson = Some("{\"__COLLATIONS\" : {\"c1\" : \"UTF8_LCASE\"}}")),
               structFieldJson("c2", "\"string\"", true,
                 metadataJson = Some("{\"__COLLATIONS\" : {\"c1\" : \"UNICODE\"}}")),
-              structFieldJson("c3", "\"string\"", true)
-            )), true
-          ), true),
-          structFieldJson("b2", "\"long\"", true))), true,
-          metadataJson =
+              structFieldJson("c3", "\"string\"", true))), true), true),
+          structFieldJson("b2", "\"long\"", true))), true, metadataJson =
             Some("{\"__COLLATIONS\" : {\"b1.key.element.element\" : \"UTF8_LCASE\"}}")),
         structFieldJson("a3", arrayTypeJson(
           mapTypeJson(
             "\"string\"",
             structTypeJson(Seq(
-              structFieldJson("b1", "\"string\"", false,
-                metadataJson =
+              structFieldJson("b1", "\"string\"", false, metadataJson =
                   Some("{\"__COLLATIONS\" : {\"a3.element.key\" : \"UNICODE_CI\"}}")))),
             false), false), true,
           metadataJson = Some("{\"__COLLATIONS\" : {\"a3.element.key\" : \"UNICODE_CI\"}}")))),
