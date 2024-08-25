@@ -332,7 +332,7 @@ object TableFeature {
    * Warning: Do not call `get` on this Map to get a specific feature because keys in this map are
    * in lower cases. Use [[featureNameToFeature]] instead.
    */
-  private[delta] def allSupportedFeaturesMap: Map[String, TableFeature] = {
+  def allSupportedFeaturesMap: Map[String, TableFeature] = {
     val testingFeaturesEnabled =
       try {
         SparkSession

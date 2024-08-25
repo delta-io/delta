@@ -41,8 +41,9 @@ import org.apache.spark.sql.types._
 trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
 
   import testImplicits._
-  protected val tblName = "identity_test"
+
   test("Don't allow IDENTITY column in the schema if the feature is disabled") {
+    val tblName = getRandomTableName
     withSQLConf(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key -> "false") {
       withTable(tblName) {
         val e = intercept[DeltaUnsupportedTableFeatureException] {
@@ -102,6 +103,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
       startsWith <- starts
       incrementBy <- steps
     } {
+      val tblName = getRandomTableName
       withTable(tblName) {
         createTableWithIdColAndIntValueCol(
           tblName, generatedAsIdentityType, Some(startsWith), Some(incrementBy))
@@ -119,6 +121,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
       startsWith <- Seq(Some(1L), None)
       incrementBy <- Seq(Some(1L), None)
     } {
+      val tblName = getRandomTableName
       withTable(tblName) {
         createTableWithIdColAndIntValueCol(
           tblName, generatedAsIdentityType, startsWith, incrementBy)
@@ -131,6 +134,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
   }
 
   test("logging") {
+    val tblName = getRandomTableName
     withTable(tblName) {
       val eventsDefinition = Log4jUsageLogger.track {
         createTable(
@@ -184,6 +188,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
       assert(!ColumnWithDefaultExprUtils.hasIdentityColumn(f().schema), s"test $id failed")
     }
 
+    val tblName = getRandomTableName
     withTable(tblName) {
       createTable(
         tblName,
@@ -312,6 +317,8 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     test(
         "replace table with identity column should upgrade protocol, "
           + s"identityType: $generatedAsIdentityType") {
+
+      val tblName = getRandomTableName
       def getProtocolVersions: (Int, Int) = {
         sql(s"DESC DETAIL $tblName")
           .select("minReaderVersion", "minWriterVersion")
@@ -354,6 +361,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
       start <- starts
       step <- steps
     } {
+      val tblName = getRandomTableName
       withTable(tblName) {
         createTableWithIdColAndIntValueCol(
           tblName, generatedAsIdentityType, Some(start), Some(step))
@@ -380,26 +388,26 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
   }
 
   test("restore - positive step") {
-    val tableName = "identity_test_tgt"
-    withTable(tableName) {
-      generateTableWithIdentityColumn(tableName)
-      sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
-      sql(s"INSERT INTO $tableName (value) VALUES (6)")
+    val tblName = getRandomTableName
+    withTable(tblName) {
+      generateTableWithIdentityColumn(tblName)
+      sql(s"RESTORE TABLE $tblName TO VERSION AS OF 3")
+      sql(s"INSERT INTO $tblName (value) VALUES (6)")
       checkAnswer(
-        sql(s"SELECT id, value FROM $tableName ORDER BY value ASC"),
+        sql(s"SELECT id, value FROM $tblName ORDER BY value ASC"),
         Seq(Row(0, 0), Row(1, 1), Row(2, 2), Row(6, 6))
       )
     }
   }
 
   test("restore - negative step") {
-    val tableName = "identity_test_tgt"
-    withTable(tableName) {
-      generateTableWithIdentityColumn(tableName, step = -1)
-      sql(s"RESTORE TABLE $tableName TO VERSION AS OF 3")
-      sql(s"INSERT INTO $tableName (value) VALUES (6)")
+    val tblName = getRandomTableName
+    withTable(tblName) {
+      generateTableWithIdentityColumn(tblName, step = -1)
+      sql(s"RESTORE TABLE $tblName TO VERSION AS OF 3")
+      sql(s"INSERT INTO $tblName (value) VALUES (6)")
       checkAnswer(
-        sql(s"SELECT id, value FROM $tableName ORDER BY value ASC"),
+        sql(s"SELECT id, value FROM $tblName ORDER BY value ASC"),
         Seq(Row(0, 0), Row(-1, 1), Row(-2, 2), Row(-6, 6))
       )
     }
@@ -407,6 +415,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
 
   test("restore - on partitioned table") {
       for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+        val tblName = getRandomTableName
         withTable(tblName) {
           // v0.
           createTable(
@@ -443,11 +452,11 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
   }
 
   test("clone") {
-      val oldTbl = "identity_test_old"
-      val newTbl = "identity_test_new"
       for {
         generatedAsIdentityType <- GeneratedAsIdentityType.values
       } {
+        val oldTbl = s"${getRandomTableName}_old"
+        val newTbl = s"${getRandomTableName}_new"
         withIdentityColumnTable(generatedAsIdentityType, oldTbl) {
           withTable(newTbl) {
             sql(s"INSERT INTO $oldTbl (value) VALUES (1), (2)")
@@ -479,8 +488,8 @@ class IdentityColumnScalaSuite
   with ScalaDDLTestUtils {
 
   test("unsupported column type") {
-    val tblName = "identity_test"
     for (unsupportedType <- unsupportedDataTypes) {
+      val tblName = getRandomTableName
       withTable(tblName) {
         val ex = intercept[DeltaUnsupportedOperationException] {
           createTable(
@@ -498,11 +507,11 @@ class IdentityColumnScalaSuite
   }
 
   test("unsupported step") {
-    val tblName = "identity_test"
     for {
       generatedAsIdentityType <- GeneratedAsIdentityType.values
       startsWith <- Seq(Some(1L), None)
     } {
+      val tblName = getRandomTableName
       withTable(tblName) {
         val ex = intercept[DeltaAnalysisException] {
           createTableWithIdColAndIntValueCol(

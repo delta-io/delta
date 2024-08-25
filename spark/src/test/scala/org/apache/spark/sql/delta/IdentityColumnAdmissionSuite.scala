@@ -39,8 +39,6 @@ trait IdentityColumnAdmissionSuiteBase
 
   import testImplicits._
 
-  protected val tblName = "identity_admission_test"
-
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key, "true")
@@ -52,6 +50,7 @@ trait IdentityColumnAdmissionSuiteBase
       keyword <- Seq("ALTER", "CHANGE")
       targetType <- Seq(IntegerType, DoubleType)
     } {
+      val tblName = getRandomTableName
       withIdentityColumnTable(generatedAsIdentityType, tblName) {
         targetType match {
           case IntegerType =>
@@ -78,6 +77,7 @@ trait IdentityColumnAdmissionSuiteBase
       generatedAsIdentityType <- GeneratedAsIdentityType.values
       keyword <- Seq("ALTER", "CHANGE")
     } {
+      val tblName = getRandomTableName
       withIdentityColumnTable(generatedAsIdentityType, tblName) {
         sql(s"ALTER TABLE $tblName $keyword COLUMN id COMMENT 'comment'")
       }
@@ -88,6 +88,7 @@ trait IdentityColumnAdmissionSuiteBase
     for {
       generatedAsIdentityType <- GeneratedAsIdentityType.values
     } {
+      val tblName = getRandomTableName
       withIdentityColumnTable(generatedAsIdentityType, tblName) {
         sql(s"ALTER TABLE $tblName SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
         sql(s"INSERT INTO $tblName (value) VALUES (1)")
@@ -102,9 +103,8 @@ trait IdentityColumnAdmissionSuiteBase
   }
 
   test("cannot set default value for identity column") {
-    for {
-      generatedAsIdentityType <- GeneratedAsIdentityType.values
-    } {
+    for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val tblName = getRandomTableName
       withIdentityColumnTable(generatedAsIdentityType, tblName) {
         val ex = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tblName ALTER COLUMN id SET DEFAULT 1")
@@ -115,9 +115,8 @@ trait IdentityColumnAdmissionSuiteBase
   }
 
   test("position of identity column can be moved") {
-    for {
-      generatedAsIdentityType <- GeneratedAsIdentityType.values
-    } {
+    for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val tblName = getRandomTableName
       withIdentityColumnTable(generatedAsIdentityType, tblName) {
         sql(s"ALTER TABLE $tblName ALTER COLUMN id AFTER value")
         sql(s"INSERT INTO $tblName (value) VALUES (1)")
@@ -133,6 +132,7 @@ trait IdentityColumnAdmissionSuiteBase
 
   test("alter table replace columns") {
     for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val tblName = getRandomTableName
       withIdentityColumnTable(generatedAsIdentityType, tblName) {
         val ex = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tblName REPLACE COLUMNS (id BIGINT, value INT)")
@@ -143,9 +143,8 @@ trait IdentityColumnAdmissionSuiteBase
   }
 
   test("create table partitioned by identity column") {
-    for {
-      generatedAsIdentityType <- GeneratedAsIdentityType.values
-    } {
+    for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val tblName = getRandomTableName
       withTable(tblName) {
         val ex1 = intercept[DeltaAnalysisException] {
           createTable(
@@ -176,9 +175,8 @@ trait IdentityColumnAdmissionSuiteBase
   }
 
   test("replace with table partitioned by identity column") {
-    for {
-      generatedAsIdentityType <- GeneratedAsIdentityType.values
-    } {
+    for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val tblName = getRandomTableName
       withTable(tblName) {
         // First create a table with no identity column and no partitions.
         createTable(
@@ -220,10 +218,9 @@ trait IdentityColumnAdmissionSuiteBase
   }
 
   test("CTAS does not inherit IDENTITY column") {
-    for {
-      generatedAsIdentityType <- GeneratedAsIdentityType.values
-    } {
-      val ctasTblName = "ctasTblName"
+    for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val tblName = getRandomTableName
+      val ctasTblName = getRandomTableName
       withIdentityColumnTable(generatedAsIdentityType, tblName) {
         withTable(ctasTblName) {
           sql(s"INSERT INTO $tblName (value) VALUES (1), (2)")
@@ -239,6 +236,7 @@ trait IdentityColumnAdmissionSuiteBase
   }
 
   test("insert generated always as") {
+    val tblName = getRandomTableName
     withIdentityColumnTable(GeneratedAlways, tblName) {
       // Test SQLs.
       val blockedStmts = Seq(
@@ -267,6 +265,7 @@ trait IdentityColumnAdmissionSuiteBase
   }
 
   test("streaming") {
+    val tblName = getRandomTableName
     withIdentityColumnTable(GeneratedAlways, tblName) {
       val path = DeltaLog.forTable(spark, TableIdentifier(tblName)).dataPath.toString
       withTempDir { checkpointDir =>
@@ -293,6 +292,7 @@ trait IdentityColumnAdmissionSuiteBase
 
   test("update") {
     for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val tblName = getRandomTableName
       withIdentityColumnTable(generatedAsIdentityType, tblName) {
         sql(s"INSERT INTO $tblName (value) VALUES (1), (2)")
 
@@ -305,6 +305,56 @@ trait IdentityColumnAdmissionSuiteBase
         for (stmt <- blockedStatements) {
           val ex = intercept[DeltaAnalysisException](sql(stmt))
           assert(ex.getMessage.contains("UPDATE on IDENTITY column"))
+        }
+      }
+    }
+  }
+
+  test("merge") {
+    for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
+      val source = s"${getRandomTableName}_source"
+      val target = s"${getRandomTableName}_target"
+      withIdentityColumnTable(generatedAsIdentityType, target) {
+        withTable(source) {
+          sql(
+            s"""
+               |CREATE TABLE $source (
+               |  value INT,
+               |  id BIGINT
+               |) USING delta
+               |""".stripMargin)
+          sql(
+            s"""
+               |INSERT INTO $source VALUES (1, 100), (2, 200), (3, 300)
+               |""".stripMargin)
+          sql(
+            s"""
+               |INSERT INTO $target(value) VALUES (2), (3), (4)
+               |""".stripMargin)
+
+          val updateStmt =
+            s"""
+               |MERGE INTO $target
+               |  USING $source on $target.value = $source.value
+               |  WHEN MATCHED THEN UPDATE SET *
+               |""".stripMargin
+          val updateEx = intercept[DeltaAnalysisException](sql(updateStmt))
+          assert(updateEx.getMessage.contains("UPDATE on IDENTITY column"))
+
+          val insertStmt =
+            s"""
+               |MERGE INTO $target
+               |  USING $source on $target.value = $source.value
+               |  WHEN NOT MATCHED THEN INSERT *
+               |""".stripMargin
+
+          if (generatedAsIdentityType == GeneratedAlways) {
+            val insertEx = intercept[DeltaAnalysisException](sql(insertStmt))
+            assert(
+              insertEx.getMessage.contains("Providing values for GENERATED ALWAYS AS IDENTITY"))
+          } else {
+            sql(insertStmt)
+          }
         }
       }
     }
