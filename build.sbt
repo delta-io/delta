@@ -571,13 +571,41 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
+
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test"
     ),
+    // Shade jackson libraries so that connector developers don't have to worry
+    // about jackson version conflicts.
+    Compile / packageBin := assembly.value,
+    assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      val allowedPrefixes = Set("META_INF", "io", "jackson")
+      cp.filter { f =>
+        !allowedPrefixes.exists(prefix => f.data.getName.startsWith(prefix))
+      }
+    },
+     assembly / assemblyShadeRules := Seq(
+      ShadeRule.rename("com.fasterxml.jackson.**" -> "io.delta.kernel.shaded.com.fasterxml.jackson.@1").inAll
+    ),
+    assembly / assemblyMergeStrategy := {
+      // Discard `module-info.class` to fix the `different file contents found` error.
+      // TODO Upgrade SBT to 1.5 which will do this automatically
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     // Generate the package object to provide the version information in runtime.
     Compile / sourceGenerators += Def.task {
       val file = (Compile / sourceManaged).value / "io" / "delta" / "kernel" / "Meta.java"
