@@ -634,7 +634,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       ),
       (
         ofString("\uFFFD", "UTF8_BINARY"),
-        ofString("\uD83C\uDF3C", "UTF8_BINARY"), // blossom flower emoji
+        ofString("\uD83C\uDF3C", "UTF8_BINARY"),
         ofString("\uFFFD", "UTF8_BINARY"),
         ofNull(StringType.STRING)
         // scalastyle:on nonascii
