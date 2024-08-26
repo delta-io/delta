@@ -221,7 +221,6 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
     val res = x.eval(new DefaultColumnarBatch(1, schema,
       columnarArray.asJava.toArray(Array.empty[ColumnVector])))
-    println(res.getBoolean(0))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
