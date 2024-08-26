@@ -267,7 +267,7 @@ class ParquetColumnReaders {
 
     IntColumnReader(DataType dataType, int initialBatchSize) {
       super(initialBatchSize);
-      checkArgument(dataType instanceof IntegerType || dataType instanceof DataType);
+      checkArgument(dataType instanceof IntegerType || dataType instanceof DateType);
       this.dataType = dataType;
       this.values = new int[initialBatchSize];
     }
@@ -313,6 +313,13 @@ class ParquetColumnReaders {
               || dataType instanceof TimestampNTZType);
       this.dataType = dataType;
       this.values = new long[initialBatchSize];
+    }
+
+    @Override
+    public void addInt(int value) {
+      resizeIfNeeded();
+      this.nullability[currentRowIndex] = false;
+      this.values[currentRowIndex] = value;
     }
 
     @Override
@@ -386,6 +393,20 @@ class ParquetColumnReaders {
     DoubleColumnReader(int initialBatchSize) {
       super(initialBatchSize);
       this.values = new double[initialBatchSize];
+    }
+
+    @Override
+    public void addInt(int value) {
+      resizeIfNeeded();
+      this.nullability[currentRowIndex] = false;
+      this.values[currentRowIndex] = value;
+    }
+
+    @Override
+    public void addFloat(float value) {
+      resizeIfNeeded();
+      this.nullability[currentRowIndex] = false;
+      this.values[currentRowIndex] = value;
     }
 
     @Override
