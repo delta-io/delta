@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT32;
 import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT64;
 import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT96;
 
@@ -23,6 +24,7 @@ import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import io.delta.kernel.types.*;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.time.ZoneOffset;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.schema.*;
@@ -75,6 +77,10 @@ public class TimestampConverters {
           throw new UnsupportedOperationException(
               String.format("Unsupported Parquet TimeType unit=%s", timestamp.getUnit()));
       }
+    } else if (typeFromClient == TimestampNTZType.TIMESTAMP_NTZ
+        && primType.getPrimitiveTypeName() == INT32
+        && typeAnnotation instanceof LogicalTypeAnnotation.DateLogicalTypeAnnotation) {
+      return new DateToTimestampNTZConverter(typeFromClient, initialBatchSize);
     } else {
       throw new RuntimeException(
           String.format("Unsupported timestamp column with Parquet type %s.", typeFromFile));
@@ -123,6 +129,18 @@ public class TimestampConverters {
     @Override
     public void addLong(long value) {
       throw new UnsupportedOperationException(getClass().getName());
+    }
+  }
+
+  public static class DateToTimestampNTZConverter extends ParquetColumnReaders.LongColumnReader {
+
+    DateToTimestampNTZConverter(DataType dataType, int initialBatchSize) {
+      super(validTimestampType(dataType), initialBatchSize);
+    }
+
+    @Override
+    public void addInt(int value) {
+      super.addLong(DefaultKernelUtils.daysToMicros(value, ZoneOffset.UTC));
     }
   }
 
