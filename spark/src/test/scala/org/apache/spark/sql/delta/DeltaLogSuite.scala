@@ -301,12 +301,12 @@ class DeltaLogSuite extends QueryTest
     withTempDir { dir =>
       val log = DeltaLog.forTable(spark, dir)
       assert(new File(log.logPath.toUri).mkdirs())
-      val path = new File(dir, "a/b/c").getCanonicalPath
+      val path = new File(dir, "a/b%c/d").toURI.toString
       val rm = RemoveFile(path, Some(System.currentTimeMillis()), dataChange = true)
       log.startTransaction().commitManually(rm)
 
-      val committedRemove = log.update(stalenessAcceptable = false).tombstones.collect()
-      assert(committedRemove.head.path === s"file://$path")
+      val committedRemove = log.update(stalenessAcceptable = false).tombstones.collect().head
+      assert(committedRemove.path === path)
     }
   }
 
