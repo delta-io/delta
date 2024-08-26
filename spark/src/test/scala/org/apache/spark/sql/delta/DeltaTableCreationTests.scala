@@ -2427,6 +2427,9 @@ trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelecte
 
 class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
   with DeltaColumnMappingEnableIdMode {
+
+  override val defaultTempDirPrefix = "spark"
+
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     // ignore comparing column mapping properties
     dropColumnMappingConfigurations(super.getTableProperties(tableName))
@@ -2435,6 +2438,8 @@ class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
 
 class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
   with DeltaColumnMappingEnableNameMode {
+  override val defaultTempDirPrefix = "spark"
+
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     // ignore comparing column mapping properties
     dropColumnMappingConfigurations(super.getTableProperties(tableName))

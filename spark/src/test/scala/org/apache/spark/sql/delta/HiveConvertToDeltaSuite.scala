@@ -130,7 +130,7 @@ abstract class HiveConvertToDeltaSuiteBase
 
   test("convert a Hive based external parquet table") {
     val tbl = "hive_parquet"
-    withTempDir { dir =>
+    withTempDir(prefix = "spark") { dir =>
       withTable(tbl) {
         sql(
           s"""
