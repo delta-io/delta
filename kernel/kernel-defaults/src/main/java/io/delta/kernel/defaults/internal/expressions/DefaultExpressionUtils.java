@@ -24,6 +24,7 @@ import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
@@ -150,7 +151,7 @@ class DefaultExpressionUtils {
       vectorValueComparator =
           rowId ->
               booleanComparator.test(
-                  STRING_COMPARATOR.compare(left.getString(rowId), right.getString(rowId)));
+                  -BINARY_COMPARTOR.compare(left.getString(rowId).getBytes(StandardCharsets.UTF_8), right.getString(rowId).getBytes(StandardCharsets.UTF_8)));
     } else if (dataType instanceof BinaryType) {
       vectorValueComparator =
           rowId ->
