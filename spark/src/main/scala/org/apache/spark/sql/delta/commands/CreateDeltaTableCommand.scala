@@ -53,6 +53,8 @@ import org.apache.spark.sql.types.StructType
  *                - CTAS
  *                - saveAsTable
  * @param protocol This is used to create a table with specific protocol version
+ * @param createTableFunc If specified, call this function to create the table, instead of
+ *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
 case class CreateDeltaTableCommand(
     table: CatalogTable,
@@ -62,7 +64,8 @@ case class CreateDeltaTableCommand(
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil,
-    protocol: Option[Protocol] = None)
+    protocol: Option[Protocol] = None,
+    createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging {
@@ -573,10 +576,14 @@ case class CreateDeltaTableCommand(
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
-        spark.sessionState.catalog.createTable(
-          cleaned,
-          ignoreIfExists = existingTableOpt.isDefined,
-          validateLocation = false)
+        if (createTableFunc.isDefined) {
+          createTableFunc.get.apply(cleaned)
+        } else {
+          spark.sessionState.catalog.createTable(
+            cleaned,
+            ignoreIfExists = existingTableOpt.isDefined,
+            validateLocation = false)
+        }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
           if existingTableOpt.isDefined =>
         UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
