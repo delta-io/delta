@@ -626,10 +626,28 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofNull(StringType.STRING)
       ),
       (
+        ofString("abc", "UTF8_BINARY"),
+        ofString("abcd", "UTF8_BINARY"),
+        ofString("abc", "UTF8_BINARY"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("abc", "UTF8_BINARY"),
+        ofString("abd", "UTF8_BINARY"),
+        ofString("abc", "UTF8_BINARY"),
+        ofNull(StringType.STRING)
+      ),
+      (
         // scalastyle:off nonascii
         ofString("A", "UTF8_BINARY"),
         ofString("\u0100", "UTF8_BINARY"),
         ofString("A", "UTF8_BINARY"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("\00BB", "UTF8_BINARY"),
+        ofString("\u00EE", "UTF8_BINARY"),
+        ofString("\00BB", "UTF8_BINARY"),
         ofNull(StringType.STRING)
       ),
       (
