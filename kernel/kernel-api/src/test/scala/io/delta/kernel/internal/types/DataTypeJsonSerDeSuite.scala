@@ -16,31 +16,23 @@
 package io.delta.kernel.internal.types
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.module.SimpleModule
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
-import java.io.StringWriter
 import scala.reflect.ClassTag
 
 class DataTypeJsonSerDeSuite extends AnyFunSuite {
 
   import DataTypeJsonSerDeSuite._
 
-  private val objectMapper = new ObjectMapper().registerModule(
-    new SimpleModule()
-      .addSerializer(classOf[StructType], new DataTypeJsonSerDe.DataTypeSerializer))
+  private val objectMapper = new ObjectMapper()
 
   private def parse(json: String): DataType = {
     DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json))
   }
 
   private def serialize(dataType: DataType): String = {
-    val writer = new StringWriter()
-    val generator = objectMapper.createGenerator(writer)
-    DataTypeJsonSerDe.writeDataType(generator, dataType)
-    generator.flush()
-    writer.toString
+    DataTypeJsonSerDe.serializeDataType(dataType)
   }
 
   private def testRoundTrip(dataTypeJsonString: String, dataType: DataType): Unit = {

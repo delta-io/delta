@@ -28,6 +28,7 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.types.*;
 import java.io.IOException;
+import java.io.StringWriter;
 import java.util.*;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -43,7 +44,7 @@ public class DataTypeJsonSerDe {
   private static final ObjectMapper OBJECT_MAPPER =
       new ObjectMapper()
           .registerModule(
-              new SimpleModule().addSerializer(StructType.class, new DataTypeSerializer()));
+              new SimpleModule().addSerializer(StructType.class, new StructTypeSerializer()));
 
   private DataTypeJsonSerDe() {}
 
@@ -62,15 +63,21 @@ public class DataTypeJsonSerDe {
   }
 
   /**
-   * Serializes a {@link DataType} to a JSON string according to the Delta Protocol.
+   * Serializes a {@link DataType} to a JSON string according to the Delta Protocol. TODO: Only
+   * reason why this API added was due to Flink-Kernel dependency. Currently Flink-Kernel uses the
+   * Kernel DataType.toJson and Standalone DataType.fromJson to convert between types.
    *
    * @param dataType
-   * @return
+   * @return JSON string representing the data type
    */
   public static String serializeDataType(DataType dataType) {
     try {
-      return OBJECT_MAPPER.writeValueAsString(dataType);
-    } catch (JsonProcessingException ex) {
+      StringWriter stringWriter = new StringWriter();
+      JsonGenerator generator = OBJECT_MAPPER.createGenerator(stringWriter);
+      writeDataType(generator, dataType);
+      generator.flush();
+      return stringWriter.toString();
+    } catch (IOException ex) {
       throw new KernelException("Could not serialize DataType to JSON", ex);
     }
   }
@@ -342,19 +349,19 @@ public class DataTypeJsonSerDe {
     return node.booleanValue();
   }
 
-  protected static class DataTypeSerializer extends StdSerializer<DataType> {
-    public DataTypeSerializer() {
-      super(DataType.class);
+  protected static class StructTypeSerializer extends StdSerializer<StructType> {
+    public StructTypeSerializer() {
+      super(StructType.class);
     }
 
     @Override
-    public void serialize(DataType dataType, JsonGenerator gen, SerializerProvider provider)
+    public void serialize(StructType structType, JsonGenerator gen, SerializerProvider provider)
         throws IOException {
-      writeDataType(gen, dataType);
+      writeDataType(gen, structType);
     }
   }
 
-  protected static void writeDataType(JsonGenerator gen, DataType dataType) throws IOException {
+  private static void writeDataType(JsonGenerator gen, DataType dataType) throws IOException {
     if (dataType instanceof StructType) {
       writeStructType(gen, (StructType) dataType);
     } else if (dataType instanceof ArrayType) {
