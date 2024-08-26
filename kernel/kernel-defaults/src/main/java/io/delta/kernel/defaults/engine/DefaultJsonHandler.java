@@ -26,10 +26,8 @@ import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
-import io.delta.kernel.defaults.internal.types.DataTypeParser;
 import io.delta.kernel.engine.JsonHandler;
 import io.delta.kernel.exceptions.KernelEngineException;
-import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
@@ -45,10 +43,9 @@ import org.apache.hadoop.fs.*;
 /** Default implementation of {@link JsonHandler} based on Hadoop APIs. */
 public class DefaultJsonHandler implements JsonHandler {
   private static final ObjectMapper mapper = new ObjectMapper();
-  private static final ObjectReader defaultObjectReader = mapper.reader();
   // by default BigDecimals are truncated and read as floats
   private static final ObjectReader objectReaderReadBigDecimals =
-      mapper.reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+      new ObjectMapper().reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
 
   private final Configuration hadoopConf;
   private final int maxBatchSize;
@@ -76,18 +73,6 @@ public class DefaultJsonHandler implements JsonHandler {
       }
     }
     return new DefaultRowBasedColumnarBatch(outputSchema, rows);
-  }
-
-  @Override
-  public StructType deserializeStructType(String structTypeJson) {
-    try {
-      // We don't expect Java BigDecimal anywhere in a Delta schema so we use the default
-      // JSON reader
-      return DataTypeParser.parseSchema(defaultObjectReader.readTree(structTypeJson));
-    } catch (JsonProcessingException ex) {
-      throw new KernelException(
-          format("Could not parse schema given as JSON string: %s", structTypeJson), ex);
-    }
   }
 
   @Override

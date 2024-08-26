@@ -86,18 +86,6 @@ public class MapType extends DataType {
   }
 
   @Override
-  public String toJson() {
-    return String.format(
-        "{"
-            + "\"type\": \"map\","
-            + "\"keyType\": %s,"
-            + "\"valueType\": %s,"
-            + "\"valueContainsNull\": %s"
-            + "}",
-        getKeyType().toJson(), getValueType().toJson(), isValueContainsNull());
-  }
-
-  @Override
   public String toString() {
     return String.format("map[%s, %s]", getKeyType(), getValueType());
   }

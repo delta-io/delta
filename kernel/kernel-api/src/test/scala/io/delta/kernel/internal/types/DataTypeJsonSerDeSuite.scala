@@ -13,33 +13,47 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.internal.types
-
-import scala.reflect.ClassTag
+package io.delta.kernel.internal.types
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.module.SimpleModule
+import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
-import io.delta.kernel.types._
+import java.io.StringWriter
+import scala.reflect.ClassTag
 
-class DataTypeParserSuite extends AnyFunSuite {
+class DataTypeJsonSerDeSuite extends AnyFunSuite {
 
-  import DataTypeParserSuite._
+  import DataTypeJsonSerDeSuite._
 
-  private val objectMapper = new ObjectMapper()
+  private val objectMapper = new ObjectMapper().registerModule(
+    new SimpleModule()
+      .addSerializer(classOf[StructType], new DataTypeJsonSerDe.DataTypeSerializer))
 
   private def parse(json: String): DataType = {
-    DataTypeParser.parseDataType(objectMapper.readTree(json))
+    DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json))
   }
 
-  private def checkDataType(dataTypeString: String, expectedDataType: DataType): Unit = {
-    test(s"parseDataType: parse ${dataTypeString.replace("\n", "")}") {
-      assert(parse(dataTypeString) === expectedDataType)
-    }
+  private def serialize(dataType: DataType): String = {
+    val writer = new StringWriter()
+    val generator = objectMapper.createGenerator(writer)
+    DataTypeJsonSerDe.writeDataType(generator, dataType)
+    generator.flush()
+    writer.toString
+  }
+
+  private def testRoundTrip(dataTypeJsonString: String, dataType: DataType): Unit = {
+    // test deserialization
+    assert(parse(dataTypeJsonString) === dataType)
+
+    // test serialization
+    val serializedJson = serialize(dataType)
+    assert(parse(serializedJson) === dataType)
   }
 
   private def checkError[T <: Throwable](json: String, expectedErrorContains: String)
-      (implicit classTag: ClassTag[T]): Unit = {
+    (implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
       parse(json)
     }
@@ -48,20 +62,26 @@ class DataTypeParserSuite extends AnyFunSuite {
 
   /* --------------- Primitive data types (stored as a string) ----------------- */
 
-  checkDataType("\"string\"", StringType.STRING)
-  checkDataType("\"long\"", LongType.LONG)
-  checkDataType("\"short\"", ShortType.SHORT)
-  checkDataType("\"integer\"", IntegerType.INTEGER)
-  checkDataType("\"boolean\"", BooleanType.BOOLEAN)
-  checkDataType("\"byte\"", ByteType.BYTE)
-  checkDataType("\"float\"", FloatType.FLOAT)
-  checkDataType("\"double\"", DoubleType.DOUBLE)
-  checkDataType("\"binary\"", BinaryType.BINARY)
-  checkDataType("\"date\"", DateType.DATE)
-  checkDataType("\"timestamp\"", TimestampType.TIMESTAMP)
-  checkDataType("\"decimal\"", DecimalType.USER_DEFAULT)
-  checkDataType("\"decimal(10, 5)\"", new DecimalType(10, 5))
-  checkDataType("\"variant\"", VariantType.VARIANT)
+  Seq(
+    ("\"string\"", StringType.STRING),
+    ("\"long\"", LongType.LONG),
+    ("\"short\"", ShortType.SHORT),
+    ("\"integer\"", IntegerType.INTEGER),
+    ("\"boolean\"", BooleanType.BOOLEAN),
+    ("\"byte\"", ByteType.BYTE),
+    ("\"float\"", FloatType.FLOAT),
+    ("\"double\"", DoubleType.DOUBLE),
+    ("\"binary\"", BinaryType.BINARY),
+    ("\"date\"", DateType.DATE),
+    ("\"timestamp\"", TimestampType.TIMESTAMP),
+    ("\"decimal\"", DecimalType.USER_DEFAULT),
+    ("\"decimal(10, 5)\"", new DecimalType(10, 5)),
+    ("\"variant\"", VariantType.VARIANT)
+  ).foreach { case (json, dataType) =>
+    test("serialize/deserialize: " + dataType) {
+      testRoundTrip(json, dataType)
+    }
+  }
 
   test("parseDataType: invalid primitive string data type") {
     checkError[IllegalArgumentException]("\"foo\"", "foo is not a supported delta data type")
@@ -75,54 +95,60 @@ class DataTypeParserSuite extends AnyFunSuite {
 
   /* ---------------  Complex types ----------------- */
 
-  test("parseDataType: array type") {
+  test("serialize/deserialize: array type") {
     for (containsNull <- Seq(true, false)) {
       for ((elementJson, elementType) <- SAMPLE_JSON_TO_TYPES) {
-        val parsedType = parse(arrayTypeJson(elementJson, containsNull))
+        // test deserialization
+        val json = arrayTypeJson(elementJson, containsNull)
         val expectedType = new ArrayType(elementType, containsNull)
-        assert(parsedType == expectedType)
+
+        testRoundTrip(json, expectedType)
       }
     }
   }
 
-  test("parseDataType: map type") {
+  test("serialize/deserialize: map type") {
     for (valueContainsNull <- Seq(true, false)) {
       for ((keyJson, keyType) <- SAMPLE_JSON_TO_TYPES) {
         for ((valueJson, valueType) <- SAMPLE_JSON_TO_TYPES) {
-          val parsedType = parse(mapTypeJson(keyJson, valueJson, valueContainsNull))
+          val json = mapTypeJson(keyJson, valueJson, valueContainsNull)
           val expectedType = new MapType(keyType, valueType, valueContainsNull)
-          assert(parsedType == expectedType)
+
+          testRoundTrip(json, expectedType)
         }
       }
     }
   }
 
-  test("parseDataType: struct type") {
+  test("serialize/deserialize: struct type") {
     for ((col1Json, col1Type) <- SAMPLE_JSON_TO_TYPES) {
       for ((col2Json, col2Type) <- SAMPLE_JSON_TO_TYPES) {
         val fieldsJson = Seq(
           structFieldJson("col1", col1Json, false),
           structFieldJson("col2", col2Json, true, Some("{ \"int\" : 0 }"))
         )
-        val parsedType = parse(structTypeJson(fieldsJson))
+
+        val json = structTypeJson(fieldsJson)
         val expectedType = new StructType()
           .add("col1", col1Type, false)
           .add("col2", col2Type, true, FieldMetadata.builder().putLong("int", 0).build())
-        assert(parsedType == expectedType)
+
+        testRoundTrip(json, expectedType)
       }
     }
   }
 
-  test("parseDataType: special characters for column name") {
-    val parsedType = parse(structTypeJson(Seq(
+  test("serialize/deserialize: special characters for column name") {
+    val json = structTypeJson(Seq(
       structFieldJson("@_! *c", "\"string\"", true)
-    )))
+    ))
     val expectedType = new StructType()
       .add("@_! *c", StringType.STRING, true)
-    assert(parsedType == expectedType)
+
+    testRoundTrip(json, expectedType)
   }
 
-  test("parseDataType: empty struct type") {
+  test("serialize/deserialize: empty struct type") {
     val str =
       """
         |{
@@ -130,16 +156,18 @@ class DataTypeParserSuite extends AnyFunSuite {
         |  "fields": []
         |}
         |""".stripMargin
-    assert(parse(str) == new StructType())
+    testRoundTrip(str, new StructType())
   }
 
-  test("parseDataType: parsing FieldMetadata") {
+  test("serialize/deserialize: parsing FieldMetadata") {
     def testFieldMetadata(fieldMetadataJson: String, expectedFieldMetadata: FieldMetadata): Unit = {
-      val parsedMetadata = parse(structTypeJson(
-        Seq(structFieldJson("testCol", "\"string\"", true, Some(fieldMetadataJson)))
-      )).asInstanceOf[StructType].get("testCol").getMetadata
+      val json = structTypeJson(Seq(
+        structFieldJson("testCol", "\"string\"", true, Some(fieldMetadataJson))
+      ))
 
-      assert(parsedMetadata == expectedFieldMetadata)
+      val dataType = new StructType().add("testCol", StringType.STRING, true, expectedFieldMetadata)
+
+      testRoundTrip(json, dataType)
     }
 
     val fieldMetadataAllTypesJson =
@@ -205,7 +233,7 @@ class DataTypeParserSuite extends AnyFunSuite {
   }
 }
 
-object DataTypeParserSuite {
+object DataTypeJsonSerDeSuite {
 
   val SAMPLE_JSON_TO_TYPES = Seq(
     ("\"string\"", StringType.STRING),
@@ -247,10 +275,10 @@ object DataTypeParserSuite {
   }
 
   def structFieldJson(
-      name: String,
-      typeJson: String,
-      nullable: Boolean,
-      metadataJson: Option[String] = None): String = {
+    name: String,
+    typeJson: String,
+    nullable: Boolean,
+    metadataJson: Option[String] = None): String = {
     metadataJson match {
       case Some(metadata) =>
         s"""
@@ -274,10 +302,10 @@ object DataTypeParserSuite {
 
   def structTypeJson(fieldsJsons: Seq[String]): String = {
     s"""
-      |{
-      |  "type" : "struct",
-      |  "fields": ${fieldsJsons.mkString("[\n", ",\n", "]\n")}
-      |}
-      |""".stripMargin
+       |{
+       |  "type" : "struct",
+       |  "fields": ${fieldsJsons.mkString("[\n", ",\n", "]\n")}
+       |}
+       |""".stripMargin
   }
 }
