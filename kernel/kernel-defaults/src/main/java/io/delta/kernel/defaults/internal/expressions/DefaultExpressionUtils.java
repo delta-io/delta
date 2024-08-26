@@ -35,13 +35,12 @@ import java.util.stream.Collectors;
 class DefaultExpressionUtils {
 
   static final Comparator<BigDecimal> BIGDECIMAL_COMPARATOR = Comparator.naturalOrder();
-  static final Comparator<String> STRING_COMPARATOR = Comparator.naturalOrder();
   static final Comparator<byte[]> BINARY_COMPARTOR =
       (leftOp, rightOp) -> {
         int i = 0;
         while (i < leftOp.length && i < rightOp.length) {
           if (leftOp[i] != rightOp[i]) {
-            return Byte.compare(leftOp[i], rightOp[i]);
+            return Byte.toUnsignedInt(leftOp[i]) - Byte.toUnsignedInt(rightOp[i]);
           }
           i++;
         }

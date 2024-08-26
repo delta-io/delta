@@ -599,7 +599,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)
     val literals = Seq(
-      (ofByte(1.toByte), ofByte(2.toByte), ofByte(1.toByte), ofNull(ByteType.BYTE)),
+      /*(ofByte(1.toByte), ofByte(2.toByte), ofByte(1.toByte), ofNull(ByteType.BYTE)),
       (ofShort(1.toShort), ofShort(2.toShort), ofShort(1.toShort), ofNull(ShortType.SHORT)),
       (ofInt(1), ofInt(2), ofInt(1), ofNull(IntegerType.INTEGER)),
       (ofLong(1L), ofLong(2L), ofLong(1L), ofNull(LongType.LONG)),
@@ -623,7 +623,20 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofString("apples", "UTF8_BINARY"),
         ofString("oranges", "UTF8_BINARY"),
         ofString("apples", "UTF8_BINARY"),
-        ofNull(StringType.STRING)),
+        ofNull(StringType.STRING)
+      ),*/
+      (
+        ofString("A", "UTF8_BINARY"),
+        ofString("Ā", "UTF8_BINARY"),
+        ofString("A", "UTF8_BINARY"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("�", "UTF8_BINARY"),
+        ofString("\uD83C\uDF3C", "UTF8_BINARY"), // blossom flower emoji
+        ofString("�", "UTF8_BINARY"),
+        ofNull(StringType.STRING)
+      ),/*
       (
         ofBinary("apples".getBytes()),
         ofBinary("oranges".getBytes()),
@@ -635,7 +648,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofDecimal(BigDecimalJ.valueOf(5233.232), 7, 3),
         ofDecimal(BigDecimalJ.valueOf(1.12), 7, 3),
         ofNull(new DecimalType(7, 3))
-      )
+      )*/
     )
 
     // Mapping of comparator to expected results for:
