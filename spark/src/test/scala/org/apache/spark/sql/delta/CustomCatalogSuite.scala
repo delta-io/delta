@@ -283,6 +283,8 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
   }
 
   test("custom catalog that adds additional table storage properties") {
+    // Reset catalog manager so that the new `spark_catalog` implementation can apply.
+    spark.sessionState.catalogManager.reset()
     withSQLConf("spark.sql.catalog.spark_catalog" -> classOf[DummySessionCatalog].getName) {
       withTable("t") {
         withTempPath { path =>
