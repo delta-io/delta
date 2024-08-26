@@ -179,7 +179,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
         |  "long-2" : 16070400023423400,
         |  "double" : 2.22,
         |  "boolean" : true,
-        |  "string" : "10",
+        |  "string" : "10\"@",
         |  "metadata" : { "nestedInt" : 200 },
         |  "empty_arr" : [],
         |  "int_arr" : [1, 2, 0],
@@ -196,7 +196,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       .putLong("long-2", 16070400023423400L)
       .putDouble("double", 2.22)
       .putBoolean("boolean", true)
-      .putString("string", "10")
+      .putString("string", "10\"@") // special characters
       .putFieldMetadata("metadata", FieldMetadata.builder().putLong("nestedInt", 200).build())
       .putLongArray("empty_arr", Array())
       .putLongArray("int_arr", Array(1, 2, 0))
