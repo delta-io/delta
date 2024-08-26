@@ -627,14 +627,14 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       ),
       (
         ofString("A", "UTF8_BINARY"),
-        ofString("Ā", "UTF8_BINARY"),
+        ofString("\u0100", "UTF8_BINARY"),
         ofString("A", "UTF8_BINARY"),
         ofNull(StringType.STRING)
       ),
       (
-        ofString("�", "UTF8_BINARY"),
+        ofString("\uFFFD", "UTF8_BINARY"),
         ofString("\uD83C\uDF3C", "UTF8_BINARY"), // blossom flower emoji
-        ofString("�", "UTF8_BINARY"),
+        ofString("\uFFFD", "UTF8_BINARY"),
         ofNull(StringType.STRING)
       ),
       (
