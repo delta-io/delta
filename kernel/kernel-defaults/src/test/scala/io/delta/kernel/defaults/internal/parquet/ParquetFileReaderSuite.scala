@@ -24,6 +24,7 @@ import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
+import org.apache.parquet.io.ParquetDecodingException
 
 class ParquetFileReaderSuite extends AnyFunSuite
   with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
@@ -91,6 +92,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
     }
   }
 
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  // Tests covering reading parquet values into a wider column type                              //
+  /////////////////////////////////////////////////////////////////////////////////////////////////
   /**
    * Test case for reading a column using a given type.
    * @param columnName Column to read from the file
@@ -183,6 +187,22 @@ class ParquetFileReaderSuite extends AnyFunSuite
     }
   }
 
+  def checkParquetReadError(inputLocation: String, readSchema: StructType): Unit = {
+    val ex = intercept[Throwable] {
+      readParquetFilesUsingKernel(inputLocation, readSchema)
+    }
+    // We don't properly reject conversions and the error we get vary a lot, this checks various
+    // error message we may get as result.
+    // TODO: Uniformize rejecting unsupported conversions.
+    assert(
+      ex.getMessage.contains("Can not read value") ||
+      ex.getMessage.contains("column with Parquet type") ||
+      ex.getMessage.contains("Unable to create Parquet converter for") ||
+      ex.getMessage.contains("Found Delta type Decimal") ||
+      ex.getMessage.contains("cannot be cast to")
+    )
+  }
+
   for(column <- Seq("BooleanType", "ByteType", "ShortType", "IntegerType", "LongType",
     "FloatType", "DoubleType", "StringType", "BinaryType")) {
     test(s"parquet unsupported conversion from $column") {
@@ -197,7 +217,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
       for (toType <- unsupportedTypes) {
         val readSchema = new StructType().add(column, toType)
         withClue(s"Converting $column to $toType") {
-          assertThrows[Throwable](readParquetFilesUsingKernel(inputLocation, readSchema))
+          checkParquetReadError(inputLocation, readSchema)
         }
       }
     }
@@ -209,10 +229,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
     for (toType <- ALL_TYPES.filterNot(_ == LongType.LONG)) {
       val readSchema = new StructType().add("decimal", toType)
       withClue(s"Converting decimal to $toType") {
-        // We don't properly reject conversions and the error we get are currently varying a lot, so
-        // we catch a generic Throwable.
-        // TODO: Uniformize rejecting unsupported conversions.
-        assertThrows[Throwable](readParquetFilesUsingKernel(inputLocation, readSchema))
+        checkParquetReadError(inputLocation, readSchema)
       }
     }
   }
