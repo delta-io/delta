@@ -44,9 +44,6 @@ case class PreprocessTableMerge(override val conf: SQLConf)
 
   override protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = true
 
-  private var trackHighWaterMarks = Set[String]()
-
-  def getTrackHighWaterMarks: Set[String] = trackHighWaterMarks
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case m: DeltaMergeInto if m.resolved => apply(m, true)
@@ -99,8 +96,14 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
       throw DeltaErrors.operationOnTempViewWithGenerateColsNotSupported("MERGE INTO")
     }
-    // Additional columns with default expressions.
-    var additionalColumns = Seq[StructField]()
+
+    val identityColumns = IdentityColumn.getIdentityColumns(
+      tahoeFileIndex.snapshotAtAnalysis.metadata.schema)
+    // A mapping from the identity column struct field to the GenerateIdentityColumnValues
+    // expression for the target table in the MERGE clause.
+    val identityColumnExpressionMap = mutable.Map[StructField, Expression]()
+    // Column names for which we need to track IDENTITY high water marks.
+    var trackHighWaterMarks = Set[String]()
 
     val processedMatched = matched.map {
       case m: DeltaMergeIntoMatchedUpdateClause =>
@@ -108,7 +111,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           target,
           m.resolvedActions,
           whenClauses = matched ++ notMatched ++ notMatchedBySource,
-          identityColumns = additionalColumns,
+          identityColumns = identityColumns,
           generatedColumns = generatedColumns,
           allowSchemaEvolution = withSchemaEvolution,
           postEvolutionTargetSchema = postEvolutionTargetSchema)
@@ -121,7 +124,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           target,
           m.resolvedActions,
           whenClauses = matched ++ notMatched ++ notMatchedBySource,
-          identityColumns = additionalColumns,
+          identityColumns = identityColumns,
           generatedColumns = generatedColumns,
           allowSchemaEvolution = withSchemaEvolution,
           postEvolutionTargetSchema = postEvolutionTargetSchema)
@@ -140,6 +143,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         }
       }
 
+      IdentityColumn.blockExplicitIdentityColumnInsert(
+        identityColumns,
+        m.resolvedActions.map(_.targetColNameParts))
 
       val targetColNames = m.resolvedActions.map(_.targetColNameParts.head)
       if (targetColNames.distinct.size < targetColNames.size) {
@@ -166,8 +172,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         m.resolvedActions,
         actions,
         source,
-        generatedColumns.map(f => (f, true)) ++ additionalColumns.map(f => (f, false)),
-        postEvolutionTargetSchema)
+        generatedColumns.map(f => (f, true)) ++ identityColumns.map(f => (f, false)),
+        postEvolutionTargetSchema,
+        identityColumnExpressionMap)
 
       trackHighWaterMarks ++= trackFromInsert
 
@@ -218,6 +225,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           processedNotMatched,
           processedNotMatchedBySource,
           migratedSchema = finalSchemaOpt,
+          trackHighWaterMarks = trackHighWaterMarks,
           schemaEvolutionEnabled = withSchemaEvolution),
         now)
     } else {
@@ -280,6 +288,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       allowSchemaEvolution: Boolean,
       postEvolutionTargetSchema: StructType)
     : Seq[DeltaMergeAction] = {
+    IdentityColumn.blockIdentityColumnUpdate(
+      identityColumns,
+      resolvedActions.map(_.targetColNameParts))
     // Get the operations for columns that already exist...
     val existingUpdateOps = resolvedActions.map { a =>
       UpdateOperation(a.targetColNameParts, a.expr)
@@ -389,15 +400,18 @@ case class PreprocessTableMerge(override val conf: SQLConf)
    * @param allActions Actions with non explicitly specified columns added with nulls.
    * @param sourcePlan Logical plan node of the source table of merge.
    * @param columnWithDefaultExpr All the generated columns in the target table.
+   * @param identityColumnExpressionMap A mapping from identity column struct fields to expressions
    * @return `allActions` with expression for non explicitly inserted generated columns expression
-   *        resolved.
+   *        resolved, and columns names for which we will track high water marks.
    */
   private def resolveImplicitColumns(
-    explicitActions: Seq[DeltaMergeAction],
-    allActions: Seq[DeltaMergeAction],
-    sourcePlan: LogicalPlan,
-    columnWithDefaultExpr: Seq[(StructField, Boolean)],
-    postEvolutionTargetSchema: StructType): (Seq[DeltaMergeAction], Set[String]) = {
+      explicitActions: Seq[DeltaMergeAction],
+      allActions: Seq[DeltaMergeAction],
+      sourcePlan: LogicalPlan,
+      columnWithDefaultExpr: Seq[(StructField, Boolean)],
+      postEvolutionTargetSchema: StructType,
+      identityColumnExpressionMap: mutable.Map[StructField, Expression])
+    : (Seq[DeltaMergeAction], Set[String]) = {
     val implicitColumns = columnWithDefaultExpr.filter {
       case (field, _) =>
         !explicitActions.exists { insertAct =>
@@ -437,6 +451,17 @@ case class PreprocessTableMerge(override val conf: SQLConf)
               fakeProjectMap(a.exprId).child
           }
           action.copy(expr = transformedExpr)
+        case Some((field, false)) =>
+          // This is the IDENTITY column case. Track the high water marks collection and produce
+          // IDENTITY value generation function.
+          track += field.name
+          // Reuse the existing identityExp which we might have already generated. This is to make
+          // sure that we use the same identity column generation expression across different
+          // WHEN NOT MATCHED branches for a given identity column - so that we can generate
+          // identity values from the same generator and prevent duplicate identity values.
+          val identityExp = identityColumnExpressionMap.getOrElseUpdate(
+            field, IdentityColumn.createIdentityColumnGenerationExpr(field))
+          action.copy(expr = identityExp)
         case _ => action
       }
     }

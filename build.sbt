@@ -59,6 +59,7 @@ spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
+sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -539,9 +540,10 @@ lazy val sharing = (project in file("sharing"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    crossSparkSettings(),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
       "io.delta" %% "delta-sharing-client" % "1.2.0",
 
@@ -550,10 +552,10 @@ lazy val sharing = (project in file("sharing"))
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
     )
   ).configureUnidoc()
 

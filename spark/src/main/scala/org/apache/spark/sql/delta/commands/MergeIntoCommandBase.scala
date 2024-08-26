@@ -474,6 +474,34 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       spark, source, condition, matchedClauses, notMatchedClauses, isInsertOnly)
   }
 
+  /**
+   * Verify that the high water marks used by the identity column generators still match the
+   * the high water marks in the version of the table read by the current transaction.
+   * These high water marks were determined during analysis in [[PreprocessTableMerge]],
+   * which runs outside of the current transaction, so they may no longer be valid.
+   */
+  protected def checkIdentityColumnHighWaterMarks(deltaTxn: OptimisticTransaction): Unit = {
+    notMatchedClauses.foreach { clause =>
+      if (deltaTxn.metadata.schema.length != clause.resolvedActions.length) {
+        throw new IllegalStateException
+      }
+      deltaTxn.metadata.schema.zip(clause.resolvedActions.map(_.expr)).foreach {
+        case (f, GenerateIdentityValues(gen)) =>
+          val info = IdentityColumn.getIdentityInfo(f)
+          if (info.highWaterMark != gen.highWaterMarkOpt) {
+            IdentityColumn.logTransactionAbort(deltaTxn.deltaLog)
+            throw DeltaErrors.metadataChangedException(conflictingCommit = None)
+          }
+
+        case (f, _) if ColumnWithDefaultExprUtils.isIdentityColumn(f) &&
+          !IdentityColumn.allowExplicitInsert(f) =>
+          throw new IllegalStateException
+
+        case _ => ()
+      }
+    }
+  }
+
   /** Returns whether it allows non-deterministic expressions. */
   override def allowNonDeterministicExpression: Boolean = {
     def isConditionDeterministic(mergeClause: DeltaMergeIntoClause): Boolean = {
