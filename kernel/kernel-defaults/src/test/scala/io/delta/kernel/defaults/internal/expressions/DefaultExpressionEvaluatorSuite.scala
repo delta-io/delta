@@ -608,6 +608,44 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       (ofDate(-12123), ofDate(123123), ofDate(-12123), ofNull(DateType.DATE)),
       (ofString("apples"), ofString("oranges"), ofString("apples"), ofNull(StringType.STRING)),
       (
+        ofString("apples"),
+        ofString("oranges"),
+        ofString("apples"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("abc"),
+        ofString("abcd"),
+        ofString("abc"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("abc"),
+        ofString("abd"),
+        ofString("abc"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        // scalastyle:off nonascii
+        ofString("A"),
+        ofString("\u0100"),
+        ofString("A"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("\00BB"),
+        ofString("\u00EE"),
+        ofString("\00BB"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("\uFFFD"),
+        ofString("\uD83C\uDF3C"),
+        ofString("\uFFFD"),
+        ofNull(StringType.STRING)
+        // scalastyle:on nonascii
+      ),
+      (
         ofBinary("apples".getBytes()),
         ofBinary("oranges".getBytes()),
         ofBinary("apples".getBytes()),
