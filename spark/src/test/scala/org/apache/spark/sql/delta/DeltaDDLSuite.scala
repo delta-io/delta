@@ -134,7 +134,7 @@ abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
 
         intercept[InvariantViolationException] {
           Seq((2L, null)).toDF("a", "b")
-            .write.format("delta").mode("append").save(table.location.toString)
+            .write.format("delta").mode("append").save(table.location.getPath)
         }
       }
     }
@@ -286,7 +286,7 @@ abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
           spark.createDataFrame(
             Seq(Row(Row(2L, null), 2L)).asJava,
             schema
-          ).write.format("delta").mode("append").save(table.location.toString)
+          ).write.format("delta").mode("append").save(table.location.getPath)
         }
         verifyInvariantViolationException(e)
       }
