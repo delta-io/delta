@@ -383,6 +383,8 @@ class DummyCatalog extends TableCatalog {
   }
 }
 
+// A dummy catalog that adds additional table storage properties after the table is loaded.
+// It's only used inside `DummySessionCatalog`.
 class DummySessionCatalogInner extends DelegatingCatalogExtension {
   override def loadTable(ident: Identifier): Table = {
     val t = super.loadTable(ident).asInstanceOf[V1Table]
@@ -394,6 +396,8 @@ class DummySessionCatalogInner extends DelegatingCatalogExtension {
   }
 }
 
+// A dummy catalog that adds a layer between DeltaCatalog and the Spark SessionCatalog,
+// to attach additional table storage properties after the table is loaded.
 class DummySessionCatalog extends TableCatalog {
   private var deltaCatalog: DelegatingCatalogExtension = null
 
