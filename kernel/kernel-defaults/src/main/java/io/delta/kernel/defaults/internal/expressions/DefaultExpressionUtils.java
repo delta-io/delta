@@ -151,7 +151,9 @@ class DefaultExpressionUtils {
       vectorValueComparator =
           rowId ->
               booleanComparator.test(
-                  -BINARY_COMPARTOR.compare(left.getString(rowId).getBytes(StandardCharsets.UTF_8), right.getString(rowId).getBytes(StandardCharsets.UTF_8)));
+                  -BINARY_COMPARTOR.compare(
+                      left.getString(rowId).getBytes(StandardCharsets.UTF_8),
+                      right.getString(rowId).getBytes(StandardCharsets.UTF_8)));
     } else if (dataType instanceof BinaryType) {
       vectorValueComparator =
           rowId ->
