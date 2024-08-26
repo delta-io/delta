@@ -202,27 +202,6 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     )
   }
 
-  test("compare random") {
-    val schema = new StructType()
-      .add("c1", new StringType("UTF8_BINARY"), true)
-
-    val s1 = List("�", "\uD83C\uDF3C")
-    val s2 = List("\uD83C\uDF3C")
-    val columnar1 = new DefaultStringVector(1, Optional.empty(),
-      s1.asJava.toArray(Array.empty[String]), "UTF8_BINARY")
-    val columnar2 = new DefaultStringVector(1, Optional.empty(),
-      s2.asJava.toArray(Array.empty[String]), "UTF8_BINARY")
-    val x = new DefaultExpressionEvaluator(schema, new ScalarExpression("<",
-      scala.collection.JavaConverters
-        .seqAsJavaList(Seq(Literal.ofString("�", "UTF8_BINARY"),
-          Literal.ofString("\uD83C\uDF3C", "UTF8_BINARY")))), BooleanType.BOOLEAN)
-
-    val columnarArray = Seq(columnar1)
-
-    val res = x.eval(new DefaultColumnarBatch(1, schema,
-      columnarArray.asJava.toArray(Array.empty[ColumnVector])))
-  }
-
   //////////////////////////////////////////////////////////////////////////////////
   // Table/Snapshot tests
   //////////////////////////////////////////////////////////////////////////////////
