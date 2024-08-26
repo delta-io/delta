@@ -601,7 +601,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       // Discard `module-info.class` to fix the `different file contents found` error.
       // TODO Upgrade SBT to 1.5 which will do this automatically
       case "module-info.class" => MergeStrategy.discard
-      // Discard unused `parquet.thrift` so that we don't conflict the file used by the user
       case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
