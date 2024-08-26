@@ -25,7 +25,6 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.types._
@@ -51,7 +50,9 @@ class TypeWideningInsertSchemaEvolutionSuite
 /**
  * Tests covering type widening during schema evolution in INSERT.
  */
-trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
+trait TypeWideningInsertSchemaEvolutionTests
+  extends DeltaInsertIntoTest
+  with TypeWideningTestCases {
   self: QueryTest with TypeWideningTestMixin with DeltaDMLTestUtils =>
 
   import testImplicits._
@@ -160,209 +161,7 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }
 
-
-  /**
-   * There are **many** different ways to run an insert:
-   * - Using SQL or the dataframe v1 and v2 APIs.
-   * - Append vs. Overwrite / Partition overwrite.
-   * - Position-based vs. name-based resolution.
-   *
-   * Each take a unique path through analysis. The abstractions below captures these different
-   * inserts to allow more easily running tests with all or a subset of them.
-   *
-   * @param mode Append or Overwrite. This dictates in particular what the expected result after the
-   *             insert should be.
-   * @param name A human-readable name for the insert type displayed in the test names.
-   */
-  trait Insert {
-    val mode: SaveMode
-    val name: String
-
-    /**
-     * The method that tests will call to run the insert. Each type of insert must implement its
-     * sepcific way to run insert.
-     */
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit
-
-    /** SQL keyword for this type of insert.  */
-    def intoOrOverwrite: String = if (mode == SaveMode.Append) "INTO" else "OVERWRITE"
-
-    /** The expected content of the table after the insert. */
-    def expectedResult(initialDF: DataFrame, insertedDF: DataFrame): DataFrame =
-      if (mode == SaveMode.Overwrite) insertedDF
-      else initialDF.unionByName(insertedDF, allowMissingColumns = true)
-  }
-
-  /** INSERT INTO/OVERWRITE */
-  case class SQLInsertByPosition(mode: SaveMode) extends Insert {
-    val name: String = s"INSERT $intoOrOverwrite"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
-      sql(s"INSERT $intoOrOverwrite target SELECT * FROM source")
-  }
-
-  /** INSERT INTO/OVERWRITE (a, b) */
-  case class SQLInsertColList(mode: SaveMode) extends Insert {
-    val name: String = s"INSERT $intoOrOverwrite (columns) - $mode"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      val colList = columns.mkString(", ")
-      sql(s"INSERT $intoOrOverwrite target ($colList) SELECT $colList FROM source")
-    }
-  }
-
-  /** INSERT INTO/OVERWRITE BY NAME */
-  case class SQLInsertByName(mode: SaveMode) extends Insert {
-    val name: String = s"INSERT $intoOrOverwrite BY NAME - $mode"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
-      sql(s"INSERT $intoOrOverwrite target SELECT ${columns.mkString(", ")} FROM source")
-  }
-
-  /** INSERT INTO REPLACE WHERE */
-  object SQLInsertOverwriteReplaceWhere extends Insert {
-    val mode: SaveMode = SaveMode.Overwrite
-    val name: String = s"INSERT INTO REPLACE WHERE"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
-      sql(s"INSERT INTO target REPLACE WHERE $whereCol = $whereValue " +
-          s"SELECT ${columns.mkString(", ")} FROM source")
-  }
-
-  /** INSERT OVERWRITE PARTITION (part = 1) */
-  object SQLInsertOverwritePartitionByPosition extends Insert {
-    val mode: SaveMode = SaveMode.Overwrite
-    val name: String = s"INSERT OVERWRITE PARTITION (partition)"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      val assignments = columns.filterNot(_ == whereCol).mkString(", ")
-      sql(s"INSERT OVERWRITE target PARTITION ($whereCol = $whereValue) " +
-          s"SELECT $assignments FROM source")
-    }
-  }
-
-  /** INSERT OVERWRITE PARTITION (part = 1) (a, b) */
-  object SQLInsertOverwritePartitionColList extends Insert {
-    val mode: SaveMode = SaveMode.Overwrite
-    val name: String = s"INSERT OVERWRITE PARTITION (partition) (columns)"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      val assignments = columns.filterNot(_ == whereCol).mkString(", ")
-      sql(s"INSERT OVERWRITE target PARTITION ($whereCol = $whereValue) ($assignments) " +
-          s"SELECT $assignments FROM source")
-    }
-  }
-
-  /** df.write.mode(mode).insertInto() */
-  case class DFv1InsertInto(mode: SaveMode) extends Insert {
-    val name: String = s"DFv1 insertInto() - $mode"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
-      spark.read.table("source").write.mode(mode).insertInto("target")
-  }
-
-  /** df.write.mode(mode).saveAsTable() */
-  case class DFv1SaveAsTable(mode: SaveMode) extends Insert {
-    val name: String = s"DFv1 saveAsTable() - $mode"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      spark.read.table("source").write.mode(mode).format("delta").saveAsTable("target")
-    }
-  }
-
-  /** df.writeTo.append() */
-  object DFv2Append extends Insert { self: Insert =>
-    val mode: SaveMode = SaveMode.Append
-    val name: String = "DFv2 append()"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      spark.read.table("source").writeTo("target").append()
-    }
-  }
-
-  /** df.writeTo.overwrite() */
-  object DFv2Overwrite extends Insert { self: Insert =>
-    val mode: SaveMode = SaveMode.Overwrite
-    val name: String = s"DFv2 overwrite()"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      spark.read.table("source").writeTo("target").overwrite(col(whereCol) === lit(whereValue))
-    }
-  }
-
-  /** df.writeTo.overwritePartitions() */
-  object DFv2OverwritePartition extends Insert { self: Insert =>
-    override val mode: SaveMode = SaveMode.Overwrite
-    val name: String = s"DFv2 overwritePartitions()"
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      spark.read.table("source").writeTo("target").overwritePartitions()
-    }
-  }
-
-  /** Collects all the types of insert previously defined. */
-  protected lazy val allInsertTypes: Seq[Insert] = Seq(
-        SQLInsertOverwriteReplaceWhere,
-        SQLInsertOverwritePartitionByPosition,
-        SQLInsertOverwritePartitionColList,
-        DFv2Append,
-        DFv2Overwrite,
-        DFv2OverwritePartition
-  ) ++ (for {
-      mode: SaveMode <- Seq(SaveMode.Append, SaveMode.Overwrite)
-      insert: Insert <- Seq(
-        SQLInsertByPosition(mode),
-        SQLInsertColList(mode),
-        SQLInsertByName(mode),
-        DFv1InsertInto(mode),
-        DFv1SaveAsTable(mode)
-      )
-    } yield insert)
-
-  /**
-   * Test runner for type evolution in INSERT.
-   * @param name             Test name
-   * @param initialSchemaDDL Initial schema of the table to be inserted into (as a DDL string).
-   * @param initialJsonData  Initial data present in the table to be inserted into (as a JSON
-   *                         string).
-   * @param partitionBy      Partition columns for the initial table.
-   * @param insertSchemaDDL  Schema of the data to be inserted (as a DDL string).
-   * @param insertJsonData   Data to be inserted (as a JSON string)
-   * @param overwriteWhere   Where clause for overwrite PARTITION / REPLACE WHERE (as
-   *                         colName -> value)
-   * @param expectedSchema   Expected schema of the table after the insert.
-   * @param includeInserts   List of insert types to run the test with. Defaults to all inserts.
-   * @param excludeInserts   List of insert types to exclude when running the test. Defaults to no
-   *                         inserts excluded.
-   */
-  def testInsertTypeEvolution(name: String)(
-      initialSchemaDDL: String,
-      initialJsonData: Seq[String],
-      partitionBy: Seq[String] = Seq.empty,
-      insertSchemaDDL: String,
-      insertJsonData: Seq[String],
-      overwriteWhere: (String, Int),
-      expectedSchema: StructType,
-      includeInserts: Seq[Insert] = allInsertTypes,
-      excludeInserts: Seq[Insert] = Seq.empty): Unit = {
-    for (insert <- includeInserts.filterNot(excludeInserts.toSet)) {
-      test(s"${insert.name} - $name") {
-        withTable("source", "target") {
-          val initialDF = readFromJSON(initialJsonData, StructType.fromDDL(initialSchemaDDL))
-          val writer = initialDF.write.format("delta")
-          if (partitionBy.nonEmpty) {
-            writer.partitionBy(partitionBy: _*)
-          }
-          writer.saveAsTable("target")
-          // Write the data to insert to a table so that we can use it in both SQL and dataframe
-          // writer inserts.
-          val insertDF = readFromJSON(insertJsonData, StructType.fromDDL(insertSchemaDDL))
-          insertDF.write.format("delta").saveAsTable("source")
-
-          insert.runInsert(
-            columns = insertDF.schema.map(_.name),
-            whereCol = overwriteWhere._1,
-            whereValue = overwriteWhere._2
-          )
-
-          val target = spark.read.table("target")
-          assert(target.schema === expectedSchema)
-          checkAnswer(target, insert.expectedResult(initialDF, insertDF))
-        }
-      }
-    }
-  }
-
-  testInsertTypeEvolution("top-level type evolution")(
+  testInserts("top-level type evolution")(
     initialSchemaDDL = "a int, b short",
     initialJsonData = Seq("""{ "a": 1, "b": 2 }"""),
     partitionBy = Seq("a"),
@@ -372,10 +171,11 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
     expectedSchema = StructType(new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))),
+    excludeInserts = Seq(StreamingInsert)
   )
 
-  testInsertTypeEvolution("top-level type evolution with column upcast")(
+  testInserts("top-level type evolution with column upcast")(
     initialSchemaDDL = "a int, b short, c int",
     initialJsonData = Seq("""{ "a": 1, "b": 2, "c": 3 }"""),
     partitionBy = Seq("a"),
@@ -386,10 +186,11 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
         metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
-      .add("c", IntegerType)
+      .add("c", IntegerType),
+    excludeInserts = Seq(StreamingInsert)
   )
 
-  testInsertTypeEvolution("top-level type evolution with schema evolution")(
+  testInserts("top-level type evolution with schema evolution")(
     initialSchemaDDL = "a int, b short",
     initialJsonData = Seq("""{ "a": 1, "b": 2 }"""),
     partitionBy = Seq("a"),
@@ -405,11 +206,12 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
     excludeInserts = Seq(
       SQLInsertColList(SaveMode.Append),
       SQLInsertColList(SaveMode.Overwrite),
-      SQLInsertOverwritePartitionColList)
+      SQLInsertOverwritePartitionColList,
+      StreamingInsert)
   )
 
 
-  testInsertTypeEvolution("nested type evolution by position")(
+  testInserts("nested type evolution by position")(
     initialSchemaDDL =
       "key int, s struct<x: short, y: short>, m map<string, short>, a array<short>",
     initialJsonData = Seq("""{ "key": 1, "s": { "x": 1, "y": 2 }, "m": { "p": 3 }, "a": [4] }"""),
@@ -434,11 +236,12 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
           version = 1,
           from = ShortType,
           to = IntegerType,
-          path = Seq("element")))
+          path = Seq("element"))),
+    excludeInserts = Seq(StreamingInsert)
   )
 
 
-  testInsertTypeEvolution("nested type evolution with struct evolution by position")(
+  testInserts("nested type evolution with struct evolution by position")(
     initialSchemaDDL =
       "key int, s struct<x: short, y: short>, m map<string, short>, a array<short>",
     initialJsonData = Seq("""{ "key": 1, "s": { "x": 1, "y": 2 }, "m": { "p": 3 }, "a": [4] }"""),
@@ -466,11 +269,12 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
           version = 1,
           from = ShortType,
           to = IntegerType,
-          path = Seq("element")))
+          path = Seq("element"))),
+    excludeInserts = Seq(StreamingInsert)
   )
 
 
-  testInsertTypeEvolution("nested struct type evolution with field upcast")(
+  testInserts("nested struct type evolution with field upcast")(
     initialSchemaDDL = "key int, s struct<x: int, y: short>",
     initialJsonData = Seq("""{ "key": 1, "s": { "x": 1, "y": 2 } }"""),
     partitionBy = Seq("key"),
@@ -482,13 +286,14 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
       .add("s", new StructType()
         .add("x", IntegerType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))),
+    excludeInserts = Seq(StreamingInsert)
   )
 
   // Interestingly, we introduced a special case to handle schema evolution / casting for structs
   // directly nested into an array. This doesn't always work with maps or with elements that
   // aren't a struct (see other tests).
-  testInsertTypeEvolution("nested struct type evolution with field upcast in array")(
+  testInserts("nested struct type evolution with field upcast in array")(
     initialSchemaDDL = "key int, a array<struct<x: int, y: short>>",
     initialJsonData = Seq("""{ "key": 1, "a": [ { "x": 1, "y": 2 } ] }"""),
     partitionBy = Seq("key"),
@@ -500,12 +305,13 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
       .add("a", ArrayType(new StructType()
         .add("x", IntegerType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))))
+          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))),
+    excludeInserts = Seq(StreamingInsert)
   )
 
   // The next two tests document inconsistencies when handling maps. Using SQL doesn't allow type
   // evolution but using the dataframe API does.
-  testInsertTypeEvolution("nested struct type evolution with field upcast in map")(
+  testInserts("nested struct type evolution with field upcast in map")(
     initialSchemaDDL = "key int, m map<string, struct<x: int, y: short>>",
     initialJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }"""),
     partitionBy = Seq("key"),
@@ -523,11 +329,12 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
       DFv1SaveAsTable(SaveMode.Overwrite),
       DFv2Append,
       DFv2Overwrite,
-      DFv2OverwritePartition
+      DFv2OverwritePartition,
+      StreamingInsert
     )
   )
 
-  testInsertTypeEvolution("nested struct type evolution with field upcast in map")(
+  testInserts("nested struct type evolution with field upcast in map")(
     initialSchemaDDL = "key int, m map<string, struct<x: int, y: short>>",
     initialJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }"""),
     partitionBy = Seq("key"),
@@ -546,7 +353,8 @@ trait TypeWideningInsertSchemaEvolutionTests extends TypeWideningTestCases {
       DFv1SaveAsTable(SaveMode.Overwrite),
       DFv2Append,
       DFv2Overwrite,
-      DFv2OverwritePartition
+      DFv2OverwritePartition,
+      StreamingInsert
     )
   )
 }
