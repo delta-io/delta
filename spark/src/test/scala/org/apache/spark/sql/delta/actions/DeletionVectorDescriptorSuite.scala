@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.paths.SparkPath
 // scalastyle:on import.ordering.noEmptyLine
 
 /**
@@ -117,14 +118,16 @@ class DeletionVectorDescriptorSuite extends SparkFunSuite {
 
       // Expect the DV final path to be under the given table path
       assert(dv.absolutePath(testTablePath) ===
-        new Path(s"$testTablePath/prefix/deletion_vector_$uuid.bin"))
+        new Path(s"$testTablePath/prefix/${DELETION_VECTOR_FILE_NAME_CORE}_$uuid.bin"))
 
       // Copy DV with an absolute path location
       val dvCopyWithAbsPath = dv.copyWithAbsolutePath(testTablePath)
       assert(dvCopyWithAbsPath.isAbsolute)
       assert(dvCopyWithAbsPath.isOnDisk)
+      // pathOrInlineDV is URL-encoded.
       assert(
-        dvCopyWithAbsPath.pathOrInlineDv === s"$testTablePath/prefix/deletion_vector_$uuid.bin")
+        SparkPath.fromUrlString(dvCopyWithAbsPath.pathOrInlineDv).toPath.toString ===
+        s"$testTablePath/prefix/${DELETION_VECTOR_FILE_NAME_CORE}_$uuid.bin")
 
       // Copy DV as a relative path DV - expect to return the same DV as the current
       // DV already contains relative path.
