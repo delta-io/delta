@@ -27,8 +27,10 @@ import org.apache.spark.sql.delta.{
   DeletionVectorsTableFeature,
   DeltaLog,
   DeltaParquetFileFormat,
-  SnapshotDescriptor
+  SnapshotDescriptor,
+  TimestampNTZTableFeature
 }
+import org.apache.spark.sql.delta.VariantTypeTableFeature
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
@@ -45,9 +47,19 @@ import org.apache.spark.storage.{BlockId, StorageLevel}
 object DeltaSharingUtils extends Logging {
 
   val STREAMING_SUPPORTED_READER_FEATURES: Seq[String] =
-    Seq(DeletionVectorsTableFeature.name, ColumnMappingTableFeature.name)
+    Seq(
+      DeletionVectorsTableFeature.name,
+      ColumnMappingTableFeature.name,
+      TimestampNTZTableFeature.name,
+      VariantTypeTableFeature.name
+    )
   val SUPPORTED_READER_FEATURES: Seq[String] =
-    Seq(DeletionVectorsTableFeature.name, ColumnMappingTableFeature.name)
+    Seq(
+      DeletionVectorsTableFeature.name,
+      ColumnMappingTableFeature.name,
+      TimestampNTZTableFeature.name,
+      VariantTypeTableFeature.name
+    )
 
   // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.
   // It's used to ensure delta sharing queries don't mess up with blocks with other applications.

@@ -188,7 +188,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
   }
 
   test("filter non-parquet file for schema inference when not using catalog schema") {
-    withTempDir { dir =>
+    withTempDir(prefix = "spark") { dir =>
       val tempDir = dir.getCanonicalPath
       writeFiles(tempDir + "/part=1/", Seq(1).toDF("corrupted_id"), format = "orc")
       writeFiles(tempDir + "/part=2/", Seq(2).toDF("id"))
@@ -1385,6 +1385,40 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with DeltaSQL
 
       // Check data in the converted delta table.
       checkAnswer(sql(s"SELECT id FROM $tableName WHERE key1 = 0"), df1.select("id"))
+    }
+  }
+
+  test(s"catalog partition values contain special characters") {
+    // Add interesting special characters here for test
+    val specialChars = " ,;{}()\n\t=!@#$%^&*-?.+<_>|/"
+    val tableName = "ppqtable"
+    withTable(tableName) {
+      val valueA = s"${specialChars}some${specialChars}${specialChars}value${specialChars}A"
+      val valueB = s"${specialChars}some${specialChars}${specialChars}value${specialChars}B"
+      val valueC = s"${specialChars}some${specialChars}${specialChars}value${specialChars}C"
+      val valueD = s"${specialChars}some${specialChars}${specialChars}value${specialChars}D"
+
+      val df1 = spark.range(3).withColumn("key1", lit(valueA)).withColumn("key2", lit(valueB))
+      val df2 = spark.range(4, 7).withColumn("key1", lit(valueC)).withColumn("key2", lit(valueD))
+      df1.union(df2).write.format("parquet").partitionBy("key1", "key2").saveAsTable(tableName)
+
+      convertToDelta(tableName, Some("key1 string, key2 string"))
+
+      // missing one char from valueA, so no match
+      checkAnswer(
+        spark.table(tableName)
+          .where(s"key1 = '${specialChars}some${specialChars}value${specialChars}A'")
+          .select("id"), Nil)
+
+      checkAnswer(
+        spark.table(tableName).where(s"key1 = '$valueA' and key2 = '$valueB'")
+          .select("id"),
+        Row(0) :: Row(1) :: Row(2) :: Nil)
+
+      checkAnswer(
+        spark.table(tableName).where(s"key2 = '$valueD' and id > 4")
+          .select("id"),
+        Row(5) :: Row(6) :: Nil)
     }
   }
 }

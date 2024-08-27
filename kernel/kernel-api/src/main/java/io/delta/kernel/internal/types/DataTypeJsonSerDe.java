@@ -13,34 +13,93 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.internal.types;
+package io.delta.kernel.internal.types;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.lang.String.format;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.module.SimpleModule;
+import com.fasterxml.jackson.databind.ser.std.StdSerializer;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.types.*;
+import java.io.IOException;
+import java.io.StringWriter;
 import java.util.*;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Parses JSON serialized Delta data types to their {@link DataType} class based on the <a
+ * Serialize and deserialize Delta data types {@link DataType} to JSON and from JSON class based on
+ * the <a
  * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types">serialization
  * rules </a> outlined in the Delta Protocol.
  */
-public class DataTypeParser {
+public class DataTypeJsonSerDe {
+  private static final ObjectMapper OBJECT_MAPPER =
+      new ObjectMapper()
+          .registerModule(
+              new SimpleModule().addSerializer(StructType.class, new StructTypeSerializer()));
 
-  private DataTypeParser() {}
+  private DataTypeJsonSerDe() {}
 
-  public static StructType parseSchema(JsonNode json) {
-    DataType parsedType = parseDataType(json, "", new HashMap<>());
-    if (parsedType instanceof StructType) {
-      return (StructType) parsedType;
-    } else {
-      throw new IllegalArgumentException(
-          String.format("Could not parse the following JSON as a valid StructType:\n%s", json));
+  /**
+   * Serializes a {@link StructType} to a JSON string
+   *
+   * @param structType
+   * @return
+   */
+  public static String serializeStructType(StructType structType) {
+    try {
+      return OBJECT_MAPPER.writeValueAsString(structType);
+    } catch (JsonProcessingException ex) {
+      throw new KernelException("Could not serialize StructType to JSON", ex);
+    }
+  }
+
+  /**
+   * Serializes a {@link DataType} to a JSON string according to the Delta Protocol. TODO: Only
+   * reason why this API added was due to Flink-Kernel dependency. Currently Flink-Kernel uses the
+   * Kernel DataType.toJson and Standalone DataType.fromJson to convert between types.
+   *
+   * @param dataType
+   * @return JSON string representing the data type
+   */
+  public static String serializeDataType(DataType dataType) {
+    try {
+      StringWriter stringWriter = new StringWriter();
+      JsonGenerator generator = OBJECT_MAPPER.createGenerator(stringWriter);
+      writeDataType(generator, dataType);
+      generator.flush();
+      return stringWriter.toString();
+    } catch (IOException ex) {
+      throw new KernelException("Could not serialize DataType to JSON", ex);
+    }
+  }
+
+  /**
+   * Deserializes a JSON string representing a Delta data type to a {@link DataType}.
+   *
+   * @param structTypeJson JSON string representing a {@link StructType} data type
+   */
+  public static StructType deserializeStructType(String structTypeJson) {
+    try {
+      DataType parsedType = parseDataType(OBJECT_MAPPER.reader().readTree(structTypeJson), "", new HashMap<>());
+      if (parsedType instanceof StructType) {
+        return (StructType) parsedType;
+      } else {
+        throw new IllegalArgumentException(
+            String.format(
+                "Could not parse the following JSON as a valid StructType:\n%s", structTypeJson));
+      }
+    } catch (JsonProcessingException ex) {
+      throw new KernelException(
+          format("Could not parse schema given as JSON string: %s", structTypeJson), ex);
     }
   }
 
@@ -143,7 +202,7 @@ public class DataTypeParser {
         String.format(
             "Expected JSON object with 2 fields for struct data type but got:\n%s", json));
     JsonNode fieldsNode = getNonNullField(json, "fields");
-    checkArgument(
+    Preconditions.checkArgument(
         fieldsNode.isArray(),
         String.format("Expected array for fieldName=%s in:\n%s", "fields", json));
     Iterator<JsonNode> fields = fieldsNode.elements();
@@ -159,7 +218,7 @@ public class DataTypeParser {
    * struct field </a>
    */
   private static StructField parseStructField(JsonNode json) {
-    checkArgument(json.isObject(), "Expected JSON object for struct field");
+    Preconditions.checkArgument(json.isObject(), "Expected JSON object for struct field");
     String name = getStringField(json, "name");
     FieldMetadata metadata = parseFieldMetadata(json.get("metadata"), false);
     DataType type =
@@ -182,7 +241,7 @@ public class DataTypeParser {
       return FieldMetadata.empty();
     }
 
-    checkArgument(json.isObject(), "Expected JSON object for struct field metadata");
+    Preconditions.checkArgument(json.isObject(), "Expected JSON object for struct field metadata");
     final Iterator<Map.Entry<String, JsonNode>> iterator = json.fields();
     final FieldMetadata.Builder builder = FieldMetadata.builder();
     while (iterator.hasNext()) {
@@ -229,7 +288,8 @@ public class DataTypeParser {
           } else if (head.isObject()) {
             builder.putFieldMetadataArray(
                 key,
-                buildList(value, DataTypeParser::parseFieldMetadata).toArray(new FieldMetadata[0]));
+                buildList(value, DataTypeJsonSerDe::parseFieldMetadata)
+                    .toArray(new FieldMetadata[0]));
           } else {
             throw new IllegalArgumentException(
                 String.format("Unsupported type for Array as field metadata value: %s", value));
@@ -302,7 +362,7 @@ public class DataTypeParser {
 
   private static String getStringField(JsonNode rootNode, String fieldName) {
     JsonNode node = getNonNullField(rootNode, fieldName);
-    checkArgument(
+    Preconditions.checkArgument(
         node.isTextual(),
         String.format("Expected string for fieldName=%s in:\n%s", fieldName, rootNode));
     return node.textValue(); // double check this only works for string values! and isTextual()!
@@ -335,9 +395,134 @@ public class DataTypeParser {
 
   private static boolean getBooleanField(JsonNode rootNode, String fieldName) {
     JsonNode node = getNonNullField(rootNode, fieldName);
-    checkArgument(
+    Preconditions.checkArgument(
         node.isBoolean(),
         String.format("Expected boolean for fieldName=%s in:\n%s", fieldName, rootNode));
     return node.booleanValue();
+  }
+
+  protected static class StructTypeSerializer extends StdSerializer<StructType> {
+    public StructTypeSerializer() {
+      super(StructType.class);
+    }
+
+    @Override
+    public void serialize(StructType structType, JsonGenerator gen, SerializerProvider provider)
+        throws IOException {
+      writeDataType(gen, structType);
+    }
+  }
+
+  private static void writeDataType(JsonGenerator gen, DataType dataType) throws IOException {
+    if (dataType instanceof StructType) {
+      writeStructType(gen, (StructType) dataType);
+    } else if (dataType instanceof ArrayType) {
+      writeArrayType(gen, (ArrayType) dataType);
+    } else if (dataType instanceof MapType) {
+      writeMapType(gen, (MapType) dataType);
+    } else if (dataType instanceof DecimalType) {
+      DecimalType decimalType = (DecimalType) dataType;
+      gen.writeString(format("decimal(%d,%d)", decimalType.getPrecision(), decimalType.getScale()));
+    } else {
+      gen.writeString(dataType.toString());
+    }
+  }
+
+  private static void writeArrayType(JsonGenerator gen, ArrayType arrayType) throws IOException {
+    gen.writeStartObject();
+    gen.writeStringField("type", "array");
+    gen.writeFieldName("elementType");
+    writeDataType(gen, arrayType.getElementType());
+    gen.writeBooleanField("containsNull", arrayType.containsNull());
+    gen.writeEndObject();
+  }
+
+  private static void writeMapType(JsonGenerator gen, MapType mapType) throws IOException {
+    gen.writeStartObject();
+    gen.writeStringField("type", "map");
+    gen.writeFieldName("keyType");
+    writeDataType(gen, mapType.getKeyType());
+    gen.writeFieldName("valueType");
+    writeDataType(gen, mapType.getValueType());
+    gen.writeBooleanField("valueContainsNull", mapType.isValueContainsNull());
+    gen.writeEndObject();
+  }
+
+  private static void writeStructType(JsonGenerator gen, StructType structType) throws IOException {
+    gen.writeStartObject();
+    gen.writeStringField("type", "struct");
+    gen.writeArrayFieldStart("fields");
+    for (StructField field : structType.fields()) {
+      writeStructField(gen, field);
+    }
+    gen.writeEndArray();
+    gen.writeEndObject();
+  }
+
+  private static void writeStructField(JsonGenerator gen, StructField field) throws IOException {
+    gen.writeStartObject();
+    gen.writeStringField("name", field.getName());
+    gen.writeFieldName("type");
+    writeDataType(gen, field.getDataType());
+    gen.writeBooleanField("nullable", field.isNullable());
+    gen.writeFieldName("metadata");
+    writeFieldMetadata(gen, field.getMetadata());
+    gen.writeEndObject();
+  }
+
+  private static void writeFieldMetadata(JsonGenerator gen, FieldMetadata metadata)
+      throws IOException {
+    gen.writeStartObject();
+    for (Map.Entry<String, Object> entry : metadata.getEntries().entrySet()) {
+      gen.writeFieldName(entry.getKey());
+      Object value = entry.getValue();
+      if (value instanceof Long) {
+        gen.writeNumber((Long) value);
+      } else if (value instanceof Double) {
+        gen.writeNumber((Double) value);
+      } else if (value instanceof Boolean) {
+        gen.writeBoolean((Boolean) value);
+      } else if (value instanceof String) {
+        gen.writeString((String) value);
+      } else if (value instanceof FieldMetadata) {
+        writeFieldMetadata(gen, (FieldMetadata) value);
+      } else if (value instanceof Long[]) {
+        gen.writeStartArray();
+        for (Long v : (Long[]) value) {
+          gen.writeNumber(v);
+        }
+        gen.writeEndArray();
+      } else if (value instanceof Double[]) {
+        gen.writeStartArray();
+        for (Double v : (Double[]) value) {
+          gen.writeNumber(v);
+        }
+        gen.writeEndArray();
+      } else if (value instanceof Boolean[]) {
+        gen.writeStartArray();
+        for (Boolean v : (Boolean[]) value) {
+          gen.writeBoolean(v);
+        }
+        gen.writeEndArray();
+      } else if (value instanceof String[]) {
+        gen.writeStartArray();
+        for (String v : (String[]) value) {
+          gen.writeString(v);
+        }
+        gen.writeEndArray();
+      } else if (value instanceof FieldMetadata[]) {
+        gen.writeStartArray();
+        for (FieldMetadata v : (FieldMetadata[]) value) {
+          writeFieldMetadata(gen, v);
+        }
+        gen.writeEndArray();
+      } else if (value == null) {
+        gen.writeNull();
+      } else {
+        throw new IllegalArgumentException(
+            format("Unsupported type for field metadata value: %s", value));
+      }
+    }
+    gen.writeEndObject();
   }
 }

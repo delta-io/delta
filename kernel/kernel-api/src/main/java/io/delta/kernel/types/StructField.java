@@ -102,7 +102,7 @@ public class StructField {
   public String toString() {
     return String.format(
         "StructField(name=%s,type=%s,nullable=%s,metadata=%s)",
-        name, dataType, nullable, metadata.toJson());
+        name, dataType, nullable, metadataJson());
   }
 
   public String toJson() {
@@ -119,7 +119,7 @@ public class StructField {
   private String metadataJson() {
     List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
     if (nestedCollatedFields.isEmpty()) {
-      return metadata.toJson();
+      return metadata.toString();
     }
 
     Builder metadataBuilder = new Builder();
@@ -130,7 +130,7 @@ public class StructField {
         .fromMetadata(metadata)
         .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
         .build()
-        .toJson();
+        .toString();
   }
 
   private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {

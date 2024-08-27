@@ -144,14 +144,14 @@ public class MultiThreadedTableReader
          * Get the deserialized scan state as {@link Row} object
          */
         Row getScanRow(Engine engine) {
-            return RowSerDe.deserializeRowFromJson(engine, stateJson);
+            return RowSerDe.deserializeRowFromJson(stateJson);
         }
 
         /**
          * Get the deserialized scan file as {@link Row} object
          */
         Row getScanFileRow(Engine engine) {
-            return RowSerDe.deserializeRowFromJson(engine, fileJson);
+            return RowSerDe.deserializeRowFromJson(fileJson);
         }
     }
 

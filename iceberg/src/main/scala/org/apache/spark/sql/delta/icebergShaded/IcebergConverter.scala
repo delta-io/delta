@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.Breaks._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, OptimisticTransactionImpl, Snapshot, UniversalFormat, UniversalFormatConverter}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, IcebergConstants, OptimisticTransactionImpl, Snapshot, UniversalFormat, UniversalFormatConverter}
 import org.apache.spark.sql.delta.DeltaOperations.OPTIMIZE_OPERATION_NAME
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
@@ -53,8 +53,6 @@ object IcebergConverter {
    * Indicates the timestamp (milliseconds) of the delta commit that it corresponds to.
    */
   val DELTA_TIMESTAMP_PROPERTY = "delta-timestamp"
-
-  val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
 
   def getLastConvertedDeltaVersion(table: Option[IcebergTable]): Option[Long] =
     table.flatMap(_.properties().asScala.get(DELTA_VERSION_PROPERTY)).map(_.toLong)
@@ -243,8 +241,10 @@ class IcebergConverter(spark: SparkSession)
       txnOpt: Option[OptimisticTransactionImpl],
       catalogTable: CatalogTable): Option[(Long, Long)] =
       recordFrameProfile("Delta", "IcebergConverter.convertSnapshot") {
+    val cleanedCatalogTable =
+      cleanCatalogTableIfEnablingUniform(catalogTable, snapshotToConvert, txnOpt)
     val log = snapshotToConvert.deltaLog
-    val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, catalogTable)
+    val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, cleanedCatalogTable)
     val lastConvertedIcebergSnapshotId =
       lastConvertedIcebergTable.flatMap(it => Option(it.currentSnapshot())).map(_.snapshotId())
     val lastDeltaVersionConverted = IcebergConverter
@@ -282,13 +282,13 @@ class IcebergConverter(spark: SparkSession)
       case (None, None) => CREATE_TABLE
     }
 
-    UniversalFormat.enforceSupportInCatalog(catalogTable, snapshotToConvert.metadata) match {
+    UniversalFormat.enforceSupportInCatalog(cleanedCatalogTable, snapshotToConvert.metadata) match {
       case Some(updatedTable) => spark.sessionState.catalog.alterTable(updatedTable)
       case _ =>
     }
 
     val icebergTxn = new IcebergConversionTransaction(
-      catalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
+      cleanedCatalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
       lastConvertedIcebergSnapshotId, lastDeltaVersionConverted)
 
     // Write out the actions taken since the last conversion (or since table creation).
@@ -377,8 +377,43 @@ class IcebergConverter(spark: SparkSession)
     }
 
     icebergTxn.commit()
-    validateIcebergCommit(snapshotToConvert, catalogTable)
+    validateIcebergCommit(snapshotToConvert, cleanedCatalogTable)
     Some(snapshotToConvert.version, snapshotToConvert.timestamp)
+  }
+
+  // This is for newly enabling uniform table to
+  // start a new history line for iceberg metadata
+  // so that if a uniform table is corrupted,
+  // user can unset and re-enable to unblock
+  private def cleanCatalogTableIfEnablingUniform(
+      table: CatalogTable,
+      snapshotToConvert: Snapshot,
+      txnOpt: Option[OptimisticTransactionImpl]): CatalogTable = {
+    val disabledIceberg = txnOpt.map(txn =>
+      !UniversalFormat.icebergEnabled(txn.snapshot.metadata)
+    ).getOrElse(!UniversalFormat.icebergEnabled(table.properties))
+    val enablingUniform =
+      disabledIceberg && UniversalFormat.icebergEnabled(snapshotToConvert.metadata)
+    if (enablingUniform) {
+      clearDeltaUniformMetadata(table)
+    } else {
+      table
+    }
+  }
+
+  protected def clearDeltaUniformMetadata(table: CatalogTable): CatalogTable = {
+    val metadata_key = IcebergConstants.ICEBERG_TBLPROP_METADATA_LOCATION
+    if (table.properties.contains(metadata_key)) {
+      val cleanedCatalogTable = table.copy(properties = table.properties
+        - metadata_key
+        - IcebergConverter.DELTA_VERSION_PROPERTY
+        - IcebergConverter.DELTA_TIMESTAMP_PROPERTY
+      )
+      spark.sessionState.catalog.alterTable(cleanedCatalogTable)
+      cleanedCatalogTable
+    } else {
+      table
+    }
   }
 
   override def loadLastDeltaVersionConverted(

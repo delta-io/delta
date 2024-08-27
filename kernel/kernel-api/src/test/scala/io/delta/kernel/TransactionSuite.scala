@@ -17,17 +17,17 @@ package io.delta.kernel
 
 import io.delta.kernel.Transaction.{generateAppendActions, transformLogicalData}
 import io.delta.kernel.data._
-import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.DataWriteContextImpl
 import io.delta.kernel.internal.TableConfig.ICEBERG_COMPAT_V2_ENABLED
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.data.TransactionStateRow
+import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils, VectorTestUtils}
+import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
 import io.delta.kernel.types.{LongType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatistics, DataFileStatus}
 import org.scalatest.funsuite.AnyFunSuite
@@ -45,7 +45,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
     test("transformLogicalData: un-partitioned table, " +
       s"icebergCompatV2Enabled=$icebergCompatV2Enabled") {
       val transformedDateIter = transformLogicalData(
-        testMockEngine(testSchema),
+        mockEngine(),
         testTxnState(testSchema, enableIcebergCompatV2 = icebergCompatV2Enabled),
         testData(includePartitionCols = false),
         Map.empty[String, Literal].asJava /* partition values */)
@@ -59,7 +59,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
     test("transformLogicalData: partitioned table, " +
       s"icebergCompatV2Enabled=$icebergCompatV2Enabled") {
       val transformedDateIter = transformLogicalData(
-        testMockEngine(testSchemaWithPartitions),
+        mockEngine(),
         testTxnState(
           testSchemaWithPartitions,
           testPartitionColNames,
@@ -84,7 +84,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
     test(s"generateAppendActions: iceberg comaptibily checks, " +
       s"icebergCompatV2Enabled=$icebergCompatV2Enabled") {
       val txnState = testTxnState(testSchema, enableIcebergCompatV2 = icebergCompatV2Enabled)
-      val engine = testMockEngine(testSchema)
+      val engine = mockEngine()
 
       Seq(
         // missing stats
@@ -197,24 +197,13 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), /* name */
       Optional.empty(), /* description */
       new Format(),
-      "", // schemaString,
+      DataTypeJsonSerDe.serializeDataType(schema),
       schema,
       VectorUtils.stringArrayValue(partitionCols.asJava), // partitionColumns
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
     TransactionStateRow.of(metadata, "table path")
-  }
-
-  /**
-   * Create a mock [[Engine]] with the given schema which is returned by the mock [[JsonHandler]].
-   */
-  def testMockEngine(schema: StructType): Engine = {
-    mockEngine(
-      jsonHandler = new BaseMockJsonHandler {
-        override def deserializeStructType(structTypeJson: String): StructType = schema
-      }
-    )
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {

@@ -412,7 +412,7 @@ trait DeltaSQLConfBase {
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2, 3, 4, 5, 7))
+      .checkValues(Set(1, 2, 3, 4, 5, 6, 7))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
@@ -2025,6 +2025,18 @@ trait DeltaSQLConfBase {
       .doc("If true, post-commit hooks will by default throw an exception when they fail.")
       .booleanConf
       .createWithDefault(Utils.isTesting)
+
+  ///////////
+  // UTC TIMESTAMP PARTITION VALUES
+  ///////////////////
+  val UTC_TIMESTAMP_PARTITION_VALUES = buildConf("write.utcTimestampPartitionValues")
+    .internal()
+    .doc(
+      """
+        | If true, write UTC normalized timestamp partition values to Delta Log.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
