@@ -393,7 +393,7 @@ public class DataTypeJsonSerDe {
       Object collationName = collationField.getValue();
       if (!(collationName instanceof String)) {
         throw new IllegalArgumentException(
-          String.format("Invalid collation name: %s.", collationName));
+            String.format("Invalid collation name: %s.", collationName));
       }
       collationsMap.put(fieldPath, (String) collationName);
     }
