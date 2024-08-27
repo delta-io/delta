@@ -175,7 +175,8 @@ trait CoordinatedCommitsTestUtils
 
 case class TrackingInMemoryCommitCoordinatorBuilder(
     batchSize: Long,
-    defaultCommitCoordinatorClientOpt: Option[CommitCoordinatorClient] = None)
+    defaultCommitCoordinatorClientOpt: Option[CommitCoordinatorClient] = None,
+    defaultCommitCoordinatorName: String = "tracking-in-memory")
   extends CommitCoordinatorBuilder {
   lazy val trackingInMemoryCommitCoordinatorClient =
     defaultCommitCoordinatorClientOpt.getOrElse {
@@ -183,7 +184,7 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
         new PredictableUuidInMemoryCommitCoordinatorClient(batchSize))
     }
 
-  override def getName: String = "tracking-in-memory"
+  override def getName: String = defaultCommitCoordinatorName
   override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
     trackingInMemoryCommitCoordinatorClient
   }
