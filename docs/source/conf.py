@@ -110,15 +110,7 @@ html_title = "Delta Lake Documentation"
 html_logo = "_static/delta-lake-white.png"
 html_favicon = "_static/favicon.ico"
 
-html_theme_options = {
-    "show_toc_level": 2,
-    "use_sidenav_for_toctree": True,
-    "navigation_depth": 2
-}
-
-html_sidebars = {
-    '**': ['globaltoc.html', 'searchbox.html']
-}
+html_theme_options = {}
 
 html_last_updated_fmt = "%b %d, %Y"
 
