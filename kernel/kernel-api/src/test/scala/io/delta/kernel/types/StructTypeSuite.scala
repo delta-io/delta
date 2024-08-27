@@ -115,10 +115,10 @@ class StructTypeSuite extends AnyFunSuite {
       ":true,\"metadata\":{}},{\"name\":\"c3\",\"type\":\"string\",\"nullable\":true,\"metadata\"" +
       ":{}}]},\"valueContainsNull\":true},\"nullable\":true,\"metadata\":{}},{\"name\":\"b2\"," +
       "\"type\":\"long\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}," +
-      "{\"name\":\"a3\",\"type\":{\"type\":\"array\",\"elementType\":{\"type\":\"map\",\"keyType\"" +
-      ":\"string\",\"valueType\":{\"type\":\"struct\",\"fields\":[{\"name\":\"b1\",\"type\":\"string\"" +
-      ",\"nullable\":false,\"metadata\":{}}]},\"valueContainsNull\":false},\"containsNull\":false}," +
-      "\"nullable\":true,\"metadata\":{}}]}"
+      "{\"name\":\"a3\",\"type\":{\"type\":\"array\",\"elementType\":{\"type\":\"map\"," +
+      "\"keyType\":\"string\",\"valueType\":{\"type\":\"struct\",\"fields\":[{\"name\":\"b1\"," +
+      "\"type\":\"string\",\"nullable\":false,\"metadata\":{}}]},\"valueContainsNull\":false}," +
+      "\"containsNull\":false},\"nullable\":true,\"metadata\":{}}]}"
 
     assert(structType.toJson == toJson)
   }
