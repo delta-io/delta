@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -34,7 +34,6 @@ import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, Set
 import org.apache.spark.sql.catalyst.trees.UnaryLike
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, InMemoryTable, InMemoryTableCatalog, Table, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.expressions.Transform
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, V2SessionCatalog}
 import org.apache.spark.sql.test.SharedSparkSession
