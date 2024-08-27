@@ -26,7 +26,6 @@ import io.delta.kernel.types.{BooleanType, LongType, StringType, StructType}
 import io.delta.kernel.Table
 import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.internal.data.vector.DefaultStringVector
 import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.functions.col
