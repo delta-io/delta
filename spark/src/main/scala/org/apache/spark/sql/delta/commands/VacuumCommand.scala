@@ -144,9 +144,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     }.toDF("path")
   }
 
-  def getFilesFromInventory(basePath: String,
-                            partitionColumns: Seq[String],
-                            inventory: DataFrame): Dataset[SerializableFileStatus] = {
+  def getFilesFromInventory(
+      basePath: String,
+      partitionColumns: Seq[String],
+      inventory: DataFrame,
+      shouldIcebergMetadataDirBeHidden: Boolean): Dataset[SerializableFileStatus] = {
     implicit val fileNameAndSizeEncoder: Encoder[SerializableFileStatus] =
       org.apache.spark.sql.Encoders.product[SerializableFileStatus]
 
@@ -167,7 +169,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       .flatMap {
         row =>
           val path = row.getString(0)
-          if(!DeltaTableUtils.isHiddenDirectory(partitionColumns, path)) {
+          if(!DeltaTableUtils.isHiddenDirectory(
+              partitionColumns, path, shouldIcebergMetadataDirBeHidden)
+          ) {
             Seq(SerializableFileStatus(path,
               row.getLong(1), row.getBoolean(2), row.getLong(3)))
           } else {
@@ -249,14 +253,24 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
+      val shouldIcebergMetadataDirBeHidden = UniversalFormat.icebergEnabled(snapshot.metadata)
       val allFilesAndDirsWithDuplicates = inventory match {
-        case Some(inventoryDF) => getFilesFromInventory(basePath, partitionColumns, inventoryDF)
+        case Some(inventoryDF) =>
+          getFilesFromInventory(
+            basePath, partitionColumns, inventoryDF, shouldIcebergMetadataDirBeHidden
+          )
         case None => DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
           hadoopConf,
-          hiddenDirNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
-          hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+          hiddenDirNameFilter =
+            DeltaTableUtils.isHiddenDirectory(
+              partitionColumns, _, shouldIcebergMetadataDirBeHidden
+            ),
+          hiddenFileNameFilter =
+            DeltaTableUtils.isHiddenDirectory(
+              partitionColumns, _, shouldIcebergMetadataDirBeHidden
+            ),
           fileListingParallelism = Option(parallelism)
         )
       }
