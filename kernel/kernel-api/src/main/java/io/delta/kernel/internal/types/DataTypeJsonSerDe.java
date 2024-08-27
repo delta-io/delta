@@ -389,7 +389,13 @@ public class DataTypeJsonSerDe {
         parseFieldMetadata(fieldMetadata.get(DataType.COLLATIONS_METADATA_KEY));
     for (Map.Entry<String, Object> collationField :
         collationFieldMetadata.getEntries().entrySet()) {
-      collationsMap.put(collationField.getKey(), (String) collationField.getValue());
+      String fieldPath = collationField.getKey();
+      Object collationName = collationField.getValue();
+      if (!(collationName instanceof String)) {
+        throw new IllegalArgumentException(
+          String.format("Invalid collation name: %s.", collationName));
+      }
+      collationsMap.put(fieldPath, (String) collationName);
     }
     return collationsMap;
   }

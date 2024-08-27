@@ -29,13 +29,6 @@ public abstract class DataType {
   public static String COLLATIONS_METADATA_KEY = "__COLLATIONS";
 
   /**
-   * Convert the data type to Delta protocol specified serialization format.
-   *
-   * @return Data type serialized in JSON format.
-   */
-  public abstract String toJson();
-
-  /**
    * Are the data types same? The metadata or column names could be different.
    *
    * @param dataType

@@ -101,19 +101,7 @@ public class StructField {
   @Override
   public String toString() {
     return String.format(
-        "StructField(name=%s,type=%s,nullable=%s,metadata=%s)",
-        name, dataType, nullable, metadataJson());
-  }
-
-  public String toJson() {
-    return String.format(
-        "{\n"
-            + "  \"name\" : \"%s\",\n"
-            + "  \"type\" : %s,\n"
-            + "  \"nullable\" : %s,\n"
-            + "  \"metadata\" : %s\n"
-            + "}",
-        name, dataType.toJson(), nullable, metadataJson());
+          "StructField(name=%s,type=%s,nullable=%s,metadata=%s)", name, dataType, nullable, metadata);
   }
 
   private String metadataJson() {
