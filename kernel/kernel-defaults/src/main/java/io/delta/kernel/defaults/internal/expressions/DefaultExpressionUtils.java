@@ -35,12 +35,25 @@ import java.util.stream.Collectors;
 class DefaultExpressionUtils {
 
   static final Comparator<BigDecimal> BIGDECIMAL_COMPARATOR = Comparator.naturalOrder();
+  static final Comparator<String> STRING_COMPARATOR =
+      (leftOp, rightOp) -> {
+        byte[] leftBytes = leftOp.getBytes(StandardCharsets.UTF_8);
+        byte[] rightBytes = rightOp.getBytes(StandardCharsets.UTF_8);
+        int i = 0;
+        while (i < leftBytes.length && i < rightBytes.length) {
+          if (leftBytes[i] != rightBytes[i]) {
+            return Byte.toUnsignedInt(leftBytes[i]) - Byte.toUnsignedInt(rightBytes[i]);
+          }
+          i++;
+        }
+        return Integer.compare(leftBytes.length, rightBytes.length);
+      };
   static final Comparator<byte[]> BINARY_COMPARTOR =
       (leftOp, rightOp) -> {
         int i = 0;
         while (i < leftOp.length && i < rightOp.length) {
           if (leftOp[i] != rightOp[i]) {
-            return Byte.toUnsignedInt(leftOp[i]) - Byte.toUnsignedInt(rightOp[i]);
+            return Byte.compare(leftOp[i], rightOp[i]);
           }
           i++;
         }
@@ -152,9 +165,9 @@ class DefaultExpressionUtils {
       vectorValueComparator =
           rowId ->
               booleanComparator.test(
-                  BINARY_COMPARTOR.compare(
-                      left.getString(rowId).getBytes(StandardCharsets.UTF_8),
-                      right.getString(rowId).getBytes(StandardCharsets.UTF_8)));
+                  STRING_COMPARATOR.compare(
+                      left.getString(rowId),
+                      right.getString(rowId)));
     } else if (dataType instanceof BinaryType) {
       vectorValueComparator =
           rowId ->
