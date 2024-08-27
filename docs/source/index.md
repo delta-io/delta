@@ -16,7 +16,14 @@ This is the documentation site for <Delta>.
     :glob:
 
     delta-intro
-    delta-connectors
+    delta-spark
+    delta-trino-integration
+    delta-presto-integration
+    redshift-spectrum-integration
+    snowflake-integration
+    bigquery-integration
+    flink-integration
+    delta-more-connectors
     delta-kernel
     delta-standalone
     delta-apidoc

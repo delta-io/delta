@@ -31,8 +31,7 @@ This [library](https://docs.rs/deltalake/latest/deltalake/) allows Rust (with Py
 
 ## Delta Standalone
 
-warning::
-  The Delta Standalone is deprecated in favor of [Delta Kernel](#delta-kernel.md).
+.. warning:: The Delta Standalone is deprecated in favor of [Delta Kernel](delta-kernel.md) which has support for reading from or writing into Delta tables with advanced features.
 
 Delta Standalone, formerly known as the Delta Standalone Reader (DSR), is a JVM library to read and write Delta tables. Unlike Delta-Spark, this library doesn't use Spark to read or write tables and it has only a few transitive dependencies. It can be used by any application that cannot use a Spark cluster. More details refer [here](https://github.com/delta-io/delta/blob/master/connectors/README.md).
 

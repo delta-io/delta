@@ -2,7 +2,7 @@
 description: Learn how to use <Delta> Spark connector.
 ---
 
-# <AS>
+# <AS> connector
 
 .. note::
 [Delta Lake 4.0 Preview](https://github.com/delta-io/delta/releases/tag/v4.0.0rc1) is released! See the 4.0 Preview documentation [here](https://docs.delta.io/4.0.0-preview/index.html).

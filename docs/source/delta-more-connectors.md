@@ -19,6 +19,9 @@ An [extension](https://github.com/finos/legend-community-delta/blob/main/README.
 #### Hopsworks
 This [connectors](https://docs.hopsworks.ai/latest/user_guides/fs/feature_group/create/#batch-write-api) allows [Hopsworks Feature Store](https://www.hopsworks.ai/dictionary/feature-store) store, manage, and serve feature data in Delta Lake.
 
+#### Apache Hive
+This integration enables reading Delta tables from Apache Hive. For details on installing the integration, see the [Delta Lake repository](https://github.com/delta-io/delta/tree/master/connectors/hive).
+
 #### Kafka Delta Ingest
 This [project](https://github.com/delta-io/kafka-delta-ingest) builds a highly efficient daemon for streaming data through Apache Kafka into Delta Lake.
 
