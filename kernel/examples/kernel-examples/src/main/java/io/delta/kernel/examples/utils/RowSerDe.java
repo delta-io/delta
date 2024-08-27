@@ -27,6 +27,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 
 import io.delta.kernel.internal.util.VectorUtils;
 
@@ -59,12 +60,11 @@ public class RowSerDe {
     /**
      * Utility method to deserialize a {@link Row} object from the JSON form.
      */
-    public static Row deserializeRowFromJson(Engine engine, String jsonRowWithSchema) {
+    public static Row deserializeRowFromJson(String jsonRowWithSchema) {
         try {
             JsonNode jsonNode = OBJECT_MAPPER.readTree(jsonRowWithSchema);
             JsonNode schemaNode = jsonNode.get("schema");
-            StructType schema =
-                engine.getJsonHandler().deserializeStructType(schemaNode.asText());
+            StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaNode.asText());
             return parseRowFromJsonWithSchema((ObjectNode) jsonNode.get("row"), schema);
         } catch (JsonProcessingException ex) {
             throw new UncheckedIOException(ex);

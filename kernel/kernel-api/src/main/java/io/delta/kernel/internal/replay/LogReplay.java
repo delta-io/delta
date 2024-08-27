@@ -229,7 +229,7 @@ public class LogReplay {
 
           for (int i = 0; i < metadataVector.getSize(); i++) {
             if (!metadataVector.isNullAt(i)) {
-              metadata = Metadata.fromColumnVector(metadataVector, i, engine);
+              metadata = Metadata.fromColumnVector(metadataVector, i);
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.

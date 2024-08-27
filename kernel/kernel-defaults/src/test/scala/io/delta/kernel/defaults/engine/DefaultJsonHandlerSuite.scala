@@ -20,7 +20,6 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestRow, TestUtils}
-import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
 import org.apache.hadoop.conf.Configuration
@@ -28,8 +27,6 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import java.nio.file.FileAlreadyExistsException
 
-// NOTE: currently tests are split across scala and java; additional tests are in
-// TestDefaultJsonHandler.java
 class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVectorTestUtils {
 
   val jsonHandler = new DefaultJsonHandler(new Configuration {
@@ -272,83 +269,6 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     assert(batchRows(1).isNullAt(0) && batchRows(2).isNullAt(0))
   }
 
-  //////////////////////////////////////////////////////////////////////////////////
-  // END-TO-END TESTS FOR deserializeStructType (more tests in DataTypeParserSuite)
-  //////////////////////////////////////////////////////////////////////////////////
-
-  private def sampleMetadata: FieldMetadata = FieldMetadata.builder()
-    .putNull("null")
-    .putLong("long", 1000L)
-    .putDouble("double", 2.222)
-    .putBoolean("boolean", true)
-    .putString("string", "value")
-    .build()
-
-  test("deserializeStructType: primitive type round trip") {
-    val fields = BasePrimitiveType.getAllPrimitiveTypes().asScala.flatMap { dataType =>
-      Seq(
-        new StructField("col1" + dataType, dataType, true),
-        new StructField("col1" + dataType, dataType, false),
-        new StructField("col1" + dataType, dataType, false, sampleMetadata)
-      )
-    } ++ Seq(
-      new StructField("col1decimal", new DecimalType(30, 10), true),
-      new StructField("col2decimal", new DecimalType(38, 22), true),
-      new StructField("col3decimal", new DecimalType(5, 2), true)
-    )
-
-    val expSchema = new StructType(fields.asJava);
-    val serializedSchema = expSchema.toJson
-    val actSchema = jsonHandler.deserializeStructType(serializedSchema)
-    assert(expSchema == actSchema)
-  }
-
-  test("deserializeStructType: complex type round trip") {
-    val arrayType = new ArrayType(IntegerType.INTEGER, true)
-    val arrayArrayType = new ArrayType(arrayType, false)
-    val mapType = new MapType(FloatType.FLOAT, BinaryType.BINARY, false)
-    val mapMapType = new MapType(mapType, BinaryType.BINARY, true)
-    val structType = new StructType().add("simple", DateType.DATE)
-    val structAllType = new StructType()
-      .add("prim", BooleanType.BOOLEAN)
-      .add("arr", arrayType)
-      .add("map", mapType)
-      .add("struct", structType)
-
-    val expSchema = new StructType()
-      .add("col1", arrayType, true)
-      .add("col2", arrayArrayType, false)
-      .add("col3", mapType, false)
-      .add("col4", mapMapType, false)
-      .add("col5", structType, false)
-      .add("col6", structAllType, false)
-
-    val serializedSchema = expSchema.toJson
-    val actSchema = jsonHandler.deserializeStructType(serializedSchema)
-    assert(expSchema == actSchema)
-  }
-
-  test("deserializeStructType: not a StructType") {
-    val e = intercept[IllegalArgumentException] {
-      jsonHandler.deserializeStructType(new ArrayType(StringType.STRING, true).toJson())
-    }
-    assert(e.getMessage.contains("Could not parse the following JSON as a valid StructType"))
-  }
-
-  test("deserializeStructType: invalid JSON") {
-    val e = intercept[KernelException] {
-      jsonHandler.deserializeStructType(
-        """
-          |{
-          |  "type" : "struct,
-          |  "fields" : []
-          |}
-          |""".stripMargin
-      )
-    }
-    assert(e.getMessage.contains("Could not parse schema given as JSON string"))
-  }
-
   test("read json files") {
     val expResults = Seq(
       TestRow("part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet", 348L, true),
@@ -538,7 +458,4 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       writeAndVerify(overwrite = true)
     }
   }
-
-  // TODO we use toJson to serialize our physical and logical schemas in ScanStateRow, we should
-  //  test DataType.toJson
 }
