@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.data;
 
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Transaction;
@@ -23,6 +22,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -67,10 +67,7 @@ public class TransactionStateRow extends GenericRow {
   public static StructType getLogicalSchema(Engine engine, Row transactionState) {
     String serializedSchema =
         transactionState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
-    return wrapEngineException(
-        () -> engine.getJsonHandler().deserializeStructType(serializedSchema),
-        "Parsing the schema from the scan state. Schema JSON:\n%s",
-        serializedSchema);
+    return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
   }
 
   /**

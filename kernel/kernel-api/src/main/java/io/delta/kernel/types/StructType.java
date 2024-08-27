@@ -17,6 +17,7 @@ package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -109,6 +110,15 @@ public final class StructType extends DataType {
     return new Column(field.getName());
   }
 
+  /**
+   * Convert the struct type to Delta protocol specified serialization format.
+   *
+   * @return serialized in JSON format.
+   */
+  public String toJson() {
+    return DataTypeJsonSerDe.serializeStructType(this);
+  }
+
   @Override
   public boolean equivalent(DataType dataType) {
     if (!(dataType instanceof StructType)) {
@@ -126,14 +136,6 @@ public final class StructType extends DataType {
   public String toString() {
     return String.format(
         "struct(%s)", fields.stream().map(StructField::toString).collect(Collectors.joining(", ")));
-  }
-
-  @Override
-  public String toJson() {
-    String fieldsAsJson = fields.stream().map(e -> e.toJson()).collect(Collectors.joining(",\n"));
-
-    return String.format(
-        "{\n" + "  \"type\" : \"struct\",\n" + "  \"fields\" : [ %s ]\n" + "}", fieldsAsJson);
   }
 
   @Override

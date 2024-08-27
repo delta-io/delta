@@ -25,12 +25,6 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public abstract class DataType {
-  /**
-   * Convert the data type to Delta protocol specified serialization format.
-   *
-   * @return Data type serialized in JSON format.
-   */
-  public abstract String toJson();
 
   /**
    * Are the data types same? The metadata or column names could be different.
