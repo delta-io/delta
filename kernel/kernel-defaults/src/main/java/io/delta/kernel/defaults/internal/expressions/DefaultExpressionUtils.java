@@ -49,6 +49,17 @@ class DefaultExpressionUtils {
         return Integer.compare(leftBytes.length, rightBytes.length);
     };
 
+    static final Comparator<byte[]> BINARY_COMPARTOR = (leftOp, rightOp) -> {
+        int i = 0;
+        while (i < leftOp.length && i < rightOp.length) {
+            if (leftOp[i] != rightOp[i]) {
+                return Byte.toUnsignedInt(leftOp[i]) - Byte.toUnsignedInt(rightOp[i]);
+            }
+            i++;
+        }
+        return Integer.compare(leftOp.length, rightOp.length);
+    };
+
     /**
      * Utility method that calculates the nullability result from given two vectors. Result is
      * null if at least one side is a null.
@@ -218,19 +229,10 @@ class DefaultExpressionUtils {
     }
 
     static void compareBinary(ColumnVector left, ColumnVector right, int[] result) {
-        Comparator<byte[]> comparator = (leftOp, rightOp) -> {
-            int i = 0;
-            while (i < leftOp.length && i < rightOp.length) {
-                if (leftOp[i] != rightOp[i]) {
-                    return Byte.compare(leftOp[i], rightOp[i]);
-                }
-                i++;
-            }
-            return Integer.compare(leftOp.length, rightOp.length);
-        };
         for (int rowId = 0; rowId < left.getSize(); rowId++) {
             if (!left.isNullAt(rowId) && !right.isNullAt(rowId)) {
-                result[rowId] = comparator.compare(left.getBinary(rowId), right.getBinary(rowId));
+                result[rowId] =
+                        BINARY_COMPARTOR.compare(left.getBinary(rowId), right.getBinary(rowId));
             }
         }
     }
