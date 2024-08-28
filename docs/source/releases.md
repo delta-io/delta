@@ -31,5 +31,6 @@ The following table lists <Delta> versions and their compatible <AS> versions.
 | 0.7.x and 0.8.x | 3.0.x |
 | Below 0.7.0 | 2.4.2 - 2.4._<latest>_ |
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark
 

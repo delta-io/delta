@@ -718,4 +718,5 @@ CREATE OR REPLACE TABLE <target_table_name> SHALLOW CLONE iceberg.`/path/to/data
 
 .. <PrestoAnd> replace:: Presto and Athena
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark
