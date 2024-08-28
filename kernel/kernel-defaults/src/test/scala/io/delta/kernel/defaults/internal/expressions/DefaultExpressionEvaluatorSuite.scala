@@ -658,9 +658,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofNull(StringType.STRING)
       ),
       (
+        ofString(s"a${UTF8_MAX_CHARACTER}d"),
         ofString(s"a$UTF8_MAX_CHARACTER$ASCII_MAX_CHARACTER"),
-        ofString(s"a${UTF8_MAX_CHARACTER}d)"),
-        ofString(s"a$UTF8_MAX_CHARACTER$ASCII_MAX_CHARACTER"),
+        ofString(s"a${UTF8_MAX_CHARACTER}d"),
         ofNull(StringType.STRING)
       ),
       (
