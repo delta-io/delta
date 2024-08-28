@@ -607,44 +607,30 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       ),
       (ofDate(-12123), ofDate(123123), ofDate(-12123), ofNull(DateType.DATE)),
       (ofString("apples"), ofString("oranges"), ofString("apples"), ofNull(StringType.STRING)),
+      (ofString(""), ofString("a"), ofString(""), ofNull(StringType.STRING)),
+      (ofString("abc"), ofString("abc0"), ofString("abc"), ofNull(StringType.STRING)),
+      (ofString("abc"), ofString("abcd"), ofString("abc"), ofNull(StringType.STRING)),
+      (ofString("abc"), ofString("abd"), ofString("abc"), ofNull(StringType.STRING)),
       (
-        ofString("apples"),
-        ofString("oranges"),
-        ofString("apples"),
+        ofString("Abcabcabc"),
+        ofString("aBcabcabc"),
+        ofString("Abcabcabc"),
         ofNull(StringType.STRING)
       ),
       (
-        ofString("abc"),
-        ofString("abcd"),
-        ofString("abc"),
+        ofString("abcabcabC"),
+        ofString("abcabcabc"),
+        ofString("abcabcabC"),
         ofNull(StringType.STRING)
       ),
-      (
-        ofString("abc"),
-        ofString("abd"),
-        ofString("abc"),
-        ofNull(StringType.STRING)
-      ),
-      (
-        // scalastyle:off nonascii
-        ofString("A"),
-        ofString("\u0100"),
-        ofString("A"),
-        ofNull(StringType.STRING)
-      ),
-      (
-        ofString("\00BB"),
-        ofString("\u00EE"),
-        ofString("\00BB"),
-        ofNull(StringType.STRING)
-      ),
-      (
-        ofString("\uFFFD"),
-        ofString("\uD83C\uDF3C"),
-        ofString("\uFFFD"),
-        ofNull(StringType.STRING)
-        // scalastyle:on nonascii
-      ),
+      // scalastyle:off nonascii
+      (ofString("abc"), ofString("世界"), ofString("abc"), ofNull(StringType.STRING)),
+      (ofString("世界"), ofString("你好"), ofString("世界"), ofNull(StringType.STRING)),
+      (ofString("你好122"), ofString("你好123"), ofString("你好122"), ofNull(StringType.STRING)),
+      (ofString("A"), ofString("\u0100"), ofString("A"), ofNull(StringType.STRING)),
+      (ofString("\00BB"), ofString("\u00EE"), ofString("\00BB"), ofNull(StringType.STRING)),
+      (ofString("\uFFFD"), ofString("\uD83C\uDF3C"), ofString("\uFFFD"), ofNull(StringType.STRING)),
+      // scalastyle:on nonascii
       (
         ofBinary("apples".getBytes()),
         ofBinary("oranges".getBytes()),
