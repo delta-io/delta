@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
@@ -34,6 +35,19 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  */
 class DefaultExpressionUtils {
     private DefaultExpressionUtils() {}
+
+    static final Comparator<String> STRING_COMPARATOR = (leftOp, rightOp) -> {
+        byte[] leftBytes = leftOp.getBytes(StandardCharsets.UTF_8);
+        byte[] rightBytes = rightOp.getBytes(StandardCharsets.UTF_8);
+        int i = 0;
+        while (i < leftBytes.length && i < rightBytes.length) {
+            if (leftBytes[i] != rightBytes[i]) {
+                return Byte.toUnsignedInt(leftBytes[i]) - Byte.toUnsignedInt(rightBytes[i]);
+            }
+            i++;
+        }
+        return Integer.compare(leftBytes.length, rightBytes.length);
+    };
 
     /**
      * Utility method that calculates the nullability result from given two vectors. Result is
@@ -186,10 +200,10 @@ class DefaultExpressionUtils {
     }
 
     static void compareString(ColumnVector left, ColumnVector right, int[] result) {
-        Comparator<String> comparator = Comparator.naturalOrder();
         for (int rowId = 0; rowId < left.getSize(); rowId++) {
             if (!left.isNullAt(rowId) && !right.isNullAt(rowId)) {
-                result[rowId] = comparator.compare(left.getString(rowId), right.getString(rowId));
+                result[rowId] =
+                        STRING_COMPARATOR.compare(left.getString(rowId), right.getString(rowId));
             }
         }
     }
