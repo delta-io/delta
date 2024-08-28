@@ -2029,14 +2029,14 @@ trait DeltaSQLConfBase {
   val TEST_FILE_NAME_PREFIX =
     buildStaticConf("testOnly.dataFileNamePrefix")
       .internal()
-      .doc("[TEST_ONLY]: The prefix to use for the names of all Parquet data files.")
+      .doc("[TEST_ONLY] The prefix to use for the names of all Parquet data files.")
       .stringConf
       .createWithDefault(if (Utils.isTesting) "test%file%prefix-" else "")
 
   val TEST_DV_NAME_PREFIX =
     buildStaticConf("testOnly.dvFileNamePrefix")
       .internal()
-      .doc("[TEST_ONLY]: The prefix to use for the names of all Deletion Vector files.")
+      .doc("[TEST_ONLY] The prefix to use for the names of all Deletion Vector files.")
       .stringConf
       .createWithDefault(if (Utils.isTesting) "test%dv%prefix-" else "")
 
