@@ -583,6 +583,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
+    val ASCII_MAX_CHARACTER = '\u007F'
+    val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
+
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)
     val literals = Seq(
@@ -607,6 +610,66 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       ),
       (ofDate(-12123), ofDate(123123), ofDate(-12123), ofNull(DateType.DATE)),
       (ofString("apples"), ofString("oranges"), ofString("apples"), ofNull(StringType.STRING)),
+      (ofString(""), ofString("a"), ofString(""), ofNull(StringType.STRING)),
+      (ofString("abc"), ofString("abc0"), ofString("abc"), ofNull(StringType.STRING)),
+      (ofString("abc"), ofString("abcd"), ofString("abc"), ofNull(StringType.STRING)),
+      (ofString("abc"), ofString("abd"), ofString("abc"), ofNull(StringType.STRING)),
+      (
+        ofString("Abcabcabc"),
+        ofString("aBcabcabc"),
+        ofString("Abcabcabc"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("abcabcabC"),
+        ofString("abcabcabc"),
+        ofString("abcabcabC"),
+        ofNull(StringType.STRING)
+      ),
+      // scalastyle:off nonascii
+      (ofString("abc"), ofString("世界"), ofString("abc"), ofNull(StringType.STRING)),
+      (ofString("世界"), ofString("你好"), ofString("世界"), ofNull(StringType.STRING)),
+      (ofString("你好122"), ofString("你好123"), ofString("你好122"), ofNull(StringType.STRING)),
+      (ofString("A"), ofString("Ā"), ofString("A"), ofNull(StringType.STRING)),
+      (ofString("»"), ofString("î"), ofString("»"), ofNull(StringType.STRING)),
+      (ofString("�"), ofString("🌼"), ofString("�"), ofNull(StringType.STRING)),
+      (
+        ofString("abcdef🚀"),
+        ofString(s"abcdef$UTF8_MAX_CHARACTER"),
+        ofString("abcdef🚀"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("abcde�abcdef�abcdef�abcdef"),
+        ofString(s"abcde�$ASCII_MAX_CHARACTER"),
+        ofString("abcde�abcdef�abcdef�abcdef"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("abcde�abcdef�abcdef�abcdef"),
+        ofString(s"abcde�$ASCII_MAX_CHARACTER"),
+        ofString("abcde�abcdef�abcdef�abcdef"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("����"),
+        ofString(s"��$UTF8_MAX_CHARACTER"),
+        ofString("����"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString(s"a${UTF8_MAX_CHARACTER}d"),
+        ofString(s"a$UTF8_MAX_CHARACTER$ASCII_MAX_CHARACTER"),
+        ofString(s"a${UTF8_MAX_CHARACTER}d"),
+        ofNull(StringType.STRING)
+      ),
+      (
+        ofString("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀"),
+        ofString(s"abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼$UTF8_MAX_CHARACTER"),
+        ofString("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀"),
+        ofNull(StringType.STRING)
+      ),
+      // scalastyle:on nonascii
       (
         ofBinary("apples".getBytes()),
         ofBinary("oranges".getBytes()),
