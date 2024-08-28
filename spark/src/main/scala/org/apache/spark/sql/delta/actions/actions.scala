@@ -30,7 +30,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{JsonUtils, Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.annotation.JsonInclude.Include
@@ -42,6 +42,7 @@ import io.delta.storage.commit.actions.{AbstractCommitInfo, AbstractMetadata, Ab
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
@@ -658,7 +659,19 @@ sealed trait FileAction extends Action {
   def getTag(tagName: String): Option[String] = Option(tags).flatMap(_.get(tagName))
 
 
-  def toPath: Path = new Path(pathAsUri)
+  /** Returns the [[SparkPath]] for this file action. */
+  def sparkPath: SparkPath = SparkPath.fromUrlString(path)
+
+  /** Returns the [[Path]] for this file action (not URL-encoded). */
+  def toPath: Path = sparkPath.toPath
+
+  /** Returns the absolute [[Path]] for this file action (not URL-encoded). */
+  def absolutePath(deltaLog: DeltaLog): Path = {
+    // dataPath is not URL-encoded.
+    val dataPath: Path = deltaLog.dataPath
+    // this.path is a URL-encoded String, that is either the relative or absolute path.
+    DeltaFileOperations.absolutePath(dataPath.toString, path)
+  }
 }
 
 case class ParsedStatsFields(
