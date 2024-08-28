@@ -36,16 +36,16 @@ class DefaultExpressionUtils {
 
   static final Comparator<BigDecimal> BIGDECIMAL_COMPARATOR = Comparator.naturalOrder();
   static final Comparator<byte[]> BINARY_COMPARTOR =
-          (leftOp, rightOp) -> {
-            int i = 0;
-            while (i < leftOp.length && i < rightOp.length) {
-              if (leftOp[i] != rightOp[i]) {
-                return Byte.toUnsignedInt(leftOp[i]) - Byte.toUnsignedInt(rightOp[i]);
-              }
-              i++;
-            }
-            return Integer.compare(leftOp.length, rightOp.length);
-          };
+      (leftOp, rightOp) -> {
+        int i = 0;
+        while (i < leftOp.length && i < rightOp.length) {
+          if (leftOp[i] != rightOp[i]) {
+            return Byte.toUnsignedInt(leftOp[i]) - Byte.toUnsignedInt(rightOp[i]);
+          }
+          i++;
+        }
+        return Integer.compare(leftOp.length, rightOp.length);
+      };
   static final Comparator<String> STRING_COMPARATOR =
       (leftOp, rightOp) -> {
         byte[] leftBytes = leftOp.getBytes(StandardCharsets.UTF_8);
