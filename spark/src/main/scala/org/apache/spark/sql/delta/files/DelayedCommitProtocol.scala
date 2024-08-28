@@ -111,7 +111,7 @@ class DelayedCommitProtocol(
   }
 
   /** Prefix added in testing mode to all filenames to test special chars that need URL-encoding. */
-  val FILE_NAME_PREFIX = SQLConf.get.getConfString(DeltaSQLConf.TEST_FILE_NAME_PREFIX.key, "")
+  val FILE_NAME_PREFIX = SQLConf.get.getConf(DeltaSQLConf.TEST_FILE_NAME_PREFIX)
 
   protected def getFileName(
       taskContext: TaskAttemptContext,
