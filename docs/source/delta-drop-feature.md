@@ -62,4 +62,5 @@ To drop the table feature, you must remove all transaction history associated wi
 
 See [_](versioning.md).
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

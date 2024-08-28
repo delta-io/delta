@@ -31,4 +31,5 @@ The <Delta> GitHub repository has [Scala and Python examples](https://github.com
 
 The <Delta> transaction log has a well-defined open protocol that can be used by any system to read the log. See [Delta Transaction Log Protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md).
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark
