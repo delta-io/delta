@@ -28,7 +28,7 @@ import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.lang.{Boolean => BooleanJ}
-import java.math.{BigDecimal => BigDecimalJ, BigInteger}
+import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
@@ -583,9 +583,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
-    println(new BigInteger("-1").toByteArray.length)
-    println(new BigInteger("-1").toByteArray)
-
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)
     val literals = Seq(
@@ -614,6 +611,54 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofBinary("apples".getBytes()),
         ofBinary("oranges".getBytes()),
         ofBinary("apples".getBytes()),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte]()),
+        ofBinary(Array[Byte](5.toByte)),
+        ofBinary(Array[Byte]()),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](0.toByte)),   // 00000000
+        ofBinary(Array[Byte](-1.toByte)),  // 11111111
+        ofBinary(Array[Byte](0.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](127.toByte)), // 01111111
+        ofBinary(Array[Byte](-1.toByte)),  // 11111111
+        ofBinary(Array[Byte](127.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofBinary(Array[Byte](6.toByte)),
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofBinary(Array[Byte](5.toByte, 100.toByte)),
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, 10.toByte, 5.toByte)), // 00000101 00001010 00000101
+        ofBinary(Array[Byte](5.toByte, -3.toByte)),           // 00000101 11111101
+        ofBinary(Array[Byte](5.toByte, 10.toByte, 5.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, -25.toByte, 5.toByte)), // 00000101 11100111 00000101
+        ofBinary(Array[Byte](5.toByte, -9.toByte)),            // 00000101 11110111
+        ofBinary(Array[Byte](5.toByte, -25.toByte, 5.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofBinary(Array[Byte](5.toByte, 10.toByte, 0.toByte)),
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
         ofNull(BinaryType.BINARY)
       ),
       (
