@@ -28,7 +28,7 @@ import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.lang.{Boolean => BooleanJ}
-import java.math.{BigDecimal => BigDecimalJ}
+import java.math.{BigDecimal => BigDecimalJ, BigInteger}
 import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
@@ -583,6 +583,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
+    println(new BigInteger("-1").toByteArray.length)
+
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)
     val literals = Seq(
