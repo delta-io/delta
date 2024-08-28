@@ -677,6 +677,54 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofNull(BinaryType.BINARY)
       ),
       (
+        ofBinary(Array[Byte]()),
+        ofBinary(Array[Byte](5.toByte)),
+        ofBinary(Array[Byte]()),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](0.toByte)),   // 00000000
+        ofBinary(Array[Byte](-1.toByte)),  // 11111111
+        ofBinary(Array[Byte](0.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](127.toByte)), // 01111111
+        ofBinary(Array[Byte](-1.toByte)),  // 11111111
+        ofBinary(Array[Byte](127.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofBinary(Array[Byte](6.toByte)),
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofBinary(Array[Byte](5.toByte, 100.toByte)),
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, 10.toByte, 5.toByte)), // 00000101 00001010 00000101
+        ofBinary(Array[Byte](5.toByte, -3.toByte)),           // 00000101 11111101
+        ofBinary(Array[Byte](5.toByte, 10.toByte, 5.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, -25.toByte, 5.toByte)), // 00000101 11100111 00000101
+        ofBinary(Array[Byte](5.toByte, -9.toByte)),            // 00000101 11110111
+        ofBinary(Array[Byte](5.toByte, -25.toByte, 5.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofBinary(Array[Byte](5.toByte, 10.toByte, 0.toByte)),
+        ofBinary(Array[Byte](5.toByte, 10.toByte)),
+        ofNull(BinaryType.BINARY)
+      ),
+      (
         ofDecimal(BigDecimalJ.valueOf(1.12), 7, 3),
         ofDecimal(BigDecimalJ.valueOf(5233.232), 7, 3),
         ofDecimal(BigDecimalJ.valueOf(1.12), 7, 3),
