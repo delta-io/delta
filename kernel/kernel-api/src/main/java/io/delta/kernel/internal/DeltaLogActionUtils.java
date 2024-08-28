@@ -42,12 +42,16 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 
 /**
- * Exposes APIs to read the raw actions within the *commit files* of the _delta_log. This is used for
- * CDF, streaming, and more.
+ * Exposes APIs to read the raw actions within the *commit files* of the _delta_log. This is used
+ * for CDF, streaming, and more.
  */
-public class ActionCommitLog {
+public class DeltaLogActionUtils {
 
-  private ActionCommitLog() {}
+  private DeltaLogActionUtils() {}
+
+  /////////////////
+  // Public APIs //
+  /////////////////
 
   /**
    * Represents a Delta action. This is used to request which actions to read from the commit files
@@ -57,7 +61,6 @@ public class ActionCommitLog {
    * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#actions
    */
   public enum DeltaAction {
-    // TODO do we want to provide an API that can evolve the action schema w/out release?
     REMOVE("remove", RemoveFile.FULL_SCHEMA),
     ADD("add", AddFile.FULL_SCHEMA);
     // Remaining actions coming in follow-up PR
@@ -71,24 +74,124 @@ public class ActionCommitLog {
     }
   }
 
-  /** Column name storing the commit version for a given file action */
-  static final String COMMIT_VERSION_COL_NAME = "version";
+  /**
+   * For a table get the list of commit log files for the provided version range.
+   *
+   * @param tablePath path for the given table
+   * @param startVersion start version of the range (inclusive)
+   * @param endVersion end version of the range (inclusive)
+   * @return the list of commit files in increasing order between startVersion and endVersion
+   * @throws TableNotFoundException if the table does not exist or if it is not a delta table
+   * @throws KernelException if a commit file does not exist for any of the versions in the provided
+   *     range
+   * @throws KernelException if provided an invalid version range
+   */
+  public static List<FileStatus> getCommitFilesForVersionRange(
+      Engine engine, Path tablePath, long startVersion, long endVersion) {
 
-  static final DataType COMMIT_VERSION_DATA_TYPE = LongType.LONG;
-  static final StructField COMMIT_VERSION_STRUCT_FIELD =
+    // Validate arguments
+    if (startVersion < 0 || endVersion < startVersion) {
+      throw invalidVersionRange(startVersion, endVersion);
+    }
+
+    // Get any available commit files within the version range
+    List<FileStatus> commitFiles = listCommitFiles(engine, tablePath, startVersion, endVersion);
+
+    // There are no available commit files within the version range.
+    // This can be due to (1) an empty directory, (2) no valid delta files in the directory,
+    // (3) only delta files less than startVersion prefix (4) only delta files after endVersion
+    if (commitFiles.isEmpty()) {
+      throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersion);
+    }
+
+    // Verify commit files found
+    // (check that they are continuous and start with startVersion and end with endVersion)
+    verifyDeltaVersions(commitFiles, startVersion, endVersion, tablePath);
+
+    return commitFiles;
+  }
+
+  /**
+   * Read the given commitFiles and return the contents as an iterator of batches. Also adds two
+   * columns "version" and "timestamp" that store the commit version and timestamp for the commit
+   * file that the batch was read from. The "version" and "timestamp" columns are the first and
+   * second columns in the returned schema respectively and both of {@link LongType}
+   *
+   * @param commitFiles list of delta commit files to read
+   * @param readSchema JSON schema to read
+   * @return an iterator over the contents of the files in the same order as the provided files
+   */
+  public static CloseableIterator<ColumnarBatch> readCommitFiles(
+      Engine engine, List<FileStatus> commitFiles, StructType readSchema) {
+
+    return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty())
+        .map(
+            actionWrapper -> {
+              long timestamp =
+                  actionWrapper
+                      .getTimestamp()
+                      .orElseThrow(
+                          () ->
+                              new RuntimeException("Commit files should always have a timestamp"));
+              ExpressionEvaluator commitVersionGenerator =
+                  wrapEngineException(
+                      () ->
+                          engine
+                              .getExpressionHandler()
+                              .getEvaluator(
+                                  readSchema,
+                                  Literal.ofLong(actionWrapper.getVersion()),
+                                  LongType.LONG),
+                      "Get the expression evaluator for the commit version");
+              ExpressionEvaluator commitTimestampGenerator =
+                  wrapEngineException(
+                      () ->
+                          engine
+                              .getExpressionHandler()
+                              .getEvaluator(readSchema, Literal.ofLong(timestamp), LongType.LONG),
+                      "Get the expression evaluator for the commit timestamp");
+              ColumnVector commitVersionVector =
+                  wrapEngineException(
+                      () -> commitVersionGenerator.eval(actionWrapper.getColumnarBatch()),
+                      "Evaluating the commit version expression");
+              ColumnVector commitTimestampVector =
+                  wrapEngineException(
+                      () -> commitTimestampGenerator.eval(actionWrapper.getColumnarBatch()),
+                      "Evaluating the commit timestamp expression");
+
+              return actionWrapper
+                  .getColumnarBatch()
+                  .withNewColumn(0, COMMIT_VERSION_STRUCT_FIELD, commitVersionVector)
+                  .withNewColumn(1, COMMIT_TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
+            });
+  }
+
+  //////////////////////
+  // Private helpers //
+  /////////////////////
+
+  /** Column name storing the commit version for a given file action */
+  private static final String COMMIT_VERSION_COL_NAME = "version";
+
+  private static final DataType COMMIT_VERSION_DATA_TYPE = LongType.LONG;
+  private static final StructField COMMIT_VERSION_STRUCT_FIELD =
       new StructField(COMMIT_VERSION_COL_NAME, COMMIT_VERSION_DATA_TYPE, false /* nullable */);
 
   /** Column name storing the commit timestamp for a given file action */
-  static final String COMMIT_TIMESTAMP_COL_NAME = "timestamp";
+  private static final String COMMIT_TIMESTAMP_COL_NAME = "timestamp";
 
-  static final DataType COMMIT_TIMESTAMP_DATA_TYPE = LongType.LONG;
-  static final StructField COMMIT_TIMESTAMP_STRUCT_FIELD =
+  private static final DataType COMMIT_TIMESTAMP_DATA_TYPE = LongType.LONG;
+  private static final StructField COMMIT_TIMESTAMP_STRUCT_FIELD =
       new StructField(COMMIT_TIMESTAMP_COL_NAME, COMMIT_TIMESTAMP_DATA_TYPE, false /* nullable */);
 
   /**
    * Given a list of delta versions, verifies that they are (1) continuous (2) versions starts with
    * expectedStartVersion and (3) end with expectedEndVersion. Throws an exception if any of these
    * are not true.
+   *
+   * <p>Public to expose for testing only.
+   *
+   * @param commitFiles in sorted increasing order according to the commit version
    */
   public static void verifyDeltaVersions(
       List<FileStatus> commitFiles,
@@ -179,94 +282,5 @@ public class ActionCommitLog {
       throw new UncheckedIOException("Unable to close resource", e);
     }
     return output;
-  }
-
-  /**
-   * For a table get the list of commit log files for the provided version range.
-   *
-   * @param tablePath path for the given table
-   * @param startVersion start version of the range (inclusive)
-   * @param endVersion end version of the range (inclusive)
-   * @return the list of commit files in increasing order between startVersion and endVersion
-   * @throws TableNotFoundException if the table does not exist or if it is not a delta table
-   * @throws KernelException if a commit file does not exist for any of the versions in the provided
-   *     range
-   * @throws KernelException if provided an invalid version range
-   */
-  public static List<FileStatus> getCommitFilesForVersionRange(
-      Engine engine, Path tablePath, long startVersion, long endVersion) {
-
-    // Validate arguments
-    if (startVersion < 0 || endVersion < startVersion) {
-      throw invalidVersionRange(startVersion, endVersion);
-    }
-
-    // Get any available commit files within the version range
-    List<FileStatus> commitFiles = listCommitFiles(engine, tablePath, startVersion, endVersion);
-
-    // There are no available commit files within the version range.
-    // This can be due to (1) an empty directory, (2) no valid delta files in the directory,
-    // (3) only delta files less than startVersion prefix (4) only delta files after endVersion
-    if (commitFiles.isEmpty()) {
-      throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersion);
-    }
-
-    // Verify commit files found
-    // (check that they are continuous and start with startVersion and end with endVersion)
-    verifyDeltaVersions(commitFiles, startVersion, endVersion, tablePath);
-
-    return commitFiles;
-  }
-
-  /**
-   * Read the given commitFiles and return the contents as an iterator of batches. Also adds two
-   * columns "version" and "timestamp" that store the commit version and timestamp for the commit
-   * file that the batch was read from.
-   *
-   * @param commitFiles list of delta commit files to read
-   * @param readSchema JSON schema to read
-   * @return an iterator over the contents of the files in the same order as the provided files
-   */
-  public static CloseableIterator<ColumnarBatch> readCommitFiles(
-      Engine engine, List<FileStatus> commitFiles, StructType readSchema) {
-
-    return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty())
-        .map(
-            actionWrapper -> {
-              long timestamp =
-                  actionWrapper
-                      .getTimestamp()
-                      .orElseThrow(
-                          () ->
-                              new RuntimeException("Commit files should always have a timestamp"));
-              ExpressionEvaluator commitVersionGenerator =
-                  wrapEngineException(
-                      () -> engine
-                          .getExpressionHandler()
-                          .getEvaluator(
-                              readSchema,
-                              Literal.ofLong(actionWrapper.getVersion()),
-                              LongType.LONG),
-                      "Get the expression evaluator for the commit version");
-              ExpressionEvaluator commitTimestampGenerator =
-                  wrapEngineException(
-                      () -> engine
-                          .getExpressionHandler()
-                          .getEvaluator(readSchema, Literal.ofLong(timestamp), LongType.LONG),
-                      "Get the expression evaluator for the commit timestamp");
-              ColumnVector commitVersionVector =
-                  wrapEngineException(
-                      () -> commitVersionGenerator.eval(actionWrapper.getColumnarBatch()),
-                      "Evaluating the commit version expression");
-              ColumnVector commitTimestampVector =
-                  wrapEngineException(
-                      () -> commitTimestampGenerator.eval(actionWrapper.getColumnarBatch()),
-                      "Evaluating the commit timestamp expression");
-
-              return actionWrapper
-                  .getColumnarBatch()
-                  .withNewColumn(0, COMMIT_VERSION_STRUCT_FIELD, commitVersionVector)
-                  .withNewColumn(1, COMMIT_TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
-            });
   }
 }

@@ -130,7 +130,9 @@ public class TableImpl implements Table {
    *   <li>Each row within the same batch is guaranteed to have the same commit version
    *   <li>The batch commit versions are monotonically increasing
    *   <li>The top-level columns include "version", "timestamp", and the actions requested in
-   *       actionSet
+   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
+   *       respectively. The remaining columns are based on the actions requested and each have the
+   *       schema found in {@code DeltaAction.schema}.
    * </ul>
    *
    * @param engine {@link Engine} instance to use in Delta Kernel.
