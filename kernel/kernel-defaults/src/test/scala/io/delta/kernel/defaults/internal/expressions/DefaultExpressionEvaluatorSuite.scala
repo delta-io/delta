@@ -584,6 +584,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
     println(new BigInteger("-1").toByteArray.length)
+    println(new BigInteger("-1").toByteArray)
 
     // Literals for each data type from the data type value range, used as inputs to comparator
     // (small, big, small, null)
