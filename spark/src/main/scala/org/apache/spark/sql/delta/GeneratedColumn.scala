@@ -27,7 +27,9 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
-import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
+import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.{Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression

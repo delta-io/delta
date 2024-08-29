@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.catalog.CatalogTable

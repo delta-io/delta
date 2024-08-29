@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.skipping
 import org.apache.spark.sql.delta.expressions.{HilbertByteArrayIndex, HilbertLongIndex, InterleaveBits, RangePartitionId}
 
 import org.apache.spark.SparkException
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression}
 import org.apache.spark.sql.types.StringType

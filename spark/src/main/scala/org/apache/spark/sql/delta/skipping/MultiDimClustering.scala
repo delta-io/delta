@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
