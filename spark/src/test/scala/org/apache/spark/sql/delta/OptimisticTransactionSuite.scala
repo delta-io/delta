@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
+import java.util.Optional
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
@@ -28,7 +29,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException, CommitResponse, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException, CommitResponse, TableDescriptor, UpdatedActions}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -501,15 +502,19 @@ class OptimisticTransactionSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              tablePath: Path,
-              tableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             // Fail all commits except first one
             if (commitVersion == 0) {
               return super.commit(
-                logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
+                logStore,
+                hadoopConf,
+                tableDesc,
+                commitVersion,
+                actions,
+                updatedActions)
             }
             commitAttempts += 1
             throw new CommitFailedException(
@@ -557,15 +562,19 @@ class OptimisticTransactionSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              tablePath: Path,
-              tableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             // Fail all commits except first one
             if (commitVersion == 0) {
               return super.commit(
-                logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
+                logStore,
+                hadoopConf,
+                tableDesc,
+                commitVersion,
+                actions,
+                updatedActions)
             }
             commitAttempts += 1
             throw new FileAlreadyExistsException("Commit-File Already Exists")
@@ -868,8 +877,7 @@ class OptimisticTransactionSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              tablePath: Path,
-              tableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
@@ -878,8 +886,7 @@ class OptimisticTransactionSuite
               deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
               throw new CommitFailedException(true, conflict, "")
             }
-            super.commit(
-              logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
+            super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
           }
         }
         object RetryableConflictCommitCoordinatorBuilder$ extends CommitCoordinatorBuilder {

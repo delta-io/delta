@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{BufferedReader, File, InputStreamReader, IOException}
 import java.nio.charset.StandardCharsets
-import java.util.Locale
+import java.util.{Locale, Optional}
 
 import scala.collection.JavaConverters._
 import scala.language.postfixOps
@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
+import io.delta.storage.commit.TableDescriptor
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.fs.permission.FsPermission
 
@@ -506,8 +507,9 @@ class DeltaLogSuite extends QueryTest
         // file.
         val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
           "tracking-in-memory", Map.empty[String, String], spark)
-        val commitResponse = oc.getCommits(
-          deltaLog.logPath, Map.empty[String, String].asJava, 2, null)
+        val tableDesc =
+          new TableDescriptor(deltaLog.logPath, Optional.empty(), Map.empty[String, String].asJava)
+        val commitResponse = oc.getCommits(tableDesc, 2, null)
         if (!commitResponse.getCommits.isEmpty) {
           val path = commitResponse.getCommits.asScala.last.getFileStatus.getPath
           fs.delete(path, true)
@@ -619,8 +621,9 @@ class DeltaLogSuite extends QueryTest
         // file.
         val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
           "tracking-in-memory", Map.empty[String, String], spark)
-        val commitResponse = oc.getCommits(
-          log.logPath, Map.empty[String, String].asJava, 1, null)
+        val tableDesc =
+          new TableDescriptor(log.logPath, Optional.empty(), Map.empty[String, String].asJava)
+        val commitResponse = oc.getCommits(tableDesc, 1, null)
         if (!commitResponse.getCommits.isEmpty) {
           commitFilePath = commitResponse.getCommits.asScala.head.getFileStatus.getPath
         }

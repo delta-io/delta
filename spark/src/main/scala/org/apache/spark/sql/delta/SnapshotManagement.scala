@@ -174,9 +174,13 @@ trait SnapshotManagement { self: DeltaLog =>
 
     // Submit a potential async call to get commits from commit coordinator if available
     val threadPool = SnapshotManagement.commitCoordinatorGetCommitsThreadPool
+    // TODO(table-identifier-plumbing): Plumb the right tableIdentifier from the deltaLog.update and
+    // Cold deltaLog initialization codepath.
+    val tableIdentifierOpt = None
     def getCommitsTask(isAsyncRequest: Boolean): GetCommitsResponse = {
       CoordinatedCommitsUtils.getCommitsFromCommitCoordinatorWithUsageLogs(
-        this, tableCommitCoordinatorClient, startVersion, versionToLoad, isAsyncRequest)
+        this, tableCommitCoordinatorClient, tableIdentifierOpt,
+        startVersion, versionToLoad, isAsyncRequest)
     }
     val unbackfilledCommitsResponseFuture =
       if (threadPool.getActiveCount < threadPool.getMaximumPoolSize) {

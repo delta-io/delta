@@ -25,7 +25,7 @@ import org.apache.hadoop.fs.Path;
 
 /**
  * Exception raised by
- * {@link io.delta.storage.commit.CommitCoordinatorClient#commit(LogStore, Configuration, Path, Map, long, Iterator, UpdatedActions)}
+ * {@link CommitCoordinatorClient#commit(LogStore, Configuration, TableDescriptor, long, Iterator, UpdatedActions)}
  *
  * <pre>
  *  | retryable | conflict  | meaning                                                         |

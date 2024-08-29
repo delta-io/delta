@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
 import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
@@ -23,7 +24,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_N
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -246,42 +247,36 @@ class TrackingCommitCoordinatorClient(
   override def commit(
       logStore: LogStore,
       hadoopConf: Configuration,
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       commitVersion: Long,
       actions: java.util.Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
     delegatingCommitCoordinatorClient.commit(
       logStore,
       hadoopConf,
-      logPath,
-      coordinatedCommitsTableConf,
+      tableDesc,
       commitVersion,
       actions,
       updatedActions)
   }
 
   override def getCommits(
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       startVersion: java.lang.Long,
       endVersion: java.lang.Long): JGetCommitsResponse = recordOperation("getCommits") {
-    delegatingCommitCoordinatorClient.getCommits(
-      logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+    delegatingCommitCoordinatorClient.getCommits(tableDesc, startVersion, endVersion)
   }
 
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       version: Long,
       lastKnownBackfilledVersion: java.lang.Long): Unit = recordOperation("backfillToVersion") {
     delegatingCommitCoordinatorClient.backfillToVersion(
       logStore,
       hadoopConf,
-      logPath,
-      coordinatedCommitsTableConf,
+      tableDesc,
       version,
       lastKnownBackfilledVersion)
   }
@@ -304,12 +299,13 @@ class TrackingCommitCoordinatorClient(
 
   override def registerTable(
       logPath: Path,
+      tableIdentifier: Optional[TableIdentifier],
       currentVersion: Long,
       currentMetadata: AbstractMetadata,
       currentProtocol: AbstractProtocol): java.util.Map[String, String] =
     recordOperation("registerTable") {
       delegatingCommitCoordinatorClient.registerTable(
-        logPath, currentVersion, currentMetadata, currentProtocol)
+        logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
     }
 }
 

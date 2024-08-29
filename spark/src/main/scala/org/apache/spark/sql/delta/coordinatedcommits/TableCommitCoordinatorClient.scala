@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
@@ -24,10 +26,13 @@ import io.delta.storage.commit.{
   CommitCoordinatorClient => JCommitCoordinatorClient,
   CommitResponse,
   GetCommitsResponse => JGetCommitsResponse,
+  TableDescriptor,
   UpdatedActions
 }
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 
 /**
  * A wrapper around [[CommitCoordinatorClient]] that provides a more user-friendly API for
@@ -48,35 +53,44 @@ case class TableCommitCoordinatorClient(
     hadoopConf: Configuration,
     logStore: LogStore) {
 
+  private def makeTableDesc(
+      tableIdentifierOpt: Option[CatalystTableIdentifier]): TableDescriptor = {
+    val ccTableIdentifier = CoordinatedCommitsUtils.toCCTableIdentifier(tableIdentifierOpt)
+    new TableDescriptor(logPath, ccTableIdentifier, tableConf.asJava)
+  }
+
   def commit(
       commitVersion: Long,
       actions: Iterator[String],
-      updatedActions: UpdatedActions): CommitResponse = {
+      updatedActions: UpdatedActions,
+      tableIdentifierOpt: Option[CatalystTableIdentifier]): CommitResponse = {
     commitCoordinatorClient.commit(
       LogStoreInverseAdaptor(logStore, hadoopConf),
       hadoopConf,
-      logPath,
-      tableConf.asJava,
+      makeTableDesc(tableIdentifierOpt),
       commitVersion,
       actions.asJava,
       updatedActions)
   }
 
   def getCommits(
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
       startVersion: Option[Long] = None,
       endVersion: Option[Long] = None): JGetCommitsResponse = {
     commitCoordinatorClient.getCommits(
-      logPath, tableConf.asJava, startVersion.map(Long.box).orNull, endVersion.map(Long.box).orNull)
+      makeTableDesc(tableIdentifierOpt),
+      startVersion.map(Long.box).orNull,
+      endVersion.map(Long.box).orNull)
   }
 
   def backfillToVersion(
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
       version: Long,
       lastKnownBackfilledVersion: Option[Long] = None): Unit = {
     commitCoordinatorClient.backfillToVersion(
       LogStoreInverseAdaptor(logStore, hadoopConf),
       hadoopConf,
-      logPath,
-      tableConf.asJava,
+      makeTableDesc(tableIdentifierOpt),
       version,
       lastKnownBackfilledVersion.map(Long.box).orNull)
   }
