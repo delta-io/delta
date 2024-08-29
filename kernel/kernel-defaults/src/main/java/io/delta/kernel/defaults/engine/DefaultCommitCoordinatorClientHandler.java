@@ -30,9 +30,11 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.storage.LogStore;
 import io.delta.storage.commit.CommitCoordinatorClient;
 import io.delta.storage.commit.CommitFailedException;
+import io.delta.storage.commit.TableDescriptor;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
@@ -89,8 +91,11 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
       long currentVersion,
       AbstractMetadata currentMetadata,
       AbstractProtocol currentProtocol) {
+    // TODO: Introduce table identifier concept in Table API in Kernel and plumb the
+    //  table identifier into `CommitCoordinatorClient` in all APIs.
     return commitCoordinatorClient.registerTable(
         new Path(logPath),
+        Optional.empty(),
         currentVersion,
         StorageKernelAPIAdapter.toStorageAbstractMetadata(currentMetadata),
         StorageKernelAPIAdapter.toStorageAbstractProtocol(currentProtocol));
@@ -111,8 +116,7 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
           commitCoordinatorClient.commit(
               logStore,
               hadoopConf,
-              path,
-              tableConf,
+              new TableDescriptor(path, Optional.empty(), tableConf),
               commitVersion,
               new Iterator<String>() {
                 @Override
@@ -134,8 +138,9 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
   @Override
   public GetCommitsResponse getCommits(
       String logPath, Map<String, String> tableConf, Long startVersion, Long endVersion) {
+    TableDescriptor tableDesc = new TableDescriptor(new Path(logPath), Optional.empty(), tableConf);
     return StorageKernelAPIAdapter.toKernelAPIGetCommitsResponse(
-        commitCoordinatorClient.getCommits(new Path(logPath), tableConf, startVersion, endVersion));
+        commitCoordinatorClient.getCommits(tableDesc, startVersion, endVersion));
   }
 
   @Override
@@ -144,8 +149,9 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
       throws IOException {
     Path path = new Path(logPath);
     LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
+    TableDescriptor tableDesc = new TableDescriptor(path, Optional.empty(), tableConf);
     commitCoordinatorClient.backfillToVersion(
-        logStore, hadoopConf, path, tableConf, version, lastKnownBackfilledVersion);
+        logStore, hadoopConf, tableDesc, version, lastKnownBackfilledVersion);
   }
 
   @Override
