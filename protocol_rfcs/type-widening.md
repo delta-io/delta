@@ -15,13 +15,10 @@ The supported type changes are:
   - `Byte` -> `Short` -> `Int` -> `Long`
 - Floating-point widening:
   - `Float` -> `Double`
-  - `Byte`, `Short` or `Int` -> `Double`
 - Date widening:
   - `Date` -> `Timestamp without timezone`
-- Decimal widening - `p` and `s` denote the decimal precision and scale respectively.
-  - `Decimal(p, s)` -> `Decimal(p + k1, s + k2)` where `k1 >= k2 >= 0`.
-  - `Byte`, `Short` or `Int` -> `Decimal(10 + k1, k2)` where `k1 >= k2 >= 0`.
-  - `Long` -> `Decimal(20 + k1, k2)` where `k1 >= k2 >= 0`.
+- Decimal precision increase:
+  - `Decimal(p1, s)` -> `Decimal(p2, s)` where `p2 >= p1`.
 
 To support this feature:
 - The table must be on Reader version 3 and Writer Version 7.
