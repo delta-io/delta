@@ -68,6 +68,7 @@ val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
+val icu4jVersion = "75.1"
 
 // Versions for Hive 3
 val hadoopVersionForHive3 = "3.1.0"
@@ -672,6 +673,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
+      "com.ibm.icu" % "icu4j" % icu4jVersion
     ),
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings

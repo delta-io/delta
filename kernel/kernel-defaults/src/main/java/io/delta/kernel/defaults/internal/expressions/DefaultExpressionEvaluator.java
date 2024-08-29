@@ -425,37 +425,47 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     @Override
     ColumnVector visitComparator(Predicate predicate) {
       PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(predicate);
+      Optional<Collation> collation = Optional.empty();
+      if (predicate instanceof CollatedPredicate) {
+        collation = Optional.of(((CollatedPredicate) predicate).getCollation());
+      }
       switch (predicate.getName()) {
         case "=":
           return comparatorVector(
               argResults.leftResult,
               argResults.rightResult,
-              (compareResult) -> (compareResult == 0));
+              (compareResult) -> (compareResult == 0),
+              collation);
         case ">":
           return comparatorVector(
               argResults.leftResult,
               argResults.rightResult,
-              (compareResult) -> (compareResult > 0));
+              (compareResult) -> (compareResult > 0),
+              collation);
         case ">=":
           return comparatorVector(
               argResults.leftResult,
               argResults.rightResult,
-              (compareResult) -> (compareResult >= 0));
+              (compareResult) -> (compareResult >= 0),
+              collation);
         case "<":
           return comparatorVector(
               argResults.leftResult,
               argResults.rightResult,
-              (compareResult) -> (compareResult < 0));
+              (compareResult) -> (compareResult < 0),
+              collation);
         case "<=":
           return comparatorVector(
               argResults.leftResult,
               argResults.rightResult,
-              (compareResult) -> (compareResult <= 0));
+              (compareResult) -> (compareResult <= 0),
+              collation);
         case "IS NOT DISTINCT FROM":
           return nullSafeComparatorVector(
               argResults.leftResult,
               argResults.rightResult,
-              (compareResult) -> (compareResult == 0));
+              (compareResult) -> (compareResult == 0),
+              collation);
         default:
           // We should never reach this based on the ExpressionVisitor
           throw new IllegalStateException(

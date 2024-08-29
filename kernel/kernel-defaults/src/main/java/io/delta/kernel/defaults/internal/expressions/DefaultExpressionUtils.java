@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.Collation;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
@@ -27,6 +28,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
@@ -109,7 +111,7 @@ class DefaultExpressionUtils {
    * @return
    */
   static IntPredicate getComparator(
-      ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
+      ColumnVector left, ColumnVector right, IntPredicate booleanComparator, Optional<Collation> collation) {
     checkArgument(
         left.getSize() == right.getSize(), "Left and right operand have different vector sizes.");
 
@@ -149,12 +151,16 @@ class DefaultExpressionUtils {
               booleanComparator.test(
                   BIGDECIMAL_COMPARATOR.compare(left.getDecimal(rowId), right.getDecimal(rowId)));
     } else if (dataType instanceof StringType) {
-      vectorValueComparator =
-          rowId ->
-              booleanComparator.test(
-                  BINARY_COMPARTOR.compare(
-                      left.getString(rowId).getBytes(StandardCharsets.UTF_8),
-                      right.getString(rowId).getBytes(StandardCharsets.UTF_8)));
+      if (collation.isPresent() && collation.get() != Collation.DEFAULT_COLLATION) {
+        // TODO
+      } else {
+        vectorValueComparator =
+            rowId ->
+                booleanComparator.test(
+                    BINARY_COMPARTOR.compare(
+                        left.getString(rowId).getBytes(StandardCharsets.UTF_8),
+                        right.getString(rowId).getBytes(StandardCharsets.UTF_8)));
+      }
     } else if (dataType instanceof BinaryType) {
       vectorValueComparator =
           rowId ->
@@ -174,8 +180,8 @@ class DefaultExpressionUtils {
    * <p>Only primitive data types are supported.
    */
   static ColumnVector comparatorVector(
-      ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
-    IntPredicate vectorValueComparator = getComparator(left, right, booleanComparator);
+          ColumnVector left, ColumnVector right, IntPredicate booleanComparator, Optional<Collation> collation) {
+    IntPredicate vectorValueComparator = getComparator(left, right, booleanComparator, collation);
 
     return new ColumnVector() {
 
@@ -216,8 +222,8 @@ class DefaultExpressionUtils {
    * <p>Only primitive data types are supported.
    */
   static ColumnVector nullSafeComparatorVector(
-      ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
-    IntPredicate vectorValueComparator = getComparator(left, right, booleanComparator);
+      ColumnVector left, ColumnVector right, IntPredicate booleanComparator, Optional<Collation> collation) {
+    IntPredicate vectorValueComparator = getComparator(left, right, booleanComparator, collation);
     return new ColumnVector() {
       @Override
       public DataType getDataType() {
