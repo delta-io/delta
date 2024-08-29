@@ -24,10 +24,10 @@ import io.delta.kernel.exceptions.{InvalidTableException, KernelException, Table
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.FileStatus
 import org.scalatest.funsuite.AnyFunSuite
-import io.delta.kernel.internal.ActionCommitLog.{getCommitFilesForVersionRange, verifyDeltaVersions}
+import io.delta.kernel.internal.DeltaLogActionUtils.{getCommitFilesForVersionRange, verifyDeltaVersions}
 import io.delta.kernel.test.MockFileSystemClientUtils
 
-class ActionCommitLogSuite extends AnyFunSuite with MockFileSystemClientUtils {
+class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   //////////////////////////////////////////////////////////////////////////////////
   // verifyDeltaVersions tests
