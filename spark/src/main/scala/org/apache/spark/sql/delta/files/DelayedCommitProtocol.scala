@@ -35,6 +35,7 @@ import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.delta.files.DeltaFileFormatWriter.PartitionedTaskAttemptContextImpl
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StringType, TimestampType}
 import org.apache.spark.util.Utils
 
@@ -110,7 +111,7 @@ class DelayedCommitProtocol(
   }
 
   /** Prefix added in testing mode to all filenames to test special chars that need URL-encoding. */
-  val FILE_NAME_PREFIX = if (Utils.isTesting) "test%file%prefix-" else ""
+  val FILE_NAME_PREFIX = SQLConf.get.getConf(DeltaSQLConf.TEST_FILE_NAME_PREFIX)
 
   protected def getFileName(
       taskContext: TaskAttemptContext,

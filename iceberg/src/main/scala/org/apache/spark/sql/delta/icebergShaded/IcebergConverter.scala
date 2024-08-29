@@ -467,6 +467,7 @@ class IcebergConverter(spark: SparkSession)
         var hasRemoves = false
         var hasDataChange = false
         var hasCommitInfo = false
+        var commitInfo: Option[CommitInfo] = None
         breakable {
           for (action <- actionsToCommit) {
             action match {
@@ -476,7 +477,9 @@ class IcebergConverter(spark: SparkSession)
               case r: RemoveFile =>
                 hasRemoves = true
                 if (r.dataChange) hasDataChange = true
-              case _: CommitInfo => hasCommitInfo = true
+              case ci: CommitInfo =>
+                commitInfo = Some(ci)
+                hasCommitInfo = true
               case _ => // Do nothing
             }
             if (hasAdds && hasRemoves && hasDataChange && hasCommitInfo) break // Short-circuit
@@ -510,9 +513,14 @@ class IcebergConverter(spark: SparkSession)
           }
           overwriteHelper.commit()
         } else if (hasAdds) {
-          val appendHelper = icebergTxn.getAppendOnlyHelper()
-          addsAndRemoves.foreach(action => appendHelper.add(action.add))
-          appendHelper.commit()
+          if (!hasRemoves && !hasDataChange && allDeltaActionsCaptured) {
+            logInfo(s"Skip Iceberg conversion for commit that only has AddFiles " +
+              s"without any RemoveFiles or data change. CommitInfo: $commitInfo")
+          } else {
+            val appendHelper = icebergTxn.getAppendOnlyHelper()
+              addsAndRemoves.foreach(action => appendHelper.add(action.add))
+              appendHelper.commit()
+          }
         } else if (hasRemoves) {
           val removeHelper = icebergTxn.getRemoveOnlyHelper()
           addsAndRemoves.foreach(action => removeHelper.remove(action.remove))
