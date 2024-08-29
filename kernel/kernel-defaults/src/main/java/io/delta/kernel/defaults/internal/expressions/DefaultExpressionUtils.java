@@ -165,14 +165,19 @@ class DefaultExpressionUtils {
                   BIGDECIMAL_COMPARATOR.compare(left.getDecimal(rowId), right.getDecimal(rowId)));
     } else if (dataType instanceof StringType) {
       if (collation.isPresent() && collation.get() != Collation.DEFAULT_COLLATION) {
-
+        vectorValueComparator =
+            rowId ->
+                booleanComparator.test(
+                    collation.get().getComparator().compare(
+                        left.getString(rowId),
+                        right.getString(rowId)));
       } else {
         vectorValueComparator =
             rowId ->
                 booleanComparator.test(
-                    BINARY_COMPARTOR.compare(
-                        left.getString(rowId).getBytes(StandardCharsets.UTF_8),
-                        right.getString(rowId).getBytes(StandardCharsets.UTF_8)));
+                    STRING_COMPARATOR.compare(
+                        left.getString(rowId),
+                        right.getString(rowId)));
       }
     } else if (dataType instanceof BinaryType) {
       vectorValueComparator =

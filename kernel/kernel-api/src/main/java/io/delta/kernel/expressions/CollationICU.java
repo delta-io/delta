@@ -22,4 +22,7 @@ public class CollationICU implements Collation {
     comparator = collator::compare;
   }
 
+  public Comparator<String> getComparator() {
+    return comparator;
+  }
 }

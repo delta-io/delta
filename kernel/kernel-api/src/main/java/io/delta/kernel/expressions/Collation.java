@@ -11,4 +11,6 @@ public interface Collation {
 
   public static final Collation DEFAULT_COLLATION =
           new CollationICU(DEFAULT_COLLATION_NAME, Optional.of("1.0"));
+
+  public Comparator<String> getComparator();
 }
