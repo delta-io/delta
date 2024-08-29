@@ -28,7 +28,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
 
 /**
  * A trait that writers into Delta can extend to update the schema and/or partitioning of the table.
@@ -232,7 +232,7 @@ object ImplicitMetadataOperation {
    * the constraint data type mismatch.
    *
    * @param spark the spark session used.
-   * @param path the full column path.
+   * @param path the full column path for the current field.
    * @param metadata the metadata used for checking dependant (CHECK) constraints.
    * @param currentDt the current data type.
    * @param updateDt the updated data type.
@@ -261,7 +261,7 @@ object ImplicitMetadataOperation {
    * the generated columns data type mismatch.
    *
    * @param spark the spark session used.
-   * @param path the full column path.
+   * @param path the full column path for the current field.
    * @param protocol the protocol used.
    * @param metadata the metadata used for checking dependant generated columns.
    * @param currentDt the current data type.
@@ -287,15 +287,51 @@ object ImplicitMetadataOperation {
   }
 
   /**
+   * Check whether the provided field is currently being referenced
+   * by CHECK constraints or generated columns.
+   * Note that we explicitly ignore the check for `StructType` in this
+   * function, since any `StructType` will be checked in
+   * [[checkReferencedByCheckConstraintsOrGeneratedColumns]].
+   *
+   * @param spark the spark session used.
+   * @param path the full column path for the current field.
+   * @param protocol the protocol used.
+   * @param metadata the metadata used for checking constraints and generated columns.
+   * @param currentDt the current data type.
+   * @param updateDt the updated data type.
+   */
+  private def checkConstraintsOrGeneratedColumnsExceptStruct(
+      spark: SparkSession,
+      path: Seq[String],
+      protocol: Protocol,
+      metadata: Metadata,
+      currentDt: DataType,
+      updateDt: DataType): Unit = (currentDt, updateDt) match {
+    case (StructType(_), StructType(_)) =>
+      // we explicitly ignore the check for `StructType` here.
+    case (from, to) =>
+      if (currentDt != updateDt) {
+        checkDependentConstraints(spark, path, metadata, from, to)
+        checkDependentGeneratedColumns(spark, path, protocol, metadata, from, to)
+      }
+  }
+
+  /**
    * If the provided data types are `StructType`, check whether the nested/inner fields
    * of the struct are being referenced by CHECK constraints or generated columns.
-   * It is worth noting that we only care about the inner fields of `StructType`,
-   * for all the other types, e.g., `MapType` or `ArrayType`, we will directly check
-   * the dependant constraints and generated columns without inspecting the inner fields.
+   * It is worth noting that:
+   * 1. we only care about the inner fields of `StructType`,
+   *    for all the other types, e.g., `MapType` or `ArrayType`, we will directly check
+   *    the dependant constraints and generated columns without inspecting the inner fields;
+   *    this indicates we intentionally keep being too strict for `MapType` and `ArrayType`.
+   *
+   * 2. this function will not recursively check any nested `StructType`, the actual traverse
+   *    through the nested struct(s) will be handled by [[SchemaMergingUtils.transformColumns]]
+   *    in [[checkDependentExpressions]].
    *
    * @param spark the spark session used.
    * @param protocol the protocol used.
-   * @param path the full column path.
+   * @param path the full column path for the current field.
    * @param from the current data type.
    * @param to the updated data type.
    * @param metadata the metadata used for checking constraints and generated columns.
@@ -307,25 +343,30 @@ object ImplicitMetadataOperation {
       from: DataType,
       to: DataType,
       metadata: Metadata): Unit = (from, to) match {
-    // we only check for (nested) struct fields
     case (StructType(fromFields), StructType(toFields)) =>
       fromFields.zip(toFields).foreach { case (fromField, toField) =>
-        checkReferencedByCheckConstraintsOrGeneratedColumns(
+        checkConstraintsOrGeneratedColumnsExceptStruct(
           spark = spark,
-          protocol = protocol,
           path = path :+ fromField.name,
-          from = fromField.dataType,
-          to = toField.dataType,
-          metadata = metadata
+          protocol = protocol,
+          metadata = metadata,
+          currentDt = fromField.dataType,
+          updateDt = toField.dataType
         )
       }
+    // do note that for `MapType` and `ArrayType`, we intentionally keep being too strict when
+    // checking nested fields - i.e., even if the containing nested fields are not
+    // being referenced by any dependant constraints or generated columns.
+    // reference: <https://github.com/delta-io/delta/pull/3601#discussion_r1731203107>.
     case (fromDataType, toDataType) =>
-      // this could potentially be the nested fields inside a struct with type evolution,
-      // we need to check for the dependant constraints and generated columns.
-      if (fromDataType != toDataType) {
-        checkDependentConstraints(spark, path, metadata, fromDataType, toDataType)
-        checkDependentGeneratedColumns(spark, path, protocol, metadata, fromDataType, toDataType)
-      }
+      checkConstraintsOrGeneratedColumnsExceptStruct(
+        spark = spark,
+        path = path,
+        protocol = protocol,
+        metadata = metadata,
+        currentDt = fromDataType,
+        updateDt = toDataType
+      )
   }
 
   /**
@@ -351,8 +392,8 @@ object ImplicitMetadataOperation {
           to = updateField.dataType,
           metadata = metadata
         )
-        // We don't transform the schema but just perform checks, the returned field won't be used
-        // anyway.
+        // We don't transform the schema but just perform checks,
+        // the returned field won't be used anyway.
         updateField
       case (_, field, _, _) => field
     }

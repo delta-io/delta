@@ -790,22 +790,14 @@ trait GeneratedColumnSuiteBase
       createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen SMALLINT",
         Map("gen" -> "CAST(HASH(t.a - 10s) AS SMALLINT)"), Nil)
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          Seq((32767.toShort, 32767)).toDF("a", "b")
-            .selectExpr("named_struct('a', a, 'b', b) as t")
-            .write.format("delta").mode("append")
-            .option("mergeSchema", "true")
-            .saveAsTable(table)
-        },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-        parameters = Map(
-          "columnName" -> "t",
-          "columnType" -> "STRUCT<a: SMALLINT, b: SMALLINT>",
-          "dataType" -> "STRUCT<a: SMALLINT, b: INT>",
-          "generatedColumns" -> "gen -> CAST(HASH(t.a - 10s) AS SMALLINT)"
-        )
-      )
+      // changing the type of `t.b` should succeed since it is not being
+      // referenced by any CHECK constraints or generated columns.
+      Seq((32767.toShort, 32767)).toDF("a", "b")
+        .selectExpr("named_struct('a', a, 'b', b) as t")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+      checkAnswer(spark.table(table), Row(Row(32767, 32767), -22677) :: Nil)
     }
   }
 
