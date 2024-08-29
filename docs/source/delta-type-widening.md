@@ -10,29 +10,17 @@ The type widening feature allows changing the type of columns in a Delta table t
 
 ## Supported type changes
 
-The feature introduces a limited set of supported type changes in <Delta> 3.2 and expandes it in <Delta> 4.0 and above.
+The feature introduces a limited set of supported type changes in <Delta> 3.2 and expands it in <Delta> 4.0 and above.
 
 .. csv-table::
   :header: "Source type", "Supported wider types - Delta 3.2", "Supported wider types - Delta 4.0"
 
-  "`byte`","`short`, `int`","`short`,`int`,`long`, `decimal`, `double`"
-  "`short`","`int`", "`int`,`long`, `decimal`, `double`"
-  "`int`"," ","`long`, `decimal`, `double`"
-  "`long`", ,"`decimal`"
+  "`byte`","`short`, `int`","`short`,`int`,`long`"
+  "`short`","`int`", "`int`,`long`"
+  "`int`"," ","`long`"
   "`float`", ,"`double`"
-  "`decimal`", ,"`decimal` with greater precision and scale"
+  "`decimal`", ,"`decimal` with greater precision and same scale"
   "`date`", ,"`timestampNTZ`"
-
-To avoid accidental promotion of integer values to decimals, type changes from `byte`, `short`, `int`, or `long` to `decimal` or `double` are not eligible to be applied automatically during schema evolution. You must manually alter the type in that case.
-
-.. note::
-
-  When changing an integer or decimal type to decimal, the total precision must be equal to or greater than the starting precision. If you also increase the scale, the total precision must increase by a corresponding amount.
-  That is, `decimal(p, s)` can be changed to `decimal(p + k1, s + k2)` iff `k1 >= k2 >= 0`.
-
-  For example, if you want to add two decimal places to a field with `decimal(10,1)`, the minimum target is `decimal(12,3)`.
-
-  The minimum target for `byte`, `short`, and `int` types is `decimal(10,0)`. The minimum target for `long` is `decimal(20,0)`.
 
 Type changes are supported for top-level columns as well as fields nested inside structs, maps and arrays.
 
