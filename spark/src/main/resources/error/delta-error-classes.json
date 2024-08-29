@@ -381,7 +381,7 @@
   },
   "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
     "message" : [
-      "Cluster By is not supported because the following column(s) '<columnsWithDataTypes>' don't support data skipping."
+      "CLUSTER BY is not supported because the following column(s): <columnsWithDataTypes> don't support data skipping."
     ],
     "sqlState" : "0A000"
   },
