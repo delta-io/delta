@@ -24,11 +24,12 @@ import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
+
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
+import org.apache.spark.sql.types.{DataType, StructType}
 
 /**
  * A trait that writers into Delta can extend to update the schema and/or partitioning of the table.
