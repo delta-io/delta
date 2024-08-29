@@ -95,7 +95,7 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
     //  table identifier into `CommitCoordinatorClient` in all APIs.
     return commitCoordinatorClient.registerTable(
         new Path(logPath),
-        Optional.empty(),
+        Optional.empty() /* table identfier */,
         currentVersion,
         StorageKernelAPIAdapter.toStorageAbstractMetadata(currentMetadata),
         StorageKernelAPIAdapter.toStorageAbstractProtocol(currentProtocol));
@@ -116,7 +116,7 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
           commitCoordinatorClient.commit(
               logStore,
               hadoopConf,
-              new TableDescriptor(path, Optional.empty(), tableConf),
+              new TableDescriptor(path, Optional.empty() /* table identfier */, tableConf),
               commitVersion,
               new Iterator<String>() {
                 @Override
@@ -149,7 +149,8 @@ public class DefaultCommitCoordinatorClientHandler implements CommitCoordinatorC
       throws IOException {
     Path path = new Path(logPath);
     LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
-    TableDescriptor tableDesc = new TableDescriptor(path, Optional.empty(), tableConf);
+    TableDescriptor tableDesc =
+        new TableDescriptor(path, Optional.empty() /* table identfier */, tableConf);
     commitCoordinatorClient.backfillToVersion(
         logStore, hadoopConf, tableDesc, version, lastKnownBackfilledVersion);
   }
