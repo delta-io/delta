@@ -152,7 +152,7 @@ class DefaultExpressionUtils {
                   BIGDECIMAL_COMPARATOR.compare(left.getDecimal(rowId), right.getDecimal(rowId)));
     } else if (dataType instanceof StringType) {
       if (collation.isPresent() && collation.get() != Collation.DEFAULT_COLLATION) {
-        // TODO
+
       } else {
         vectorValueComparator =
             rowId ->
