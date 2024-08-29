@@ -388,6 +388,47 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("create table with collation string") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val schema = new StructType()
+        .add("c1", new StringType("UTF8_LCASE"), true)
+        .add("c2", STRING, true)
+
+      val txn = txnBuilder
+        .withSchema(engine, schema)
+        .build(engine)
+
+      val txnResult = txn.commit(engine, emptyIterable())
+
+      val dataStringC1 = List("A", "b", "a", "A", "c")
+      val dataStringC2 = List("b", "c", "d", "d", "e")
+      val columnVectorStringC1 = new DefaultStringVector(dataStringC1.length, Optional.empty(),
+        dataStringC1.asJava.toArray(Array.empty[String]), "UTF8_LCASE")
+      val columnVectorStringC2 = new DefaultStringVector(dataStringC1.length, Optional.empty(),
+        dataStringC2.asJava.toArray(Array.empty[String]), "UTF8_BINARY")
+      val columnarBatch = new DefaultColumnarBatch(dataStringC1.length, schema,
+        List(columnVectorStringC1, columnVectorStringC2).asJava.toArray(Array.empty[ColumnVector]))
+      val filteredColumnarBatch = new FilteredColumnarBatch(
+        columnarBatch, Optional.empty())
+
+      appendData(engine = engine,
+        tablePath = tablePath,
+        data = Seq(Map.empty[String, Literal] -> Seq(filteredColumnarBatch)))
+
+      //checkTable(tablePath, Seq(TestRow("a", "b"), TestRow("A", "c")))
+
+      val scalarExpression = new CollatedPredicate("=",
+        List[Expression](new Column("c1"),
+          Literal.ofString("a", "UTF8_LCASE")).asJava)
+      val output1 = engine.getExpressionHandler()
+        .getEvaluator(schema, scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
+      println(output1)
+    }
+  }
+
   test("insert into table - already existing table") {
     withTempDirAndEngine { (tblPath, engine) =>
       val commitResult0 = appendData(
