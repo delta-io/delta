@@ -150,10 +150,10 @@ public class TableImpl implements Table {
       Engine engine,
       long startVersion,
       long endVersion,
-      Set<ActionCommitLog.DeltaAction> actionSet) {
+      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
 
     List<FileStatus> commitFiles =
-        ActionCommitLog.getCommitFilesForVersionRange(
+        DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, new Path(tablePath), startVersion, endVersion);
 
     StructType readSchema =
@@ -162,6 +162,6 @@ public class TableImpl implements Table {
                 .map(action -> new StructField(action.colName, action.schema, true))
                 .collect(Collectors.toList()));
 
-    return ActionCommitLog.readCommitFiles(engine, commitFiles, readSchema);
+    return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
   }
 }
