@@ -116,13 +116,14 @@ public final class DeltaErrors {
       String tablePath, long endVersionRequested, Optional<Long> latestAvailableVersion) {
     String message =
         String.format(
-            "%s: Requested table changes ending with endVersion=%s but no log file found for "
-                + "version %s",
-            tablePath, endVersionRequested, endVersionRequested);
-    if (latestAvailableVersion.isPresent()) {
-      message =
-          message + String.format(" Latest available version is %s", latestAvailableVersion.get());
-    }
+            "%s: Requested table changes ending with endVersion=%d but no log file found for "
+                + "version %d%s",
+            tablePath,
+            endVersionRequested,
+            endVersionRequested,
+            latestAvailableVersion
+                .map(version -> String.format(". Latest available version is %d", version))
+                .orElse(""));
     return new KernelException(message);
   }
 

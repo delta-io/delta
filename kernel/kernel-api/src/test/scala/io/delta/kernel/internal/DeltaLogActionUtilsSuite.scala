@@ -102,7 +102,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 4, 3, 2)),
         1,
-        4,
+        2,
         dataPath
       )
     }

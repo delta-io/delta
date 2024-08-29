@@ -39,7 +39,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.LongStream;
 
 /**
  * Exposes APIs to read the raw actions within the *commit files* of the _delta_log. This is used
@@ -185,7 +184,7 @@ public class DeltaLogActionUtils {
       new StructField(COMMIT_TIMESTAMP_COL_NAME, COMMIT_TIMESTAMP_DATA_TYPE, false /* nullable */);
 
   /**
-   * Given a list of delta versions, verifies that they are (1) continuous (2) versions starts with
+   * Given a list of delta versions, verifies that they are (1) contiguous (2) versions starts with
    * expectedStartVersion and (3) end with expectedEndVersion. Throws an exception if any of these
    * are not true.
    *
@@ -193,7 +192,7 @@ public class DeltaLogActionUtils {
    *
    * @param commitFiles in sorted increasing order according to the commit version
    */
-  public static void verifyDeltaVersions(
+  static void verifyDeltaVersions(
       List<FileStatus> commitFiles,
       long expectedStartVersion,
       long expectedEndVersion,
@@ -204,17 +203,12 @@ public class DeltaLogActionUtils {
             .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
             .collect(Collectors.toList());
 
-    if (!commitVersions.isEmpty()) {
-      List<Long> contVersions =
-          LongStream.rangeClosed(
-                  commitVersions.get(0), commitVersions.get(commitVersions.size() - 1))
-              .boxed()
-              .collect(Collectors.toList());
-      if (!contVersions.equals(commitVersions)) {
+    for (int i = 1; i < commitVersions.size(); i++) {
+      if (commitVersions.get(i) != commitVersions.get(i - 1) + 1) {
         throw new InvalidTableException(
             tablePath.toString(),
             String.format(
-                "Missing delta files: versions are not continuous: (%s)", commitVersions));
+                "Missing delta files: versions are not contiguous: (%s)", commitVersions));
       }
     }
 

@@ -23,7 +23,7 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.utils.CloseableIterator
-import io.delta.kernel.internal.ActionCommitLog.DeltaAction
+import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.actions.{AddFile, RemoveFile}
 import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.Table
