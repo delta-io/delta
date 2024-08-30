@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
-import java.util.Optional
-
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
