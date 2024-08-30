@@ -126,7 +126,9 @@ public class StructField {
     List<Tuple2<String, String>> nestedCollatedFields = new ArrayList<>();
     if (parent instanceof StringType) {
       StringType stringType = (StringType) parent;
-      if (stringType.getCollationIdentifier().equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) {
+      if (stringType
+          .getCollationIdentifier()
+          .equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) {
         nestedCollatedFields.add(
             new Tuple2<>(
                 path, ((StringType) parent).getCollationIdentifier().toStringWithoutVersion()));
