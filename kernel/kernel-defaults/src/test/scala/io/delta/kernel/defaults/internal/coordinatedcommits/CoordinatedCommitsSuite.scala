@@ -33,7 +33,7 @@ import io.delta.kernel.internal.util.{CoordinatedCommitsUtils, FileNames}
 import io.delta.kernel.internal.util.Preconditions.checkArgument
 import io.delta.kernel.internal.util.Utils.{closeCloseables, singletonCloseableIterator, toCloseableIterator}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse, InMemoryCommitCoordinator, UpdatedActions, CoordinatedCommitsUtils => CCU}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse, InMemoryCommitCoordinator, TableDescriptor, TableIdentifier, UpdatedActions, CoordinatedCommitsUtils => CCU}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.LogStore
 import org.apache.hadoop.conf.Configuration
@@ -331,31 +331,29 @@ object TestCommitCoordinator {
 class TestCommitCoordinatorClient extends InMemoryCommitCoordinator(10) {
   override def registerTable(
     logPath: Path,
+    tableIdentifier: Optional[TableIdentifier],
     currentVersion: Long,
     currentMetadata: AbstractMetadata,
     currentProtocol: AbstractProtocol): util.Map[String, String] = {
-    super.registerTable(logPath, currentVersion, currentMetadata, currentProtocol)
+    super.registerTable(logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
     TestCommitCoordinator.EXP_TABLE_CONF
   }
   override def getCommits(
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     startVersion: lang.Long,
     endVersion: lang.Long = null): GetCommitsResponse = {
-    checkArgument(coordinatedCommitsTableConf == TestCommitCoordinator.EXP_TABLE_CONF)
-    super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+    checkArgument(tableDesc.getTableConf == TestCommitCoordinator.EXP_TABLE_CONF)
+    super.getCommits(tableDesc, startVersion, endVersion)
   }
   override def commit(
     logStore: LogStore,
     hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     commitVersion: Long,
     actions: util.Iterator[String],
     updatedActions: UpdatedActions): CommitResponse = {
-    checkArgument(coordinatedCommitsTableConf == TestCommitCoordinator.EXP_TABLE_CONF)
-    super.commit(logStore, hadoopConf, logPath, coordinatedCommitsTableConf,
-      commitVersion, actions, updatedActions)
+    checkArgument(tableDesc.getTableConf == TestCommitCoordinator.EXP_TABLE_CONF)
+    super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
   }
 }
 

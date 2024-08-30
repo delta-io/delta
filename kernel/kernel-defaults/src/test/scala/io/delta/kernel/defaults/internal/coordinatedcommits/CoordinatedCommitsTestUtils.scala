@@ -18,7 +18,7 @@ package io.delta.kernel.defaults.internal.coordinatedcommits
 import io.delta.kernel.data.Row
 
 import java.{lang, util}
-import io.delta.storage.commit.{CommitCoordinatorClient, InMemoryCommitCoordinator, Commit => StorageCommit, CommitResponse => StorageCommitResponse, GetCommitsResponse => StorageGetCommitsResponse, UpdatedActions => StorageUpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, InMemoryCommitCoordinator, Commit => StorageCommit, CommitResponse => StorageCommitResponse, GetCommitsResponse => StorageGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions => StorageUpdatedActions}
 import io.delta.kernel.defaults.internal.logstore.LogStoreProvider
 import io.delta.kernel.engine.{CommitCoordinatorClientHandler, Engine}
 import io.delta.kernel.internal.actions.{CommitInfo, Format, Metadata, Protocol}
@@ -203,44 +203,34 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
   override def commit(
     logStore: LogStore,
     hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     commitVersion: Long,
     actions: util.Iterator[String],
     updatedActions: StorageUpdatedActions): StorageCommitResponse = recordOperation("commit") {
     delegatingCommitCoordinatorClient.commit(
       logStore,
       hadoopConf,
-      logPath,
-      coordinatedCommitsTableConf,
+      tableDesc,
       commitVersion,
       actions,
       updatedActions)
   }
 
   override def getCommits(
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     startVersion: lang.Long,
     endVersion: lang.Long = null): StorageGetCommitsResponse = recordOperation("getCommits") {
-    delegatingCommitCoordinatorClient.getCommits(
-      logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+    delegatingCommitCoordinatorClient.getCommits(tableDesc, startVersion, endVersion)
   }
 
   override def backfillToVersion(
     logStore: LogStore,
     hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     version: Long,
     lastKnownBackfilledVersion: lang.Long): Unit = recordOperation("backfillToVersion") {
     delegatingCommitCoordinatorClient.backfillToVersion(
-      logStore,
-      hadoopConf,
-      logPath,
-      coordinatedCommitsTableConf,
-      version,
-      lastKnownBackfilledVersion)
+      logStore, hadoopConf, tableDesc, version, lastKnownBackfilledVersion)
   }
 
   override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
@@ -253,11 +243,12 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
 
   override def registerTable(
     logPath: Path,
+    tableIdentifier: Optional[TableIdentifier],
     currentVersion: Long,
     currentMetadata: AbstractMetadata,
     currentProtocol: AbstractProtocol):
   util.Map[String, String] = recordOperation("registerTable") {
     delegatingCommitCoordinatorClient.registerTable(
-      logPath, currentVersion, currentMetadata, currentProtocol)
+      logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
   }
 }

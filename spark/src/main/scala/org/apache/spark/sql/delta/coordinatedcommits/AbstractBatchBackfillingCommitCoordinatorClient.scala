@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.nio.file.FileAlreadyExistsException
-import java.util.UUID
+import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, CommitResponse, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, CommitResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -64,11 +64,11 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
   override def commit(
       logStore: LogStore,
       hadoopConf: Configuration,
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       commitVersion: Long,
       actions: java.util.Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = {
+    val logPath = tableDesc.getLogPath
     val executionObserver = TransactionExecutionObserver.getObserver
     val tablePath = CoordinatedCommitsUtils.getTablePath(logPath)
     if (commitVersion == 0) {
@@ -86,8 +86,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       backfillToVersion(
         logStore,
         hadoopConf,
-        logPath,
-        coordinatedCommitsTableConf,
+        tableDesc,
         commitVersion - 1,
         null)
     }
@@ -103,7 +102,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
         logStore,
         hadoopConf,
         logPath,
-        coordinatedCommitsTableConf.asScala.toMap,
+        tableDesc.getTableConf.asScala.toMap,
         commitVersion,
         fileStatus,
         commitTimestamp)
@@ -122,13 +121,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       logInfo(log"Making sure commits are backfilled till " +
         log"${MDC(DeltaLogKeys.VERSION, commitVersion)} " +
         log"version for table ${MDC(DeltaLogKeys.PATH, tablePath.toString)}")
-      backfillToVersion(
-        logStore,
-        hadoopConf,
-        logPath,
-        coordinatedCommitsTableConf,
-        commitVersion,
-        null)
+      backfillToVersion(logStore, hadoopConf, tableDesc, commitVersion, null)
     }
     logInfo(log"Commit ${MDC(DeltaLogKeys.VERSION, commitVersion)} done successfully on table " +
       log"${MDC(DeltaLogKeys.PATH, tablePath)}")
@@ -150,10 +143,10 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       version: Long,
       lastKnownBackfilledVersionOpt: java.lang.Long): Unit = {
+    val logPath = tableDesc.getLogPath
     // Confirm the last backfilled version by checking the backfilled delta file's existence.
     val validLastKnownBackfilledVersionOpt = Option(lastKnownBackfilledVersionOpt)
         .filter { version =>
@@ -161,7 +154,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       fs.exists(FileNames.unsafeDeltaFile(logPath, version))
     }
     val startVersionOpt: Long = validLastKnownBackfilledVersionOpt.map(_ + 1).map(Long.box).orNull
-    getCommits(logPath, coordinatedCommitsTableConf, startVersionOpt, version)
+    getCommits(tableDesc, startVersionOpt, version)
       .getCommits.asScala
       .foreach { commit =>
         backfill(logStore, hadoopConf, logPath, commit.getVersion, commit.getFileStatus)

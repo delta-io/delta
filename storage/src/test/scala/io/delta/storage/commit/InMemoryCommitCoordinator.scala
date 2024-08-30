@@ -15,11 +15,12 @@
  */
 package io.delta.storage.commit
 
+import java.lang.{Long => JLong}
 import java.nio.file.FileAlreadyExistsException
-import java.{lang, util}
-import java.util._
+import java.util.{ArrayList, Collections, Iterator => JIterator, Map => JMap, Optional, TreeMap, UUID}
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
+
 import io.delta.storage.LogStore
 import io.delta.storage.commit.actions.AbstractMetadata
 import io.delta.storage.commit.actions.AbstractProtocol
@@ -62,7 +63,7 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
     def lastRatifiedCommitVersion: Long = if (!active) -1 else maxCommitVersion
 
     // Map from version to Commit data
-    val commitsMap: util.TreeMap[Long, Commit] = new util.TreeMap[Long, Commit]
+    val commitsMap: TreeMap[Long, Commit] = new TreeMap[Long, Commit]
     // We maintain maxCommitVersion explicitly since commitsMap might be empty
     // if all commits for a table have been backfilled.
     val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock()
@@ -71,10 +72,11 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
   private[commit] val perTableMap = new ConcurrentHashMap[String, PerTableData]()
 
   override def registerTable(
-    logPath: Path,
-    currentVersion: Long,
-    currentMetadata: AbstractMetadata,
-    currentProtocol: AbstractProtocol): util.Map[String, String] = {
+      logPath: Path,
+      tableIdentifier: Optional[TableIdentifier],
+      currentVersion: Long,
+      currentMetadata: AbstractMetadata,
+      currentProtocol: AbstractProtocol): JMap[String, String] = {
     val newPerTableData = new PerTableData(currentVersion + 1)
     perTableMap.compute(logPath.toString, (_, existingData) => {
       if (existingData != null) {
@@ -97,13 +99,13 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
   }
 
   override def commit(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
-    commitVersion: Long,
-    actions: util.Iterator[String],
-    updatedActions: UpdatedActions): CommitResponse = {
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      tableDesc: TableDescriptor,
+      commitVersion: Long,
+      actions: JIterator[String],
+      updatedActions: UpdatedActions): CommitResponse = {
+    val logPath = tableDesc.getLogPath
     val tablePath = CoordinatedCommitsUtils.getTablePath(logPath)
     if (commitVersion == 0) {
       throw new CommitFailedException(false, false, "Commit version 0 must go via filesystem.")
@@ -116,8 +118,7 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
         "Making sure commits are backfilled until {}" + " version for table {}",
         commitVersion - 1,
         tablePath)
-      backfillToVersion(
-        logStore, hadoopConf, logPath, coordinatedCommitsTableConf, commitVersion - 1, null)
+      backfillToVersion(logStore, hadoopConf, tableDesc, commitVersion - 1, null)
     }
     // Write new commit file in _commits directory
     val fileStatus = CoordinatedCommitsUtils.writeCommitFile(
@@ -142,24 +143,18 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
         "Making sure commits are backfilled till {} version for table {}",
         commitVersion,
         tablePath)
-      backfillToVersion(
-        logStore,
-        hadoopConf,
-        logPath,
-        coordinatedCommitsTableConf,
-        commitVersion,
-        null)
+      backfillToVersion(logStore, hadoopConf, tableDesc, commitVersion, null)
     }
     logger.info("Commit {} done successfully on table {}", commitVersion, tablePath)
     commitResponse
   }
 
   override def getCommits(
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
-    startVersion: lang.Long,
-    endVersion: lang.Long): GetCommitsResponse = withReadLock[GetCommitsResponse](logPath) {
-    val tableData = perTableMap.get(logPath.toString)
+      tableDesc: TableDescriptor,
+      startVersion: JLong,
+      endVersion: JLong)
+      : GetCommitsResponse = withReadLock[GetCommitsResponse](tableDesc.getLogPath) {
+    val tableData = perTableMap.get(tableDesc.getLogPath.toString)
     val startVersionOpt = Optional.ofNullable(startVersion)
     val endVersionOpt = Optional.ofNullable(endVersion)
     val effectiveStartVersion = startVersionOpt.orElse(0L)
@@ -170,16 +165,16 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
       else tableData.commitsMap.lastKey)
     val commitsInRange = tableData.commitsMap.subMap(effectiveStartVersion, effectiveEndVersion + 1)
     new GetCommitsResponse(
-      new util.ArrayList[Commit](commitsInRange.values), tableData.lastRatifiedCommitVersion)
+      new ArrayList[Commit](commitsInRange.values), tableData.lastRatifiedCommitVersion)
   }
 
   override def backfillToVersion(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
-    version: Long,
-    lastKnownBackfilledVersion: lang.Long): Unit = {
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      tableDesc: TableDescriptor,
+      version: Long,
+      lastKnownBackfilledVersion: JLong): Unit = {
+    val logPath = tableDesc.getLogPath
     // Confirm the last backfilled version by checking the backfilled delta file's existence.
     var validLastKnownBackfilledVersion = lastKnownBackfilledVersion
     if (lastKnownBackfilledVersion != null) {
@@ -188,9 +183,9 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
         validLastKnownBackfilledVersion = null
       }
     }
-    var startVersion: lang.Long = null
+    var startVersion: JLong = null
     if (validLastKnownBackfilledVersion != null) startVersion = validLastKnownBackfilledVersion + 1
-    val commitsResponse = getCommits(logPath, coordinatedCommitsTableConf, startVersion, version)
+    val commitsResponse = getCommits(tableDesc, startVersion, version)
     commitsResponse.getCommits.forEach((commit: Commit) => {
       backfill(logStore, hadoopConf, logPath, commit.getVersion, commit.getFileStatus)
     })
@@ -200,11 +195,11 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
 
   /** Backfills a given `fileStatus` to `version`.json */
   protected def backfill(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    logPath: Path,
-    version: Long,
-    fileStatus: FileStatus): Unit = {
+      logStore: LogStore,
+      hadoopConf: Configuration,
+      logPath: Path,
+      version: Long,
+      fileStatus: FileStatus): Unit = {
     val targetFile = CoordinatedCommitsUtils.getBackfilledDeltaFilePath(logPath, version)
     logger.info("Backfilling commit " + fileStatus.getPath + " to " + targetFile)
     val commitContentIterator = logStore.read(fileStatus.getPath, hadoopConf)
@@ -220,10 +215,10 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
   protected def generateUUID(): String = UUID.randomUUID().toString
 
   private def addToMap(
-    logPath: Path,
-    commitVersion: Long,
-    commitFile: FileStatus,
-    commitTimestamp: Long): CommitResponse = withWriteLock[CommitResponse](logPath) {
+      logPath: Path,
+      commitVersion: Long,
+      commitFile: FileStatus,
+      commitTimestamp: Long): CommitResponse = withWriteLock[CommitResponse](logPath) {
     val tableData = perTableMap.get(logPath.toString)
     val expectedVersion = tableData.maxCommitVersion + 1
     if (commitVersion != expectedVersion) {
