@@ -54,7 +54,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       1,
       dataPath
     )
-    // Non-continuous versions
+    // Non-contiguous versions
     intercept[InvalidTableException] {
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 3, 4)),
@@ -164,7 +164,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
   testGetCommitFilesExpectedError[InvalidTableException](
     testName = "missing log files",
     files = deltaFileStatuses(Seq(1, 3)),
-    expectedErrorMessageContains = "versions are not continuous"
+    expectedErrorMessageContains = "versions are not contiguous"
   )
 
   testGetCommitFilesExpectedError[KernelException](
