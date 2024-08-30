@@ -20,7 +20,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
-import org.apache.spark.sql.delta.actions.{FileAction, Metadata, SetTransaction}
+import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaMergingUtils, SchemaUtils}
@@ -29,9 +29,8 @@ import org.apache.hadoop.fs.Path
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.analysis.TableOutputResolver
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Expression}
+import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
@@ -130,7 +129,7 @@ case class DeltaSink(
       txn.readWholeTable()
     }
 
-    val writeSchema = getWriteSchema(txn.metadata, data.schema)
+    val writeSchema = getWriteSchema(txn.protocol, txn.metadata, data.schema)
     // Streaming sinks can't blindly overwrite schema. See Schema Management design doc for details
     updateMetadata(data.sparkSession, txn, writeSchema, partitionColumns, Map.empty,
       outputMode == OutputMode.Complete(), rearrangeOnly = false)
@@ -168,17 +167,20 @@ case class DeltaSink(
 
   /**
    * Returns the schema to use to write data to this delta table. The write schema includes new
-   * columns to add with schema evolution and reconciles types to match the table types.
+   * columns to add with schema evolution and reconciles types to match the table types when
+   * possible or apply type widening if enabled.
    */
-  private def getWriteSchema(metadata: Metadata, dataSchema: StructType): StructType = {
+  private def getWriteSchema(protocol: Protocol, metadata: Metadata, dataSchema: StructType)
+    : StructType = {
     if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return dataSchema
 
     if (canOverwriteSchema) return dataSchema
 
     SchemaMergingUtils.mergeSchemas(
-      tableSchema = metadata.schema,
-      dataSchema = dataSchema,
-      allowImplicitConversions = true
+      metadata.schema,
+      dataSchema,
+      allowImplicitConversions = true,
+      allowTypeWidening = canMergeSchema && TypeWidening.isEnabled(protocol, metadata)
     )
   }
 

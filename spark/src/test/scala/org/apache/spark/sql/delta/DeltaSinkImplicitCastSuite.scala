@@ -32,9 +32,10 @@ import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException}
 import org.apache.spark.sql.types._
 
 /**
- * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
+ * Defines helper class & methods to test writing to a Delta streaming sink using data types that
+ * don't match the corresponding column type in the table schema.
  */
-abstract class DeltaSinkImplicitCastTest extends DeltaSinkTest {
+abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -106,7 +107,10 @@ abstract class DeltaSinkImplicitCastTest extends DeltaSinkTest {
   }
 }
 
-class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastTest {
+/**
+ * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
+ */
+class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
   import testImplicits._
 
   test(s"write wider type - long -> int") {
