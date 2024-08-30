@@ -51,4 +51,14 @@ public class CollationIdentifier {
       return new CollationIdentifier(parts[0], parts[1], Optional.of(parts[2]));
     }
   }
+
+  @Override
+  public boolean equals(Object o) {
+    if (!(o instanceof CollationIdentifier)) {
+      return false;
+    }
+
+    CollationIdentifier that = (CollationIdentifier) o;
+    return provider.equals(that.provider) && name.equals(that.name) && version.equals(that.version);
+  }
 }
