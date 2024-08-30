@@ -431,7 +431,7 @@ public class PartitionUtils {
       return Literal.ofDouble(Double.parseDouble(partitionValue));
     }
     if (dataType instanceof StringType) {
-      return Literal.ofString(partitionValue, ((StringType) dataType).getCollationName());
+      return Literal.ofString(partitionValue, ((StringType) dataType).getCollationIdentifier());
     }
     if (dataType instanceof BinaryType) {
       return Literal.ofBinary(partitionValue.getBytes());

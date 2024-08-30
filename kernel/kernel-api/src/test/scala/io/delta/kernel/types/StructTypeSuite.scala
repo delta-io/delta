@@ -94,15 +94,15 @@ class StructTypeSuite extends AnyFunSuite {
         .add("b1", new MapType(
           new ArrayType(
             new ArrayType(
-              new StringType("UTF8_LCASE"), true), true),
+              new StringType("KERNEL.UTF8_LCASE"), true), true),
           new StructType()
-            .add("c1", new StringType("UTF8_LCASE"), false)
-            .add("c2", new StringType("UNICODE"), true)
+            .add("c1", new StringType("KERNEL.UTF8_LCASE"), false)
+            .add("c2", new StringType("ICU.UNICODE"), true)
             .add("c3", StringType.STRING), true))
         .add("b2", LongType.LONG), true)
       .add("a3", new ArrayType(
         new MapType(
-          new StringType("UNICODE_CI"),
+          new StringType("ICU.UNICODE_CI"),
           new StructType()
             .add("b1", new StringType("UTF8_LCASE"), false), false), false), true)
     val toJson = "{\"type\":\"struct\",\"fields\":[{\"name\":\"a1\"," +

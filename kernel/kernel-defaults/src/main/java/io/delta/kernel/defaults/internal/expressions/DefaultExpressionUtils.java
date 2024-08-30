@@ -20,7 +20,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
-import io.delta.kernel.expressions.Collation;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;

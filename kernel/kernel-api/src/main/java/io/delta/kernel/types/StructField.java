@@ -17,6 +17,7 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.expressions.CollationIdentifier;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.FieldMetadata.Builder;
 import java.util.*;
@@ -126,8 +127,8 @@ public class StructField {
     List<Tuple2<String, String>> nestedCollatedFields = new ArrayList<>();
     if (parent instanceof StringType) {
       StringType stringType = (StringType) parent;
-      if (!stringType.getCollationName().equals(StringType.DEFAULT_COLLATION)) {
-        nestedCollatedFields.add(new Tuple2<>(path, ((StringType) parent).getCollationName()));
+      if (stringType.getCollationIdentifier() != CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER) {
+        nestedCollatedFields.add(new Tuple2<>(path, ((StringType) parent).getCollationIdentifier().toStringWithoutVersion()));
       }
     } else if (parent instanceof MapType) {
       nestedCollatedFields.addAll(
