@@ -3,13 +3,13 @@ package io.delta.kernel.expressions;
 import java.util.Optional;
 
 public class CollationIdentifier {
-  public static final String PROVIDER_KERNEL = "KERNEL";
+  public static final String PROVIDER_SPARK = "SPARK";
   public static final String PROVIDER_ICU = "ICU";
 
   public static final String DEFAULT_COLLATION_NAME = "UTF8_BINARY";
 
   public static final CollationIdentifier DEFAULT_COLLATION_IDENTIFIER =
-          new CollationIdentifier(PROVIDER_KERNEL, DEFAULT_COLLATION_NAME, Optional.empty());
+          new CollationIdentifier(PROVIDER_SPARK, DEFAULT_COLLATION_NAME, Optional.empty());
 
   private final String provider;
   private final String name;
