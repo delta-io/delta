@@ -21,6 +21,8 @@ public class CollationIdentifier {
   public static final String PROVIDER_SPARK = "SPARK";
   public static final String PROVIDER_ICU = "ICU";
 
+  public static final String ICU_COLLATOR_VERSION = "75.1";
+
   public static final String DEFAULT_COLLATION_NAME = "UTF8_BINARY";
 
   public static final CollationIdentifier DEFAULT_COLLATION_IDENTIFIER =
@@ -38,6 +40,18 @@ public class CollationIdentifier {
 
   public String toStringWithoutVersion() {
     return String.format("%s.%s", provider, name);
+  }
+
+  public String getProvider() {
+    return provider;
+  }
+
+  public String getName() {
+    return name;
+  }
+
+  public Optional<String> getVersion() {
+    return version;
   }
 
   public static CollationIdentifier fromString(String identifier) {

@@ -98,7 +98,11 @@ abstract class ExpressionVisitor<R> {
       case ">":
       case ">=":
       case "IS NOT DISTINCT FROM":
-        return visitComparator(new Predicate(name, children));
+        if (expression instanceof Predicate) {
+          return visitComparator((Predicate) expression);
+        } else {
+          return visitComparator(new Predicate(name, children));
+        }
       case "ELEMENT_AT":
         return visitElementAt(expression);
       case "NOT":
