@@ -102,7 +102,7 @@ public class CollationFactory {
     }
 
     private static String getICULocale(CollationIdentifier collationIdentifier) {
-      String collationName = collationIdentifier.getName();
+      String collationName = collationIdentifier.getName().toUpperCase();
 
       // Search for the longest locale match because specifiers are designed to be different from
       // script tag and country code, meaning the only valid locale name match can be the longest
@@ -122,7 +122,7 @@ public class CollationFactory {
     }
 
     private static Tuple2<CaseSensitivity, AccentSensitivity> getICUCaseAndAccentSensitivity(CollationIdentifier collationIdentifier, String locale) {
-      String collationName = collationIdentifier.getName();
+      String collationName = collationIdentifier.getName().toUpperCase();
 
       // Try all combinations of AS/AI and CS/CI.
       CaseSensitivity caseSensitivity;

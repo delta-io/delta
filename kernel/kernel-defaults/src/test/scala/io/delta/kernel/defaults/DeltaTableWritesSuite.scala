@@ -18,17 +18,19 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{CollatedPredicate, CollationIdentifier, Column, Expression, Literal, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.{ColumnMapping, VectorUtils}
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -177,6 +179,48 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assertMetadataProp(engine, ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
+
+  test("create table with collation string") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val schema = new StructType()
+        .add("c1", new StringType("Spark.UTF8_BINARY"), true)
+        .add("c2", STRING, true)
+
+      val txn = txnBuilder
+        .withSchema(engine, schema)
+        .build(engine)
+
+      val txnResult = txn.commit(engine, emptyIterable())
+
+      val dataStringC1 = Seq("a", "č", "ć", "a")
+      val dataStringC2 = Seq("b", "c", "c", "ć")
+
+      val columnVectorStringC1 =
+        VectorUtils.stringVector(scala.collection.JavaConverters.seqAsJavaList(dataStringC1))
+      val columnVectorStringC2 =
+        VectorUtils.stringVector(scala.collection.JavaConverters.seqAsJavaList(dataStringC2))
+      val columnarBatch = new DefaultColumnarBatch(2, schema,
+        List(columnVectorStringC1, columnVectorStringC2).asJava.toArray(Array.empty[ColumnVector]))
+      val filteredColumnarBatch = new FilteredColumnarBatch(
+        columnarBatch, Optional.empty())
+
+      appendData(engine = defaultEngine,
+        tablePath = tablePath,
+        data = Seq(Map.empty[String, Literal] -> Seq(filteredColumnarBatch)))
+
+      val collationIdentifier =
+        new CollationIdentifier("ICU", "SR_Latn_SRB", Optional.empty())
+      val scalarExpression = new CollatedPredicate("=", new Column("c1"),
+        new Column("c2"), collationIdentifier)
+      val output = new DefaultExpressionEvaluator(schema,
+        scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
+      println(output)
+    }
+  }
+
 
   test("create table and configure properties with retries") {
     withTempDirAndEngine { (tablePath, engine) =>
