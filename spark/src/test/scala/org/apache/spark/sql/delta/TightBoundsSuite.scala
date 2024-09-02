@@ -22,7 +22,6 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics.{MIN, NULL_COUNT, NUM_RECORDS, TIGHT_BOUNDS}
-import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -299,6 +298,11 @@ class TightBoundsSuite
       targetTable: () => io.delta.tables.DeltaTable,
       targetLog: DeltaLog,
       deleteCond: String): Unit = {
+    // Add DVs. Stats should have tightBounds = false afterwards.
+    targetTable().delete(deleteCond)
+    val initialStats = getStats(targetLog.update(), "*")
+    assert(initialStats.forall(_.get(4) === false)) // tightBounds
+
     // Other systems may support Compute Stats that recomputes tightBounds stats on tables with DVs.
     // Simulate this with a manual update commit that introduces tight stats.
     val txn = targetLog.startTransaction()
