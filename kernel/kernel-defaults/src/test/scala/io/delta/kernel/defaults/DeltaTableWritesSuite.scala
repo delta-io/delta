@@ -180,53 +180,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create table with collation string") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val schema = new StructType()
-        .add("c1", new StringType("Spark.UTF8_BINARY"), true)
-        .add("c2", STRING, true)
-
-      val txn = txnBuilder
-        .withSchema(engine, schema)
-        .build(engine)
-
-      val txnResult = txn.commit(engine, emptyIterable())
-
-      val dataStringC1 = Seq("a", "č", "ć", "a", "c")
-      val dataStringC2 = Seq("b", "c", "c", "ć", "c")
-
-      val columnVectorStringC1 =
-        VectorUtils.stringVector(scala.collection.JavaConverters.seqAsJavaList(dataStringC1))
-      val columnVectorStringC2 =
-        VectorUtils.stringVector(scala.collection.JavaConverters.seqAsJavaList(dataStringC2))
-      val columnarBatch = new DefaultColumnarBatch(2, schema,
-        List(columnVectorStringC1, columnVectorStringC2).asJava.toArray(Array.empty[ColumnVector]))
-      val filteredColumnarBatch = new FilteredColumnarBatch(
-        columnarBatch, Optional.empty())
-
-      appendData(engine = defaultEngine,
-        tablePath = tablePath,
-        data = Seq(Map.empty[String, Literal] -> Seq(filteredColumnarBatch)))
-
-      val collationIdentifier =
-        new CollationIdentifier("ICU", "sr_Latn_SRB_AI", Optional.empty())
-      val scalarExpression = new CollatedPredicate("=", new Column("c1"),
-        new Column("c2"), collationIdentifier)
-      val output = new DefaultExpressionEvaluator(schema,
-        scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
-      println(output)
-      println(output.getBoolean(0))
-      println(output.getBoolean(1))
-      println(output.getBoolean(2))
-      println(output.getBoolean(3))
-      println(output.getBoolean(4))
-    }
-  }
-
-
   test("create table and configure properties with retries") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
