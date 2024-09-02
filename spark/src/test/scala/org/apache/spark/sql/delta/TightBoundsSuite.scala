@@ -324,7 +324,7 @@ class TightBoundsSuite
       // CLONE shouldn't throw
       // DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED
       withTempPath("cloned") { clonedPath =>
-        sql(s"CREATE TABLE delta.`$clonedPath` CLONE delta.`$targetPath`")
+        sql(s"CREATE TABLE delta.`$clonedPath` SHALLOW CLONE delta.`$targetPath`")
       }
     }
   }
