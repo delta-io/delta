@@ -860,7 +860,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         // 2. All operations that add new DVs should always turn bounds to wide.
         //    Operations that only update files with existing DVs may opt-out from this rule
         //    via `checkAddFileWithDeletionVectorStatsAreNotTightBounds`.
-        //    (e.g. stats collection, metadata-only updates.)
+        //    See that field comment in DeltaOperation for more details.
         //    Note, the absence of the tightBounds column when DVs exist is also an illegal state.
         if (addFileMustHaveWideBounds &&
             a.deletionVector != null &&
