@@ -28,7 +28,7 @@ import org.apache.spark.sql.execution.streaming.{MemoryStream, StreamExecution}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
-import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException}
+import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trigger}
 import org.apache.spark.sql.types._
 
 /**
@@ -60,6 +60,7 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
         extraOptions: Map[String, String])(
         data: T*)(
         selectExpr: String*): Unit = {
+      source.addData(data)
       val query =
         source.toDF()
           .selectExpr(selectExpr: _*)
@@ -68,9 +69,9 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
           .outputMode(outputMode)
           .options(extraOptions)
           .format("delta")
+          .trigger(Trigger.AvailableNow())
           .start(outputDir.getCanonicalPath)
       try {
-        source.addData(data)
         failAfter(streamingTimeout) {
           query.processAllAvailable()
         }
