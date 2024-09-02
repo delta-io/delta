@@ -22,6 +22,7 @@ import org.apache.spark.{DebugFilesystem, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -129,6 +130,15 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
     }
   }
 
+  /** df.write.mode(mode).save() */
+  case class DFv1Save(mode: SaveMode) extends Insert {
+    val name: String = s"DFv1 save() - $mode"
+    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+      spark.read.table("source").write.mode(mode).format("delta").save(deltaLog.dataPath.toString)
+    }
+  }
+
   /** df.writeTo.append() */
   object DFv2Append extends Insert { self: Insert =>
     val mode: SaveMode = SaveMode.Append
@@ -167,6 +177,7 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
         .writeStream
         .option("checkpointLocation", tablePath.toString)
         .format("delta")
+        .trigger(Trigger.AvailableNow())
         .toTable("target")
       query.processAllAvailable()
     }
@@ -188,11 +199,26 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
         SQLInsertColList(mode),
         SQLInsertByName(mode),
         DFv1InsertInto(mode),
-        DFv1SaveAsTable(mode)
+        DFv1SaveAsTable(mode),
+        DFv1Save(mode)
       )
     } yield insert)
 
-  // scalastyle:off argcount
+  /**
+   * Represents the expected result after running an insert operation in `testInserts()` below.
+   * Either:
+   * - Success: the table schema after the operation is checked against the expected schema.
+   *   `testInserts()` also validates the data, though it's able to infer the expected data from the
+   *   test inputs.
+   * - Failure: an exception is thrown and the caller passes a function to check that it matches an
+   *   expected error.
+   */
+  type ExpectedResult = Either[StructType, SparkThrowable => Unit]
+  object ExpectedResult {
+    def Success(expectedSchema: StructType): ExpectedResult = Left(expectedSchema)
+    def Failure(checkError: SparkThrowable => Unit): ExpectedResult = Right(checkError)
+  }
+
   /**
    * Test runner to cover INSERT operations defined above.
    * @param name             Test name
@@ -204,15 +230,13 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
    * @param insertJsonData   Data to be inserted (as a JSON string)
    * @param overwriteWhere   Where clause for overwrite PARTITION / REPLACE WHERE (as
    *                         colName -> value)
-   * @param expectedSchema   Expected schema of the table after the insert. Only set this parameter
-   *                         if the insert is expected to succeed.
-   * @param checkError       A check to run on the exception thrown by the insert operation. Only
-   *                         set this parameter if the insert is expected to fail.
+   * @param expectedResult   Expected result, see [[ExpectedResult]] above.
    * @param includeInserts   List of insert types to run the test with. Defaults to all inserts.
    * @param excludeInserts   List of insert types to exclude when running the test. Defaults to no
    *                         inserts excluded.
    * @param confs            Custom spark confs to set before running the insert operation.
    */
+  // scalastyle:off argcount
   def testInserts(name: String)(
       initialSchemaDDL: String,
       initialJsonData: Seq[String],
@@ -220,8 +244,7 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
       insertSchemaDDL: String,
       insertJsonData: Seq[String],
       overwriteWhere: (String, Int),
-      expectedSchema: StructType = null,
-      checkError: SparkThrowable => Unit = null,
+      expectedResult: ExpectedResult,
       includeInserts: Seq[Insert] = allInsertTypes,
       excludeInserts: Seq[Insert] = Seq.empty,
       confs: Seq[(String, String)] = Seq.empty): Unit = {
@@ -239,29 +262,25 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
           val insertDF = readFromJSON(insertJsonData, StructType.fromDDL(insertSchemaDDL))
           insertDF.write.format("delta").saveAsTable("source")
 
+          def runInsert(): Unit =
+            insert.runInsert(
+              columns = insertDF.schema.map(_.name),
+              whereCol = overwriteWhere._1,
+              whereValue = overwriteWhere._2
+            )
+
           withSQLConf(confs: _*) {
-            if (checkError == null) {
-              assert(expectedSchema != null, "You must provide either `expectedSchema` or " +
-                "`checkError` in test method `testInserts`.")
-              insert.runInsert(
-                columns = insertDF.schema.map(_.name),
-                whereCol = overwriteWhere._1,
-                whereValue = overwriteWhere._2
-              )
-              val target = spark.read.table("target")
-              assert(target.schema === expectedSchema)
-              checkAnswer(target, insert.expectedResult(initialDF, insertDF))
-            } else {
-              assert(expectedSchema == null, "You can't provide both `expectedSchema` and " +
-                "`checkError` in test method `testInserts`.")
-              val ex = intercept[SparkThrowable] {
-                insert.runInsert(
-                  columns = insertDF.schema.map(_.name),
-                  whereCol = overwriteWhere._1,
-                  whereValue = overwriteWhere._2
-                )
-              }
-              checkError(ex)
+            expectedResult match {
+              case Left(expectedSchema) =>
+                runInsert()
+                val target = spark.read.table("target")
+                assert(target.schema === expectedSchema)
+                checkAnswer(target, insert.expectedResult(initialDF, insertDF))
+              case Right(checkError) =>
+                val ex = intercept[SparkThrowable] {
+                  runInsert()
+                }
+                checkError(ex)
             }
           }
         }

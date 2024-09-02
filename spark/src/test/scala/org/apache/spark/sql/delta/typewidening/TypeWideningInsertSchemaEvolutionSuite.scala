@@ -168,7 +168,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "a" -> 1,
     insertSchemaDDL = "a int, b int",
     insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
-    expectedSchema = StructType(new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
         metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))),
@@ -182,11 +182,11 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "a" -> 1,
     insertSchemaDDL = "a int, b int, c short",
     insertJsonData = Seq("""{ "a": 1, "b": 5, "c": 6 }"""),
-    expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
         metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
-      .add("c", IntegerType),
+      .add("c", IntegerType)),
     excludeInserts = Seq(StreamingInsert)
   )
 
@@ -197,11 +197,11 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "a" -> 1,
     insertSchemaDDL = "a int, b int, c int",
     insertJsonData = Seq("""{ "a": 1, "b": 4, "c": 5 }"""),
-    expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
         metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
-      .add("c", IntegerType),
+      .add("c", IntegerType)),
     // INSERT INTO/OVERWRITE (a, b) VALUES doesn't support schema evolution.
     excludeInserts = Seq(
       SQLInsertColList(SaveMode.Append),
@@ -219,7 +219,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, s struct<x: short, y: int>, m map<string, int>, a array<int>",
     insertJsonData = Seq("""{ "key": 1, "s": { "x": 4, "y": 5 }, "m": { "p": 6 }, "a": [7] }"""),
-    expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
@@ -236,7 +236,7 @@ trait TypeWideningInsertSchemaEvolutionTests
           version = 1,
           from = ShortType,
           to = IntegerType,
-          path = Seq("element"))),
+          path = Seq("element")))),
     excludeInserts = Seq(StreamingInsert)
   )
 
@@ -251,7 +251,7 @@ trait TypeWideningInsertSchemaEvolutionTests
       "key int, s struct<x: short, y: int, z: int>, m map<string, int>, a array<int>",
     insertJsonData =
       Seq("""{ "key": 1, "s": { "x": 4, "y": 5, "z": 8 }, "m": { "p": 6 }, "a": [7] }"""),
-    expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
@@ -269,7 +269,7 @@ trait TypeWideningInsertSchemaEvolutionTests
           version = 1,
           from = ShortType,
           to = IntegerType,
-          path = Seq("element"))),
+          path = Seq("element")))),
     excludeInserts = Seq(StreamingInsert)
   )
 
@@ -281,12 +281,12 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, s struct<x: short, y: int>",
     insertJsonData = Seq("""{ "key": 1, "s": { "x": 4, "y": 5 } }"""),
-    expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", IntegerType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))),
+          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))),
     excludeInserts = Seq(StreamingInsert)
   )
 
@@ -300,12 +300,12 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, a array<struct<x: short, y: int>>",
     insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
-    expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("key", IntegerType)
       .add("a", ArrayType(new StructType()
         .add("x", IntegerType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))),
+          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))))),
     excludeInserts = Seq(StreamingInsert)
   )
 
@@ -318,15 +318,17 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, m map<string, struct<x: short, y: int>>",
     insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-    expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("key", IntegerType)
       // Type evolution wasn't applied in the map.
       .add("m", MapType(StringType, new StructType()
         .add("x", IntegerType)
-        .add("y", ShortType))),
+        .add("y", ShortType)))),
     excludeInserts = Seq(
       DFv1SaveAsTable(SaveMode.Append),
       DFv1SaveAsTable(SaveMode.Overwrite),
+      DFv1Save(SaveMode.Append),
+      DFv1Save(SaveMode.Overwrite),
       DFv2Append,
       DFv2Overwrite,
       DFv2OverwritePartition,
@@ -341,7 +343,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, m map<string, struct<x: short, y: int>>",
     insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-    expectedSchema = StructType(new StructType()
+    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
       .add("key", IntegerType)
       // Type evolution was applied in the map.
       .add("m", MapType(StringType, new StructType()
@@ -351,10 +353,11 @@ trait TypeWideningInsertSchemaEvolutionTests
     includeInserts = Seq(
       DFv1SaveAsTable(SaveMode.Append),
       DFv1SaveAsTable(SaveMode.Overwrite),
+      DFv1Save(SaveMode.Append),
+      DFv1Save(SaveMode.Overwrite),
       DFv2Append,
       DFv2Overwrite,
-      DFv2OverwritePartition,
-      StreamingInsert
+      DFv2OverwritePartition
     )
   )
 }

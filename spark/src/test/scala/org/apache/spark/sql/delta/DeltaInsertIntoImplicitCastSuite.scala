@@ -41,15 +41,18 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertSchemaDDL = "a int, b long",
       insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
-      expectedSchema = StructType(new StructType()
-        .add("a", LongType)
-        .add("b", IntegerType)),
+      expectedResult = ExpectedResult.Success(
+        expectedSchema = new StructType()
+          .add("a", LongType)
+          .add("b", IntegerType)),
       // The following insert operations don't implicitly cast the data but fail instead - see
       // following test covering failure for these cases. We should change this to offer consistent
       // behavior across all inserts.
       excludeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
+        DFv1Save(SaveMode.Append),
+        DFv1Save(SaveMode.Overwrite),
         DFv2Append,
         DFv2Overwrite,
         DFv2OverwritePartition
@@ -65,7 +68,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertSchemaDDL = "a int, b long",
       insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
-      checkError = ex => {
+      expectedResult = ExpectedResult.Failure(ex => {
         checkError(
           ex,
           errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
@@ -73,10 +76,12 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
             "currentField" -> "a",
             "updateField" -> "a"
           ))
-      },
+      }),
       includeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
+        DFv1Save(SaveMode.Append),
+        DFv1Save(SaveMode.Overwrite),
         DFv2Append,
         DFv2Overwrite,
         DFv2OverwritePartition
@@ -92,17 +97,20 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "key" -> 1,
       insertSchemaDDL = "key int, a array<struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
-      expectedSchema = new StructType()
-        .add("key", IntegerType)
-        .add("a", ArrayType(new StructType()
-          .add("x", LongType)
-          .add("y", IntegerType, nullable = true))),
+      expectedResult = ExpectedResult.Success(
+        expectedSchema = new StructType()
+          .add("key", IntegerType)
+          .add("a", ArrayType(new StructType()
+            .add("x", LongType)
+            .add("y", IntegerType, nullable = true)))),
       // The following insert operations don't implicitly cast the data but fail instead - see
       // following test covering failure for these cases. We should change this to offer consistent
       // behavior across all inserts.
       excludeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
+        DFv1Save(SaveMode.Append),
+        DFv1Save(SaveMode.Overwrite),
         DFv2Append,
         DFv2Overwrite,
         DFv2OverwritePartition
@@ -118,7 +126,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "key" -> 1,
       insertSchemaDDL = "key int, a array<struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
-      checkError = ex => {
+      expectedResult = ExpectedResult.Failure(ex => {
         checkError(
           ex,
           errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
@@ -126,10 +134,12 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
             "currentField" -> "a",
             "updateField" -> "a"
           ))
-      },
+      }),
       includeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
+        DFv1Save(SaveMode.Append),
+        DFv1Save(SaveMode.Overwrite),
         DFv2Append,
         DFv2Overwrite,
         DFv2OverwritePartition
@@ -145,17 +155,20 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "key" -> 1,
       insertSchemaDDL = "key int, m map<string, struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-      expectedSchema = new StructType()
-        .add("key", IntegerType)
-        .add("m", MapType(StringType, new StructType()
-          .add("x", LongType)
-          .add("y", IntegerType))),
+      expectedResult = ExpectedResult.Success(
+        expectedSchema = new StructType()
+          .add("key", IntegerType)
+          .add("m", MapType(StringType, new StructType()
+            .add("x", LongType)
+            .add("y", IntegerType)))),
       // The following insert operations don't implicitly cast the data but fail instead - see
       // following test covering failure for these cases. We should change this to offer consistent
       // behavior across all inserts.
       excludeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
+        DFv1Save(SaveMode.Append),
+        DFv1Save(SaveMode.Overwrite),
         DFv2Append,
         DFv2Overwrite,
         DFv2OverwritePartition
@@ -171,7 +184,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "key" -> 1,
       insertSchemaDDL = "key int, m map<string, struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-      checkError = ex => {
+      expectedResult = ExpectedResult.Failure(ex => {
         checkError(
           ex,
           errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
@@ -179,10 +192,12 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
             "currentField" -> "m",
             "updateField" -> "m"
           ))
-      },
+      }),
       includeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
+        DFv1Save(SaveMode.Append),
+        DFv1Save(SaveMode.Overwrite),
         DFv2Append,
         DFv2Overwrite,
         DFv2OverwritePartition
