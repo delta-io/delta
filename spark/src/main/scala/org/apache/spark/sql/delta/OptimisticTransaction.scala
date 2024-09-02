@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
-import java.util.{ConcurrentModificationException, UUID}
+import java.util.{ConcurrentModificationException, Optional, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.JavaConverters._
@@ -1556,7 +1556,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val updatedActions = new UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
-        effectiveTableCommitCoordinatorClient.commit(attemptVersion, jsonActions, updatedActions)
+        effectiveTableCommitCoordinatorClient.commit(
+          attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
@@ -1706,8 +1707,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             log"file-system based table to coordinated-commits table: " +
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, commitCoordinatorName)}" +
             log", conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, commitCoordinatorConf)}]")
+          val tableIdentifierOpt =
+            CoordinatedCommitsUtils.toCCTableIdentifier(catalogTable.map(_.identifier))
           newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
-            deltaLog.logPath, readVersion, finalMetadata, protocol).asScala.toMap)
+            deltaLog.logPath,
+            tableIdentifierOpt,
+            readVersion,
+            finalMetadata,
+            protocol).asScala.toMap)
         case (None, Some(readCommitCoordinatorClient)) =>
           // CC -> FS conversion
           val (newOwnerName, newOwnerConf) =
@@ -2277,11 +2284,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     override def commit(
         logStore: io.delta.storage.LogStore,
         hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         commitVersion: Long,
         actions: java.util.Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
+      val logPath = tableDesc.getLogPath
       // Get thread local observer for Fuzz testing purpose.
       val executionObserver = TransactionExecutionObserver.getObserver
       val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
@@ -2315,8 +2322,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     override def getCommits(
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         startVersion: java.lang.Long,
         endVersion: java.lang.Long): GetCommitsResponse =
       new GetCommitsResponse(Seq.empty.asJava, -1)
@@ -2324,8 +2330,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     override def backfillToVersion(
         logStore: io.delta.storage.LogStore,
         hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         version: Long,
         lastKnownBackfilledVersion: java.lang.Long): Unit = {}
 
@@ -2344,6 +2349,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     override def registerTable(
         logPath: Path,
+        tableIdentifier: Optional[TableIdentifier],
         currentVersion: Long,
         currentMetadata: AbstractMetadata,
         currentProtocol: AbstractProtocol): java.util.Map[String, String] =
@@ -2380,7 +2386,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
-      tableCommitCoordinatorClient.commit(attemptVersion, jsonActions, updatedActions)
+      tableCommitCoordinatorClient.commit(
+        attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
     }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri

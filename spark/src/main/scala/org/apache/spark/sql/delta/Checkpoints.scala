@@ -361,7 +361,9 @@ trait Checkpoints extends DeltaLogging {
     //   00015.json
     //   00016.json
     //   00018.checkpoint.parquet
-    snapshotToCheckpoint.ensureCommitFilesBackfilled()
+    // TODO(table-identifier-plumbing): Plumb the right tableIdentifier from the Checkpoint Hook
+    //  and pass it to `ensureCommitFilesBackfilled`.
+    snapshotToCheckpoint.ensureCommitFilesBackfilled(tableIdentifierOpt = None)
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 

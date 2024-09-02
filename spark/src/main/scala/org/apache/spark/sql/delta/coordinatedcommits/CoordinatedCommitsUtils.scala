@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
@@ -27,13 +29,14 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
 import io.delta.storage.commit.actions.AbstractMetadata
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.util.Utils
 
@@ -46,6 +49,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   def getCommitsFromCommitCoordinatorWithUsageLogs(
       deltaLog: DeltaLog,
       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
       startVersion: Long,
       versionToLoad: Option[Long],
       isAsyncRequest: Boolean): JGetCommitsResponse = {
@@ -66,7 +70,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
 
       try {
         val response =
-          tableCommitCoordinatorClient.getCommits(Some(startVersion), endVersion = versionToLoad)
+          tableCommitCoordinatorClient.getCommits(
+            tableIdentifierOpt, Some(startVersion), endVersion = versionToLoad)
         val additionalEventData = Map(
           "responseCommitsSize" -> response.getCommits.size,
           "responseLatestTableVersion" -> response.getLatestTableVersion)
@@ -496,5 +501,18 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         }
       }
     }
+  }
+
+  /**
+   * Converts a given Spark [[CatalystTableIdentifier]] to Coordinated Commits [[TableIdentifier]]
+   */
+  def toCCTableIdentifier(
+      catalystTableIdentifierOpt: Option[CatalystTableIdentifier]): Optional[TableIdentifier] = {
+    catalystTableIdentifierOpt.map { catalystTableIdentifier =>
+      val namespace =
+        catalystTableIdentifier.catalog.toSeq ++
+          catalystTableIdentifier.database.toSeq
+      new TableIdentifier(namespace.toArray, catalystTableIdentifier.table)
+    }.map(Optional.of[TableIdentifier]).getOrElse(Optional.empty[TableIdentifier])
   }
 }

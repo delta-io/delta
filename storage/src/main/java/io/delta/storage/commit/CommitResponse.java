@@ -25,7 +25,7 @@ import org.apache.hadoop.fs.Path;
 
 /**
  * Response container for
- * {@link io.delta.storage.commit.CommitCoordinatorClient#commit(LogStore, Configuration, Path, Map, long, Iterator, UpdatedActions)}.
+ * {@link CommitCoordinatorClient#commit(LogStore, Configuration, TableDescriptor, long, Iterator, UpdatedActions)}.
  */
 public class CommitResponse {
 

@@ -399,4 +399,5 @@ While the stream is writing to the Delta table, you can also read from that tabl
   StreamingQuery stream2 = spark.readStream().format("delta").load("/tmp/delta-table").writeStream().format("console").start();
   ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

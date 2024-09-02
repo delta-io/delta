@@ -21,6 +21,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -69,6 +70,15 @@ public class DefaultKernelUtils {
 
   public static long millisToMicros(long millis) {
     return Math.multiplyExact(millis, DateTimeConstants.MICROS_PER_MILLIS);
+  }
+
+  /**
+   * Converts a number of days since epoch (1970-01-01 00:00:00 UTC) to microseconds between epoch
+   * and start of the day in the given timezone.
+   */
+  public static long daysToMicros(int days, ZoneOffset timezone) {
+    long seconds = LocalDate.ofEpochDay(days).atStartOfDay(timezone).toEpochSecond();
+    return seconds * DateTimeConstants.MICROS_PER_SECOND;
   }
 
   /**

@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Optional;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -173,7 +174,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
             fields[index] = new io.delta.standalone.types.StructField(
                 kernelField.getName(),
                 io.delta.standalone.types.DataType.fromJson(
-                    kernelField.getDataType().toJson()
+                    DataTypeJsonSerDe.serializeDataType(kernelField.getDataType())
                 ),
                 kernelField.isNullable(),
                 fieldMetadata

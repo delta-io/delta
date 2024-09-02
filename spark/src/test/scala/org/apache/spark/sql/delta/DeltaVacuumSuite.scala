@@ -1043,7 +1043,8 @@ class DeltaVacuumSuite
     }
   }
 
-  test("hidden metadata dir") {
+
+  test("gc metadata dir when uniform disabled") {
     withEnvironment { (tempDir, clock) =>
       spark.emptyDataset[Int].write.format("delta").save(tempDir)
       val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
@@ -1053,7 +1054,9 @@ class DeltaVacuumSuite
 
         AdvanceClock(defaultTombstoneInterval + 1000),
         GC(dryRun = false, Seq(tempDir)),
-        CheckFiles(Seq("metadata", "metadata/file1.json"))
+        CheckFiles(Seq("metadata/file1.json"), exist = false),
+        GC(dryRun = false, Seq(tempDir)), // Second GC clears empty dir
+        CheckFiles(Seq("metadata"), exist = false)
       )
     }
   }
