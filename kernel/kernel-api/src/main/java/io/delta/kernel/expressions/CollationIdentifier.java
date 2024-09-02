@@ -68,6 +68,8 @@ public class CollationIdentifier {
     }
 
     CollationIdentifier other = (CollationIdentifier) o;
-    return this.provider.equals(other.provider) && this.name.equals(other.name) && this.version.equals(other.version);
+    return this.provider.equals(other.provider)
+        && this.name.equals(other.name)
+        && this.version.equals(other.version);
   }
 }
