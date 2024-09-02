@@ -164,7 +164,7 @@ object DeltaOperations {
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.REMOVE_COLUMN_MAPPING
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -398,7 +398,7 @@ object DeltaOperations {
       properties: Map[String, String]) extends Operation(OP_SET_TBLPROPERTIES) {
     override val parameters: Map[String, Any] = Map("properties" -> JsonUtils.toJson(properties))
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
   /** Recorded when the table properties are unset. */
@@ -409,7 +409,7 @@ object DeltaOperations {
       "properties" -> JsonUtils.toJson(propKeys),
       "ifExists" -> ifExists)
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
   /** Recorded when dropping a table feature. */
@@ -420,7 +420,7 @@ object DeltaOperations {
       "featureName" -> featureName,
       "truncateHistory" -> truncateHistory)
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
   /** Recorded when columns are added. */
@@ -435,7 +435,7 @@ object DeltaOperations {
           ) ++ colPosition.map("position" -> _.toString)
       }))
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -447,7 +447,7 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "columns" -> JsonUtils.toJson(colsToDrop.map(UnresolvedAttribute(_).name)))
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -460,7 +460,7 @@ object DeltaOperations {
       "newColumnPath" -> UnresolvedAttribute(newColumnPath).name
     )
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -475,7 +475,7 @@ object DeltaOperations {
       "column" -> JsonUtils.toJson(structFieldToMap(columnPath, newColumn))
     ) ++ colPosition.map("position" -> _)
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
   /** Recorded when columns are replaced. */
@@ -485,7 +485,7 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "columns" -> JsonUtils.toJson(columns.map(structFieldToMap(Seq.empty, _))))
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -497,7 +497,7 @@ object DeltaOperations {
       "writerFeatures" -> newProtocol.writerFeatures
     )))
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -512,7 +512,7 @@ object DeltaOperations {
   object EmptyCommit extends Operation("Empty Commit") {
     override val parameters: Map[String, Any] = Map.empty
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -526,7 +526,7 @@ object DeltaOperations {
       }))
     }
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -536,7 +536,7 @@ object DeltaOperations {
       "oldSchema" -> JsonUtils.toJson(oldSchema),
       "newSchema" -> JsonUtils.toJson(newSchema))
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -544,7 +544,7 @@ object DeltaOperations {
       constraintName: String, expr: String) extends Operation("ADD CONSTRAINT") {
     override val parameters: Map[String, Any] = Map("name" -> constraintName, "expr" -> expr)
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -558,7 +558,7 @@ object DeltaOperations {
       }
     }
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -660,7 +660,7 @@ object DeltaOperations {
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_START
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -674,7 +674,7 @@ object DeltaOperations {
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_END
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
@@ -700,7 +700,7 @@ object DeltaOperations {
       "oldClusteringColumns" -> oldClusteringColumns,
       "newClusteringColumns" -> newClusteringColumns)
 
-    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
