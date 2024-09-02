@@ -68,11 +68,6 @@ public class CollationFactory {
     }
 
     /**
-     * Array of locale names, each locale ID corresponds to the index in this array.
-     */
-    private static final String[] ICULocaleNames;
-
-    /**
      * Mapping of locale names to corresponding `ULocale` instance.
      */
     private static final Map<String, ULocale> ICULocaleMap = new HashMap<>();
@@ -102,14 +97,15 @@ public class CollationFactory {
     }
 
     private static String getICULocale(CollationIdentifier collationIdentifier) {
-      String collationName = collationIdentifier.getName().toUpperCase();
+      String collationName = collationIdentifier.getName();
+      String collationNameUpperCase = collationIdentifier.getName().toUpperCase();
 
       // Search for the longest locale match because specifiers are designed to be different from
       // script tag and country code, meaning the only valid locale name match can be the longest
       // one.
       int lastPos = -1;
-      for (int i = 1; i <= collationName.length(); i++) {
-        String localeName = collationName.substring(0, i);
+      for (int i = 1; i <= collationNameUpperCase.length(); i++) {
+        String localeName = collationNameUpperCase.substring(0, i);
         if (ICULocaleMapUppercase.containsKey(localeName)) {
           lastPos = i;
         }
@@ -122,7 +118,7 @@ public class CollationFactory {
     }
 
     private static Tuple2<CaseSensitivity, AccentSensitivity> getICUCaseAndAccentSensitivity(CollationIdentifier collationIdentifier, String locale) {
-      String collationName = collationIdentifier.getName().toUpperCase();
+      String collationName = collationIdentifier.getName();
 
       // Try all combinations of AS/AI and CS/CI.
       CaseSensitivity caseSensitivity;
@@ -220,11 +216,6 @@ public class CollationFactory {
         assert (!ICULocaleMapUppercase.containsKey(localeUppercase));
         ICULocaleMapUppercase.put(localeUppercase, localeName);
       }
-      // Construct locale name to ID mapping. Locale ID is defined as index in `ICULocaleNames`.
-      ICULocaleNames = ICULocaleMap.keySet().toArray(new String[0]);
-      Arrays.sort(ICULocaleNames);
-      // Maximum number of locale IDs as defined by binary layout.
-      assert (ICULocaleNames.length <= (1 << 12));
     }
   }
 

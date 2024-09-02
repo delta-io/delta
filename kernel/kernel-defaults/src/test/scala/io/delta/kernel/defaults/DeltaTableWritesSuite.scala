@@ -195,8 +195,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       val txnResult = txn.commit(engine, emptyIterable())
 
-      val dataStringC1 = Seq("a", "č", "ć", "a")
-      val dataStringC2 = Seq("b", "c", "c", "ć")
+      val dataStringC1 = Seq("a", "č", "ć", "a", "c")
+      val dataStringC2 = Seq("b", "c", "c", "ć", "c")
 
       val columnVectorStringC1 =
         VectorUtils.stringVector(scala.collection.JavaConverters.seqAsJavaList(dataStringC1))
@@ -219,6 +219,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
       println(output)
       println(output.getBoolean(0))
+      println(output.getBoolean(1))
+      println(output.getBoolean(2))
+      println(output.getBoolean(3))
+      println(output.getBoolean(4))
     }
   }
 
