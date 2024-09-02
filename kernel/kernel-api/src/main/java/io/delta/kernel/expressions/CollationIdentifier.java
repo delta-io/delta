@@ -41,24 +41,26 @@ public class CollationIdentifier {
   }
 
   public static CollationIdentifier fromString(String identifier) {
-    String[] parts = identifier.split("\\.");
-    if (parts.length == 1) {
+    long numDots = identifier.chars().filter(ch -> ch == '.').count();
+    if (numDots == 0) {
       throw new IllegalArgumentException(
           String.format("Invalid collation identifier: %s", identifier));
-    } else if (parts.length == 2) {
+    } else if (numDots == 1) {
+      String[] parts = identifier.split("\\.");
       return new CollationIdentifier(parts[0], parts[1], Optional.empty());
     } else {
+      String[] parts = identifier.split("\\.", 3);
       return new CollationIdentifier(parts[0], parts[1], Optional.of(parts[2]));
     }
   }
 
   @Override
   public String toString() {
-    String toString = toStringWithoutVersion();
     if (version.isPresent()) {
-      toString = String.format("%s.%s", toString, version.get());
+      return String.format("%s.%s.%s", provider, name, version.get());
+    } else {
+      return String.format("%s.%s", provider, name);
     }
-    return toString;
   }
 
   @Override
