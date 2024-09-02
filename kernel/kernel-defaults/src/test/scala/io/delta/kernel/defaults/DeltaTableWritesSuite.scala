@@ -212,12 +212,13 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         data = Seq(Map.empty[String, Literal] -> Seq(filteredColumnarBatch)))
 
       val collationIdentifier =
-        new CollationIdentifier("ICU", "SR_Latn_SRB", Optional.empty())
+        new CollationIdentifier("ICU", "sr_Latn_SRB_AI", Optional.empty())
       val scalarExpression = new CollatedPredicate("=", new Column("c1"),
         new Column("c2"), collationIdentifier)
       val output = new DefaultExpressionEvaluator(schema,
         scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
       println(output)
+      println(output.getBoolean(0))
     }
   }
 
