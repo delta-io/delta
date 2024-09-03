@@ -23,12 +23,12 @@ jobs:
             .github/workflows/**
             !kernel/**
             !connectors/**
-      - name: install java
+      - name: [Spark Latest] Install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
           java-version: "8"
-      - name: Cache Scala, SBT
+      - name: [Spark Latest] Cache Scala, SBT
         uses: actions/cache@v3
         with:
           path: |
@@ -40,7 +40,7 @@ jobs:
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
           key: delta-sbt-cache-spark3.2-scala${{ matrix.scala }}
-      - name: Install Job dependencies
+      - name: [Spark Latest] Install Job dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
@@ -79,7 +79,7 @@ jobs:
           pipenv run pip install pyarrow==8.0.0
           pipenv run pip install numpy==1.20.3
         if: steps.git-diff.outputs.diff
-      - name: Run Scala/Java and Python tests
+      - name: [Spark Latest] Run Scala/Java and Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |
           TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }}

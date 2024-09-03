@@ -25,27 +25,27 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: [Kernel Docs] Checkout
         uses: actions/checkout@v3
-      - name: install java
+      - name: [Kernel Docs] Install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
           java-version: "8"
-      - name: Generate docs
+      - name: [Kernel Docs] Generate docs
         run: |
           build/sbt kernelGroup/unidoc
           mkdir -p kernel/docs/snapshot/kernel-api/java
           mkdir -p kernel/docs/snapshot/kernel-defaults/java
           cp -r kernel/kernel-api/target/javaunidoc/. kernel/docs/snapshot/kernel-api/java/
           cp -r kernel/kernel-defaults/target/javaunidoc/. kernel/docs/snapshot/kernel-defaults/java/
-      - name: Setup Pages
+      - name: [Kernel Docs] Setup Pages
         uses: actions/configure-pages@v3
-      - name: Upload artifact
+      - name: [Kernel Docs] Upload artifact
         uses: actions/upload-pages-artifact@v1
         with:
           # Upload kernel docs
           path: kernel/docs
-      - name: Deploy to GitHub Pages
+      - name: [Kernel Docs] Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v2
