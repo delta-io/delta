@@ -97,4 +97,27 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
       assert(result.head === data.head)
     }
   }
+
+  test("Re-enable test") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName (col1 INT) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV1' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      write(s"INSERT INTO $testTableName VALUES (1)")
+      readAndVerify(testTableName, "col1", "col1", Seq(Row(1)))
+
+      write(s"ALTER TABLE `$testTableName` UNSET TBLPROPERTIES " +
+        s"('delta.universalFormat.enabledFormats')")
+      write(s"""
+               | REORG TABLE $testTableName APPLY
+               | (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = 2))
+               |""".stripMargin)
+      write(s"INSERT INTO $testTableName VALUES (2)")
+      readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2)))
+    }
+  }
 }

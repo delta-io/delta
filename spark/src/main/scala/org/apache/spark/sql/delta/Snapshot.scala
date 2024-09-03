@@ -38,6 +38,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -572,7 +573,7 @@ class Snapshot(
    * @throws IllegalStateException
    *   if the delta file for the current version is not found after backfilling.
    */
-  def ensureCommitFilesBackfilled(): Unit = {
+  def ensureCommitFilesBackfilled(tableIdentifierOpt: Option[TableIdentifier]): Unit = {
     val tableCommitCoordinatorClient = getTableCommitCoordinatorForWrites.getOrElse {
       return
     }
@@ -580,6 +581,7 @@ class Snapshot(
     if (minUnbackfilledVersion <= version) {
       val hadoopConf = deltaLog.newDeltaHadoopConf()
       tableCommitCoordinatorClient.backfillToVersion(
+        tableIdentifierOpt,
         version,
         lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)

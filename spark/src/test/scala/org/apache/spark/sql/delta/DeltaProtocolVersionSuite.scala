@@ -38,6 +38,7 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{unsafeDeltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.storage.LogStore
+import io.delta.storage.commit.TableDescriptor
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -3985,12 +3986,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val alternatingFailureBackfillClient =
         new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(1000) {
           override def backfillToVersion(
-            logStore: LogStore,
-            hadoopConf: Configuration,
-            logPath: Path,
-            coordinatedCommitsTableConf: java.util.Map[String, String],
-            startVersion: Long,
-            endVersionOpt: java.lang.Long): Unit = {
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tableDesc: TableDescriptor,
+              startVersion: Long,
+              endVersionOpt: java.lang.Long): Unit = {
             // Backfill fails on every other attempt.
             if (shouldFailBackfill) {
               shouldFailBackfill = !shouldFailBackfill
@@ -3999,8 +3999,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               super.backfillToVersion(
                 logStore,
                 hadoopConf,
-                logPath,
-                coordinatedCommitsTableConf,
+                tableDesc,
                 startVersion,
                 endVersionOpt)
             }
@@ -4033,7 +4032,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(!backfilledCommitExists(3))
       // The commit coordinator still tracks the commit that disables it.
       val commitsFromCommitCoordinator =
-        log.snapshot.tableCommitCoordinatorClientOpt.get.getCommits(Some(3))
+        log.snapshot.tableCommitCoordinatorClientOpt.get.getCommits(Some(3L))
       assert(commitsFromCommitCoordinator.getCommits.asScala.exists(_.getVersion == 3))
       // The next drop attempt will also trigger an explicit backfill.
       val usageLogs2 = Log4jUsageLogger.track {

@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.data;
 
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Scan;
@@ -23,6 +22,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -76,26 +76,24 @@ public class ScanStateRow extends GenericRow {
    * Utility method to get the logical schema from the scan state {@link Row} returned by {@link
    * Scan#getScanState(Engine)}.
    *
-   * @param engine instance of {@link Engine} to use.
    * @param scanState Scan state {@link Row}
    * @return Logical schema to read from the data files.
    */
-  public static StructType getLogicalSchema(Engine engine, Row scanState) {
+  public static StructType getLogicalSchema(Row scanState) {
     String serializedSchema = scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
-    return parseSchema(engine, serializedSchema);
+    return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
   }
 
   /**
    * Utility method to get the physical schema from the scan state {@link Row} returned by {@link
    * Scan#getScanState(Engine)}.
    *
-   * @param engine instance of {@link Engine} to use.
    * @param scanState Scan state {@link Row}
    * @return Physical schema to read from the data files.
    */
-  public static StructType getPhysicalSchema(Engine engine, Row scanState) {
+  public static StructType getPhysicalSchema(Row scanState) {
     String serializedSchema = scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
-    return parseSchema(engine, serializedSchema);
+    return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
   }
 
   /**
@@ -110,7 +108,7 @@ public class ScanStateRow extends GenericRow {
   public static StructType getPhysicalDataReadSchema(Engine engine, Row scanState) {
     String serializedSchema =
         scanState.getString(COL_NAME_TO_ORDINAL.get("physicalDataReadSchemaString"));
-    return parseSchema(engine, serializedSchema);
+    return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
   }
 
   /**
@@ -142,12 +140,5 @@ public class ScanStateRow extends GenericRow {
    */
   public static String getTableRoot(Row scanState) {
     return scanState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
-  }
-
-  private static StructType parseSchema(Engine engine, String serializedSchema) {
-    return wrapEngineException(
-        () -> engine.getJsonHandler().deserializeStructType(serializedSchema),
-        "Parsing the schema from the scan state. Schema JSON:\n%s",
-        serializedSchema);
   }
 }

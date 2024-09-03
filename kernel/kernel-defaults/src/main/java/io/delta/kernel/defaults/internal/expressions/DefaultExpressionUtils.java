@@ -24,6 +24,7 @@ import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
@@ -34,13 +35,25 @@ import java.util.stream.Collectors;
 class DefaultExpressionUtils {
 
   static final Comparator<BigDecimal> BIGDECIMAL_COMPARATOR = Comparator.naturalOrder();
-  static final Comparator<String> STRING_COMPARATOR = Comparator.naturalOrder();
+  static final Comparator<String> STRING_COMPARATOR =
+      (leftOp, rightOp) -> {
+        byte[] leftBytes = leftOp.getBytes(StandardCharsets.UTF_8);
+        byte[] rightBytes = rightOp.getBytes(StandardCharsets.UTF_8);
+        int i = 0;
+        while (i < leftBytes.length && i < rightBytes.length) {
+          if (leftBytes[i] != rightBytes[i]) {
+            return Byte.toUnsignedInt(leftBytes[i]) - Byte.toUnsignedInt(rightBytes[i]);
+          }
+          i++;
+        }
+        return Integer.compare(leftBytes.length, rightBytes.length);
+      };
   static final Comparator<byte[]> BINARY_COMPARTOR =
       (leftOp, rightOp) -> {
         int i = 0;
         while (i < leftOp.length && i < rightOp.length) {
           if (leftOp[i] != rightOp[i]) {
-            return Byte.compare(leftOp[i], rightOp[i]);
+            return Byte.toUnsignedInt(leftOp[i]) - Byte.toUnsignedInt(rightOp[i]);
           }
           i++;
         }

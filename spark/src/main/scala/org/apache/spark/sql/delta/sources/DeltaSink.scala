@@ -20,23 +20,26 @@ import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
-import org.apache.spark.sql.delta.actions.{FileAction, SetTransaction}
+import org.apache.spark.sql.delta.actions.{FileAction, Metadata, SetTransaction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaMergingUtils, SchemaUtils}
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.analysis.TableOutputResolver
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Expression}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.execution.streaming.{Sink, StreamExecution}
+import org.apache.spark.sql.execution.streaming.{IncrementalExecution, Sink, StreamExecution}
 import org.apache.spark.sql.streaming.OutputMode
-import org.apache.spark.sql.types.NullType
+import org.apache.spark.sql.types.{DataType, NullType, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -51,6 +54,7 @@ case class DeltaSink(
     catalogTable: Option[CatalogTable] = None)
   extends Sink
     with ImplicitMetadataOperation
+    with UpdateExpressionsSupport
     with DeltaLogging {
 
   private val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
@@ -126,8 +130,9 @@ case class DeltaSink(
       txn.readWholeTable()
     }
 
+    val writeSchema = getWriteSchema(txn.metadata, data.schema)
     // Streaming sinks can't blindly overwrite schema. See Schema Management design doc for details
-    updateMetadata(data.sparkSession, txn, data.schema, partitionColumns, Map.empty,
+    updateMetadata(data.sparkSession, txn, writeSchema, partitionColumns, Map.empty,
       outputMode == OutputMode.Complete(), rearrangeOnly = false)
 
     val currentVersion = txn.txnVersion(queryId)
@@ -144,7 +149,7 @@ case class DeltaSink(
       case _ => Nil
     }
     val (newFiles, writeFilesTimeMs) = Utils.timeTakenMs{
-      txn.writeFiles(data, Some(options))
+      txn.writeFiles(castDataIfNeeded(data, writeSchema), Some(options))
     }
     val totalSize = newFiles.map(_.getFileSize).sum
     val totalLogicalRecords = newFiles.map(_.numLogicalRecords.getOrElse(0L)).sum
@@ -161,6 +166,53 @@ case class DeltaSink(
     return true
   }
 
+  /**
+   * Returns the schema to use to write data to this delta table. The write schema includes new
+   * columns to add with schema evolution and reconciles types to match the table types.
+   */
+  private def getWriteSchema(metadata: Metadata, dataSchema: StructType): StructType = {
+    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return dataSchema
+
+    if (canOverwriteSchema) return dataSchema
+
+    SchemaMergingUtils.mergeSchemas(
+      tableSchema = metadata.schema,
+      dataSchema = dataSchema,
+      allowImplicitConversions = true
+    )
+  }
+
+  /** Casts columns in the given dataframe to match the target schema. */
+  private def castDataIfNeeded(data: DataFrame, targetSchema: StructType): DataFrame = {
+    if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return data
+
+    // We should respect 'spark.sql.caseSensitive' here but writing to a Delta sink is currently
+    // case insensitive so we align with that.
+    val targetTypes =
+      CaseInsensitiveMap[DataType](targetSchema.map(field => field.name -> field.dataType).toMap)
+
+    val needCast = data.schema.exists { field =>
+      !DataTypeUtils.equalsIgnoreCaseAndNullability(field.dataType, targetTypes(field.name))
+    }
+    if (!needCast) return data
+
+    val castColumns = data.columns.map { columnName =>
+      val castExpr = castIfNeeded(
+        fromExpression = data.col(columnName).expr,
+        dataType = targetTypes(columnName),
+        allowStructEvolution = canMergeSchema,
+        columnName = columnName
+      )
+      new Column(Alias(castExpr, columnName)())
+    }
+
+    data.queryExecution match {
+      case i: IncrementalExecution =>
+        DeltaStreamUtils.selectFromStreamingDataFrame(i, data, castColumns: _*)
+      case _: QueryExecution =>
+        data.select(castColumns: _*)
+    }
+  }
 
   override def toString(): String = s"DeltaSink[$path]"
 }
