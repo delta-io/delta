@@ -19,12 +19,12 @@ jobs:
             .github/workflows/**
             !kernel/**
             !connectors/**
-      - name: [Spark Examples] Install java
+      - name: "[Spark Examples] Install java"
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
           java-version: "8"
-      - name: [Spark Examples] Cache Scala, SBT
+      - name: "[Spark Examples] Cache Scala, SBT"
         uses: actions/cache@v3
         with:
           path: |
@@ -36,13 +36,13 @@ jobs:
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
           key: delta-sbt-cache-spark-examples-scala${{ matrix.scala }}
-      - name: [Spark Examples] Install Job dependencies
+      - name: "[Spark Examples] Install Job dependencies"
         run: |
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
           sudo apt install libedit-dev
         if: steps.git-diff.outputs.diff
-      - name: [Spark Examples] Run Delta Spark Local Publishing and Examples Compilation
+      - name: "[Spark Examples] Run Delta Spark Local Publishing and Examples Compilation"
         # examples/scala/build.sbt will compile against the local Delta relase version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.
         # We publish storage explicitly so that it is available for the Scala 2.13 build. As a java project

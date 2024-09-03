@@ -9,11 +9,11 @@
         # These Scala versions must match those in the build.sbt
           scala: [2.13.13, 2.12.18]
       steps:
-        - name: [Unidoc] Install java
+        - name: "[Unidoc] Install java"
           uses: actions/setup-java@v3
           with:
             distribution: "zulu"
             java-version: "8"
         - uses: actions/checkout@v3
-        - name: [Unidoc] Generate unidoc
+        - name: "[Unidoc] Generate unidoc"
           run: build/sbt "++ ${{ matrix.scala }}" unidoc
