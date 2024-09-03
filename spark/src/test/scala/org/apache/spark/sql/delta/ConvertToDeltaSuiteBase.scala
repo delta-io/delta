@@ -188,7 +188,7 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
   }
 
   test("filter non-parquet file for schema inference when not using catalog schema") {
-    withTempDir(prefix = "spark") { dir =>
+    withTempDir { dir =>
       val tempDir = dir.getCanonicalPath
       writeFiles(tempDir + "/part=1/", Seq(1).toDF("corrupted_id"), format = "orc")
       writeFiles(tempDir + "/part=2/", Seq(2).toDF("id"))
