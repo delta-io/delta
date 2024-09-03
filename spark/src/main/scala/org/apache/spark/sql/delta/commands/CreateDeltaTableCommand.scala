@@ -135,8 +135,8 @@ case class CreateDeltaTableCommand(
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
-    CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurations(
-      sparkSession, deltaLog, query, tableWithLocation.properties)
+    CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
+      sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val result = handleCommit(sparkSession, deltaLog, tableWithLocation)
