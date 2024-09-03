@@ -20,6 +20,7 @@ import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta.DeltaConfigs.{COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
 import org.apache.spark.sql.delta.DeltaIllegalArgumentException
+import org.scalatest.Tag
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession

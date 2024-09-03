@@ -47,7 +47,6 @@ import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetComm
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-import org.scalatest.Tag
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
