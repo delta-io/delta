@@ -291,8 +291,8 @@ object ImplicitMetadataOperation {
    * Check whether the provided field is currently being referenced
    * by CHECK constraints or generated columns.
    * Note that we explicitly ignore the check for `StructType` in this
-   * function, since any `StructType` will be checked in
-   * [[checkReferencedByCheckConstraintsOrGeneratedColumns]].
+   * function by only inspecting its inner fields to relax the check;
+   * plus, any `StructType` will be traversed in [[checkDependentExpressions]].
    *
    * @param spark the spark session used.
    * @param path the full column path for the current field.
@@ -301,73 +301,28 @@ object ImplicitMetadataOperation {
    * @param currentDt the current data type.
    * @param updateDt the updated data type.
    */
-  private def checkConstraintsOrGeneratedColumnsExceptStruct(
+  private def checkConstraintsOrGeneratedColumnsOnStructField(
       spark: SparkSession,
       path: Seq[String],
       protocol: Protocol,
       metadata: Metadata,
       currentDt: DataType,
       updateDt: DataType): Unit = (currentDt, updateDt) match {
+    // we explicitly ignore the check for `StructType` here.
     case (StructType(_), StructType(_)) =>
-      // we explicitly ignore the check for `StructType` here.
+
+    // FIXME: we intentionally incorporate the pattern match for `ArrayType` and `MapType`
+    //        here mainly due to the field paths for maps/arrays in constraints/generated columns
+    //        are *NOT* consistent with regular field paths,
+    //        e.g., `hash(a.arr[0].x)` vs. `hash(a.element.x)`.
+    //        this makes it hard to recurse into maps/arrays and check for the corresponding
+    //        fields - thus we can not actually block the operation even if the updated field
+    //        is being referenced by any CHECK constraints or generated columns.
     case (from, to) =>
       if (currentDt != updateDt) {
         checkDependentConstraints(spark, path, metadata, from, to)
         checkDependentGeneratedColumns(spark, path, protocol, metadata, from, to)
       }
-  }
-
-  /**
-   * If the provided data types are `StructType`, check whether the nested/inner fields
-   * of the struct are being referenced by CHECK constraints or generated columns.
-   * It is worth noting that:
-   * 1. we only care about the inner fields of `StructType`,
-   *    for all the other types, e.g., `MapType` or `ArrayType`, we will directly check
-   *    the dependant constraints and generated columns without inspecting the inner fields;
-   *    this indicates we intentionally keep being too strict for `MapType` and `ArrayType`.
-   *
-   * 2. this function will not recursively check any nested `StructType`, the actual traverse
-   *    through the nested struct(s) will be handled by [[SchemaMergingUtils.transformColumns]]
-   *    in [[checkDependentExpressions]].
-   *
-   * @param spark the spark session used.
-   * @param protocol the protocol used.
-   * @param path the full column path for the current field.
-   * @param from the current data type.
-   * @param to the updated data type.
-   * @param metadata the metadata used for checking constraints and generated columns.
-   */
-  private def checkReferencedByCheckConstraintsOrGeneratedColumns(
-      spark: SparkSession,
-      protocol: Protocol,
-      path: Seq[String],
-      from: DataType,
-      to: DataType,
-      metadata: Metadata): Unit = (from, to) match {
-    case (StructType(fromFields), StructType(toFields)) =>
-      fromFields.zip(toFields).foreach { case (fromField, toField) =>
-        checkConstraintsOrGeneratedColumnsExceptStruct(
-          spark = spark,
-          path = path :+ fromField.name,
-          protocol = protocol,
-          metadata = metadata,
-          currentDt = fromField.dataType,
-          updateDt = toField.dataType
-        )
-      }
-    // do note that for `MapType` and `ArrayType`, we intentionally keep being too strict when
-    // checking nested fields - i.e., even if the containing nested fields are not
-    // being referenced by any dependant constraints or generated columns.
-    // reference: <https://github.com/delta-io/delta/pull/3601#discussion_r1731203107>.
-    case (fromDataType, toDataType) =>
-      checkConstraintsOrGeneratedColumnsExceptStruct(
-        spark = spark,
-        path = path,
-        protocol = protocol,
-        metadata = metadata,
-        currentDt = fromDataType,
-        updateDt = toDataType
-      )
   }
 
   /**
@@ -385,13 +340,13 @@ object ImplicitMetadataOperation {
           currentField.dataType,
           updateField.dataType
         ) =>
-        checkReferencedByCheckConstraintsOrGeneratedColumns(
+        checkConstraintsOrGeneratedColumnsOnStructField(
           spark = sparkSession,
-          protocol = protocol,
           path = fieldPath :+ currentField.name,
-          from = currentField.dataType,
-          to = updateField.dataType,
-          metadata = metadata
+          protocol = protocol,
+          metadata = metadata,
+          currentDt = currentField.dataType,
+          updateDt = updateField.dataType
         )
         // We don't transform the schema but just perform checks,
         // the returned field won't be used anyway.
