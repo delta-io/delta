@@ -192,7 +192,7 @@ class DefaultExpressionUtils {
             rowId ->
                 booleanComparator.test(
                     CollationFactory.fetchCollation(((CollatedPredicate) predicate).getCollationIdentifier())
-                        .getCollationComparator().compare(left.getString(rowId), right.getString(rowId)));
+                        .getComparator().compare(left.getString(rowId), right.getString(rowId)));
       } else {
         vectorValueComparator =
             rowId ->

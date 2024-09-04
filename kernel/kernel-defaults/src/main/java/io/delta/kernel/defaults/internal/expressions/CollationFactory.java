@@ -5,29 +5,33 @@ import com.ibm.icu.util.ULocale;
 import io.delta.kernel.expressions.CollationIdentifier;
 import io.delta.kernel.internal.util.Tuple2;
 
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 
 import static io.delta.kernel.defaults.internal.expressions.CollationFactory.Collation.DEFAULT_COLLATION;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.STRING_COMPARATOR;
-import static io.delta.kernel.expressions.CollationIdentifier.ICU_COLLATOR_VERSION;
-import static io.delta.kernel.expressions.CollationIdentifier.PROVIDER_ICU;
+import static io.delta.kernel.expressions.CollationIdentifier.*;
 
 public class CollationFactory {
   private static final Map<CollationIdentifier, Collation> collationMap = new ConcurrentHashMap<>();
 
-  public static Collation fetchCollation(CollationIdentifier collationIdentifier) {
+  public static Collation fetchCollation(String collationName) {
+    if (collationName.startsWith("UTF8")) {
+      return fetchCollation(new CollationIdentifier(PROVIDER_SPARK, collationName));
+    } else {
+      return fetchCollation(new CollationIdentifier(PROVIDER_ICU, collationName));
+    }
+  }
 
-    if (collationIdentifier.equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) {
+  public static Collation fetchCollation(CollationIdentifier collationIdentifier) {
+    if (collationIdentifier.equals(DEFAULT_COLLATION_IDENTIFIER)) {
       return DEFAULT_COLLATION;
     } else if (collationMap.containsKey(collationIdentifier)) {
       return collationMap.get(collationIdentifier);
     } else {
       Collation collation;
-      if (collationIdentifier.getProvider().equals(CollationIdentifier.PROVIDER_SPARK)) {
+      if (collationIdentifier.getProvider().equals(PROVIDER_SPARK)) {
         collation = UTF8CollationFactory.fetchCollation(collationIdentifier);
       } else if (collationIdentifier.getProvider().equals(PROVIDER_ICU)) {
         collation = ICUCollationFactory.fetchCollation(collationIdentifier);
@@ -41,11 +45,11 @@ public class CollationFactory {
 
   private static class UTF8CollationFactory {
     private static Collation fetchCollation(CollationIdentifier collationIdentifier) {
-      if (collationIdentifier.equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) {
-        return new Collation(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER, STRING_COMPARATOR);
+      if (collationIdentifier.equals(DEFAULT_COLLATION_IDENTIFIER)) {
+        return DEFAULT_COLLATION;
       } else {
-        // TODO
-        throw new IllegalArgumentException(String.format("Invalid collation identifier: %s.", collationIdentifier.getProvider()));
+        // TODO UTF8_LCASE
+        throw new IllegalArgumentException(String.format("Invalid collation identifier: %s.", collationIdentifier));
       }
     }
   }
@@ -72,11 +76,6 @@ public class CollationFactory {
      */
     private static final Map<String, ULocale> ICULocaleMap = new HashMap<>();
 
-    /**
-     * Used to parse user input collation names which are converted to uppercase.
-     */
-    private static final Map<String, String> ICULocaleMapUppercase = new HashMap<>();
-
     private static Collation fetchCollation(CollationIdentifier collationIdentifier) {
       if (collationIdentifier.getVersion().isPresent() &&
               !collationIdentifier.getVersion().get().equals(ICU_COLLATOR_VERSION)) {
@@ -96,6 +95,20 @@ public class CollationFactory {
               collator::compare);
     }
 
+    private static String collationName(String locale, CaseSensitivity caseSensitivity, AccentSensitivity accentSensitivity) {
+      StringBuilder builder = new StringBuilder();
+      builder.append(locale);
+      if (caseSensitivity != CaseSensitivity.CS) {
+        builder.append('_');
+        builder.append(caseSensitivity.toString());
+      }
+      if (accentSensitivity != AccentSensitivity.AS) {
+        builder.append('_');
+        builder.append(accentSensitivity.toString());
+      }
+      return builder.toString();
+    }
+
     private static String getICULocale(CollationIdentifier collationIdentifier) {
       String collationName = collationIdentifier.getName();
       String collationNameUpperCase = collationIdentifier.getName().toUpperCase();
@@ -106,7 +119,7 @@ public class CollationFactory {
       int lastPos = -1;
       for (int i = 1; i <= collationNameUpperCase.length(); i++) {
         String localeName = collationNameUpperCase.substring(0, i);
-        if (ICULocaleMapUppercase.containsKey(localeName)) {
+        if (ICULocaleMap.containsKey(localeName)) {
           lastPos = i;
         }
       }
@@ -205,34 +218,37 @@ public class CollationFactory {
           }
           String localeName = builder.toString();
           // Verify locale names are unique.
-          assert (!ICULocaleMap.containsKey(localeName));
-          ICULocaleMap.put(localeName, locale);
+          assert (!ICULocaleMap.containsKey(localeName.toUpperCase()));
+          ICULocaleMap.put(localeName.toUpperCase(), locale);
         }
-      }
-      // Construct uppercase-normalized locale name mapping.
-      for (String localeName : ICULocaleMap.keySet()) {
-        String localeUppercase = localeName.toUpperCase();
-        // Locale names are unique case-insensitively.
-        assert (!ICULocaleMapUppercase.containsKey(localeUppercase));
-        ICULocaleMapUppercase.put(localeUppercase, localeName);
       }
     }
   }
 
   public static class Collation {
 
-    public static Collation DEFAULT_COLLATION = UTF8CollationFactory.fetchCollation(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER);
+    public static Collation DEFAULT_COLLATION = new Collation(DEFAULT_COLLATION_IDENTIFIER, STRING_COMPARATOR);
 
     public Collation(CollationIdentifier collationIdentifier, Comparator<String> collationComparator) {
-      this.collationIdentifier = collationIdentifier;
-      this.collationComparator = collationComparator;
+      this.identifier = collationIdentifier;
+      this.comparator = collationComparator;
+      this.equalsFunction = (s1, s2) -> this.comparator.compare(s1, s2) == 0;
     }
 
-    public Comparator<String> getCollationComparator() {
-      return collationComparator;
+    public CollationIdentifier getCollationIdentifier() {
+      return identifier;
     }
 
-    private final CollationIdentifier collationIdentifier;
-    private final Comparator<String> collationComparator;
+    public Comparator<String> getComparator() {
+      return comparator;
+    }
+
+    public BiFunction<String, String, Boolean> getEqualsFunction() {
+      return equalsFunction;
+    }
+
+    private final CollationIdentifier identifier;
+    private final Comparator<String> comparator;
+    private final BiFunction<String, String, Boolean> equalsFunction;
   }
 }
