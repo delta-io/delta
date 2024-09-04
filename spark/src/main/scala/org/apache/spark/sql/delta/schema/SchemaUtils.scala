@@ -428,7 +428,7 @@ def normalizeColumnNamesInDataType(
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
         case (e: AtomicType, n: AtomicType) if allowTypeWidening =>
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(e, n)
+          TypeWidening.isTypeChangeSupported(e, n)
         case (a, b) => a == b
       }
     }

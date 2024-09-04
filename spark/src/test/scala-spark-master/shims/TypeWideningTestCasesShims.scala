@@ -56,29 +56,23 @@ trait TypeWideningTestCasesShims {
     SupportedTypeEvolutionTestCase(DateType, TimestampNTZType,
       Seq("2020-01-01", "2024-02-29", "1312-02-27"),
       Seq("2020-03-17 15:23:15.123456", "2058-12-31 23:59:59.999", "0001-01-01 00:00:00")),
-    // Larger precision.
+    // Larger precision, same physical type.
+    SupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS - 2, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS, 2),
+      Seq(BigDecimal("1.23"), BigDecimal("10.34"), null.asInstanceOf[BigDecimal]),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 2) + ".99"),
+        null.asInstanceOf[BigDecimal])),
+    // Larger precision, different physical type.
     SupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
       DecimalType(Decimal.MAX_LONG_DIGITS, 2),
-      Seq(BigDecimal("1.23"), BigDecimal("10.34"), null.asInstanceOf[BigDecimal]),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"),
-        null.asInstanceOf[BigDecimal])),
-    // Larger precision and scale, same physical type.
-    SupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS - 1, 2),
-      DecimalType(Decimal.MAX_INT_DIGITS, 3),
-      Seq(BigDecimal("1.23"), BigDecimal("10.34"), null.asInstanceOf[BigDecimal]),
-      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 3) + ".99"),
-        null.asInstanceOf[BigDecimal])),
-    // Larger precision and scale, different physical types.
-    SupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS, 2),
-      DecimalType(Decimal.MAX_LONG_DIGITS + 1, 3),
       Seq(BigDecimal("1.23"), BigDecimal("10.34"), null.asInstanceOf[BigDecimal]),
       Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_LONG_DIGITS - 2) + ".99"),
         null.asInstanceOf[BigDecimal]))
   )
 
-  // Type changes that are only supported in ALTER TABLE CHANGE COLUMN TYPE but are not considered
-  // for automatic type widening.
-  protected val alterTableOnlySupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
+  // Type changes that were only supported during the preview and were removed in the stable version
+  // of the feature.
+  protected val previewOnlySupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(
     SupportedTypeEvolutionTestCase(IntegerType, DoubleType,
       Seq(1, -1, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]),
       Seq(987654321.987654321d, -0d, 0d, Double.NaN, Double.NegativeInfinity,
@@ -95,7 +89,13 @@ trait TypeWideningTestCasesShims {
       Seq(BigDecimal("1.23"), BigDecimal("9" * 10), null.asInstanceOf[BigDecimal])),
     SupportedTypeEvolutionTestCase(LongType, DecimalType(20, 0),
       Seq(1L, -1L, Long.MinValue, Long.MaxValue, null.asInstanceOf[Int]),
-      Seq(BigDecimal("1.23"), BigDecimal("9" * 20), null.asInstanceOf[BigDecimal]))
+      Seq(BigDecimal("1.23"), BigDecimal("9" * 20), null.asInstanceOf[BigDecimal])),
+    // Larger precision and scale.
+    SupportedTypeEvolutionTestCase(DecimalType(Decimal.MAX_INT_DIGITS - 1, 2),
+      DecimalType(Decimal.MAX_INT_DIGITS, 3),
+      Seq(BigDecimal("1.23"), BigDecimal("10.34"), null.asInstanceOf[BigDecimal]),
+      Seq(BigDecimal("-67.89"), BigDecimal("9" * (Decimal.MAX_INT_DIGITS - 3) + ".99"),
+        null.asInstanceOf[BigDecimal]))
   )
 
   // Test type changes that aren't supported.

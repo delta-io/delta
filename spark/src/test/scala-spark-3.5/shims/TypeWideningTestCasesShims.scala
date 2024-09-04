@@ -43,9 +43,9 @@ trait TypeWideningTestCasesShims {
       Seq(4, -4, Int.MinValue, Int.MaxValue, null.asInstanceOf[Int]))
   )
 
-  // Type changes that are only supported in ALTER TABLE CHANGE COLUMN TYPE but are not considered
-  // for automatic type widening.
-  protected val alterTableOnlySupportedTestCases: Seq[TypeEvolutionTestCase] = Seq.empty
+  // Type changes that were only supported during the preview and were removed in the stable version
+  // of the feature.
+  protected val previewOnlySupportedTestCases: Seq[TypeEvolutionTestCase] = Seq.empty
 
   // Test type changes that aren't supported.
   protected val unsupportedTestCases: Seq[TypeEvolutionTestCase] = Seq(

@@ -78,7 +78,7 @@ trait TypeWideningInsertSchemaEvolutionTests
   }
 
   for {
-    testCase <- unsupportedTestCases ++ alterTableOnlySupportedTestCases
+    testCase <- unsupportedTestCases ++ previewOnlySupportedTestCases
   } {
     test(s"INSERT - unsupported automatic type widening " +
       s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {

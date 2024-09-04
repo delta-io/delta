@@ -216,7 +216,7 @@ object SchemaMergingUtils {
         case (current, update) if keepExistingType => current
 
         case (current: AtomicType, update: AtomicType) if allowTypeWidening &&
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(current, update) => update
+          TypeWidening.isTypeChangeSupported(current, update) => update
 
         // If implicit conversions are allowed, that means we can use any valid implicit cast to
         // perform the merge.

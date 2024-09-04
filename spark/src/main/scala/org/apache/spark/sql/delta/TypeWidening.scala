@@ -16,9 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 
-import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types._
 
 object TypeWidening {
@@ -69,13 +68,6 @@ object TypeWidening {
     TypeWideningShims.isTypeChangeSupported(fromType, toType)
 
   /**
-   * Returns whether the given type change can be applied during schema evolution. Only a
-   * subset of supported type changes are considered for schema evolution.
-   */
-  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType)
-
-  /**
    * Asserts that the given table doesn't contain any unsupported type changes. This should never
    * happen unless a non-compliant writer applied a type change that is not part of the feature
    * specification.
@@ -88,7 +80,7 @@ object TypeWidening {
 
     TypeWideningMetadata.getAllTypeChanges(metadata.schema).foreach {
       case (_, TypeChange(_, from: AtomicType, to: AtomicType, _))
-        if isTypeChangeSupported(from, to) =>
+        if TypeWideningShims.canReadTypeChange(from, to) =>
       case (fieldPath, invalidChange) =>
         throw DeltaErrors.unsupportedTypeChangeInSchema(
           fieldPath ++ invalidChange.fieldPath,

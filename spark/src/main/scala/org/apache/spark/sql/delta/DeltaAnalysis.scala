@@ -921,7 +921,7 @@ class DeltaAnalysis(session: SparkSession)
           if s != t && sNull == tNull =>
         addCastsToArrayStructs(tblName, attr, s, t, sNull, allowTypeWidening)
       case (s: AtomicType, t: AtomicType)
-        if allowTypeWidening && TypeWidening.isTypeChangeSupportedForSchemaEvolution(t, s) =>
+        if allowTypeWidening && TypeWidening.isTypeChangeSupported(t, s) =>
         // Keep the type from the query, the target schema will be updated to widen the existing
         // type to match it.
         attr
@@ -1069,8 +1069,7 @@ class DeltaAnalysis(session: SparkSession)
         }
 
       case (StructField(name, dt: AtomicType, _, _), i) if i < target.length && allowTypeWidening &&
-        TypeWidening.isTypeChangeSupportedForSchemaEvolution(
-          target(i).dataType.asInstanceOf[AtomicType], dt) =>
+        TypeWidening.isTypeChangeSupported(target(i).dataType.asInstanceOf[AtomicType], dt) =>
         val targetAttr = target(i)
         Alias(
           GetStructField(parent, i, Option(name)),

@@ -26,10 +26,15 @@ import org.apache.spark.sql.types._
  * - byte -> short -> int -> long.
  * - float -> double.
  * - date -> timestamp_ntz.
+ * - decimal -> decimal with larger precision (but same scale).
+ *
+ * Additionally, the following type changes were allowed during the preview but can't be applied
+ * anymore in the stable version to avoid creating a feature gap with iceberg:
  * - {byte, short, int} -> double.
- * - decimal -> wider decimal.
  * - {byte, short, int} -> decimal(10, 0) and wider.
  * - long -> decimal(20, 0) and wider.
+ * - decimal -> wider decimal with larger scale
+ * These type changes can still be read back if they were applied on a table during the preview.
  */
 object TypeWideningShims {
 
@@ -45,7 +50,23 @@ object TypeWideningShims {
       case (from, to) if !Cast.canUpCast(from, to) => false
       case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
       case (FloatType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType) =>
+        to.precision >= from.precision && to.scale == from.scale
       case (DateType, TimestampNTZType) => true
+      case _ => false
+    }
+
+  /**
+   * Whether we support reading the given type change. Note that this is a superset of the
+   * supported type changes as it includes type changes that were only allowed during the preview
+   * phase and can't be applied anymore, but that we still allow reading.
+   */
+  def canReadTypeChange(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if isTypeChangeSupported(from, to) => true
+      // The following were supported during the preview but can't be applied anymore on tables
+      // using the stable version of the feature. We still allow reading them for backward
+      // compatibility.
       case (ByteType | ShortType | IntegerType, DoubleType) => true
       case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
       // Byte, Short, Integer are all stored as INT32 in parquet. The parquet readers support
@@ -53,21 +74,6 @@ object TypeWideningShims {
       case (ByteType | ShortType | IntegerType, d: DecimalType) => d.isWiderThan(IntegerType)
       // The parquet readers support converting INT64 to Decimal(20, 0) and wider.
       case (LongType, d: DecimalType) => d.isWiderThan(LongType)
-      case _ => false
-    }
-
-  /**
-   * Returns whether the given type change can be applied during schema evolution. Only a
-   * subset of supported type changes are considered for schema evolution.
-   */
-  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
-    (fromType, toType) match {
-      case (from, to) if from == to => true
-      case (from, to) if !isTypeChangeSupported(from, to) => false
-      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
-      case (FloatType, DoubleType) => true
-      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
-      case (DateType, TimestampNTZType) => true
       case _ => false
     }
 }
