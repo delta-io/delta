@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
@@ -161,6 +162,8 @@ case class AlterTableSetPropertiesDeltaCommand(
           true
       }.toMap
 
+      CoordinatedCommitsUtils.validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
+        metadata.configuration, filteredConfs)
       val newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
         configuration = metadata.configuration ++ filteredConfs)
@@ -193,7 +196,8 @@ case class AlterTableSetPropertiesDeltaCommand(
 case class AlterTableUnsetPropertiesDeltaCommand(
     table: DeltaTableV2,
     propKeys: Seq[String],
-    ifExists: Boolean)
+    ifExists: Boolean,
+    fromDropFeatureCommand: Boolean = false)
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -223,6 +227,10 @@ case class AlterTableUnsetPropertiesDeltaCommand(
         }
       }
 
+      if (!fromDropFeatureCommand) {
+        CoordinatedCommitsUtils.validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
+          metadata.configuration, normalizedKeys)
+      }
       val newConfiguration = metadata.configuration.filterNot {
         case (key, _) => normalizedKeys.contains(key)
       }

@@ -279,6 +279,12 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "ALTER cannot unset coordinated commits configurations. To downgrade a table from coordinated commits, please try again using `ALTER TABLE [table-name] DROP FEATURE 'coordinatedCommits-preview'`."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
       "Cannot update %1$s field %2$s type: update the element by updating %2$s.element"
