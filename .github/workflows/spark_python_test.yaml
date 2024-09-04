@@ -1,8 +1,8 @@
-name: "Delta Spark Python Tests"
+name: "Delta Spark Python"
 on: [push, pull_request]
 jobs:
   test:
-    name: "Delta Spark Python"
+    name: "DSP"
     runs-on: ubuntu-20.04
     strategy:
       matrix:

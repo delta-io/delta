@@ -1,8 +1,8 @@
-name: "Delta Spark Local Publishing and Examples Compilation"
+name: "Delta Spark Publishing and Examples"
 on: [push, pull_request]
 jobs:
   test:
-    name: "Delta Spark Local Publishing and Examples Compilation: Scala ${{ matrix.scala }}"
+    name: "DSP&E: Scala ${{ matrix.scala }}"
     runs-on: ubuntu-20.04
     strategy:
       matrix:
