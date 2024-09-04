@@ -2,7 +2,7 @@ name: "Delta Connectors Tests"
 on: [push, pull_request]
 jobs:
   build:
-    name: "Run tests"
+    name: "Delta Connectors: Scala ${{ matrix.scala }}"
     runs-on: ubuntu-20.04
     strategy:
       matrix:

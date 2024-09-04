@@ -2,6 +2,7 @@ name: "Delta Spark Python Tests"
 on: [push, pull_request]
 jobs:
   test:
+    name: "Delta Spark Python"
     runs-on: ubuntu-20.04
     strategy:
       matrix:

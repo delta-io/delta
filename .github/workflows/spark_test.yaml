@@ -2,6 +2,7 @@ name: "Delta Spark Tests"
 on: [push, pull_request]
 jobs:
   test:
+    name: "Delta Spark Latest: Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-20.04
     strategy:
       matrix:
