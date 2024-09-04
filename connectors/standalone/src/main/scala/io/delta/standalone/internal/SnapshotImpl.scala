@@ -83,7 +83,7 @@ private[internal] class SnapshotImpl(
 
   import SnapshotImpl._
 
-  private var loadedState = false
+  @volatile private var loadedState = false
 
   private val memoryOptimizedLogReplay =
     new MemoryOptimizedLogReplay(files, deltaLog.store, hadoopConf, deltaLog.timezone)
