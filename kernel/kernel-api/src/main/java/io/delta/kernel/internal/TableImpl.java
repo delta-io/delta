@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
@@ -109,5 +110,82 @@ public class TableImpl implements Table {
 
   protected Path getLogPath() {
     return new Path(tablePath, "_delta_log");
+  }
+
+  /**
+   * Returns the latest version that was committed before or at {@code millisSinceEpochUTC}.
+   * If no version exists, throws a {@link KernelException}
+   *
+   * Specifically:
+   * <ul>
+   *     <li>if a commit version exactly matches the provided timestamp, we return it</li>
+   *     <li>else, we return the latest commit version with a timestamp less than the
+   *         provided one</li>
+   *     <li>If the provided timestamp is less than the timestamp of any committed version,
+   *         we throw an error.</li>
+   * </ul>.
+   *
+   * @param millisSinceEpochUTC the number of milliseconds since midnight, January 1, 1970 UTC
+   * @return latest commit that happened before or at {@code timestamp}.
+   * @throws KernelException if the timestamp is less than the timestamp of any committed
+   *                         version
+   * @throws TableNotFoundException if no delta table is found
+   */
+  public long getVersionBeforeOrAtTimestamp(Engine engine, long millisSinceEpochUTC) {
+    return DeltaHistoryManager.getActiveCommitAtTimestamp(
+            engine,
+            getLogPath(),
+            millisSinceEpochUTC,
+            false, /* mustBeRecreatable */
+            // e.g. if we give time T+2 and last commit has time T, then we DO want that last commit
+            true, /* canReturnLastCommit */
+            // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest
+            // commit
+            false /* canReturnEarliestCommit */)
+        .version;
+  }
+
+  /**
+   * Returns the latest version that was committed at or after {@code millisSinceEpochUTC}.
+   * If no version exists, throws a {@link KernelException}
+   *
+   * Specifically:
+   * <ul>
+   *     <li>if a commit version exactly matches the provided timestamp, we return it</li>
+   *     <li>else, we return the earliest commit version with a timestamp greater than the
+   *         provided one</li>
+   *     <li>If the provided timestamp is larger than the timestamp of any committed version,
+   *         we throw an error.</li>
+   * </ul>.
+   *
+   * @param millisSinceEpochUTC the number of milliseconds since midnight, January 1, 1970 UTC
+   * @return latest commit that happened at or before {@code timestamp}.
+   * @throws KernelException if the timestamp is more than the timestamp of any committed
+   *                         version
+   * @throws TableNotFoundException if no delta table is found
+   */
+  public long getVersionAtOrAfterTimestamp(Engine engine, long millisSinceEpochUTC) {
+    DeltaHistoryManager.Commit commit =
+        DeltaHistoryManager.getActiveCommitAtTimestamp(
+            engine,
+            getLogPath(),
+            millisSinceEpochUTC,
+            false, /* mustBeRecreatable */
+            // e.g. if we give time T+2 and last commit has time T, then we do NOT want that last
+            // commit
+            false, /* canReturnLastCommit */
+            // e.g. we give time T-1 and first commit has time T, then we DO want that earliest
+            // commit
+            true /* canReturnEarliestCommit */);
+
+    if (commit.timestamp >= millisSinceEpochUTC) {
+      return commit.version;
+    } else {
+      // this commit.timestamp is before the input timestamp. if this is the last commit, then the
+      // input timestamp is after the last commit and `getActiveCommitAtTime` would have thrown
+      // an KernelException. So, clearly, this can't be the last commit, so we can safely
+      // return commit.version + 1 as the version that is at or after the input timestamp.
+      return commit.version + 1;
+    }
   }
 }

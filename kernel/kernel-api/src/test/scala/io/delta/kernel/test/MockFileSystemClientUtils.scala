@@ -141,3 +141,23 @@ class MockListFromFileSystemClient(listFromProvider: String => Seq[FileStatus])
 
   def getListFromCalls: Seq[String] = listFromCalls
 }
+
+/**
+ * A mock [[FileSystemClient]] that answers `listFrom` calls from a given content provider and
+ * implements the identity function for `resolvePath` calls.
+ *
+ * It also maintains metrics on number of times `listFrom` is called and arguments for each call.
+ */
+class MockListFromResolvePathFileSystemClient(listFromProvider: String => Seq[FileStatus])
+  extends BaseMockFileSystemClient {
+  private var listFromCalls: Seq[String] = Seq.empty
+
+  override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+    listFromCalls = listFromCalls :+ filePath
+    toCloseableIterator(listFromProvider(filePath).iterator.asJava)
+  }
+
+  override def resolvePath(path: String): String = path
+
+  def getListFromCalls: Seq[String] = listFromCalls
+}
