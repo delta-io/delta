@@ -24,6 +24,7 @@ import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /** Contains methods to create user-facing Delta exceptions. */
@@ -84,6 +85,55 @@ public final class DeltaErrors {
             latestCommitVersion,
             latestCommitTimestamp,
             formatTimestamp(latestCommitTimestamp));
+    return new KernelException(message);
+  }
+
+  public static KernelException noCommitFilesFoundForVersionRange(
+      String tablePath, long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "%s: Requested table changes between [%s, %s] but no log files found in the requested"
+                + " version range.",
+            tablePath, startVersion, endVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException startVersionNotFound(
+      String tablePath, long startVersionRequested, Optional<Long> earliestAvailableVersion) {
+    String message =
+        String.format(
+            "%s: Requested table changes beginning with startVersion=%s but no log file found for "
+                + "version %s.",
+            tablePath, startVersionRequested, startVersionRequested);
+    if (earliestAvailableVersion.isPresent()) {
+      message =
+          message
+              + String.format(" Earliest available version is %s", earliestAvailableVersion.get());
+    }
+    return new KernelException(message);
+  }
+
+  public static KernelException endVersionNotFound(
+      String tablePath, long endVersionRequested, Optional<Long> latestAvailableVersion) {
+    String message =
+        String.format(
+            "%s: Requested table changes ending with endVersion=%d but no log file found for "
+                + "version %d%s",
+            tablePath,
+            endVersionRequested,
+            endVersionRequested,
+            latestAvailableVersion
+                .map(version -> String.format(". Latest available version is %d", version))
+                .orElse(""));
+    return new KernelException(message);
+  }
+
+  public static KernelException invalidVersionRange(long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "Invalid version range: requested table changes for version range [%s, %s]. "
+                + "Requires startVersion >= 0 and endVersion >= startVersion.",
+            startVersion, endVersion);
     return new KernelException(message);
   }
 
