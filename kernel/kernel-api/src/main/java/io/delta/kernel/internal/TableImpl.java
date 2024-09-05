@@ -149,7 +149,7 @@ public class TableImpl implements Table {
    *     range
    * @throws KernelException if provided an invalid version range
    */
-  private CloseableIterator<ColumnarBatch> getChangesByVersion(
+  private CloseableIterator<ColumnarBatch> getRawChanges(
       Engine engine,
       long startVersion,
       long endVersion,
@@ -204,7 +204,7 @@ public class TableImpl implements Table {
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     if (actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL)) {
-      return getChangesByVersion(engine, startVersion, endVersion, actionSet)
+      return getRawChanges(engine, startVersion, endVersion, actionSet)
           .map(
               batch -> {
                 int protocolIdx =
@@ -220,7 +220,7 @@ public class TableImpl implements Table {
                 return batch;
               });
     } else {
-      return getChangesByVersion(engine, startVersion, endVersion, actionSet);
+      return getRawChanges(engine, startVersion, endVersion, actionSet);
     }
   }
 }

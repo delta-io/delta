@@ -75,7 +75,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
   }
 
   // Golden table from Delta Standalone test
-  test("getChangesByVersion - golden table deltalog-getChanges valid queries") {
+  test("getChanges - golden table deltalog-getChanges valid queries") {
     withGoldenTable("deltalog-getChanges") { tablePath =>
       // request subset of actions
       testGetChangesVsSpark(
@@ -118,7 +118,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - returns correct timestamps") {
+  test("getChanges - returns correct timestamps") {
     withTempDir { tempDir =>
 
       def generateCommits(path: String, commits: Long*): Unit = {
@@ -163,7 +163,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - empty _delta_log folder") {
+  test("getChanges - empty _delta_log folder") {
     withTempDir { tempDir =>
       new File(tempDir, "delta_log").mkdirs()
       intercept[TableNotFoundException] {
@@ -174,7 +174,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - empty folder no _delta_log dir") {
+  test("getChanges - empty folder no _delta_log dir") {
     withTempDir { tempDir =>
       intercept[TableNotFoundException] {
         Table.forPath(defaultEngine, tempDir.getCanonicalPath)
@@ -184,7 +184,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - non-empty folder not a delta table") {
+  test("getChanges - non-empty folder not a delta table") {
     withTempDir { tempDir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(tempDir.getCanonicalPath)
       intercept[TableNotFoundException] {
@@ -195,7 +195,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - directory does not exist") {
+  test("getChanges - directory does not exist") {
     intercept[TableNotFoundException] {
       Table.forPath(defaultEngine, "/fake/table/path")
         .asInstanceOf[TableImpl]
@@ -203,7 +203,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - golden table deltalog-getChanges invalid queries") {
+  test("getChanges - golden table deltalog-getChanges invalid queries") {
     withGoldenTable("deltalog-getChanges") { tablePath =>
       def getChangesByVersion(
         startVersion: Long, endVersion: Long): CloseableIterator[ColumnarBatch] = {
@@ -234,7 +234,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - with truncated log") {
+  test("getChanges - with truncated log") {
     withTempDir { tempDir =>
       // PREPARE TEST TABLE
       val tablePath = tempDir.getCanonicalPath
@@ -296,7 +296,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - table with a lot of changes") {
+  test("getChanges - table with a lot of changes") {
     withTempDir { tempDir =>
       spark.sql(
         f"""
