@@ -354,17 +354,15 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     // We test our protocol checks for table features in TableFeaturesSuite
     // Min reader version is too high
     assert(intercept[KernelException] {
+      // Use toSeq because we need to consume the iterator to force the exception
       Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
         .asInstanceOf[TableImpl]
-        .getChanges(defaultEngine, 0, 0, FULL_ACTION_SET.asJava)
+        .getChanges(defaultEngine, 0, 0, FULL_ACTION_SET.asJava).toSeq
     }.getMessage.contains("Unsupported Delta protocol reader version"))
     // No error if we don't request the protocol file action
-    testGetChangesVsSpark(
-      goldenTablePath("deltalog-invalid-protocol-version"),
-      0,
-      0,
-      Set(DeltaAction.ADD)
-    )
+    Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
+      .asInstanceOf[TableImpl]
+      .getChanges(defaultEngine, 0, 0, Set(DeltaAction.ADD).asJava).toSeq
   }
 
   //////////////////////////////////////////////////////////////////////////////////

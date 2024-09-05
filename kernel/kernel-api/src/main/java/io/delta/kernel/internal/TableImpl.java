@@ -170,9 +170,9 @@ public class TableImpl implements Table {
 
   /**
    * Returns the raw delta actions for each version between startVersion and endVersion. Only reads
-   * the actions requested in actionSet from the JSON log files. When
-   * {@link DeltaLogActionUtils.DeltaAction#PROTOCOL} is present in {@code actionSet} Kernel also
-   * performs read protocol checks on any protocol actions read.
+   * the actions requested in actionSet from the JSON log files. When {@link
+   * DeltaLogActionUtils.DeltaAction#PROTOCOL} is present in {@code actionSet} Kernel also performs
+   * read protocol checks on any protocol actions read.
    *
    * <p>For the returned columnar batches:
    *
@@ -195,8 +195,8 @@ public class TableImpl implements Table {
    * @throws KernelException if a commit file does not exist for any of the versions in the provided
    *     range
    * @throws KernelException if provided an invalid version range
-   * @throws KernelException if {@link DeltaLogActionUtils.DeltaAction#PROTOCOL} is in actionSet
-   *                         and a Protocol action that is not read supported by Kernel is read
+   * @throws KernelException if {@link DeltaLogActionUtils.DeltaAction#PROTOCOL} is in actionSet and
+   *     a Protocol action that is not read supported by Kernel is read
    */
   public CloseableIterator<ColumnarBatch> getChanges(
       Engine engine,
