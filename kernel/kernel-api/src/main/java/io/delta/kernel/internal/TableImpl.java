@@ -18,11 +18,13 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 
 import io.delta.kernel.*;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Clock;
@@ -33,6 +35,7 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -146,7 +149,7 @@ public class TableImpl implements Table {
    *     range
    * @throws KernelException if provided an invalid version range
    */
-  public CloseableIterator<ColumnarBatch> getChangesByVersion(
+  private CloseableIterator<ColumnarBatch> getChangesByVersion(
       Engine engine,
       long startVersion,
       long endVersion,
@@ -163,5 +166,61 @@ public class TableImpl implements Table {
                 .collect(Collectors.toList()));
 
     return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
+  }
+
+  /**
+   * Returns the raw delta actions for each version between startVersion and endVersion. Only reads
+   * the actions requested in actionSet from the JSON log files. When
+   * {@link DeltaLogActionUtils.DeltaAction#PROTOCOL} is present in {@code actionSet} Kernel also
+   * performs read protocol checks on any protocol actions read.
+   *
+   * <p>For the returned columnar batches:
+   *
+   * <ul>
+   *   <li>Each row within the same batch is guaranteed to have the same commit version
+   *   <li>The batch commit versions are monotonically increasing
+   *   <li>The top-level columns include "version", "timestamp", and the actions requested in
+   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
+   *       respectively. The remaining columns are based on the actions requested and each have the
+   *       schema found in {@code DeltaAction.schema}.
+   * </ul>
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @param startVersion start version (inclusive)
+   * @param endVersion end version (inclusive)
+   * @param actionSet the actions to read and return from the JSON log files
+   * @return an iterator of batches where each row in the batch has exactly one non-null action and
+   *     its commit version and timestamp
+   * @throws TableNotFoundException if the table does not exist or if it is not a delta table
+   * @throws KernelException if a commit file does not exist for any of the versions in the provided
+   *     range
+   * @throws KernelException if provided an invalid version range
+   * @throws KernelException if {@link DeltaLogActionUtils.DeltaAction#PROTOCOL} is in actionSet
+   *                         and a Protocol action that is not read supported by Kernel is read
+   */
+  public CloseableIterator<ColumnarBatch> getChanges(
+      Engine engine,
+      long startVersion,
+      long endVersion,
+      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    if (actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL)) {
+      return getChangesByVersion(engine, startVersion, endVersion, actionSet)
+          .map(
+              batch -> {
+                int protocolIdx =
+                    batch.getSchema().indexOf("protocol"); // must exist due to outer check
+                ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+                for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
+                  if (!protocolVector.isNullAt(rowId)) {
+                    Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+                    TableFeatures.validateReadSupportedTable(
+                        protocol, Optional.empty(), getDataPath().toString());
+                  }
+                }
+                return batch;
+              });
+    } else {
+      return getChangesByVersion(engine, startVersion, endVersion, actionSet);
+    }
   }
 }
