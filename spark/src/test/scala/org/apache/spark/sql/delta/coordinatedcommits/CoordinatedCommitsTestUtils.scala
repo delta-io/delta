@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.coordinatedcommits
 import java.util.Optional
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
@@ -323,6 +325,32 @@ trait CoordinatedCommitsBaseSuite
   def coordinatedCommitsBackfillBatchSize: Option[Int] = None
 
   final def coordinatedCommitsEnabledInTests: Boolean = coordinatedCommitsBackfillBatchSize.nonEmpty
+
+  // In case some tests reuse the table path/name with DROP table, this method can be used to
+  // clean the table data in the commit coordinator. Note that we should call this before
+  // the table actually gets DROP.
+  def deleteTableFromCommitCoordinator(tableName: String): Unit = {
+    val cc = CommitCoordinatorProvider.getCommitCoordinatorClient(
+      defaultCommitsCoordinatorName, defaultCommitsCoordinatorConf, spark)
+    assert(
+      cc.isInstanceOf[TrackingCommitCoordinatorClient],
+      s"Please implement delete/drop method for coordinator: ${cc.getClass.getName}")
+    val location = try {
+      spark.sql(s"describe detail $tableName")
+        .select("location")
+        .first
+        .getAs[String](0)
+    } catch {
+      case NonFatal(_) =>
+        // Ignore if the table does not exist/broken.
+        return
+    }
+    val logPath = location + "/_delta_log"
+    cc.asInstanceOf[TrackingCommitCoordinatorClient]
+      .delegatingCommitCoordinatorClient
+      .asInstanceOf[InMemoryCommitCoordinator]
+      .dropTable(new Path(logPath))
+  }
 
   override protected def sparkConf: SparkConf = {
     if (coordinatedCommitsBackfillBatchSize.nonEmpty) {
