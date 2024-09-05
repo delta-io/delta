@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DeltaVacuumSuiteShims._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -56,7 +57,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
   with GivenWhenThen
   with DeltaSQLTestUtils
   with DeletionVectorsTestUtils
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with CoordinatedCommitsBaseSuite {
 
   private def executeWithEnvironment(file: File)(f: (File, ManualClock) => Unit): Unit = {
     val clock = new ManualClock()
@@ -1354,4 +1356,8 @@ class DeltaVacuumSuite
     retentionHours = 20, // vacuum will not delete any files
     timeGapHours = 10
   )
+}
+
+class DeltaVacuumWithCoordinatedCommitsBatch100Suite extends DeltaVacuumSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -293,7 +293,8 @@ public class TransactionImpl implements Transaction {
         operation.getDescription(), /* description */
         getOperationParameters(), /* operationParameters */
         isBlindAppend(), /* isBlindAppend */
-        txnId.toString() /* txnId */);
+        txnId.toString(), /* txnId */
+        Collections.emptyMap() /* operationMetrics */);
   }
 
   private boolean isReadyForCheckpoint(Engine engine, long newVersion) {

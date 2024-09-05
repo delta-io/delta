@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
+import java.lang.{Long => JLong}
+import java.util.{Iterator => JIterator, Optional}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -34,17 +36,17 @@ import org.apache.spark.sql.delta.LogSegment
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaExceptionTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
-import org.scalatest.Tag
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
@@ -56,7 +58,8 @@ class CoordinatedCommitsSuite
     with DeltaSQLTestUtils
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with CoordinatedCommitsTestUtils {
+    with CoordinatedCommitsTestUtils
+    with DeltaExceptionTestUtils {
 
   import testImplicits._
 
@@ -111,10 +114,9 @@ class CoordinatedCommitsSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              logPath: Path,
-              coordinatedCommitsTableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
-              actions: java.util.Iterator[String],
+              actions: JIterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             throw new IllegalStateException("Fail commit request")
           }
@@ -402,15 +404,14 @@ class CoordinatedCommitsSuite
       var failAttempts = Set[Int]()
 
       override def getCommits(
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
-        startVersion: java.lang.Long,
-        endVersion: java.lang.Long): JGetCommitsResponse = {
+          tableDesc: TableDescriptor,
+          startVersion: java.lang.Long,
+          endVersion: java.lang.Long): JGetCommitsResponse = {
         if (failAttempts.contains(numGetCommitsCalled.get + 1)) {
           numGetCommitsCalled.incrementAndGet()
           throw new IllegalStateException("Injected failure")
         }
-        super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+        super.getCommits(tableDesc, startVersion, endVersion)
       }
     }
     case class TrackingInMemoryCommitCoordinatorClientBuilder(
@@ -754,48 +755,45 @@ class CoordinatedCommitsSuite
         new InMemoryCommitCoordinator(batchSize = 10) {
           override def registerTable(
               logPath: Path,
+              tableIdentifier: Optional[TableIdentifier],
               currentVersion: Long,
               currentMetadata: AbstractMetadata,
               currentProtocol: AbstractProtocol): java.util.Map[String, String] = {
-            super.registerTable(logPath, currentVersion, currentMetadata, currentProtocol)
+            super.registerTable(
+              logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
             tableConf
           }
 
           override def getCommits(
-              logPath: Path,
-              coordinatedCommitsTableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               startVersion: java.lang.Long,
               endVersion: java.lang.Long): JGetCommitsResponse = {
-            assert(coordinatedCommitsTableConf === tableConf)
-            super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+            assert(tableDesc.getTableConf === tableConf)
+            super.getCommits(tableDesc, startVersion, endVersion)
           }
 
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              logPath: Path,
-              coordinatedCommitsTableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
-            assert(coordinatedCommitsTableConf === tableConf)
-            super.commit(logStore, hadoopConf, logPath, coordinatedCommitsTableConf,
-              commitVersion, actions, updatedActions)
+            assert(tableDesc.getTableConf === tableConf)
+            super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
           }
 
           override def backfillToVersion(
               logStore: LogStore,
               hadoopConf: Configuration,
-              logPath: Path,
-              coordinatedCommitsTableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               version: Long,
               lastKnownBackfilledVersionOpt: java.lang.Long): Unit = {
-            assert(coordinatedCommitsTableConf === tableConf)
+            assert(tableDesc.getTableConf === tableConf)
             super.backfillToVersion(
               logStore,
               hadoopConf,
-              logPath,
-              coordinatedCommitsTableConf,
+              tableDesc,
               version,
               lastKnownBackfilledVersionOpt)
           }
@@ -1127,12 +1125,11 @@ class CoordinatedCommitsSuite
     val neverBackfillingCommitCoordinator =
       new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize) {
         override def backfillToVersion(
-            logStore: LogStore,
-            hadoopConf: Configuration,
-            logPath: Path,
-            coordinatedCommitsTableConf: java.util.Map[String, String],
-            version: Long,
-            lastKnownBackfilledVersionOpt: java.lang.Long): Unit = { }
+          logStore: LogStore,
+          hadoopConf: Configuration,
+          tableDesc: TableDescriptor,
+          version: Long,
+          lastKnownBackfilledVersionOpt: JLong): Unit = { }
       })
     CommitCoordinatorProvider.clearNonDefaultBuilders()
     val builder =
@@ -1345,7 +1342,7 @@ class CoordinatedCommitsSuite
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////
-  //           Test coordinated-commits with DeltaLog.getChangeLogFile API starts                //
+  //            Test coordinated-commits with DeltaLog.getChangeLogFile API starts           //
   /////////////////////////////////////////////////////////////////////////////////////////////
 
   /**
@@ -1571,227 +1568,46 @@ class CoordinatedCommitsSuite
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////
-  //           Test coordinated-commits with DeltaLog.getChangeLogFile API ENDS                  //
+  //            Test coordinated-commits with DeltaLog.getChangeLogFile API ENDS             //
   /////////////////////////////////////////////////////////////////////////////////////////////
 
-  /////////////////////////////////////////////////////////////////////////////////////////////
-  //     Test CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl STARTS    //
-  /////////////////////////////////////////////////////////////////////////////////////////////
+  test("During ALTER, overriding Coordinated Commits configurations throws an exception.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(1))
 
-  def gridTest[A](testNamePrefix: String, testTags: Tag*)(params: Seq[A])(
-    testFun: A => Unit): Unit = {
-    for (param <- params) {
-      test(testNamePrefix + s" ($param)", testTags: _*)(testFun(param))
-    }
-  }
-
-  private val cNameKey = COORDINATED_COMMITS_COORDINATOR_NAME.key
-  private val cConfKey = COORDINATED_COMMITS_COORDINATOR_CONF.key
-  private val tableConfKey = COORDINATED_COMMITS_TABLE_CONF.key
-  private val cName = cNameKey -> "some-cc-name"
-  private val cConf = cConfKey -> "some-cc-conf"
-  private val tableConf = tableConfKey -> "some-table-conf"
-
-  private val cNameDefaultKey = COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey
-  private val cConfDefaultKey = COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey
-  private val tableConfDefaultKey = COORDINATED_COMMITS_TABLE_CONF.defaultTablePropertyKey
-  private val cNameDefault = cNameDefaultKey -> "some-cc-name"
-  private val cConfDefault = cConfDefaultKey -> "some-cc-conf"
-  private val tableConfDefault = tableConfDefaultKey -> "some-table-conf"
-
-  private val command = "CLONE"
-
-  private val errCannotOverride = new DeltaIllegalArgumentException(
-    "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS", Array(command))
-
-  private def errMissingConfInCommand(key: String) = new DeltaIllegalArgumentException(
-      "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND", Array(command, key))
-
-  private def errMissingConfInSession(key: String) = new DeltaIllegalArgumentException(
-    "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION", Array(command, key))
-
-  private def errTableConfInCommand = new DeltaIllegalArgumentException(
-    "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_COMMAND", Array(command, tableConfKey))
-
-  private def errTableConfInSession = new DeltaIllegalArgumentException(
-    "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_SESSION",
-    Array(command, tableConfDefaultKey, tableConfDefaultKey))
-
-  private def testValidation(
-      tableExists: Boolean,
-      propertyOverrides: Map[String, String],
-      defaultConfs: Seq[(String, String)],
-      errorOpt: Option[DeltaIllegalArgumentException]): Unit = {
-    withoutCoordinatedCommitsDefaultTableProperties {
-      withSQLConf(defaultConfs: _*) {
-        if (errorOpt.isDefined) {
-          val e = intercept[DeltaIllegalArgumentException] {
-            CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl(
-              spark, propertyOverrides, tableExists, command)
-          }
-          assert(e.getMessage.contains(errorOpt.get.getMessage))
-        } else {
-          CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl(
-            spark, propertyOverrides, tableExists, command)
-        }
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES" +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES" +
+          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory', " +
+          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
       }
+      checkError(
+        exception = e,
+        errorClass = "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+        sqlState = "42616",
+        parameters = Map("Command" -> "ALTER"))
     }
   }
 
-  // tableExists: True
-  //            | False
-  //
-  // propertyOverrides: Map.empty
-  //                  | Map(cName)
-  //                  | Map(cName, cConf)
-  //                  | Map(cName, cConf, tableConf)
-  //                  | Map(tableConf)
-  //
-  // defaultConf: Seq.empty
-  //            | Seq(cNameDefault)
-  //            | Seq(cNameDefault, cConfDefault)
-  //            | Seq(cNameDefault, cConfDefault, tableConfDefault)
-  //            | Seq(tableConfDefault)
-  //
-  // errorOpt: None
-  //         | Some(errCannotOverride)
-  //         | Some(errMissingConfInCommand(cConfKey))
-  //         | Some(errMissingConfInSession(cConfKey))
-  //         | Some(errTableConfInCommand)
-  //         | Some(errTableConfInSession)
-
-  gridTest("During CLONE, CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl " +
-      "passes for existing target tables with no explicit Coordinated Commits Configurations.") (
-    Seq(
-      Seq.empty,
-      // Not having any explicit Coordinated Commits configurations, but having an illegal
-      // combination of Coordinated Commits configurations in default: pass.
-      // This is because we don't consider default configurations when the table exists.
-      Seq(cNameDefault),
-      Seq(cNameDefault, cConfDefault),
-      Seq(cNameDefault, cConfDefault, tableConfDefault),
-      Seq(tableConfDefault)
-    )
-  ) { defaultConfs: Seq[(String, String)] =>
-    testValidation(
-      tableExists = true,
-      propertyOverrides = Map.empty,
-      defaultConfs,
-      errorOpt = None)
+  test("During ALTER, unsetting Coordinated Commits configurations throws an exception.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES" +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES" +
+          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}', " +
+          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}')")
+      }
+      checkError(
+        exception = e,
+        errorClass = "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
+        sqlState = "42616",
+        parameters = Map[String, String]())
+    }
   }
-
-  gridTest("During CLONE, CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl " +
-      "fails for existing target tables with any explicit Coordinated Commits Configurations.") (
-    Seq(
-      (Map(cName), Seq.empty),
-      (Map(cName), Seq(cNameDefault)),
-      (Map(cName), Seq(cNameDefault, cConfDefault)),
-      (Map(cName), Seq(cNameDefault, cConfDefault, tableConfDefault)),
-      (Map(cName), Seq(tableConfDefault)),
-
-      (Map(cName, cConf), Seq.empty),
-      (Map(cName, cConf), Seq(cNameDefault)),
-      (Map(cName, cConf), Seq(cNameDefault, cConfDefault)),
-      (Map(cName, cConf), Seq(cNameDefault, cConfDefault, tableConfDefault)),
-      (Map(cName, cConf), Seq(tableConfDefault)),
-
-      (Map(cName, cConf, tableConf), Seq.empty),
-      (Map(cName, cConf, tableConf), Seq(cNameDefault)),
-      (Map(cName, cConf, tableConf), Seq(cNameDefault, cConfDefault)),
-      (Map(cName, cConf, tableConf), Seq(cNameDefault, cConfDefault, tableConfDefault)),
-      (Map(cName, cConf, tableConf), Seq(tableConfDefault)),
-
-      (Map(tableConf), Seq.empty),
-      (Map(tableConf), Seq(cNameDefault)),
-      (Map(tableConf), Seq(cNameDefault, cConfDefault)),
-      (Map(tableConf), Seq(cNameDefault, cConfDefault, tableConfDefault)),
-      (Map(tableConf), Seq(tableConfDefault))
-    )
-  ) { case (
-      propertyOverrides: Map[String, String],
-      defaultConfs: Seq[(String, String)]) =>
-    testValidation(
-      tableExists = true,
-      propertyOverrides,
-      defaultConfs,
-      errorOpt = Some(errCannotOverride))
-  }
-
-  gridTest("During CLONE, CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl " +
-      "works correctly for new target tables with default Coordinated Commits Configurations.") (
-    Seq(
-      (Seq.empty, None),
-      (Seq(cNameDefault), Some(errMissingConfInSession(cConfDefaultKey))),
-      (Seq(cNameDefault, cConfDefault), None),
-      (Seq(cNameDefault, cConfDefault, tableConfDefault), Some(errTableConfInSession)),
-      (Seq(tableConfDefault), Some(errTableConfInSession))
-    )
-  ) { case (
-      defaultConfs: Seq[(String, String)],
-      errorOpt: Option[DeltaIllegalArgumentException]) =>
-    testValidation(
-      tableExists = false,
-      propertyOverrides = Map.empty,
-      defaultConfs,
-      errorOpt)
-  }
-
-  gridTest("During CLONE, CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl " +
-      "fails for new target tables with any illegal explicit Coordinated Commits Configurations.") (
-    Seq(
-      (Map(cName), Seq.empty, Some(errMissingConfInCommand(cConfKey))),
-      (Map(cName), Seq(cNameDefault), Some(errMissingConfInCommand(cConfKey))),
-      (Map(cName), Seq(cNameDefault, cConfDefault), Some(errMissingConfInCommand(cConfKey))),
-      (Map(cName), Seq(cNameDefault, cConfDefault, tableConfDefault),
-        Some(errMissingConfInCommand(cConfKey))),
-      (Map(cName), Seq(tableConfDefault), Some(errMissingConfInCommand(cConfKey))),
-
-      (Map(cName, cConf, tableConf), Seq.empty, Some(errTableConfInCommand)),
-      (Map(cName, cConf, tableConf), Seq(cNameDefault), Some(errTableConfInCommand)),
-      (Map(cName, cConf, tableConf), Seq(cNameDefault, cConfDefault), Some(errTableConfInCommand)),
-      (Map(cName, cConf, tableConf), Seq(cNameDefault, cConfDefault, tableConfDefault),
-        Some(errTableConfInCommand)),
-      (Map(cName, cConf, tableConf), Seq(tableConfDefault), Some(errTableConfInCommand)),
-
-      (Map(tableConf), Seq.empty, Some(errTableConfInCommand)),
-      (Map(tableConf), Seq(cNameDefault), Some(errTableConfInCommand)),
-      (Map(tableConf), Seq(cNameDefault, cConfDefault), Some(errTableConfInCommand)),
-      (Map(tableConf), Seq(cNameDefault, cConfDefault, tableConfDefault),
-        Some(errTableConfInCommand)),
-      (Map(tableConf), Seq(tableConfDefault), Some(errTableConfInCommand))
-    )
-  ) { case (
-      propertyOverrides: Map[String, String],
-      defaultConfs: Seq[(String, String)],
-      errorOpt: Option[DeltaIllegalArgumentException]) =>
-    testValidation(
-      tableExists = false,
-      propertyOverrides,
-      defaultConfs,
-      errorOpt)
-  }
-
-  gridTest("During CLONE, CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl " +
-      "passes for new target tables with legal explicit Coordinated Commits Configurations.") (
-    Seq(
-      // Having exactly Coordinator Name and Coordinator Conf explicitly, but having an illegal
-      // combination of Coordinated Commits configurations in default: pass.
-      // This is because we don't consider default configurations when explicit ones are provided.
-      Seq.empty,
-      Seq(cNameDefault),
-      Seq(cNameDefault, cConfDefault),
-      Seq(cNameDefault, cConfDefault, tableConfDefault),
-      Seq(tableConfDefault)
-    )
-  ) { defaultConfs: Seq[(String, String)] =>
-    testValidation(
-      tableExists = false,
-      propertyOverrides = Map(cName, cConf),
-      defaultConfs,
-      errorOpt = None)
-  }
-
-  /////////////////////////////////////////////////////////////////////////////////////////////
-  //      Test CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurationsImpl ENDS     //
-  /////////////////////////////////////////////////////////////////////////////////////////////
 }

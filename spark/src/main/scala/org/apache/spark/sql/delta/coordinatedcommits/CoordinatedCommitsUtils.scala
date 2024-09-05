@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
@@ -27,13 +29,14 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
 import io.delta.storage.commit.actions.AbstractMetadata
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.util.Utils
 
@@ -46,6 +49,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   def getCommitsFromCommitCoordinatorWithUsageLogs(
       deltaLog: DeltaLog,
       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
       startVersion: Long,
       versionToLoad: Option[Long],
       isAsyncRequest: Boolean): JGetCommitsResponse = {
@@ -66,7 +70,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
 
       try {
         val response =
-          tableCommitCoordinatorClient.getCommits(Some(startVersion), endVersion = versionToLoad)
+          tableCommitCoordinatorClient.getCommits(
+            tableIdentifierOpt, Some(startVersion), endVersion = versionToLoad)
         val additionalEventData = Map(
           "responseCommitsSize" -> response.getCommits.size,
           "responseLatestTableVersion" -> response.getLatestTableVersion)
@@ -441,15 +446,62 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   }
 
   /**
-   * Validates the Coordinated Commits configurations in explicit command overrides and default
-   * SparkSession properties. See `validateCoordinatedCommitsConfigurationsImpl` for details.
+   * Validates the Coordinated Commits configurations in explicit command overrides for
+   * `AlterTableSetPropertiesDeltaCommand`.
+   *
+   * If the table already has Coordinated Commits configurations present, then we do not allow
+   * users to override them via `ALTER TABLE t SET TBLPROPERTIES ...`. Users must downgrade the
+   * table and then upgrade it with the new Coordinated Commits configurations.
    */
-  def validateCoordinatedCommitsConfigurations(
+  def validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
+      existingConfs: Map[String, String],
+      propertyOverrides: Map[String, String]): Unit = {
+    val existingCoordinatedCommitsConfs = extractCoordinatedCommitsConfigurations(existingConfs)
+    val coordinatedCommitsOverrides = extractCoordinatedCommitsConfigurations(propertyOverrides)
+    if (coordinatedCommitsOverrides.nonEmpty) {
+      if (existingCoordinatedCommitsConfs.nonEmpty) {
+        throw new DeltaIllegalArgumentException(
+          "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+          Array("ALTER"))
+      }
+      verifyContainsOnlyCoordinatorNameAndConf(
+        coordinatedCommitsOverrides, command = "ALTER", fromDefault = false)
+    }
+  }
+
+  /**
+   * Validates the configurations to unset for `AlterTableUnsetPropertiesDeltaCommand`.
+   *
+   * If the table already has Coordinated Commits configurations present, then we do not allow users
+   * to unset them via `ALTER TABLE t UNSET TBLPROPERTIES ...`. Users could only downgrade the table
+   * via `ALTER TABLE t DROP FEATURE ...`.
+   */
+  def validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
+      existingConfs: Map[String, String],
+      propKeysToUnset: Seq[String]): Unit = {
+    // If the table does not have any Coordinated Commits configurations, then we do not check the
+    // properties to unset. This is because unsetting non-existent entries would either be caught
+    // earlier (without `IF EXISTS`) or simply be a no-op (with `IF EXISTS`). Thus, we ignore them
+    // instead of throwing an exception.
+    if (extractCoordinatedCommitsConfigurations(existingConfs).nonEmpty) {
+      if (propKeysToUnset.exists(TABLE_PROPERTY_KEYS.contains)) {
+        throw new DeltaIllegalArgumentException(
+          "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
+          Array.empty)
+      }
+    }
+  }
+
+  /**
+   * Validates the Coordinated Commits configurations in explicit command overrides and default
+   * SparkSession properties for `CreateDeltaTableCommand`.
+   * See `validateConfigurationsForCreateDeltaTableCommandImpl` for details.
+   */
+  def validateConfigurationsForCreateDeltaTableCommand(
       spark: SparkSession,
-      deltaLog: DeltaLog,
+      tableExists: Boolean,
       query: Option[LogicalPlan],
       catalogTableProperties: Map[String, String]): Unit = {
-    val tableExists = deltaLog.tableExists
     val (command, propertyOverrides) = query match {
       // For CLONE, we cannot use the properties from the catalog table, because they are already
       // the result of merging the source table properties with the overrides, but we do not
@@ -459,7 +511,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
           cmd.tablePropertyOverrides)
       case _ => (if (tableExists) "REPLACE" else "CREATE", catalogTableProperties)
     }
-    validateCoordinatedCommitsConfigurationsImpl(
+    validateConfigurationsForCreateDeltaTableCommandImpl(
       spark, propertyOverrides, tableExists, command)
   }
 
@@ -471,7 +523,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    *     the Coordinator Name and Coordinator Conf, and no Table Conf. Default configurations are
    *     checked similarly if non of the three properties is present in explicit overrides.
    */
-  private[delta] def validateCoordinatedCommitsConfigurationsImpl(
+  private[delta] def validateConfigurationsForCreateDeltaTableCommandImpl(
       spark: SparkSession,
       propertyOverrides: Map[String, String],
       tableExists: Boolean,
@@ -496,5 +548,18 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         }
       }
     }
+  }
+
+  /**
+   * Converts a given Spark [[CatalystTableIdentifier]] to Coordinated Commits [[TableIdentifier]]
+   */
+  def toCCTableIdentifier(
+      catalystTableIdentifierOpt: Option[CatalystTableIdentifier]): Optional[TableIdentifier] = {
+    catalystTableIdentifierOpt.map { catalystTableIdentifier =>
+      val namespace =
+        catalystTableIdentifier.catalog.toSeq ++
+          catalystTableIdentifier.database.toSeq
+      new TableIdentifier(namespace.toArray, catalystTableIdentifier.table)
+    }.map(Optional.of[TableIdentifier]).getOrElse(Optional.empty[TableIdentifier])
   }
 }

@@ -469,7 +469,8 @@ class DeltaTableFeatureSuite
       // Add coordinated commits table feature to the table
       CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(batchSize = 100))
       val tblProperties1 =
-        Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'")
+        Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'",
+          s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}'")
       sql(buildTablePropertyModifyingCommand(
         "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
 
