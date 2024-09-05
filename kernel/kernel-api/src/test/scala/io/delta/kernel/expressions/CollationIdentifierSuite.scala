@@ -62,11 +62,11 @@ class CollationIdentifierSuite extends AnyFunSuite {
       ),
       (
         new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", Optional.empty()),
-        s"$PROVIDER_ICU.sr_Cyrl_SRB"
+        s"$PROVIDER_ICU.SR_CYRL_SRB"
       ),
       (
         new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", Optional.of("75.1")),
-        s"$PROVIDER_ICU.sr_Cyrl_SRB"
+        s"$PROVIDER_ICU.SR_CYRL_SRB"
       )
     ).foreach {
       case(collationIdentifier, toStringWithoutVersion) =>
@@ -82,11 +82,11 @@ class CollationIdentifierSuite extends AnyFunSuite {
       ),
       (
         new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", Optional.empty()),
-        s"$PROVIDER_ICU.sr_Cyrl_SRB"
+        s"$PROVIDER_ICU.SR_CYRL_SRB"
       ),
       (
         new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", Optional.of("75.1")),
-        s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1"
+        s"$PROVIDER_ICU.SR_CYRL_SRB.75.1"
       )
     ).foreach {
       case(collationIdentifier, toString) =>
