@@ -43,22 +43,22 @@ public final class DeltaHistoryManager {
   /**
    * Returns the latest commit that happened at or before {@code timestamp}.
    *
-   * If the timestamp is outside the range of [earliestCommit, latestCommit] then use
-   * parameters {@code canReturnLastCommit} and {@code canReturnEarliestCommit} to control whether
-   * an exception is thrown or the corresponding earliest/latest commit is returned.
+   * <p>If the timestamp is outside the range of [earliestCommit, latestCommit] then use parameters
+   * {@code canReturnLastCommit} and {@code canReturnEarliestCommit} to control whether an exception
+   * is thrown or the corresponding earliest/latest commit is returned.
    *
    * @param engine instance of {@link Engine} to use
    * @param logPath the _delta_log path of the table
    * @param timestamp the timestamp find the version for in milliseconds since the unix epoch
    * @param mustBeRecreatable whether the state at the returned commit should be recreatable
    * @param canReturnLastCommit whether we can return the latest version of the table if the
-   *                            provided timestamp is after the latest commit
+   *     provided timestamp is after the latest commit
    * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
-   *                                provided timestamp is before the earliest commit
+   *     provided timestamp is before the earliest commit
    * @throws KernelException if the provided timestamp is before the earliest commit and
-   *                         canReturnEarliestCommit is false
+   *     canReturnEarliestCommit is false
    * @throws KernelException if the provided timestamp is after the latest commit and
-   *                         canReturnLastCommit is false
+   *     canReturnLastCommit is false
    * @throws TableNotFoundException when there is no Delta table at the given path
    */
   public static Commit getActiveCommitAtTimestamp(
@@ -67,8 +67,8 @@ public final class DeltaHistoryManager {
       long timestamp,
       boolean mustBeRecreatable,
       boolean canReturnLastCommit,
-      boolean canReturnEarliestCommit
-      ) throws TableNotFoundException {
+      boolean canReturnEarliestCommit)
+      throws TableNotFoundException {
 
     long earliestVersion =
         (mustBeRecreatable)

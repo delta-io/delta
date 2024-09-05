@@ -175,8 +175,8 @@ public class SnapshotManager {
                 millisSinceEpochUTC,
                 true /* mustBeRecreatable */,
                 false /* canReturnLastCommit */,
-                false /* canReturnEarliestCommit */
-        ).version;
+                false /* canReturnEarliestCommit */)
+            .version;
     logger.info(
         "{}: Took {}ms to fetch version at timestamp {}",
         tablePath,
