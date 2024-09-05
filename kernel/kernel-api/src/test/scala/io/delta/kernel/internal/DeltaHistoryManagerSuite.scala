@@ -41,7 +41,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       canReturnLastCommit,
       canReturnEarliestCommit
     )
-    assert(activeCommit.version == expectedVersion,
+    assert(activeCommit.getVersion == expectedVersion,
       s"Expected version $expectedVersion but got $activeCommit for timestamp=$timestamp")
 
     if (mustBeRecreatable) {
@@ -55,7 +55,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         canReturnLastCommit,
         canReturnEarliestCommit
       )
-      assert(activeCommit.version == expectedVersion,
+      assert(activeCommit.getVersion == expectedVersion,
         s"Expected version $expectedVersion but got $activeCommit for timestamp=$timestamp")
     }
   }

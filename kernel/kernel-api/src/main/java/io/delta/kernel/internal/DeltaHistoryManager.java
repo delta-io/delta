@@ -291,12 +291,20 @@ public final class DeltaHistoryManager {
 
   public static class Commit {
 
-    public final long version;
-    public final long timestamp;
+    private final long version;
+    private final long timestamp;
 
     Commit(long version, long timestamp) {
       this.version = version;
       this.timestamp = timestamp;
+    }
+
+    public long getVersion() {
+      return version;
+    }
+
+    public long getTimestamp() {
+      return timestamp;
     }
 
     @Override

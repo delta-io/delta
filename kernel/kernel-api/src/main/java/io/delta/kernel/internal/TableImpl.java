@@ -151,7 +151,7 @@ public class TableImpl implements Table {
             // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest
             // commit
             false /* canReturnEarliestCommit */)
-        .version;
+        .getVersion();
   }
 
   /**
@@ -189,14 +189,14 @@ public class TableImpl implements Table {
             // commit
             true /* canReturnEarliestCommit */);
 
-    if (commit.timestamp >= millisSinceEpochUTC) {
-      return commit.version;
+    if (commit.getTimestamp() >= millisSinceEpochUTC) {
+      return commit.getVersion();
     } else {
       // this commit.timestamp is before the input timestamp. if this is the last commit, then
-      // the input timestamp is after the last commit and `getActiveCommitAtTime` would have thrown
-      // an KernelException. So, clearly, this can't be the last commit, so we can safely
+      // the input timestamp is after the last commit and `getActiveCommitAtTimestamp` would have
+      // thrown an KernelException. So, clearly, this can't be the last commit, so we can safely
       // return commit.version + 1 as the version that is at or after the input timestamp.
-      return commit.version + 1;
+      return commit.getVersion() + 1;
     }
   }
 

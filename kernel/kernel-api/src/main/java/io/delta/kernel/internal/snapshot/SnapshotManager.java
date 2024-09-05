@@ -176,7 +176,7 @@ public class SnapshotManager {
                 true /* mustBeRecreatable */,
                 false /* canReturnLastCommit */,
                 false /* canReturnEarliestCommit */)
-            .version;
+            .getVersion();
     logger.info(
         "{}: Took {}ms to fetch version at timestamp {}",
         tablePath,
