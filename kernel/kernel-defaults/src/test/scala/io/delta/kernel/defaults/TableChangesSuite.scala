@@ -24,16 +24,17 @@ import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
-import io.delta.kernel.internal.actions.{AddFile, RemoveFile}
+import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.Table
 import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
 
-import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddFile => SparkAddFile, RemoveFile => SparkRemoveFile}
+import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile}
 import org.apache.spark.sql.delta.DeltaLog
 import org.scalatest.funsuite.AnyFunSuite
+import org.apache.spark.sql.functions.col
 
 class TableChangesSuite extends AnyFunSuite with TestUtils {
 
@@ -75,6 +76,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
   // Golden table from Delta Standalone test
   test("getChangesByVersion - golden table deltalog-getChanges valid queries") {
     withGoldenTable("deltalog-getChanges") { tablePath =>
+      // request subset of actions
       testGetChangesByVersionVsSpark(
         tablePath,
         0,
@@ -87,6 +89,13 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         2,
         Set(DeltaAction.ADD)
       )
+      testGetChangesByVersionVsSpark(
+        tablePath,
+        0,
+        2,
+        Set(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA, DeltaAction.PROTOCOL)
+      )
+      // request full actions, various versions
       testGetChangesByVersionVsSpark(
         tablePath,
         0,
@@ -286,6 +295,60 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test("getChangesByVersion - table with a lot of changes") {
+    withTempDir { tempDir =>
+      spark.sql(
+        f"""
+          |CREATE TABLE delta.`${tempDir.getCanonicalPath}` (id LONG, month LONG)
+          |USING DELTA
+          |PARTITIONED BY (month)
+          |TBLPROPERTIES (delta.enableChangeDataFeed = true)
+          |""".stripMargin)
+      spark.range(100).withColumn("month", col("id") % 12 + 1)
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tempDir.getCanonicalPath)
+      spark.sql( // cdc actions
+        f"""
+           |UPDATE delta.`${tempDir.getCanonicalPath}` SET month = 1 WHERE id < 10
+           |""".stripMargin)
+      spark.sql(
+        f"""
+           |DELETE FROM delta.`${tempDir.getCanonicalPath}` WHERE month = 12
+           |""".stripMargin)
+      spark.sql(
+        f"""
+           |DELETE FROM delta.`${tempDir.getCanonicalPath}` WHERE id = 52
+           |""".stripMargin)
+      spark.range(100, 150).withColumn("month", col("id") % 12)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(tempDir.getCanonicalPath)
+      spark.sql( // change metadata
+        f"""
+           |ALTER TABLE delta.`${tempDir.getCanonicalPath}`
+           |ADD CONSTRAINT validMonth CHECK (month <= 12)
+           |""".stripMargin)
+
+      // Check all actions are correctly retrieved
+      testGetChangesByVersionVsSpark(
+        tempDir.getCanonicalPath,
+        0,
+        6,
+        FULL_ACTION_SET
+      )
+      // Check some subset of actions
+      testGetChangesByVersionVsSpark(
+        tempDir.getCanonicalPath,
+        0,
+        6,
+        Set(DeltaAction.ADD)
+      )
+    }
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Helpers to compare actions returned between Kernel and Spark
   //////////////////////////////////////////////////////////////////////////////////
@@ -304,6 +367,28 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     size: Long,
     modificationTime: Long,
     dataChange: Boolean) extends StandardAction
+
+  case class StandardMetadata(
+    id: String,
+    schemaString: String,
+    partitionColumns: Seq[String],
+    configuration: Map[String, String]) extends StandardAction
+
+  case class StandardProtocol(
+    minReaderVersion: Int,
+    minWriterVersion: Int,
+    readerFeatures: Set[String],
+    writerFeatures: Set[String]) extends StandardAction
+
+  case class StandardCommitInfo(
+    operation: String,
+    operationMetrics: Map[String, String]) extends StandardAction
+
+  case class StandardCdc(
+    path: String,
+    partitionValues: Map[String, String],
+    size: Long,
+    tags: Map[String, String]) extends StandardAction
 
   def standardizeKernelAction(row: Row): Option[StandardAction] = {
     val actionIdx = (2 until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
@@ -338,7 +423,74 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
           addRow.getBoolean(AddFile.FULL_SCHEMA.indexOf("dataChange"))
         ))
 
-      // TODO add more actions as we add support
+      case DeltaAction.METADATA.colName =>
+        val metadataRow = row.getStruct(actionIdx)
+        Some(StandardMetadata(
+          metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")),
+          metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("schemaString")),
+          VectorUtils.toJavaList(
+            metadataRow.getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))).asScala,
+          VectorUtils.toJavaMap[String, String](
+            metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))).asScala.toMap
+        ))
+
+      case DeltaAction.PROTOCOL.colName =>
+        val protocolRow = row.getStruct(actionIdx)
+        val readerFeatures =
+          if (protocolRow.isNullAt(Protocol.FULL_SCHEMA.indexOf("readerFeatures"))) {
+            Seq()
+          } else {
+            VectorUtils.toJavaList(
+              protocolRow.getArray(Protocol.FULL_SCHEMA.indexOf("readerFeatures"))).asScala
+          }
+        val writerFeatures =
+          if (protocolRow.isNullAt(Protocol.FULL_SCHEMA.indexOf("writerFeatures"))) {
+            Seq()
+          } else {
+            VectorUtils.toJavaList(
+              protocolRow.getArray(Protocol.FULL_SCHEMA.indexOf("writerFeatures"))).asScala
+          }
+
+        Some(StandardProtocol(
+          protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion")),
+          protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion")),
+          readerFeatures.toSet,
+          writerFeatures.toSet
+        ))
+
+      case DeltaAction.COMMITINFO.colName =>
+        val commitInfoRow = row.getStruct(actionIdx)
+        val operationIdx = CommitInfo.FULL_SCHEMA.indexOf("operation")
+        val operationMetricsIdx = CommitInfo.FULL_SCHEMA.indexOf("operationMetrics")
+
+        Some(StandardCommitInfo(
+          if (commitInfoRow.isNullAt(operationIdx)) null else commitInfoRow.getString(operationIdx),
+          if (commitInfoRow.isNullAt(operationMetricsIdx)) {
+            Map.empty
+          } else {
+            VectorUtils.toJavaMap[String, String](
+              commitInfoRow.getMap(operationMetricsIdx)).asScala.toMap
+          }
+        ))
+
+      case DeltaAction.CDC.colName =>
+        val cdcRow = row.getStruct(actionIdx)
+        val tags: Map[String, String] = {
+          if (cdcRow.isNullAt(AddCDCFile.FULL_SCHEMA.indexOf("tags"))) {
+            null
+          } else {
+            VectorUtils.toJavaMap[String, String](
+              cdcRow.getMap(AddCDCFile.FULL_SCHEMA.indexOf("tags"))).asScala.toMap
+          }
+        }
+        Some(StandardCdc(
+          cdcRow.getString(AddCDCFile.FULL_SCHEMA.indexOf("path")),
+          VectorUtils.toJavaMap[String, String](
+            cdcRow.getMap(AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"))).asScala.toMap,
+          cdcRow.getLong(AddCDCFile.FULL_SCHEMA.indexOf("size")),
+          tags
+        ))
+
       case _ =>
         throw new RuntimeException("Encountered an action that hasn't been added as an option yet")
     }
@@ -350,8 +502,23 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     case add: SparkAddFile =>
       Some(StandardAdd(
         add.path, add.partitionValues, add.size, add.modificationTime, add.dataChange))
-
-    // TODO add more actions as we add support
+    case metadata: SparkMetadata =>
+      Some(StandardMetadata(
+        metadata.id, metadata.schemaString, metadata.partitionColumns, metadata.configuration))
+    case protocol: SparkProtocol =>
+      Some(StandardProtocol(
+        protocol.minReaderVersion,
+        protocol.minWriterVersion,
+        protocol.readerFeatures.getOrElse(Set.empty),
+        protocol.writerFeatures.getOrElse(Set.empty)
+      ))
+    case commitInfo: SparkCommitInfo =>
+      Some(StandardCommitInfo(
+        commitInfo.operation,
+        commitInfo.operationMetrics.getOrElse(Map.empty)
+      ))
+    case cdc: SparkAddCDCFile =>
+      Some(StandardCdc(cdc.path, cdc.partitionValues, cdc.size, cdc.tags))
     case _ => None
   }
 
@@ -368,7 +535,10 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         actions.filter {
           case _: SparkRemoveFile => actionSet.contains(DeltaAction.REMOVE)
           case _: SparkAddFile => actionSet.contains(DeltaAction.ADD)
-          // TODO add more actions as we add support
+          case _: SparkMetadata => actionSet.contains(DeltaAction.METADATA)
+          case _: SparkProtocol => actionSet.contains(DeltaAction.PROTOCOL)
+          case _: SparkCommitInfo => actionSet.contains(DeltaAction.COMMITINFO)
+          case _: SparkAddCDCFile => actionSet.contains(DeltaAction.CDC)
           case _ => false
         }
       )
