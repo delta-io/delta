@@ -53,7 +53,7 @@ public class DeltaLogActionUtils {
 
   /**
    * Represents a Delta action. This is used to request which actions to read from the commit files
-   * in {@link TableImpl#getChangesByVersion(Engine, long, long, Set)}.
+   * in {@link TableImpl#getChanges(Engine, long, long, Set)}.
    *
    * <p>See the Delta protocol for more details
    * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#actions
