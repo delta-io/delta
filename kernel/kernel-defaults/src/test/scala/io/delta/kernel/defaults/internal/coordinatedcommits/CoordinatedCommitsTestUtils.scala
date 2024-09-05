@@ -67,7 +67,9 @@ trait CoordinatedCommitsTestUtils {
       null,
       Collections.emptyMap(),
       true,
-      null)
+      null,
+      Collections.emptyMap()
+    )
   }
 
   def commit(
