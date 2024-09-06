@@ -787,8 +787,8 @@ trait GeneratedColumnSuiteBase
 
   test("changing the type of nested field not referenced by a generated col") {
     withTableName("disallow_column_type_evolution") { table =>
-      createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen SMALLINT",
-        Map("gen" -> "CAST(HASH(t.a - 10s) AS SMALLINT)"), Nil)
+      createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen INT",
+        Map("gen" -> "HASH(t.a)"), Nil)
 
       // changing the type of `t.b` should succeed since it is not being
       // referenced by any CHECK constraints or generated columns.
@@ -797,7 +797,7 @@ trait GeneratedColumnSuiteBase
         .write.format("delta").mode("append")
         .option("mergeSchema", "true")
         .saveAsTable(table)
-      checkAnswer(spark.table(table), Row(Row(32767, 32767), -22677) :: Nil)
+      checkAnswer(spark.table(table), Row(Row(32767, 32767), 1249274084) :: Nil)
     }
   }
 
