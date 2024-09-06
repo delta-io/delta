@@ -28,13 +28,14 @@ import org.apache.spark.sql.execution.streaming.{MemoryStream, StreamExecution}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
-import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException}
+import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, Trigger}
 import org.apache.spark.sql.types._
 
 /**
- * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
+ * Defines helper class & methods to test writing to a Delta streaming sink using data types that
+ * don't match the corresponding column type in the table schema.
  */
-abstract class DeltaSinkImplicitCastTest extends DeltaSinkTest {
+abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -59,6 +60,7 @@ abstract class DeltaSinkImplicitCastTest extends DeltaSinkTest {
         extraOptions: Map[String, String])(
         data: T*)(
         selectExpr: String*): Unit = {
+      source.addData(data)
       val query =
         source.toDF()
           .selectExpr(selectExpr: _*)
@@ -67,9 +69,9 @@ abstract class DeltaSinkImplicitCastTest extends DeltaSinkTest {
           .outputMode(outputMode)
           .options(extraOptions)
           .format("delta")
+          .trigger(Trigger.AvailableNow())
           .start(outputDir.getCanonicalPath)
       try {
-        source.addData(data)
         failAfter(streamingTimeout) {
           query.processAllAvailable()
         }
@@ -106,7 +108,10 @@ abstract class DeltaSinkImplicitCastTest extends DeltaSinkTest {
   }
 }
 
-class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastTest {
+/**
+ * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
+ */
+class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
   import testImplicits._
 
   test(s"write wider type - long -> int") {
