@@ -170,8 +170,8 @@ case class DeltaSink(
    * columns to add with schema evolution and reconciles types to match the table types when
    * possible or apply type widening if enabled.
    */
-  private def getWriteSchema(protocol: Protocol, metadata: Metadata, dataSchema: StructType)
-    : StructType = {
+  private def getWriteSchema(
+      protocol: Protocol, metadata: Metadata, dataSchema: StructType): StructType = {
     if (!sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS)) return dataSchema
 
     if (canOverwriteSchema) return dataSchema
