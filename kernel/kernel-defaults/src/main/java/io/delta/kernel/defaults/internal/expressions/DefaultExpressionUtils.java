@@ -21,7 +21,6 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.CollatedPredicate;
-import io.delta.kernel.expressions.CollationIdentifier;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
