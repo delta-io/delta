@@ -21,33 +21,60 @@ public class CollationIdentifier {
   public static final String PROVIDER_SPARK = "SPARK";
   public static final String PROVIDER_ICU = "ICU";
 
+  public static final String ICU_COLLATOR_VERSION = "75.1";
+
   public static final String DEFAULT_COLLATION_NAME = "UTF8_BINARY";
 
   public static final CollationIdentifier DEFAULT_COLLATION_IDENTIFIER =
-      new CollationIdentifier(PROVIDER_SPARK, DEFAULT_COLLATION_NAME, Optional.empty());
+          new CollationIdentifier(PROVIDER_SPARK, DEFAULT_COLLATION_NAME);
 
   private final String provider;
   private final String name;
   private final Optional<String> version;
 
-  public CollationIdentifier(String provider, String name, Optional<String> version) {
-    this.provider = provider;
-    this.name = name;
-    this.version = version;
+  public CollationIdentifier(String provider, String collationName) {
+    this.provider = provider.toUpperCase();
+    this.name = collationName.toUpperCase();
+    this.version = Optional.empty();
+  }
+
+  public CollationIdentifier(String provider, String collationName, Optional<String> version) {
+    this.provider = provider.toUpperCase();
+    this.name = collationName.toUpperCase();
+    if (version.isPresent()) {
+      this.version = Optional.of(version.get().toUpperCase());
+    } else {
+      this.version = Optional.empty();
+    }
   }
 
   public String toStringWithoutVersion() {
     return String.format("%s.%s", provider, name);
   }
 
+  public String getProvider() {
+    return provider;
+  }
+
+  public String getName() {
+    return name;
+  }
+
+  // Returns Optional.empty()
+  public Optional<String> getVersion() {
+    return version;
+  }
+
   public static CollationIdentifier fromString(String identifier) {
-    String[] parts = identifier.split("\\.");
-    if (parts.length == 1) {
+    long numDots = identifier.chars().filter(ch -> ch == '.').count();
+    if (numDots == 0) {
       throw new IllegalArgumentException(
-          String.format("Invalid collation identifier: %s", identifier));
-    } else if (parts.length == 2) {
-      return new CollationIdentifier(parts[0], parts[1], Optional.empty());
+              String.format("Invalid collation identifier: %s", identifier));
+    } else if (numDots == 1) {
+      String[] parts = identifier.split("\\.");
+      return new CollationIdentifier(parts[0], parts[1]);
     } else {
+      String[] parts = identifier.split("\\.", 3);
       return new CollationIdentifier(parts[0], parts[1], Optional.of(parts[2]));
     }
   }
@@ -58,7 +85,18 @@ public class CollationIdentifier {
       return false;
     }
 
-    CollationIdentifier that = (CollationIdentifier) o;
-    return provider.equals(that.provider) && name.equals(that.name) && version.equals(that.version);
+    CollationIdentifier other = (CollationIdentifier) o;
+    return this.provider.equals(other.provider)
+            && this.name.equals(other.name)
+            && this.version.equals(other.version);
+  }
+
+  @Override
+  public String toString() {
+    if (version.isPresent()) {
+      return String.format("%s.%s.%s", provider, name, version.get());
+    } else {
+      return String.format("%s.%s", provider, name);
+    }
   }
 }
