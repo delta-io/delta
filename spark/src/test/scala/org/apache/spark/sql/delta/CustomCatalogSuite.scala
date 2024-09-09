@@ -297,6 +297,22 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       }
     }
   }
+
+  test("custom catalog that generates location for managed tables") {
+    // Reset catalog manager so that the new `spark_catalog` implementation can apply.
+    spark.sessionState.catalogManager.reset()
+    withSQLConf("spark.sql.catalog.spark_catalog" -> classOf[DummySessionCatalog].getName) {
+      withTable("t") {
+        withTempPath { path =>
+          sql(s"CREATE TABLE t (id LONG) USING delta TBLPROPERTIES (fakeLoc='$path')")
+          val t = spark.sessionState.catalogManager.v2SessionCatalog.asInstanceOf[TableCatalog]
+            .loadTable(Identifier.of(Array("default"), "t"))
+          // It should be a managed table.
+          assert(!t.properties().containsKey(TableCatalog.PROP_EXTERNAL))
+        }
+      }
+    }
+  }
 }
 
 class DummyCatalog extends TableCatalog {
@@ -397,9 +413,10 @@ class DummySessionCatalogInner extends DelegatingCatalogExtension {
 }
 
 // A dummy catalog that adds a layer between DeltaCatalog and the Spark SessionCatalog,
-// to attach additional table storage properties after the table is loaded.
+// to attach additional table storage properties after the table is loaded, and generates location
+// for managed tables.
 class DummySessionCatalog extends TableCatalog {
-  private var deltaCatalog: DelegatingCatalogExtension = null
+  private var deltaCatalog: DeltaCatalog = null
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     val inner = new DummySessionCatalogInner()
@@ -422,7 +439,16 @@ class DummySessionCatalog extends TableCatalog {
       schema: StructType,
       partitions: Array[Transform],
       properties: java.util.Map[String, String]): Table = {
-    deltaCatalog.createTable(ident, schema, partitions, properties)
+    if (!properties.containsKey(TableCatalog.PROP_EXTERNAL) &&
+      !properties.containsKey(TableCatalog.PROP_LOCATION)) {
+      val newProps = new java.util.HashMap[String, String]
+      newProps.putAll(properties)
+      newProps.put(TableCatalog.PROP_LOCATION, properties.get("fakeLoc"))
+      newProps.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
+      deltaCatalog.createTable(ident, schema, partitions, newProps)
+    } else {
+      deltaCatalog.createTable(ident, schema, partitions, properties)
+    }
   }
 
   override def alterTable(ident: Identifier, changes: TableChange*): Table = {
