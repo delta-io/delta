@@ -279,10 +279,20 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF,
     DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF)
 
+  val ICT_TABLE_PROPERTY_CONFS = Seq(
+    DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+
   /**
    * The main table properties used to instantiate a TableCommitCoordinatorClient.
    */
   val TABLE_PROPERTY_KEYS: Seq[String] = TABLE_PROPERTY_CONFS.map(_.key)
+
+  /**
+   * The main ICT table properties used as dependencies for Coordinated Commits.
+   */
+  val ICT_TABLE_PROPERTY_KEYS: Seq[String] = ICT_TABLE_PROPERTY_CONFS.map(_.key)
 
   /**
    * Returns true if any CoordinatedCommits-related table properties is present in the metadata.
@@ -374,9 +384,14 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def extractCoordinatedCommitsConfigurations(
       properties: Map[String, String]): Map[String, String] = {
-    properties.filter { case (k, _) =>
-      CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(k)
-    }
+    properties.filter { case (k, _) => TABLE_PROPERTY_KEYS.contains(k) }
+  }
+
+  /**
+   * Extracts the ICT configurations from the provided properties.
+   */
+  def extractICTConfigurations(properties: Map[String, String]): Map[String, String] = {
+    properties.filter { case (k, _) => ICT_TABLE_PROPERTY_KEYS.contains(k) }
   }
 
   /**

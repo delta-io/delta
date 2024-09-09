@@ -28,7 +28,7 @@ import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.{CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
 import org.apache.spark.sql.delta.CoordinatedCommitType._
-import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
+import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.InitialSnapshot
@@ -1608,6 +1608,56 @@ class CoordinatedCommitsSuite
         errorClass = "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
         sqlState = "42616",
         parameters = Map[String, String]())
+    }
+  }
+
+  test("During REPLACE, for non-CC tables, default CC configurations are ignored, but default " +
+      "ICT confs are retained, and existing ICT confs are discarded") {
+    // Non-CC table, REPLACE with default CC and ICT confs => Non-CC, but with ICT confs.
+    withTempDir { tempDir =>
+      withoutCoordinatedCommitsDefaultTableProperties {
+        sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
+      }
+      withSQLConf(IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
+        sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
+      }
+      assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+      assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
+        IN_COMMIT_TIMESTAMPS_ENABLED.key))
+    }
+
+    // Non-CC table with ICT confs, REPLACE with only default CC confs => Non-CC, also no ICT confs.
+    withTempDir { tempDir =>
+      withoutCoordinatedCommitsDefaultTableProperties {
+        withSQLConf(IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
+          sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
+        }
+      }
+      sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
+      assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+      assert(!DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
+        IN_COMMIT_TIMESTAMPS_ENABLED.key))
+    }
+  }
+
+  test("During REPLACE, for CC tables, existing CC and ICT configurations are both retained.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    withTempDir { tempDir =>
+      withoutCoordinatedCommitsDefaultTableProperties {
+        sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
+        sql(s"INSERT INTO delta.`${tempDir.getAbsolutePath}` VALUES (0)")
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
+          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+        // All three ICT configurations should be set because Coordinated Commits is enabled later.
+        // REPLACE with default CC confs => CC, and all ICT confs.
+        sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
+        assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+        CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS.foreach { key =>
+          assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(key))
+        }
+      }
     }
   }
 }
