@@ -17,7 +17,6 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.expressions.CollationIdentifier;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.ArrayList;
 import java.util.List;
