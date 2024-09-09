@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.expressions
+package io.delta.kernel.types
 
+import io.delta.kernel.types.CollationIdentifier._
 import org.scalatest.funsuite.AnyFunSuite
-import io.delta.kernel.expressions.CollationIdentifier._
 
 import java.util.Optional
 

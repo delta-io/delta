@@ -16,7 +16,6 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.expressions.CollationIdentifier;
 
 /**
  * The data type representing {@code string} type values.
