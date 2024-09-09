@@ -113,6 +113,23 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  test("check basic collated predicate") {
+    // CHECK SKIPPING
+    checkSkipping(
+      goldenTablePath("data_skipping_basic_stats_collated_predicate"),
+      Map(new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+        CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER) -> 2))
+  }
+
+  test("check basic collated predicate3") {
+    // CHECK SKIPPING
+    checkSkipping(
+      goldenTablePath("data_skipping_basic_stats_collated_predicate"),
+      Map(new And(new Predicate("=", new Column("c1"), Literal.ofString("a")),
+        new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+          CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) -> 1))
+  }
+
   /**
    * @param tablePath the table to scan
    * @param filterToNumExpFiles map of {predicate -> number of expected scan files}
