@@ -133,12 +133,19 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     }
   }
 
-  test("parseDataType: types with collated strings") {
+  test("serialize/deserialize: complex types") {
+    SAMPLE_COMPLEX_JSON_TO_TYPES
+      .foreach {
+        case (json, dataType) =>
+          testRoundTrip(json, dataType)
+      }
+  }
+
+  test("serialize/deserialize: types with collated strings") {
     SAMPLE_JSON_TO_TYPES_WITH_COLLATION
       .foreach {
-        case(json, structType) =>
-          val x = parse(json)
-          assert(x === structType)
+        case(json, dataType) =>
+          testRoundTrip(json, dataType)
       }
   }
 
@@ -254,6 +261,79 @@ object DataTypeJsonSerDeSuite {
         .add("col1", StringType.STRING, true)
         .add("col2", StringType.STRING, false, FieldMetadata.builder().putLong("int", 0).build())
         .add("col3", VariantType.VARIANT, false)
+    )
+  )
+
+  val SAMPLE_COMPLEX_JSON_TO_TYPES = Seq(
+    (
+      structTypeJson(Seq(
+        structFieldJson("c1", "\"binary\"", true),
+        structFieldJson("c2", "\"boolean\"", false),
+        structFieldJson("c3", "\"byte\"", false),
+        structFieldJson("c4", "\"date\"", true),
+        structFieldJson("c5", "\"decimal(10,0)\"", false),
+        structFieldJson("c6", "\"double\"", false),
+        structFieldJson("c7", "\"float\"", false),
+        structFieldJson("c8", "\"integer\"", true),
+        structFieldJson("c9", "\"long\"", true),
+        structFieldJson("c10", "\"short\"", true),
+        structFieldJson("c11", "\"string\"", true),
+        structFieldJson("c12", "\"timestamp_ntz\"", false),
+        structFieldJson("c13", "\"timestamp\"", false),
+        structFieldJson("c14", "\"variant\"", false)
+      )),
+      new StructType()
+        .add("c1", BinaryType.BINARY, true)
+        .add("c2", BooleanType.BOOLEAN, false)
+        .add("c3", ByteType.BYTE, false)
+        .add("c4", DateType.DATE, true)
+        .add("c5", DecimalType.USER_DEFAULT, false)
+        .add("c6", DoubleType.DOUBLE, false)
+        .add("c7", FloatType.FLOAT, false)
+        .add("c8", IntegerType.INTEGER, true)
+        .add("c9", LongType.LONG, true)
+        .add("c10", ShortType.SHORT, true)
+        .add("c11", StringType.STRING, true)
+        .add("c12", TimestampNTZType.TIMESTAMP_NTZ, false)
+        .add("c13", TimestampType.TIMESTAMP, false)
+        .add("c14", VariantType.VARIANT, false)
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", "\"string\"", true),
+        structFieldJson("a2", structTypeJson(Seq(
+          structFieldJson("b1", mapTypeJson(
+            arrayTypeJson(
+              arrayTypeJson(
+                "\"string\"", true), true),
+            structTypeJson(Seq(
+              structFieldJson("c1", "\"string\"", false),
+              structFieldJson("c2", "\"string\"", true)
+            )), true), true),
+          structFieldJson("b2", "\"long\"", true))), true),
+        structFieldJson("a3",
+          arrayTypeJson(
+            mapTypeJson(
+              "\"string\"",
+              structTypeJson(Seq(
+                structFieldJson("b1", "\"date\"", false)
+              )), false), false), true)
+      )),
+      new StructType()
+        .add("a1", StringType.STRING, true)
+        .add("a2", new StructType()
+          .add("b1", new MapType(
+            new ArrayType(
+              new ArrayType(StringType.STRING, true), true),
+            new StructType()
+              .add("c1", StringType.STRING, false)
+              .add("c2", StringType.STRING, true), true))
+          .add("b2", LongType.LONG), true)
+        .add("a3", new ArrayType(
+          new MapType(
+            StringType.STRING,
+            new StructType()
+              .add("b1", DateType.DATE, false), false), false), true)
     )
   )
 
