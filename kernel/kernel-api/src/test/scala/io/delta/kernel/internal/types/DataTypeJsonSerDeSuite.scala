@@ -22,6 +22,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.HashMap
 import scala.reflect.ClassTag
+import scala.util.control.Breaks.break
 
 class DataTypeJsonSerDeSuite extends AnyFunSuite {
 
@@ -136,7 +137,8 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     SAMPLE_JSON_TO_TYPES_WITH_COLLATION
       .foreach {
         case(json, structType) =>
-          assert(parse(json) == structType)
+          val x = parse(json)
+          assert(x === structType)
       }
   }
 
@@ -262,12 +264,12 @@ object DataTypeJsonSerDeSuite {
           metadataJson = Some(s"""{"$COLLATIONS_METADATA_KEY" : {"a1" : "ICU.UNICODE"}}""")),
         structFieldJson("a2", "\"integer\"", false),
         structFieldJson("a3", "\"string\"", false,
-          metadataJson = Some(s"""{"$COLLATIONS_METADATA_KEY" : {"a3" : "KERNEL.UTF8_LCASE"}}""")),
+          metadataJson = Some(s"""{"$COLLATIONS_METADATA_KEY" : {"a3" : "SPARK.UTF8_LCASE"}}""")),
         structFieldJson("a4", "\"string\"", true))),
       new StructType()
         .add("a1", new StringType("ICU.UNICODE"), true)
         .add("a2", IntegerType.INTEGER, false)
-        .add("a3", new StringType("KERNEL.UTF8_LCASE"), false)
+        .add("a3", new StringType("SPARK.UTF8_LCASE"), false)
         .add("a4", StringType.STRING, true)
     ),
     (
@@ -281,12 +283,12 @@ object DataTypeJsonSerDeSuite {
           structFieldJson("b1", arrayTypeJson("\"string\"", false), true,
             metadataJson = Some(
               s"""{"$COLLATIONS_METADATA_KEY"
-                 | : {"b1.element" : "KERNEL.UTF8_LCASE"}}""".stripMargin)),
+                 | : {"b1.element" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
           structFieldJson("b2", mapTypeJson("\"string\"", "\"string\"", true), false,
             metadataJson = Some(
               s"""{"$COLLATIONS_METADATA_KEY"
                  | : {"b2.key" : "ICU.UNICODE_CI",
-                 |  "b2.value" : "KERNEL.UTF8_LCASE"}}""".stripMargin)),
+                 |  "b2.value" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
           structFieldJson("b3", arrayTypeJson("\"string\"", false), true),
           structFieldJson("b4", mapTypeJson("\"string\"", "\"string\"", false), false))), true),
         structFieldJson("a3", structTypeJson(Seq(
@@ -294,14 +296,14 @@ object DataTypeJsonSerDeSuite {
           structFieldJson("b2", arrayTypeJson("\"integer\"", false), true))), false,
           metadataJson = Some(
             s"""{"$COLLATIONS_METADATA_KEY"
-               | : {"b1" : "KERNEL.UTF8_LCASE"}}""".stripMargin)))),
+               | : {"b1" : "SPARK.UTF8_LCASE"}}""".stripMargin)))),
       new StructType()
         .add("a1", new StructType()
           .add("b1", new StringType("ICU.UNICODE")), true)
         .add("a2", new StructType()
-          .add("b1", new ArrayType(new StringType("KERNEL.UTF8_LCASE"), false))
+          .add("b1", new ArrayType(new StringType("SPARK.UTF8_LCASE"), false))
           .add("b2", new MapType(
-            new StringType("ICU.UNICODE_CI"), new StringType("KERNEL.UTF8_LCASE"), true), false)
+            new StringType("ICU.UNICODE_CI"), new StringType("SPARK.UTF8_LCASE"), true), false)
           .add("b3", new ArrayType(StringType.STRING, false))
           .add("b4", new MapType(
             StringType.STRING, StringType.STRING, false), false), true)
@@ -319,24 +321,24 @@ object DataTypeJsonSerDeSuite {
               structFieldJson("c1", "\"string\"", false,
                 metadataJson = Some(
                   s"""{"$COLLATIONS_METADATA_KEY"
-                     | : {"c1" : "KERNEL.UTF8_LCASE"}}""".stripMargin)),
+                     | : {"c1" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
               structFieldJson("c2", "\"string\"", true,
                 metadataJson = Some(
                   s"""{"$COLLATIONS_METADATA_KEY"
-                     | : {\"c1\" : \"ICU.UNICODE\"}}""".stripMargin)),
-              structFieldJson("c3", "\"string\"", true))), true), true),
-          structFieldJson("b2", "\"long\"", true))), true, metadataJson =
-          Some(
-            s"""{"$COLLATIONS_METADATA_KEY"
-               | : {"b1.key.element.element" : \"KERNEL.UTF8_LCASE\"}}""".stripMargin)),
+                     | : {\"c2\" : \"ICU.UNICODE\"}}""".stripMargin)),
+              structFieldJson("c3", "\"string\"", true))), true), true,
+            metadataJson = Some(
+              s"""{"$COLLATIONS_METADATA_KEY"
+               | : {"b1.key.element.element" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
+          structFieldJson("b2", "\"long\"", true))), true),
         structFieldJson("a3", arrayTypeJson(
           mapTypeJson(
             "\"string\"",
             structTypeJson(Seq(
-              structFieldJson("b1", "\"string\"", false, metadataJson =
-                Some(
+              structFieldJson("b1", "\"string\"", false,
+                metadataJson = Some(
                   s"""{"$COLLATIONS_METADATA_KEY"
-                     | : {"a3.element.key" : "ICU.UNICODE_CI"}}""".stripMargin)))),
+                     | : {"b1" : "SPARK.UTF8_LCASE"}}""".stripMargin)))),
             false), false), true,
           metadataJson = Some(
             s"""{"$COLLATIONS_METADATA_KEY"
@@ -347,9 +349,9 @@ object DataTypeJsonSerDeSuite {
           .add("b1", new MapType(
             new ArrayType(
               new ArrayType(
-                new StringType("KERNEL.UTF8_LCASE"), true), true),
+                new StringType("SPARK.UTF8_LCASE"), true), true),
             new StructType()
-              .add("c1", new StringType("KERNEL.UTF8_LCASE"), false)
+              .add("c1", new StringType("SPARK.UTF8_LCASE"), false)
               .add("c2", new StringType("ICU.UNICODE"), true)
               .add("c3", StringType.STRING), true))
           .add("b2", LongType.LONG), true)
@@ -357,7 +359,7 @@ object DataTypeJsonSerDeSuite {
           new MapType(
             new StringType("ICU.UNICODE_CI"),
             new StructType()
-              .add("b1", new StringType("KERNEL.UTF8_LCASE"), false), false), false), true)
+              .add("b1", new StringType("SPARK.UTF8_LCASE"), false), false), false), true)
     )
   )
 

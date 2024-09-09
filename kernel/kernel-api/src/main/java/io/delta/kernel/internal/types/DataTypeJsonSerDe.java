@@ -172,7 +172,7 @@ public class DataTypeJsonSerDe {
         String.format("Expected JSON object with 3 fields for array data type but got:\n%s", json));
     boolean containsNull = getBooleanField(json, "containsNull");
     DataType dataType =
-        parseDataType(getNonNullField(json, "elementType"), fieldPath + "element", collationMap);
+        parseDataType(getNonNullField(json, "elementType"), fieldPath + ".element", collationMap);
     return new ArrayType(dataType, containsNull);
   }
 
@@ -187,9 +187,9 @@ public class DataTypeJsonSerDe {
         String.format("Expected JSON object with 4 fields for map data type but got:\n%s", json));
     boolean valueContainsNull = getBooleanField(json, "valueContainsNull");
     DataType keyType =
-        parseDataType(getNonNullField(json, "keyType"), fieldPath + "key", collationMap);
+        parseDataType(getNonNullField(json, "keyType"), fieldPath + ".key", collationMap);
     DataType valueType =
-        parseDataType(getNonNullField(json, "valueType"), fieldPath + "value", collationMap);
+        parseDataType(getNonNullField(json, "valueType"), fieldPath + ".value", collationMap);
     return new MapType(keyType, valueType, valueContainsNull);
   }
 
@@ -326,7 +326,7 @@ public class DataTypeJsonSerDe {
     if (BasePrimitiveType.isPrimitiveType(name)) {
       if (collationMap.containsKey(fieldPath)) {
         assertValidTypeForCollations(fieldPath, name, collationMap);
-        return stringTypeWithCollation(collationMap.get(fieldPath));
+        return new StringType(collationMap.get(fieldPath));
       }
       return BasePrimitiveType.createPrimitive(name);
     } else if (name.equals("decimal")) {
@@ -367,10 +367,6 @@ public class DataTypeJsonSerDe {
         node.isTextual(),
         String.format("Expected string for fieldName=%s in:\n%s", fieldName, rootNode));
     return node.textValue(); // double check this only works for string values! and isTextual()!
-  }
-
-  private static StringType stringTypeWithCollation(String collationName) {
-    return new StringType(collationName);
   }
 
   private static void assertValidTypeForCollations(
