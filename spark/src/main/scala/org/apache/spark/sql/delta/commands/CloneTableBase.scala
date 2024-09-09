@@ -406,7 +406,6 @@ abstract class CloneTableBase(
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
     val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations
     val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
-
     var (minReaderVersion, minWriterVersion, enabledFeatures) =
       Protocol.minProtocolComponentsFromMetadata(spark, metadataWithOverrides)
 

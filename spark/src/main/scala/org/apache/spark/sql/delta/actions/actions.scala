@@ -265,7 +265,6 @@ object Protocol {
 
     val (readerVersion, writerVersion, enabledFeatures) =
       minProtocolComponentsFromMetadata(spark, metadata)
-
     // New table protocols should always be denormalized and then normalized to convert the
     // protocol to the weakest possible form. This means either converting a table features
     // protocol to a legacy protocol or reducing the versions of a table features protocol.
@@ -314,7 +313,6 @@ object Protocol {
 
     getDependencyClosure(protocolEnabledFeatures ++ metadataEnabledFeatures)
   }
-
 
   /**
    * Given the Delta table metadata, returns the minimum required reader and writer version that
