@@ -28,7 +28,9 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf, Delta
 
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.{DataFrame, Dataset, Encoder}
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.Encoder
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap

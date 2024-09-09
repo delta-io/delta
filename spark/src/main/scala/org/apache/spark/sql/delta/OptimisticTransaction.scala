@@ -54,7 +54,8 @@ import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes

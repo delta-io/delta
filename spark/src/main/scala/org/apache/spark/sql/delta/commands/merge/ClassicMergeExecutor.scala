@@ -26,8 +26,10 @@ import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{SOURCE_R
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.util.SetAccumulator
 
+import org.apache.spark.sql.Column
 import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.{Column, Dataset, SparkSession}
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, Or}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
 import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, lit, monotonically_increasing_id, sum}

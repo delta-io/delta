@@ -31,7 +31,12 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.{DataFrame, DataFrameWriter, Dataset, QueryTest, Row, SparkSession}
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.DataFrameWriter
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
