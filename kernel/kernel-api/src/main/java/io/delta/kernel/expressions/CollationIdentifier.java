@@ -15,8 +15,14 @@
  */
 package io.delta.kernel.expressions;
 
+import io.delta.kernel.annotation.Evolving;
+
+import java.util.Objects;
 import java.util.Optional;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
+@Evolving
 public class CollationIdentifier {
   public static final String PROVIDER_SPARK = "SPARK";
   public static final String PROVIDER_ICU = "ICU";
@@ -39,6 +45,10 @@ public class CollationIdentifier {
   }
 
   public CollationIdentifier(String provider, String collationName, Optional<String> version) {
+    Objects.requireNonNull(provider, "Collation provider cannot be null.");
+    Objects.requireNonNull(collationName, "Collation name cannot be null.");
+    Objects.requireNonNull(version, "Provider version cannot be null.");
+
     this.provider = provider.toUpperCase();
     this.name = collationName.toUpperCase();
     if (version.isPresent()) {
@@ -67,10 +77,8 @@ public class CollationIdentifier {
 
   public static CollationIdentifier fromString(String identifier) {
     long numDots = identifier.chars().filter(ch -> ch == '.').count();
-    if (numDots == 0) {
-      throw new IllegalArgumentException(
-              String.format("Invalid collation identifier: %s", identifier));
-    } else if (numDots == 1) {
+    checkArgument(numDots > 0, String.format("Invalid collation identifier: %s", identifier));
+    if (numDots == 1) {
       String[] parts = identifier.split("\\.");
       return new CollationIdentifier(parts[0], parts[1]);
     } else {
