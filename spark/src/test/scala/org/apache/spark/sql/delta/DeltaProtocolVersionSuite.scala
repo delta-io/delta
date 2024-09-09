@@ -103,7 +103,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       readerVersion = 1,
       writerVersion = 1,
       sqlConfs = Seq((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")),
-      expectedProtocol = Protocol(1, 1).merge(ChangeDataFeedTableFeature.minProtocolVersion))
+      expectedProtocol = Protocol(1, 7).withFeature(ChangeDataFeedTableFeature))
     testEmptyFolder(
       readerVersion = 1,
       writerVersion = 1,
@@ -1053,7 +1053,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     "creating a new table with default protocol - requiring more recent protocol version") {
     val tableName = "delta_test"
     def testTableCreation(fn: String => Unit, tableInitialized: Boolean = false): Unit =
-      testCreation(tableName, 2, tableInitialized)(fn)
+      testCreation(tableName, 7, tableInitialized)(fn)
 
     testTableCreation { dir =>
       spark.range(10).writeTo(tableName).using("delta")
@@ -1115,7 +1115,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           sql(s"CREATE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
         }
         val deltaLog = DeltaLog.forTable(spark, dir)
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+        assert(deltaLog.update().protocol.minWriterVersion === 1,
           "Should've picked up the protocol from the configuration")
 
         // Replace the table and make sure the config is picked up
@@ -1123,13 +1123,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           spark.range(10).writeTo(tbl).using("delta")
             .tableProperty("location", dir.getCanonicalPath).replace()
         }
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+        assert(deltaLog.update().protocol.minWriterVersion === 2,
           "Should've picked up the protocol from the configuration")
 
         // Will not downgrade without special flag.
         withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
           sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+          assert(deltaLog.update().protocol.minWriterVersion === 2,
             "Should not pick up the protocol from the configuration")
         }
 
@@ -1138,23 +1138,23 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
             DeltaSQLConf.REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key -> "true") {
           sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+          assert(deltaLog.update().protocol.minWriterVersion === 1,
             "Should've created a new protocol")
 
           sql(s"CREATE OR REPLACE TABLE $tbl (id bigint NOT NULL) USING delta " +
             s"LOCATION '${dir.getCanonicalPath}'")
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+          assert(deltaLog.update().protocol === Protocol(1, 7).withFeature(InvariantsTableFeature),
             "Invariant should require the higher protocol")
 
           // Go back to version 1
           sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+          assert(deltaLog.update().protocol.minWriterVersion === 1,
             "Should've created a new protocol")
 
           // Check table properties with different syntax
           spark.range(10).writeTo(tbl).tableProperty("location", dir.getCanonicalPath)
             .tableProperty("delta.appendOnly", "true").using("delta").createOrReplace()
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+          assert(deltaLog.update().protocol  === Protocol(1, 7).withFeature(AppendOnlyTableFeature),
             "appendOnly should require the higher protocol")
         }
       }
@@ -1368,8 +1368,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "  delta.minWriterVersion='2'," +
           "  delta.enableChangeDataFeed='true'" +
           ")")
-      assert(deltaLog.snapshot.protocol.minReaderVersion === 1)
-      assert(deltaLog.snapshot.protocol.minWriterVersion === 4)
+      assert(deltaLog.update().protocol === Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ChangeDataFeedTableFeature)))
     }
   }
 
@@ -1701,12 +1703,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> "1",
       DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
       DeltaConfigs.CHANGE_DATA_FEED.key -> "true"),
-    expectedFinalProtocol = Some(Protocol(1, 4)))
+    expectedFinalProtocol = Some(Protocol(1, 7).withFeatures(Seq(
+      AppendOnlyTableFeature,
+      InvariantsTableFeature,
+      ChangeDataFeedTableFeature))))
 
   testAlterTable(
     "legacy protocol, legacy feature, metadata",
     Map("delta.appendOnly" -> "true"),
-    expectedFinalProtocol = Some(Protocol(1, 2)))
+    expectedFinalProtocol = Some(Protocol(1, 7).withFeature(AppendOnlyTableFeature)))
 
   testAlterTable(
     "legacy protocol, legacy feature, feature property",
@@ -1925,7 +1930,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .tableProperty("delta.appendOnly", "true")
           .using("delta")
           .create()
-        val protocolOfNewTable = Protocol(1, 2)
+        val protocolOfNewTable = Protocol(1, 7).withFeature(AppendOnlyTableFeature)
         assert(deltaLog.update().protocol === protocolOfNewTable)
 
         val e = intercept[DeltaTableFeatureException] {
@@ -1976,8 +1981,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
           "TBLPROPERTIES (delta.minWriterVersion=1, delta.appendOnly=true)")
 
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 2)
-        assertPropertiesAndShowTblProperties(deltaLog)
+        assert(deltaLog.update().protocol === Protocol(1, 7).withFeature(AppendOnlyTableFeature))
+        assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
       }
     }
   }
@@ -1992,8 +1997,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .using("delta")
           .create()
 
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 2)
-        assertPropertiesAndShowTblProperties(deltaLog)
+        assert(deltaLog.update().protocol === Protocol(1, 7).withFeature(AppendOnlyTableFeature))
+        assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
       }
     }
   }
@@ -2075,7 +2080,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
                    |ALTER TABLE delta.`${log.dataPath.toString}`
                    |SET TBLPROPERTIES ('delta.appendOnly' = 'true')
                  """.stripMargin)
-      assert(log.snapshot.protocol.minWriterVersion === 2)
+      assert(log.update().protocol === Protocol(1, 7).withFeature(AppendOnlyTableFeature))
     }
   }
 
@@ -2101,7 +2106,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
                    |  'delta.minWriterVersion' = '2',
                    |  'delta.enableChangeDataFeed' = 'true'
                    |)""".stripMargin)
-      assert(log.snapshot.protocol.minWriterVersion === 4)
+      assert(log.update().protocol === Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ChangeDataFeedTableFeature)))
     }
   }
 

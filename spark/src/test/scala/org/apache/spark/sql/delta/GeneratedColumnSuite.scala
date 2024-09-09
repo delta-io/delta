@@ -21,6 +21,7 @@ import java.io.PrintWriter
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -998,28 +999,25 @@ trait GeneratedColumnSuiteBase
 
   test("using generated columns should upgrade the protocol") {
     withTableName("upgrade_protocol") { table =>
-      def protocolVersions: (Int, Int) = {
-        sql(s"DESC DETAIL $table")
-          .select("minReaderVersion", "minWriterVersion")
-          .as[(Int, Int)]
-          .head()
-      }
-
-      // Use the default protocol versions when not using computed partitions
+      // Use the default protocol versions when not using computed partitions.
       createTable(table, None, "i INT", Map.empty, Seq.empty)
-      assert(protocolVersions == (1, 2))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = table))
+      assert(deltaLog.update().protocol == Protocol(1, 2))
       assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).snapshot.version == 0)
 
-      // Protocol versions should be upgraded when using computed partitions
+      // Protocol versions should be upgraded when using computed partitions.
       replaceTable(
         table,
         None,
         defaultTestTableSchema,
         defaultTestTableGeneratedColumns,
         defaultTestTablePartitionColumns)
-      assert(protocolVersions == (1, 4))
+      assert(deltaLog.update().protocol == Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        GeneratedColumnsTableFeature)))
       // Make sure we did overwrite the table rather than deleting and re-creating.
-      assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).snapshot.version == 1)
+      assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).update().version == 1)
     }
   }
 
