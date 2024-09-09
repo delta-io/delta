@@ -29,16 +29,29 @@ public class StringType extends BasePrimitiveType {
 
   private final CollationIdentifier collationIdentifier;
 
+  /**
+   *
+   * @param collationIdentifier identifier of collation in which this StringType will be observed
+   */
   public StringType(CollationIdentifier collationIdentifier) {
     super("string");
     this.collationIdentifier = collationIdentifier;
   }
 
+  /**
+   *
+   * @param collationName name of collation in which this StringType will be observed.
+   *                      In form of {@code PROVIDER.COLLATION_NAME[.VERSION]}
+   */
   public StringType(String collationName) {
     super("string");
     this.collationIdentifier = CollationIdentifier.fromString(collationName);
   }
 
+  /**
+   *
+   * @return StringType's collation identifier
+   */
   public CollationIdentifier getCollationIdentifier() {
     return collationIdentifier;
   }
