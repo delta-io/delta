@@ -129,6 +129,6 @@ public class Predicate extends ScalarExpression {
     return super.toString();
   }
 
-  private static final Set<String> BINARY_OPERATORS =
+  protected static final Set<String> BINARY_OPERATORS =
       Stream.of("<", "<=", ">", ">=", "=", "AND", "OR").collect(Collectors.toSet());
 }

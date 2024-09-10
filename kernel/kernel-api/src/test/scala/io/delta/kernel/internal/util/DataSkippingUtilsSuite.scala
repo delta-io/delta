@@ -16,9 +16,9 @@
 package io.delta.kernel.internal.util
 
 import scala.collection.JavaConverters._
-
-import io.delta.kernel.expressions.Column
+import io.delta.kernel.expressions.{AlwaysTrue, And, CollatedPredicate, CollationIdentifier, Column, Literal, Or, Predicate}
 import io.delta.kernel.internal.skipping.DataSkippingUtils
+import io.delta.kernel.internal.skipping.DataSkippingUtils.omitCollatedPredicateFromDataSkippingFilter
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.{DataType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
@@ -53,6 +53,381 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
     val prunedSchema = DataSkippingUtils.pruneStatsSchema(inputSchema, referencedCols.asJava)
     assert(compareDataTypeUnordered(expectedSchema, prunedSchema),
       s"expected=$expectedSchema\nfound=$prunedSchema")
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - AND, OR") {
+    Seq(
+      // (starting predicate, resulting predicate)
+      (
+        new And(
+          new Predicate("=", new Column("c1"), new Column("c2")),
+          new Predicate(">", Literal.ofString("a"), new Column("c1"))
+        ),
+        new And(
+          new Predicate("=", new Column("c1"), new Column("c2")),
+          new Predicate(">", Literal.ofString("a"), new Column("c1"))
+        )
+      ),
+      (
+        new And(
+          new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+          new Predicate("=", new Column("c1"), Literal.ofString("a"))
+        ),
+        new Predicate("=", new Column("c1"), Literal.ofString("a"))
+      ),
+      (
+        new And(
+          new Predicate("=", new Column("c1"), Literal.ofString("a")),
+          new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+        ),
+        new Predicate("=", new Column("c1"), Literal.ofString("a"))
+      ),
+      (
+        new And(
+          new CollatedPredicate("=", new Column("c1"), new Column("c2"),
+            CollationIdentifier.fromString("ICU.UNICODE")),
+          new CollatedPredicate(">", new Column("c2"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Or(
+          new Predicate("=", new Column("c1"), new Column("c2")),
+          new Predicate(">", Literal.ofString("a"), new Column("c1"))
+        ),
+        new Or(
+          new Predicate("=", new Column("c1"), new Column("c2")),
+          new Predicate(">", Literal.ofString("a"), new Column("c1"))
+        )
+      ),
+      (
+        new Or(
+          new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+          new Predicate("=", new Column("c1"), Literal.ofString("a"))
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Or(
+          new Predicate("=", new Column("c1"), Literal.ofString("a")),
+          new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Or(
+          new CollatedPredicate("=", new Column("c1"), new Column("c2"),
+            CollationIdentifier.fromString("ICU.UNICODE")),
+          new CollatedPredicate(">", new Column("c2"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      )
+    ).foreach {
+      case(startingPredicate, resultingPredicate) =>
+        assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+          === resultingPredicate.toString)
+    }
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - =") {
+    Seq(
+      // (starting predicate, resulting predicate)
+      (
+        new Predicate("=", Literal.ofString("a"), new Column("c1")),
+        new Predicate("=", Literal.ofString("a"), new Column("c1")),
+      ),
+      (
+        new Predicate("=",
+          new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+          Literal.ofBoolean(true)
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Predicate("=",
+          Literal.ofBoolean(true),
+          new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Predicate("=",
+          new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+          new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Predicate("=",
+          new And(
+            new CollatedPredicate("=", new Column("c1"), Literal.ofString("a"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+            new Predicate("=", new Column("a"), Literal.ofString("a"))
+          ),
+          Literal.ofBoolean(true)
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      )
+    ).foreach {
+      case(startingPredicate, resultingPredicate) =>
+        assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+          === resultingPredicate.toString)
+    }
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - >, >=") {
+    Seq(">", ">=")
+      .foreach {
+        name =>
+          Seq(
+            // (starting predicate, resulting predicate)
+            (
+              new Predicate(name,
+                Literal.ofString("a"),
+                new Column("c1")
+              ),
+              new Predicate(name,
+                Literal.ofString("a"),
+                new Column("c1")
+              )
+            ),
+            (
+              new Predicate(name,
+                new CollatedPredicate("=",
+                  Literal.ofString("a"),
+                  new Column("c1"),
+                  CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+                ),
+                Literal.ofBoolean(true)
+              ),
+              new Predicate(name,
+                AlwaysTrue.ALWAYS_TRUE,
+                Literal.ofBoolean(true)
+              )
+            ),
+            (
+              new Predicate(name,
+                Literal.ofBoolean(true),
+                new CollatedPredicate("=",
+                  Literal.ofString("a"),
+                  new Column("c1"),
+                  CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+                )
+              ),
+              AlwaysTrue.ALWAYS_TRUE
+            )
+          ).foreach {
+            case(startingPredicate, resultingPredicate) =>
+              assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+                === resultingPredicate.toString)
+          }
+      }
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - <, <=") {
+    Seq("<", "<=")
+      .foreach {
+        name =>
+          Seq(
+            // (starting predicate, resulting predicate)
+            (
+              new Predicate(name,
+                Literal.ofString("a"),
+                new Column("c1")
+              ),
+              new Predicate(name,
+                Literal.ofString("a"),
+                new Column("c1")
+              )
+            ),
+            (
+              new Predicate(name,
+                Literal.ofBoolean(true),
+                new CollatedPredicate("=",
+                  Literal.ofString("a"),
+                  new Column("c1"),
+                  CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+                )
+              ),
+              new Predicate(name,
+                Literal.ofBoolean(true),
+                AlwaysTrue.ALWAYS_TRUE
+              )
+            ),
+            (
+              new Predicate(name,
+                new CollatedPredicate("=",
+                  Literal.ofString("a"),
+                  new Column("c1"),
+                  CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+                ),
+                Literal.ofBoolean(true)
+              ),
+              AlwaysTrue.ALWAYS_TRUE
+            )
+          ).foreach {
+            case(startingPredicate, resultingPredicate) =>
+              assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+                === resultingPredicate.toString)
+          }
+      }
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - NOT") {
+    Seq(
+      // (starting predicate, resulting predicate)
+      (
+        new Predicate("NOT",
+          new And(
+            new Predicate("=",
+              new Column("c1"), Literal.ofString("a")
+            ),
+            new Predicate(">",
+              new Column("c2"), new Column("c1")
+            )
+          )
+        ),
+        new Or(
+          new Or(
+            new Predicate("<",
+              new Column("c1"), Literal.ofString("a")
+            ),
+            new Predicate("<",
+              Literal.ofString("a"), new Column("c1"))
+          ),
+          new Predicate("<=",
+            new Column("c2"), new Column("c1")
+          )
+        )
+      ),
+      (
+        new Predicate("NOT",
+          new Or(
+            new Predicate("=",
+              new Column("c1"), Literal.ofString("a")
+            ),
+            new Predicate(">",
+              new Column("c2"), new Column("c1")
+            )
+          )
+        ),
+        new And(
+          new Or(
+            new Predicate("<",
+              new Column("c1"), Literal.ofString("a")
+            ),
+            new Predicate("<",
+              Literal.ofString("a"), new Column("c1"))
+          ),
+          new Predicate("<=",
+            new Column("c2"), new Column("c1")
+          )
+        )
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("=",
+            Literal.ofString("a"),
+            new Column("c1"))
+        ),
+        new Or(
+          new Predicate("<",
+            Literal.ofString("a"),
+            new Column("c1")
+          ),
+          new Predicate("<",
+            new Column("c1"),
+            Literal.ofString("a"))
+        )
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("=",
+            new CollatedPredicate("<",
+              new Column("c1"),
+              Literal.ofString("a"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+            ),
+            Literal.ofBoolean(true)
+          )
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      )
+    ).foreach {
+      case(startingPredicate, resultingPredicate) =>
+        assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+          === resultingPredicate.toString)
+    }
+
+    val reverseSign = Map(
+      ">" -> "<=",
+      ">=" -> "<",
+      "<" -> ">=",
+      "<=" -> ">"
+    )
+
+    // check >, >=
+    Seq(">", ">=")
+      .foreach {
+        name =>
+          Seq(
+            (
+              new Predicate("NOT",
+                new Predicate(name,
+                  Literal.ofString("a"),
+                  new Column("c1")
+                )
+              ),
+              new Predicate(reverseSign(name),
+                Literal.ofString("a"),
+                new Column("c1")
+              )
+            ),
+            (
+              new Predicate("NOT",
+                new Predicate(name,
+                  new CollatedPredicate("=",
+                    Literal.ofString("a"),
+                    new Column("c1"),
+                    CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+                  ),
+                  Literal.ofBoolean(true)
+                )
+              ),
+              AlwaysTrue.ALWAYS_TRUE
+            ),
+            (
+              new Predicate("NOT",
+                new Predicate(name,
+                  Literal.ofBoolean(true),
+                  new CollatedPredicate("=",
+                    Literal.ofString("a"),
+                    new Column("c1"),
+                    CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+                  )
+                )
+              ),
+              new Predicate(reverseSign(name),
+                Literal.ofBoolean(true),
+                AlwaysTrue.ALWAYS_TRUE
+              )
+            )
+          ).foreach {
+            case(startingPredicate, resultingPredicate) =>
+              assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+                === resultingPredicate.toString)
+          }
+      }
   }
 
   test("pruneStatsSchema - multiple basic cases one level of nesting") {

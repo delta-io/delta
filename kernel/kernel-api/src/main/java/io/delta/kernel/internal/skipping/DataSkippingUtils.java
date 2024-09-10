@@ -491,10 +491,10 @@ public class DataSkippingUtils {
           put("IS_NOT_NULL", "IS_NULL");
           put("NOT", "NOT");
           put("=", "=");
-          put("<", ">");
-          put("<=", ">=");
-          put(">", "<");
-          put(">=", "<=");
+          put("<", ">=");
+          put("<=", ">");
+          put(">", "<=");
+          put(">=", "<");
         }
       };
 
