@@ -221,9 +221,9 @@ class DeltaLog private(
       catalogTableOpt: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None)(
       thunk: OptimisticTransaction => T): T = {
+    val txn = startTransaction(catalogTableOpt, snapshotOpt)
+    OptimisticTransaction.setActive(txn)
     try {
-      val txn = startTransaction(catalogTableOpt, snapshotOpt)
-      OptimisticTransaction.setActive(txn)
       thunk(txn)
     } finally {
       OptimisticTransaction.clearActive()
@@ -233,9 +233,9 @@ class DeltaLog private(
   /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
   @deprecated("Please use the CatalogTable overload instead", "3.0")
   def withNewTransaction[T](thunk: OptimisticTransaction => T): T = {
+    val txn = startTransaction()
+    OptimisticTransaction.setActive(txn)
     try {
-      val txn = startTransaction()
-      OptimisticTransaction.setActive(txn)
       thunk(txn)
     } finally {
       OptimisticTransaction.clearActive()

@@ -216,10 +216,14 @@ object OptimisticTransaction {
    *       `OptimisticTransaction.withNewTransaction`. Use that to create and set active txns.
    */
   private[delta] def setActive(txn: OptimisticTransaction): Unit = {
-    if (active.get != null) {
-      throw DeltaErrors.activeTransactionAlreadySet()
+    getActive() match {
+      case Some(activeTxn) =>
+        if (!(activeTxn eq txn)) {
+          throw DeltaErrors.activeTransactionAlreadySet()
+        }
+      case _ =>
+        active.set(txn)
     }
-    active.set(txn)
   }
 
   /**
