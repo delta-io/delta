@@ -52,13 +52,14 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.2"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
+sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -539,21 +540,22 @@ lazy val sharing = (project in file("sharing"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    crossSparkSettings(),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.1.1",
+      "io.delta" %% "delta-sharing-client" % "1.2.0",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
     )
   ).configureUnidoc()
 
@@ -569,13 +571,41 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
+
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test"
     ),
+    // Shade jackson libraries so that connector developers don't have to worry
+    // about jackson version conflicts.
+    Compile / packageBin := assembly.value,
+    assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      val allowedPrefixes = Set("META_INF", "io", "jackson")
+      cp.filter { f =>
+        !allowedPrefixes.exists(prefix => f.data.getName.startsWith(prefix))
+      }
+    },
+     assembly / assemblyShadeRules := Seq(
+      ShadeRule.rename("com.fasterxml.jackson.**" -> "io.delta.kernel.shaded.com.fasterxml.jackson.@1").inAll
+    ),
+    assembly / assemblyMergeStrategy := {
+      // Discard `module-info.class` to fix the `different file contents found` error.
+      // TODO Upgrade SBT to 1.5 which will do this automatically
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     // Generate the package object to provide the version information in runtime.
     Compile / sourceGenerators += Def.task {
       val file = (Compile / sourceManaged).value / "io" / "delta" / "kernel" / "Meta.java"
@@ -782,22 +812,17 @@ lazy val iceberg = (project in file("iceberg"))
         // - delta-storage will bring in classes: io/delta/storage
         // - delta-spark will bring in classes: io/delta/exceptions/, io/delta/implicits,
         //   io/delta/package, io/delta/sql, io/delta/tables,
-        println(s"Discarding class: io/delta/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("com", "databricks", xs @ _*) =>
         // delta-spark will bring in com/databricks/spark/util
-        println(s"Discarding class: com/databricks/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("org", "apache", "spark", xs @ _*)
         if !deltaIcebergSparkIncludePrefixes.exists { prefix =>
           s"org/apache/spark/${xs.mkString("/")}".startsWith(prefix) } =>
-        println(s"Discarding class: org/apache/spark/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("scoverage", xs @ _*) =>
-        println(s"Discarding class: scoverage/${xs.mkString("/")}")
         MergeStrategy.discard
       case x =>
-        println(s"Including class: $x")
         (assembly / assemblyMergeStrategy).value(x)
     },
     assemblyPackageScala / assembleArtifact := false

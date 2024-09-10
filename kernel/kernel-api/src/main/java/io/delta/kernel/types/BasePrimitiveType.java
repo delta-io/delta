@@ -60,6 +60,7 @@ public abstract class BasePrimitiveType extends DataType {
                   put("timestamp_ntz", TimestampNTZType.TIMESTAMP_NTZ);
                   put("binary", BinaryType.BINARY);
                   put("string", StringType.STRING);
+                  put("variant", VariantType.VARIANT);
                 }
               });
 
@@ -89,10 +90,5 @@ public abstract class BasePrimitiveType extends DataType {
   @Override
   public String toString() {
     return primitiveTypeName;
-  }
-
-  @Override
-  public String toJson() {
-    return String.format("\"%s\"", primitiveTypeName);
   }
 }

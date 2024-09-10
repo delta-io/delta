@@ -308,9 +308,16 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       // We set CDC to be enabled by default, so this should automatically bump the writer protocol
       // to the required version.
       if (columnMappingEnabled) {
-        assert(log.snapshot.protocol == Protocol(2, 5))
+        assert(log.update().protocol == Protocol(2, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          ChangeDataFeedTableFeature,
+          ColumnMappingTableFeature)))
       } else {
-        assert(log.snapshot.protocol == Protocol(1, 4))
+        assert(log.update().protocol == Protocol(1, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          ChangeDataFeedTableFeature)))
       }
     }
   }

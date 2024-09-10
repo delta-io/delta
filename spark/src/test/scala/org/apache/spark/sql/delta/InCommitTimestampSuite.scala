@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -1016,7 +1017,7 @@ class InCommitTimestampWithCoordinatedCommitsSuite
       val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
       val unbackfilledCommits =
         tableCommitCoordinatorClient
-          .getCommits(Some(1))
+          .getCommits(Some(1L))
           .getCommits.asScala
           .map { commit => DeltaHistoryManager.Commit(commit.getVersion, commit.getCommitTimestamp)}
       val commits = (Seq(commit0) ++ unbackfilledCommits).toList

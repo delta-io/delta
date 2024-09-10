@@ -57,10 +57,10 @@ object CommitCoordinatorProvider {
   /** Registers a new [[CommitCoordinatorBuilder]] with the [[CommitCoordinatorProvider]] */
   def registerBuilder(commitCoordinatorBuilder: CommitCoordinatorBuilder): Unit = synchronized {
     nameToBuilderMapping.get(commitCoordinatorBuilder.getName) match {
-      case Some(commitCoordinatorBuilder: CommitCoordinatorBuilder) =>
+      case Some(existingBuilder: CommitCoordinatorBuilder) =>
         throw new IllegalArgumentException(
-          s"commit-coordinator: ${commitCoordinatorBuilder.getName} already" +
-          s" registered with builder ${commitCoordinatorBuilder.getClass.getName}")
+          s"commit-coordinator: ${existingBuilder.getName} already" +
+          s" registered with builder ${existingBuilder.getClass.getName}")
       case None =>
         nameToBuilderMapping.put(commitCoordinatorBuilder.getName, commitCoordinatorBuilder)
     }

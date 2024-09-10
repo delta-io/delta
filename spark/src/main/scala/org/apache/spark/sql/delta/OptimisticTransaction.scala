@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
-import java.util.{ConcurrentModificationException, UUID}
+import java.util.{ConcurrentModificationException, Optional, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import scala.collection.JavaConverters._
@@ -374,18 +374,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   /** Whether to check unsupported data type when updating the table schema */
   protected var checkUnsupportedDataType: Boolean =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_TYPE_CHECK)
-
-  // Some operations (e.g. stats collection) may set files with DVs back to tight bounds.
-  // In that case they need to skip this check.
-  protected var checkDeletionVectorFilesHaveWideBounds: Boolean = true
-  /**
-   * Disable the check that ensures that all files with DVs added have tightBounds set to false.
-   *
-   * This is necessary when recomputing the stats on a table with DVs.
-   */
-  def disableDeletionVectorFilesHaveWideBoundsCheck(): Unit = {
-    checkDeletionVectorFilesHaveWideBounds = false
-  }
 
   // An array of tuples where each tuple represents a pair (colName, newHighWatermark).
   // This is collected after a write into Delta table with IDENTITY columns. If it's not
@@ -753,6 +741,44 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Updates the metadata of the target table in an effective REPLACE command. Note that replacing
+   * a table is similar to dropping a table and then recreating it. However, the backing catalog
+   * object does not change. For now, for Coordinated Commit tables, this function retains the
+   * coordinator details (and other associated Coordinated Commits properties) from the original
+   * table during a REPLACE. And if the table had a coordinator, existing ICT properties are also
+   * retained; otherwise, default ICT properties are included.
+   * TODO (YumingxuanGuo): Remove this once the exact semantic on default Coordinated Commits
+   *   configurations is finalized.
+   */
+  def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
+    assert(CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
+        metadata.configuration).isEmpty,
+      "Command-specified Coordinated Commits configurations should have been blocked earlier.")
+    // Extract the existing Coordinated Commits configurations and ICT dependency configurations
+    // from the existing table metadata.
+    val existingCCConfs = CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
+      snapshot.metadata.configuration)
+    val existingICTConfs = CoordinatedCommitsUtils.extractICTConfigurations(
+      snapshot.metadata.configuration)
+    // Update the metadata.
+    updateMetadataForNewTable(metadata)
+    // Now the `txn.metadata` contains all the command-specified properties and all the default
+    // properties. The latter might still contain Coordinated Commits configurations, so we need
+    // to remove them and retain the Coordinated Commits configurations from the existing table.
+    val newConfsWithoutCC = newMetadata.get.configuration --
+      CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
+    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs
+    // We also need to retain the existing ICT dependency configurations, but only when the
+    // existing table does have Coordinated Commits configurations. Otherwise, we treat the ICT
+    // configurations the same as any other configurations, by merging them from the default.
+    if (existingCCConfs.nonEmpty) {
+      val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
+      newConfs = newConfsWithoutICT ++ existingICTConfs
+    }
+    newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
+  }
+
+  /**
    * Records an update to the metadata that should be committed with this transaction and when
    * this transaction is attempt to overwrite the data and schema using .mode('overwrite') and
    * .option('overwriteSchema', true).
@@ -856,7 +882,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       commitCheckEnabled && !isComputeStatsOperation && !deletionVectorCreationAllowed
 
     val addFileMustHaveWideBounds = deletionVectorCreationAllowed &&
-      checkDeletionVectorFilesHaveWideBounds
+      op.checkAddFileWithDeletionVectorStatsAreNotTightBounds
 
     action => action match {
       case a: AddFile =>
@@ -871,8 +897,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
         // 2. All operations that add new DVs should always turn bounds to wide.
         //    Operations that only update files with existing DVs may opt-out from this rule
-        //    via `disableDeletionVectorFilesHaveWideBoundsCheck()`.
-        //    (e.g. stats collection, metadata-only updates.)
+        //    via `checkAddFileWithDeletionVectorStatsAreNotTightBounds`.
+        //    See that field comment in DeltaOperation for more details.
         //    Note, the absence of the tightBounds column when DVs exist is also an illegal state.
         if (addFileMustHaveWideBounds &&
             a.deletionVector != null &&
@@ -1432,6 +1458,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     assert(!committed, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
+    executionObserver.preparingCommit()
 
     // From this point onwards, newProtocolOpt should not be used.
     // `newProtocol` or `protocol` should be used instead.
@@ -1539,6 +1566,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       allActions = DefaultRowCommitVersion
         .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
+      executionObserver.beginDoCommit()
       if (readVersion < 0) {
         deltaLog.createLogDirectoriesIfNotExists()
       }
@@ -1554,7 +1582,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       val updatedActions = new UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
-        effectiveTableCommitCoordinatorClient.commit(attemptVersion, jsonActions, updatedActions)
+        effectiveTableCommitCoordinatorClient.commit(
+          attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
@@ -1602,6 +1631,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
 
+      executionObserver.transactionCommitted()
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
       (attemptVersion, postCommitSnapshot)
     } catch {
@@ -1622,9 +1652,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
               throw DeltaErrors.concurrentWriteException(commitInfo)
             } finally {
               logs.close()
+              executionObserver.transactionAborted()
             }
           case NonFatal(_) =>
             recordCommitLargeFailure(e, op)
+            executionObserver.transactionAborted()
             throw e
           case _ =>
             throw e
@@ -1701,8 +1733,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             log"file-system based table to coordinated-commits table: " +
             log"[commit-coordinator: ${MDC(DeltaLogKeys.COORDINATOR_NAME, commitCoordinatorName)}" +
             log", conf: ${MDC(DeltaLogKeys.COORDINATOR_CONF, commitCoordinatorConf)}]")
+          val tableIdentifierOpt =
+            CoordinatedCommitsUtils.toCCTableIdentifier(catalogTable.map(_.identifier))
           newCoordinatedCommitsTableConf = Some(newCommitCoordinatorClient.registerTable(
-            deltaLog.logPath, readVersion, finalMetadata, protocol).asScala.toMap)
+            deltaLog.logPath,
+            tableIdentifierOpt,
+            readVersion,
+            finalMetadata,
+            protocol).asScala.toMap)
         case (None, Some(readCommitCoordinatorClient)) =>
           // CC -> FS conversion
           val (newOwnerName, newOwnerConf) =
@@ -2272,11 +2310,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     override def commit(
         logStore: io.delta.storage.LogStore,
         hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         commitVersion: Long,
         actions: java.util.Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
+      val logPath = tableDesc.getLogPath
       // Get thread local observer for Fuzz testing purpose.
       val executionObserver = TransactionExecutionObserver.getObserver
       val commitFile = util.FileNames.unsafeDeltaFile(logPath, commitVersion)
@@ -2310,8 +2348,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
 
     override def getCommits(
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         startVersion: java.lang.Long,
         endVersion: java.lang.Long): GetCommitsResponse =
       new GetCommitsResponse(Seq.empty.asJava, -1)
@@ -2319,8 +2356,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     override def backfillToVersion(
         logStore: io.delta.storage.LogStore,
         hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         version: Long,
         lastKnownBackfilledVersion: java.lang.Long): Unit = {}
 
@@ -2339,6 +2375,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     override def registerTable(
         logPath: Path,
+        tableIdentifier: Optional[TableIdentifier],
         currentVersion: Long,
         currentMetadata: AbstractMetadata,
         currentProtocol: AbstractProtocol): java.util.Map[String, String] =
@@ -2375,7 +2412,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
-      tableCommitCoordinatorClient.commit(attemptVersion, jsonActions, updatedActions)
+      tableCommitCoordinatorClient.commit(
+        attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
     }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri

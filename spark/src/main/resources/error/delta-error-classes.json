@@ -213,6 +213,12 @@
     ],
     "sqlState" : "42939"
   },
+  "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "<Command> cannot override coordinated commits configurations for an existing target table. Please remove them (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\", \"delta.coordinatedCommits.tableConf-preview\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI" : {
     "message" : [
       "A uri (<uri>) which cannot be turned into a relative path was found in the transaction log."
@@ -272,6 +278,12 @@
       "Cannot change the location of a path based table."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "ALTER cannot unset coordinated commits configurations. To downgrade a table from coordinated commits, please try again using `ALTER TABLE [table-name] DROP FEATURE 'coordinatedCommits-preview'`."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
@@ -366,30 +378,18 @@
     ],
     "sqlState" : "42613"
   },
-  "DELTA_CLONE_CANNOT_OVERRIDE_COORDINATED_COMMITS" : {
-    "message" : [
-      "Cannot override coordinated commits configurations for an existing target table that already has coordinated commits enabled during CLONE."
-    ],
-    "sqlState" : "42616"
-  },
-  "DELTA_CLONE_CONF_OVERRIDE_NOT_SUPPORTED" : {
-    "message" : [
-      "Configuration \"<configuration>\" cannot be overridden with CLONE command."
-    ],
-    "sqlState" : "42616"
-  },
-  "DELTA_CLONE_MUST_OVERRIDE_ALL_COORDINATED_COMMITS_CONFS" : {
-    "message" : [
-      "During CLONE, either all coordinated commits configurations i.e.\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\" must be overridden or none of them."
-    ],
-    "sqlState" : "42616"
-  },
   "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
     "message" : [
       "Unsupported clone source '<name>', whose format is <format>.",
       "The supported formats are 'delta', 'iceberg' and 'parquet'."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
+    "message" : [
+      "CLUSTER BY is not supported because the following column(s): <columnsWithDataTypes> don't support data skipping."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
     "message" : [
@@ -557,6 +557,18 @@
       "There is a conflict from these SET columns: <columnList>."
     ],
     "sqlState" : "42701"
+  },
+  "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_COMMAND" : {
+    "message" : [
+      "During <command>, configuration \"<configuration>\" cannot be set from the command. Please remove it from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_SESSION" : {
+    "message" : [
+      "During <command>, configuration \"<configuration>\" cannot be set from the SparkSession configurations. Please unset it by running `spark.conf.unset(\"<configuration>\")` and then retry the command again."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CONSTRAINT_ALREADY_EXISTS" : {
     "message" : [
@@ -1150,6 +1162,12 @@
           "<schema>"
         ]
       },
+      "UNSUPPORTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "IcebergCompatV<version> does not support the data type <dataType> for partition columns in your schema. Your partition schema:",
+          "<schema>"
+        ]
+      },
       "VERSION_MUTUAL_EXCLUSIVE" : {
         "message" : [
           "Only one IcebergCompat version can be enabled, please explicitly disable all other IcebergCompat versions that are not needed."
@@ -1705,6 +1723,18 @@
       "<usageReference>"
     ],
     "sqlState" : "21506"
+  },
+  "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND" : {
+    "message" : [
+      "During <command>, either both coordinated commits configurations (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\") are set in the command or neither of them. Missing: \"<configuration>\". Please specify this configuration in the TBLPROPERTIES clause or remove the other configuration, and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION" : {
+    "message" : [
+      "During <command>, either both coordinated commits configurations (\"coordinatedCommits.commitCoordinator-preview\", \"coordinatedCommits.commitCoordinatorConf-preview\") are set in the SparkSession configurations or neither of them. Missing: \"<configuration>\". Please set this configuration in the SparkSession or unset the other configuration, and then retry the command again."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_NESTED_NOT_NULL_CONSTRAINT" : {
     "message" : [

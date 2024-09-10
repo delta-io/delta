@@ -38,7 +38,7 @@ class ConflictCheckerPredicateEliminationUnitSuite
   val simpleExpressionB: Expression = (col("b") === "test").expr
 
   val deterministicExpression: Expression = (col("c") > 5L).expr
-  val nonDeterministicExpression: Expression = (col("c") > new Column(Rand(0))).expr
+  val nonDeterministicExpression: Expression = (col("c") > Column(Rand(0))).expr
   lazy val deterministicSubquery: Expression = {
     val df = spark.sql("SELECT 5")
     df.collect()

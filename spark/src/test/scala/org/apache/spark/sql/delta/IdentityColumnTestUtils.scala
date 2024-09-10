@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.UUID
+
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.{GeneratedAlways, GeneratedAsIdentityType}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
@@ -30,6 +32,9 @@ trait IdentityColumnTestUtils
     super.sparkConf
       .set(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key, "true")
   }
+
+  protected def getRandomTableName: String =
+    s"identity_test_${UUID.randomUUID()}".replaceAll("-", "_")
 
   protected val unsupportedDataTypes: Seq[DataType] = Seq(
     BooleanType,
@@ -78,26 +83,20 @@ trait IdentityColumnTestUtils
   }
 
   protected def generateTableWithIdentityColumn(tableName: String, step: Long = 1): Unit = {
-    createTable(
+    createTableWithIdColAndIntValueCol(
       tableName,
-      Seq(
-        IdentityColumnSpec(
-          GeneratedAlways,
-          startsWith = Some(0),
-          incrementBy = Some(step),
-          colName = "key"
-        ),
-        TestColumnSpec(colName = "val", dataType = LongType)
-      )
+      GeneratedAlways,
+      startsWith = Some(0),
+      incrementBy = Some(step)
     )
 
     // Insert numRows and make sure they assigned sequential IDs
     val numRows = 6
     for (i <- 0 until numRows) {
-      sql(s"INSERT INTO $tableName (val) VALUES ($i)")
+      sql(s"INSERT INTO $tableName (value) VALUES ($i)")
     }
     val expectedAnswer = for (i <- 0 until numRows) yield Row(i * step, i)
-    checkAnswer(sql(s"SELECT * FROM $tableName ORDER BY val ASC"), expectedAnswer)
+    checkAnswer(sql(s"SELECT * FROM $tableName ORDER BY value ASC"), expectedAnswer)
   }
 
   /**

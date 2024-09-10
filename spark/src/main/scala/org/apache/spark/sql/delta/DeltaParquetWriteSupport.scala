@@ -105,15 +105,17 @@ class DeltaParquetWriteSupport extends ParquetWriteSupport {
         val id = getNestedFieldId(parentField, relElemFieldPath)
         val elementField =
           field.asGroupType().getFields.get(0).asGroupType().getFields.get(0).withId(id)
-        Types
+        val builder = Types
           .buildGroup(field.getRepetition).as(LogicalTypeAnnotation.listType())
           .addField(
             Types.repeatedGroup()
               .addField(convert(elementField, parentField, sparkSchema,
                 absolutePath :+ PARQUET_LIST_ELEMENT_FIELD_NAME, relElemFieldPath))
               .named("list"))
-          .id(field.getId.intValue())
-          .named(field.getName)
+          if (field.getId != null) {
+            builder.id(field.getId.intValue())
+          }
+          builder.named(field.getName)
       case _: MapLogicalTypeAnnotation =>
         val relKeyFieldPath = relativePath :+ PARQUET_MAP_KEY_FIELD_NAME
         val relValFieldPath = relativePath :+ PARQUET_MAP_VALUE_FIELD_NAME
@@ -123,7 +125,7 @@ class DeltaParquetWriteSupport extends ParquetWriteSupport {
           field.asGroupType().getFields.get(0).asGroupType().getFields.get(0).withId(keyId)
         val valueField =
           field.asGroupType().getFields.get(0).asGroupType().getFields.get(1).withId(valId)
-        Types
+        val builder = Types
           .buildGroup(field.getRepetition).as(LogicalTypeAnnotation.mapType())
           .addField(
             Types
@@ -133,8 +135,10 @@ class DeltaParquetWriteSupport extends ParquetWriteSupport {
               .addField(convert(valueField, parentField, sparkSchema,
                 absolutePath :+ PARQUET_MAP_VALUE_FIELD_NAME, relValFieldPath))
               .named("key_value"))
-          .id(field.getId.intValue())
-          .named(field.getName)
+        if (field.getId != null) {
+          builder.id(field.getId.intValue())
+        }
+        builder.named(field.getName)
       case _ if field.isPrimitive => field
       case _ =>
         val builder = Types.buildGroup(field.getRepetition)
@@ -143,7 +147,10 @@ class DeltaParquetWriteSupport extends ParquetWriteSupport {
           val parentField = findFieldInSparkSchema(sparkSchema, absPath)
           builder.addField(convert(field, parentField, sparkSchema, absPath, Seq(field.getName)))
         }
-        builder.id(field.getId.intValue()).named(field.getName)
+        if (field.getId != null) {
+          builder.id(field.getId.intValue())
+        }
+        builder.named(field.getName)
     }
   }
 }
