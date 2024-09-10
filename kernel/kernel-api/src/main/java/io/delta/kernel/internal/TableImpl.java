@@ -34,6 +34,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -170,9 +171,7 @@ public class TableImpl implements Table {
 
   /**
    * Returns the raw delta actions for each version between startVersion and endVersion. Only reads
-   * the actions requested in actionSet from the JSON log files. When {@link
-   * DeltaLogActionUtils.DeltaAction#PROTOCOL} is present in {@code actionSet} Kernel also performs
-   * read protocol checks on any protocol actions read.
+   * the actions requested in actionSet from the JSON log files.
    *
    * <p>For the returned columnar batches:
    *
@@ -195,32 +194,38 @@ public class TableImpl implements Table {
    * @throws KernelException if a commit file does not exist for any of the versions in the provided
    *     range
    * @throws KernelException if provided an invalid version range
-   * @throws KernelException if {@link DeltaLogActionUtils.DeltaAction#PROTOCOL} is in actionSet and
-   *     a Protocol action that is not read supported by Kernel is read
+   * @throws KernelException if the version range contains a version with reader protocol that is
+   *                         unsupported by Kernel
    */
   public CloseableIterator<ColumnarBatch> getChanges(
       Engine engine,
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    if (actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL)) {
-      return getRawChanges(engine, startVersion, endVersion, actionSet)
-          .map(
-              batch -> {
-                int protocolIdx =
-                    batch.getSchema().indexOf("protocol"); // must exist due to outer check
-                ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-                for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
-                  if (!protocolVector.isNullAt(rowId)) {
-                    Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                    TableFeatures.validateReadSupportedTable(
-                        protocol, Optional.empty(), getDataPath().toString());
-                  }
+    // Create a new action set that always contains protocol
+    Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
+    copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    // If protocol is not in the original requested actions we drop the column before returning
+    boolean shouldDropProtocolColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+
+    return getRawChanges(engine, startVersion, endVersion, copySet)
+        .map(
+            batch -> {
+              int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
+              ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+              for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
+                if (!protocolVector.isNullAt(rowId)) {
+                  Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+                  TableFeatures.validateReadSupportedTable(
+                      protocol, Optional.empty(), getDataPath().toString());
                 }
+              }
+              if (shouldDropProtocolColumn) {
+                return batch.withDeletedColumnAt(protocolIdx);
+              } else {
                 return batch;
-              });
-    } else {
-      return getRawChanges(engine, startVersion, endVersion, actionSet);
-    }
+              }
+            });
   }
 }

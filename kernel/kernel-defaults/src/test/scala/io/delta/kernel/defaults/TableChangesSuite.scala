@@ -351,6 +351,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
   }
 
   test("getChanges - fails when protocol is not readable by Kernel") {
+    // Existing tests suffice to check if the protocol column is present/dropped correctly
     // We test our protocol checks for table features in TableFeaturesSuite
     // Min reader version is too high
     assert(intercept[KernelException] {
@@ -359,10 +360,12 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         .asInstanceOf[TableImpl]
         .getChanges(defaultEngine, 0, 0, FULL_ACTION_SET.asJava).toSeq
     }.getMessage.contains("Unsupported Delta protocol reader version"))
-    // No error if we don't request the protocol file action
-    Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
-      .asInstanceOf[TableImpl]
-      .getChanges(defaultEngine, 0, 0, Set(DeltaAction.ADD).asJava).toSeq
+    // We still get an error if we don't request the protocol file action
+    assert(intercept[KernelException] {
+      Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
+        .asInstanceOf[TableImpl]
+        .getChanges(defaultEngine, 0, 0, Set(DeltaAction.ADD).asJava).toSeq
+    }.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
