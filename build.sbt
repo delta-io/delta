@@ -26,7 +26,6 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.commons.compress.utils.IOUtils
 
-import scala.collection.immutable.Seq
 import scala.collection.mutable
 import scala.sys.process._
 import scala.util.Using
@@ -253,12 +252,14 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       task = Test / test,
       taskName = "test",
       projectName = "delta-connect-common",
-      emptyValue = ()).value,
+      emptyValue = ()
+    ).value,
     publish := runTaskOnlyOnSparkMaster(
       task = publish,
       taskName = "publish",
       projectName = "delta-connect-common",
-      emptyValue = ()).value,
+      emptyValue = ()
+    ).value,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
       "io.grpc" % "grpc-protobuf" % grpcVersion,
