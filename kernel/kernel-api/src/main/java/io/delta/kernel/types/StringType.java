@@ -55,4 +55,14 @@ public class StringType extends BasePrimitiveType {
   public CollationIdentifier getCollationIdentifier() {
     return collationIdentifier;
   }
+
+  @Override
+  public boolean equals(Object o) {
+    if (!(o instanceof StringType)) {
+      return false;
+    }
+
+    StringType that = (StringType) o;
+    return collationIdentifier.equals(that.collationIdentifier);
+  }
 }
