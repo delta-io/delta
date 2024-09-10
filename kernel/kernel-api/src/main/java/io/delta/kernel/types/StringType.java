@@ -63,7 +63,6 @@ public class StringType extends BasePrimitiveType {
     }
 
     StringType that = (StringType) o;
-    boolean x = collationIdentifier.equals(that.collationIdentifier);
-    return x;
+    return collationIdentifier.equals(that.collationIdentifier);
   }
 }
