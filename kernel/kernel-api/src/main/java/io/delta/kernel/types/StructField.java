@@ -141,6 +141,8 @@ public class StructField {
       nestedCollatedFields.addAll(
           getNestedCollatedFields(((ArrayType) parent).getElementType(), path + ".element"));
     }
+    // We didn't check for StructType because we store the StringType's
+    // collation information in the nearest ancestor StructField's metadata when serializing.
     return nestedCollatedFields;
   }
 

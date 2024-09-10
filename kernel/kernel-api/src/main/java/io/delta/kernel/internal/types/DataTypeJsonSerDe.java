@@ -132,6 +132,9 @@ public class DataTypeJsonSerDe {
    *   "metadata" : { }
    * }
    * </pre>
+   *
+   * @param fieldPath Path from the nearest ancestor that is of the {@link StructField} type.
+   * @param collationMap Maps the path of a {@link StringType} to its collation. Only maps non-UTF8_BINARY collated {@link StringType}.
    */
   static DataType parseDataType(
       JsonNode json, String fieldPath, HashMap<String, String> collationMap) {
