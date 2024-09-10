@@ -31,6 +31,15 @@ import scala.collection.mutable
 import scala.sys.process._
 import scala.util.Using
 
+import sbt.internal.inc.Analysis
+import sbtprotoc.ProtocPlugin.autoImport._
+
+import xsbti.compile.CompileAnalysis
+
+import Checkstyle._
+import Mima._
+import Unidoc._
+
 // Scala versions
 val scala212 = "2.12.18"
 val scala213 = "2.13.13"
