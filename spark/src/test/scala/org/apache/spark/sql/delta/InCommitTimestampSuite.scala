@@ -262,24 +262,26 @@ class InCommitTimestampSuite
   }
 
   test("CREATE OR REPLACE should not disable ICT") {
-    withSQLConf(
-      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
-    ) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
-            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+    withoutCoordinatedCommitsDefaultTableProperties {
+      withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
+      ) {
+        withTempDir { tempDir =>
+          spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+          spark.sql(
+            s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+              s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
-        spark.sql(
-          s"CREATE OR REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id long) USING delta")
+          spark.sql(
+            s"CREATE OR REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id long) USING delta")
 
-        val deltaLogAfterCreateOrReplace =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val snapshot = deltaLogAfterCreateOrReplace.snapshot
-        assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
-        assert(snapshot.timestamp ==
-          getInCommitTimestamp(deltaLogAfterCreateOrReplace, snapshot.version))
+          val deltaLogAfterCreateOrReplace =
+            DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          val snapshot = deltaLogAfterCreateOrReplace.snapshot
+          assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+          assert(snapshot.timestamp ==
+            getInCommitTimestamp(deltaLogAfterCreateOrReplace, snapshot.version))
+        }
       }
     }
   }
