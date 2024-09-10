@@ -169,7 +169,14 @@ public class SnapshotManager {
       throws TableNotFoundException {
     long startTimeMillis = System.currentTimeMillis();
     long versionToRead =
-        DeltaHistoryManager.getActiveCommitAtTimestamp(engine, logPath, millisSinceEpochUTC);
+        DeltaHistoryManager.getActiveCommitAtTimestamp(
+                engine,
+                logPath,
+                millisSinceEpochUTC,
+                true /* mustBeRecreatable */,
+                false /* canReturnLastCommit */,
+                false /* canReturnEarliestCommit */)
+            .getVersion();
     logger.info(
         "{}: Took {}ms to fetch version at timestamp {}",
         tablePath,
