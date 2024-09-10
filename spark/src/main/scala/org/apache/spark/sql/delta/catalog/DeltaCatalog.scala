@@ -159,7 +159,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     // Note: Spark generates the table location for managed tables in
     // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
     // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
-    val tableType = if (location.isEmpty || (isManagedLocation && isUnityCatalog)) {
+    val respectManagedLoc = isUnityCatalog || org.apache.spark.util.Utils.isTesting
+    val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
       CatalogTableType.MANAGED
     } else {
       CatalogTableType.EXTERNAL
