@@ -146,8 +146,19 @@ class DeltaCatalog extends DelegatingCatalogExtension
       .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
     val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
       .copy(locationUri = Option(loc))
-    val tableType =
-      if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
+    // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
+    // system-generated. The table should be created as managed table in this case.
+    val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
+      .exists(_.equalsIgnoreCase("true"))
+    // Note: Spark generates the table location for managed tables in
+    // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
+    // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
+    val respectManagedLoc = isUnityCatalog || org.apache.spark.util.Utils.isTesting
+    val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
+      CatalogTableType.MANAGED
+    } else {
+      CatalogTableType.EXTERNAL
+    }
     val commentOpt = Option(allTableProperties.get("comment"))
 
 
