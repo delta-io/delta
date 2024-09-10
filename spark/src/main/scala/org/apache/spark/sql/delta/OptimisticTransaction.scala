@@ -741,6 +741,44 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   /**
+   * Updates the metadata of the target table in an effective REPLACE command. Note that replacing
+   * a table is similar to dropping a table and then recreating it. However, the backing catalog
+   * object does not change. For now, for Coordinated Commit tables, this function retains the
+   * coordinator details (and other associated Coordinated Commits properties) from the original
+   * table during a REPLACE. And if the table had a coordinator, existing ICT properties are also
+   * retained; otherwise, default ICT properties are included.
+   * TODO (YumingxuanGuo): Remove this once the exact semantic on default Coordinated Commits
+   *   configurations is finalized.
+   */
+  def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
+    assert(CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
+        metadata.configuration).isEmpty,
+      "Command-specified Coordinated Commits configurations should have been blocked earlier.")
+    // Extract the existing Coordinated Commits configurations and ICT dependency configurations
+    // from the existing table metadata.
+    val existingCCConfs = CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
+      snapshot.metadata.configuration)
+    val existingICTConfs = CoordinatedCommitsUtils.extractICTConfigurations(
+      snapshot.metadata.configuration)
+    // Update the metadata.
+    updateMetadataForNewTable(metadata)
+    // Now the `txn.metadata` contains all the command-specified properties and all the default
+    // properties. The latter might still contain Coordinated Commits configurations, so we need
+    // to remove them and retain the Coordinated Commits configurations from the existing table.
+    val newConfsWithoutCC = newMetadata.get.configuration --
+      CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
+    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs
+    // We also need to retain the existing ICT dependency configurations, but only when the
+    // existing table does have Coordinated Commits configurations. Otherwise, we treat the ICT
+    // configurations the same as any other configurations, by merging them from the default.
+    if (existingCCConfs.nonEmpty) {
+      val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
+      newConfs = newConfsWithoutICT ++ existingICTConfs
+    }
+    newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
+  }
+
+  /**
    * Records an update to the metadata that should be committed with this transaction and when
    * this transaction is attempt to overwrite the data and schema using .mode('overwrite') and
    * .option('overwriteSchema', true).
