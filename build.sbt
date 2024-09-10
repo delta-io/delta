@@ -20,23 +20,16 @@ import java.io.BufferedInputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 import java.util
+import java.util.Locale
 
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.commons.compress.utils.IOUtils
 
+import scala.collection.immutable.Seq
 import scala.collection.mutable
 import scala.sys.process._
 import scala.util.Using
-
-import sbt.internal.inc.Analysis
-import sbtprotoc.ProtocPlugin.autoImport._
-
-import xsbti.compile.CompileAnalysis
-
-import Checkstyle._
-import Mima._
-import Unidoc._
 
 // Scala versions
 val scala212 = "2.12.18"
@@ -271,6 +264,21 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
+    (assembly / test) := { },
+    (assembly / logLevel) := Level.Info,
+    // Exclude `scala-library` from assembly.
+    (assembly / assemblyPackageScala / assembleArtifact) := false,
+    (assembly / assemblyShadeRules) := Seq(
+      ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.common.io.grpc.@1").inAll,
+      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.common.com.google.@1").inAll,
+      ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.common.javax.annotation.@1").inAll,
+    ),
+    (assembly / assemblyMergeStrategy) := {
+      case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
+      // Drop all proto files that are not needed as artifacts of the build.
+      case m if m.toLowerCase(Locale.ROOT).endsWith(".proto") => MergeStrategy.discard
+      case _ => MergeStrategy.first
+    }
   )
 
 lazy val connectClient = (project in file("spark-connect/client"))
@@ -357,7 +365,21 @@ lazy val connectClient = (project in file("spark-connect/client"))
       } else {
         dest.get()
       }
-    }.taskValue
+    }.taskValue,
+    (assembly / test) := { },
+    (assembly / logLevel) := Level.Info,
+    // Exclude `scala-library` from assembly.
+    (assembly / assemblyPackageScala / assembleArtifact) := false,
+    (assembly / assemblyShadeRules) := Seq(
+      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.client.com.google.@1").inAll,
+      ShadeRule.rename("org.scalatest.**" -> "org.deltaproject.connect.client.org.scalatest.@1").inAll,
+    ),
+    (assembly / assemblyMergeStrategy) := {
+      case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
+      // Drop all proto files that are not needed as artifacts of the build.
+      case m if m.toLowerCase(Locale.ROOT).endsWith(".proto") => MergeStrategy.discard
+      case _ => MergeStrategy.first
+    }
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -402,6 +424,19 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
+    (assembly / test) := { },
+    (assembly / logLevel) := Level.Info,
+    // Exclude `scala-library` from assembly.
+    (assembly / assemblyPackageScala / assembleArtifact) := false,
+    (assembly / assemblyShadeRules) := Seq(
+      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.server.com.google.@1").inAll,
+    ),
+    (assembly / assemblyMergeStrategy) := {
+      case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
+      // Drop all proto files that are not needed as artifacts of the build.
+      case m if m.toLowerCase(Locale.ROOT).endsWith(".proto") => MergeStrategy.discard
+      case _ => MergeStrategy.first
+    }
   )
 
 lazy val spark = (project in file("spark"))
