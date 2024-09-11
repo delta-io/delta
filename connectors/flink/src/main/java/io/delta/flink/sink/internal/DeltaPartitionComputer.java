@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 
 import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.conversion.DateDateConverter;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.LogicalTypeRoot;
 import org.apache.flink.table.types.logical.RowType;
@@ -99,6 +100,10 @@ public interface DeltaPartitionComputer<T> extends Serializable {
                     partitionValues.put(partitionKey, String.valueOf(element.getShort(keyIndex)));
                 } else if (keyType.getTypeRoot() == LogicalTypeRoot.TINYINT) {
                     partitionValues.put(partitionKey, String.valueOf(element.getByte(keyIndex)));
+                } else if (keyType.getTypeRoot() == LogicalTypeRoot.DATE) {
+                    DateDateConverter converter = new DateDateConverter();
+                    String value = String.valueOf(converter.toExternal(element.getInt(keyIndex)));
+                    partitionValues.put(partitionKey, value);
                 } else {
                     throw new RuntimeException("Type not supported " + keyType.getTypeRoot());
                 }
