@@ -266,7 +266,7 @@ public class DeltaLogActionUtils {
    */
   private static List<FileStatus> listCommitFiles(
       Engine engine, Path tablePath, long startVersion, long endVersion) {
-    
+
     // TODO update to support coordinated commits; suggested to load the Snapshot at endVersion
     //  and get the backfilled/unbackfilled commits from the LogSegment to combine with commit files
     //  listed from [startVersion, LogSegment.checkpointVersion]
