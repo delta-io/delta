@@ -42,7 +42,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       insertSchemaDDL = "a int, b long",
       insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
       expectedResult = ExpectedResult.Success(
-        expectedSchema = new StructType()
+        expected = new StructType()
           .add("a", LongType)
           .add("b", IntegerType)),
       // The following insert operations don't implicitly cast the data but fail instead - see
@@ -98,7 +98,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       insertSchemaDDL = "key int, a array<struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
       expectedResult = ExpectedResult.Success(
-        expectedSchema = new StructType()
+        expected = new StructType()
           .add("key", IntegerType)
           .add("a", ArrayType(new StructType()
             .add("x", LongType)
@@ -156,7 +156,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       insertSchemaDDL = "key int, m map<string, struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
       expectedResult = ExpectedResult.Success(
-        expectedSchema = new StructType()
+        expected = new StructType()
           .add("key", IntegerType)
           .add("m", MapType(StringType, new StructType()
             .add("x", LongType)

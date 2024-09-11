@@ -205,21 +205,6 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
     } yield insert)
 
   /**
-   * Represents the expected result after running an insert operation in `testInserts()` below.
-   * Either:
-   * - Success: the table schema after the operation is checked against the expected schema.
-   *   `testInserts()` also validates the data, though it's able to infer the expected data from the
-   *   test inputs.
-   * - Failure: an exception is thrown and the caller passes a function to check that it matches an
-   *   expected error.
-   */
-  type ExpectedResult = Either[StructType, SparkThrowable => Unit]
-  object ExpectedResult {
-    def Success(expectedSchema: StructType): ExpectedResult = Left(expectedSchema)
-    def Failure(checkError: SparkThrowable => Unit): ExpectedResult = Right(checkError)
-  }
-
-  /**
    * Test runner to cover INSERT operations defined above.
    * @param name             Test name
    * @param initialSchemaDDL Initial schema of the table to be inserted into (as a DDL string).
@@ -244,7 +229,7 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
       insertSchemaDDL: String,
       insertJsonData: Seq[String],
       overwriteWhere: (String, Int),
-      expectedResult: ExpectedResult,
+      expectedResult: ExpectedResult[StructType],
       includeInserts: Seq[Insert] = allInsertTypes,
       excludeInserts: Seq[Insert] = Seq.empty,
       confs: Seq[(String, String)] = Seq.empty): Unit = {
