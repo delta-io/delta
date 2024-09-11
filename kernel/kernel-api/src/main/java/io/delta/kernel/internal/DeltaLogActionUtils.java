@@ -33,6 +33,9 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -46,6 +49,8 @@ import java.util.stream.Collectors;
 public class DeltaLogActionUtils {
 
   private DeltaLogActionUtils() {}
+
+  private static final Logger logger = LoggerFactory.getLogger(DeltaLogActionUtils.class);
 
   /////////////////
   // Public APIs //
@@ -261,15 +266,24 @@ public class DeltaLogActionUtils {
    */
   private static List<FileStatus> listCommitFiles(
       Engine engine, Path tablePath, long startVersion, long endVersion) {
-
+    
+    // TODO update to support coordinated commits; suggested to load the Snapshot at endVersion
+    //  and get the backfilled/unbackfilled commits from the LogSegment to combine with commit files
+    //  listed from [startVersion, LogSegment.checkpointVersion]
+    logger.info("{}: Listing the commit files for versions [{}, {}]", tablePath, startVersion,
+        endVersion);
+    long startTimeMillis = System.currentTimeMillis();
     final List<FileStatus> output = new ArrayList<>();
     try (CloseableIterator<FileStatus> fsIter = listLogDir(engine, tablePath, startVersion)) {
       while (fsIter.hasNext()) {
         FileStatus fs = fsIter.next();
         if (!FileNames.isCommitFile(getName(fs.getPath()))) {
+          logger.debug("Ignoring non-commit file {}", fs.getPath());
           continue;
         }
         if (FileNames.getFileVersion(new Path(fs.getPath())) > endVersion) {
+          logger.debug("Stopping listing found file {} with version > {}=endVersion",
+              fs.getPath(), endVersion);
           break;
         }
         output.add(fs);
@@ -277,6 +291,13 @@ public class DeltaLogActionUtils {
     } catch (IOException e) {
       throw new UncheckedIOException("Unable to close resource", e);
     }
+    logger.info(
+        "{}: Took {} ms to list the commit files for versions [{}, {}]",
+        tablePath,
+        System.currentTimeMillis() - startTimeMillis,
+        startVersion,
+        endVersion
+    );
     return output;
   }
 }

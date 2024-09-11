@@ -30,6 +30,9 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
@@ -37,6 +40,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 public class TableImpl implements Table {
+
+  private static final Logger logger = LoggerFactory.getLogger(TableImpl.class);
+
   public static Table forPath(Engine engine, String path) {
     return forPath(engine, path, System::currentTimeMillis);
   }
@@ -232,6 +238,8 @@ public class TableImpl implements Table {
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
 
+    logger.info("{}: Getting the commit files for versions [{}, {}]",
+        tablePath, startVersion, endVersion);
     List<FileStatus> commitFiles =
         DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, new Path(tablePath), startVersion, endVersion);
@@ -242,6 +250,7 @@ public class TableImpl implements Table {
                 .map(action -> new StructField(action.colName, action.schema, true))
                 .collect(Collectors.toList()));
 
+    logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
     return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
   }
 }
