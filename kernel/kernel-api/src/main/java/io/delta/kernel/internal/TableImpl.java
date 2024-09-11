@@ -30,14 +30,13 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class TableImpl implements Table {
 
@@ -238,8 +237,8 @@ public class TableImpl implements Table {
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
 
-    logger.info("{}: Getting the commit files for versions [{}, {}]",
-        tablePath, startVersion, endVersion);
+    logger.info(
+        "{}: Getting the commit files for versions [{}, {}]", tablePath, startVersion, endVersion);
     List<FileStatus> commitFiles =
         DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, new Path(tablePath), startVersion, endVersion);

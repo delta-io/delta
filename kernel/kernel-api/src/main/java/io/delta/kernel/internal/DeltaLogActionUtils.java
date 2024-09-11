@@ -33,14 +33,13 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Exposes APIs to read the raw actions within the *commit files* of the _delta_log. This is used
@@ -270,8 +269,8 @@ public class DeltaLogActionUtils {
     // TODO update to support coordinated commits; suggested to load the Snapshot at endVersion
     //  and get the backfilled/unbackfilled commits from the LogSegment to combine with commit files
     //  listed from [startVersion, LogSegment.checkpointVersion]
-    logger.info("{}: Listing the commit files for versions [{}, {}]", tablePath, startVersion,
-        endVersion);
+    logger.info(
+        "{}: Listing the commit files for versions [{}, {}]", tablePath, startVersion, endVersion);
     long startTimeMillis = System.currentTimeMillis();
     final List<FileStatus> output = new ArrayList<>();
     try (CloseableIterator<FileStatus> fsIter = listLogDir(engine, tablePath, startVersion)) {
@@ -282,8 +281,10 @@ public class DeltaLogActionUtils {
           continue;
         }
         if (FileNames.getFileVersion(new Path(fs.getPath())) > endVersion) {
-          logger.debug("Stopping listing found file {} with version > {}=endVersion",
-              fs.getPath(), endVersion);
+          logger.debug(
+              "Stopping listing found file {} with version > {}=endVersion",
+              fs.getPath(),
+              endVersion);
           break;
         }
         output.add(fs);
@@ -296,8 +297,7 @@ public class DeltaLogActionUtils {
         tablePath,
         System.currentTimeMillis() - startTimeMillis,
         startVersion,
-        endVersion
-    );
+        endVersion);
     return output;
   }
 }
