@@ -234,7 +234,7 @@ public class LogReplay {
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
                 TableFeatures.validateReadSupportedTable(
-                    protocol, Optional.of(metadata), dataPath.toString());
+                    protocol, dataPath.toString(), Optional.of(metadata));
                 return new Tuple2<>(protocol, metadata);
               }
 

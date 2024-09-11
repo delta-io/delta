@@ -116,6 +116,66 @@ public class TableImpl implements Table {
     return clock;
   }
 
+  /**
+   * Returns delta actions for each version between startVersion and endVersion. Only returns the
+   * actions requested in actionSet.
+   *
+   * <p>For the returned columnar batches:
+   *
+   * <ul>
+   *   <li>Each row within the same batch is guaranteed to have the same commit version
+   *   <li>The batch commit versions are monotonically increasing
+   *   <li>The top-level columns include "version", "timestamp", and the actions requested in
+   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
+   *       respectively. The remaining columns are based on the actions requested and each have the
+   *       schema found in {@code DeltaAction.schema}.
+   * </ul>
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @param startVersion start version (inclusive)
+   * @param endVersion end version (inclusive)
+   * @param actionSet the actions to read and return from the JSON log files
+   * @return an iterator of batches where each row in the batch has exactly one non-null action and
+   *     its commit version and timestamp
+   * @throws TableNotFoundException if the table does not exist or if it is not a delta table
+   * @throws KernelException if a commit file does not exist for any of the versions in the provided
+   *     range
+   * @throws KernelException if provided an invalid version range
+   * @throws KernelException if the version range contains a version with reader protocol that is
+   *     unsupported by Kernel
+   */
+  public CloseableIterator<ColumnarBatch> getChanges(
+      Engine engine,
+      long startVersion,
+      long endVersion,
+      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    // Create a new action set that always contains protocol
+    Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
+    copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    // If protocol is not in the original requested actions we drop the column before returning
+    boolean shouldDropProtocolColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+
+    return getRawChanges(engine, startVersion, endVersion, copySet)
+        .map(
+            batch -> {
+              int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
+              ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+              for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
+                if (!protocolVector.isNullAt(rowId)) {
+                  Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+                  TableFeatures.validateReadSupportedTable(
+                      protocol, getDataPath().toString(), Optional.empty());
+                }
+              }
+              if (shouldDropProtocolColumn) {
+                return batch.withDeletedColumnAt(protocolIdx);
+              } else {
+                return batch;
+              }
+            });
+  }
+
   protected Path getDataPath() {
     return new Path(tablePath);
   }
@@ -167,65 +227,5 @@ public class TableImpl implements Table {
                 .collect(Collectors.toList()));
 
     return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
-  }
-
-  /**
-   * Returns the raw delta actions for each version between startVersion and endVersion. Only reads
-   * the actions requested in actionSet from the JSON log files.
-   *
-   * <p>For the returned columnar batches:
-   *
-   * <ul>
-   *   <li>Each row within the same batch is guaranteed to have the same commit version
-   *   <li>The batch commit versions are monotonically increasing
-   *   <li>The top-level columns include "version", "timestamp", and the actions requested in
-   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
-   *       respectively. The remaining columns are based on the actions requested and each have the
-   *       schema found in {@code DeltaAction.schema}.
-   * </ul>
-   *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
-   * @param startVersion start version (inclusive)
-   * @param endVersion end version (inclusive)
-   * @param actionSet the actions to read and return from the JSON log files
-   * @return an iterator of batches where each row in the batch has exactly one non-null action and
-   *     its commit version and timestamp
-   * @throws TableNotFoundException if the table does not exist or if it is not a delta table
-   * @throws KernelException if a commit file does not exist for any of the versions in the provided
-   *     range
-   * @throws KernelException if provided an invalid version range
-   * @throws KernelException if the version range contains a version with reader protocol that is
-   *     unsupported by Kernel
-   */
-  public CloseableIterator<ColumnarBatch> getChanges(
-      Engine engine,
-      long startVersion,
-      long endVersion,
-      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Create a new action set that always contains protocol
-    Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
-    copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // If protocol is not in the original requested actions we drop the column before returning
-    boolean shouldDropProtocolColumn =
-        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-
-    return getRawChanges(engine, startVersion, endVersion, copySet)
-        .map(
-            batch -> {
-              int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
-              ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-              for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
-                if (!protocolVector.isNullAt(rowId)) {
-                  Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                  TableFeatures.validateReadSupportedTable(
-                      protocol, Optional.empty(), getDataPath().toString());
-                }
-              }
-              if (shouldDropProtocolColumn) {
-                return batch.withDeletedColumnAt(protocolIdx);
-              } else {
-                return batch;
-              }
-            });
   }
 }

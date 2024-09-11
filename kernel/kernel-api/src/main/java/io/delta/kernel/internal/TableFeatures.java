@@ -58,7 +58,7 @@ public class TableFeatures {
   ////////////////////
 
   public static void validateReadSupportedTable(
-      Protocol protocol, Optional<Metadata> metadata, String tablePath) {
+      Protocol protocol, String tablePath, Optional<Metadata> metadata) {
     switch (protocol.getMinReaderVersion()) {
       case 1:
         break;
