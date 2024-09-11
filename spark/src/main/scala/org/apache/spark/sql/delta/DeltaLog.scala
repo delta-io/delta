@@ -42,6 +42,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.{FileSourceOptions, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStatistics, CatalogTable}

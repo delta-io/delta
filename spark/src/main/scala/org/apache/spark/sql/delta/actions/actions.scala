@@ -43,6 +43,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.paths.SparkPath
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
