@@ -1621,7 +1621,7 @@ class CoordinatedCommitsSuite
       sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
         s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
         s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
-      val e = intercept[DeltaIllegalArgumentException] {
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
       }
@@ -1636,7 +1636,7 @@ class CoordinatedCommitsSuite
     withoutCoordinatedCommitsDefaultTableProperties {
       withTempDir { tempDir =>
         sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
-        val e = intercept[DeltaIllegalArgumentException] {
+        val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
             s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
             s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}', " +
@@ -1659,7 +1659,7 @@ class CoordinatedCommitsSuite
       sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
         s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
         s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
-      val e = intercept[DeltaIllegalArgumentException] {
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}')")
       }
