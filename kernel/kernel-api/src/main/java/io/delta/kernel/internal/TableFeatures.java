@@ -40,6 +40,19 @@ public class TableFeatures {
             }
           });
 
+  private static final Set<String> SUPPORTED_READER_FEATURES =
+      Collections.unmodifiableSet(
+          new HashSet<String>() {
+            {
+              add("columnMapping");
+              add("deletionVectors");
+              add("timestampNtz");
+              add("vacuumProtocolCheck");
+              add("variantType-preview");
+              add("v2Checkpoint");
+            }
+          });
+
   ////////////////////
   // Helper Methods //
   ////////////////////
@@ -54,20 +67,13 @@ public class TableFeatures {
         break;
       case 3:
         List<String> readerFeatures = protocol.getReaderFeatures();
-        for (String readerFeature : readerFeatures) {
-          switch (readerFeature) {
-            case "columnMapping":
-              metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
-              break;
-            case "deletionVectors": // fall through
-            case "timestampNtz": // fall through
-            case "vacuumProtocolCheck": // fall through
-            case "variantType-preview": // fall through
-            case "v2Checkpoint":
-              break;
-            default:
-              throw DeltaErrors.unsupportedReaderFeature(tablePath, readerFeature);
-          }
+        if (!SUPPORTED_READER_FEATURES.containsAll(readerFeatures)) {
+          Set<String> unsupportedFeatures = new HashSet<>(readerFeatures);
+          unsupportedFeatures.removeAll(SUPPORTED_READER_FEATURES);
+          throw DeltaErrors.unsupportedReaderFeature(tablePath, unsupportedFeatures);
+        }
+        if (readerFeatures.contains("columnMapping")) {
+          metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
         }
         break;
       default:

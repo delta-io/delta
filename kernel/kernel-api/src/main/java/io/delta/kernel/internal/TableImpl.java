@@ -195,7 +195,7 @@ public class TableImpl implements Table {
    *     range
    * @throws KernelException if provided an invalid version range
    * @throws KernelException if the version range contains a version with reader protocol that is
-   *                         unsupported by Kernel
+   *     unsupported by Kernel
    */
   public CloseableIterator<ColumnarBatch> getChanges(
       Engine engine,
