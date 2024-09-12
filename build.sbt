@@ -303,7 +303,7 @@ def downloadLatestSparkReleaseJar(
   // Fetch and parse the maven-metadata.xml file.
   val metadataXml = XML.load(metadataUrl)
 
-  // Extract the latest snapshot jar version's metadata information.
+  // Extract the metadata information about the latest jar release.
   val sparkVersion = SPARK_MASTER_VERSION.replace("-SNAPSHOT", "")
   val timestamp = (metadataXml \\ "snapshot" \ "timestamp").text
   val buildNumber = (metadataXml \\ "snapshot" \ "buildNumber").text
