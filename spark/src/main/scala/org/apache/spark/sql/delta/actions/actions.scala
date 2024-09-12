@@ -143,13 +143,13 @@ case class Protocol private (
   // Correctness check
   // Reader and writer versions must match the status of reader and writer features
   require(
-    supportsReaderFeatures == readerFeatures.isDefined,
+    (supportsReaderFeatures || canSupportColumnMappingFeature) == readerFeatures.isDefined,
     "Mismatched minReaderVersion and readerFeatures.")
   require(
     supportsWriterFeatures == writerFeatures.isDefined,
     "Mismatched minWriterVersion and writerFeatures.")
 
-  // When reader is on table features, writer must be on table features too
+  // When reader is on table features, writer must be on table features too.
   if (supportsReaderFeatures && !supportsWriterFeatures) {
     throw DeltaErrors.tableFeatureReadRequiresWriteException(
       TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
@@ -166,7 +166,7 @@ case class Protocol private (
    */
   @JsonIgnore
   lazy val simpleString: String = {
-    if (!supportsReaderFeatures && !supportsWriterFeatures) {
+    if (!supportsTableFeatures) {
       s"$minReaderVersion,$minWriterVersion"
     } else {
       val readerFeaturesStr = readerFeatures
@@ -203,10 +203,12 @@ object Protocol {
   def apply(
       minReaderVersion: Int = Action.readerVersion,
       minWriterVersion: Int = Action.writerVersion): Protocol = {
+    val shouldAddReaderFeatures = supportsReaderFeatures(minReaderVersion) ||
+      canSupportColumnMappingFeature(minReaderVersion, minWriterVersion)
     new Protocol(
       minReaderVersion = minReaderVersion,
       minWriterVersion = minWriterVersion,
-      readerFeatures = if (supportsReaderFeatures(minReaderVersion)) Some(Set()) else None,
+      readerFeatures = if (shouldAddReaderFeatures) Some(Set()) else None,
       writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
@@ -214,7 +216,7 @@ object Protocol {
   def forTableFeature(tf: TableFeature): Protocol = {
     // Every table feature is a writer feature.
     val writerFeatures = tf.requiredFeatures + tf
-    val readerFeatures = writerFeatures.filter(f => f.isReaderWriterFeature && !f.isLegacyFeature)
+    val readerFeatures = writerFeatures.filter(_.isReaderWriterFeature)
     val writerFeaturesNames = writerFeatures.map(_.name)
     val readerFeaturesNames = readerFeatures.map(_.name)
 

@@ -271,7 +271,7 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
         Protocol.forNewTable(spark, Some(metadata)).minReaderVersion.toString),
       (Protocol.MIN_WRITER_VERSION_PROP,
         Protocol.forNewTable(spark, Some(metadata)).minWriterVersion.toString))
-    if (snapshot.protocol.supportsReaderFeatures || snapshot.protocol.supportsWriterFeatures) {
+    if (snapshot.protocol.supportsTableFeatures) {
       props ++=
         Protocol.minProtocolComponentsFromAutomaticallyEnabledFeatures(
           spark, metadata, snapshot.protocol)

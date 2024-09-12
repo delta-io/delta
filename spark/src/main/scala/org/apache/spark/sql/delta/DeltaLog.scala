@@ -426,7 +426,7 @@ class DeltaLog private(
   def assertTableFeaturesMatchMetadata(
       targetProtocol: Protocol,
       targetMetadata: Metadata): Unit = {
-    if (!targetProtocol.supportsReaderFeatures && !targetProtocol.supportsWriterFeatures) return
+    if (!targetProtocol.supportsTableFeatures) return
 
     val protocolEnabledFeatures = targetProtocol.writerFeatureNames
       .flatMap(TableFeature.featureNameToFeature)
