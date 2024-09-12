@@ -411,7 +411,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
         }
 
         outdatedJars.foreach { outdatedJar =>
-          // Replace outdated jar with the latest jar
           outdatedJar.delete()
         }
       }
