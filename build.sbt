@@ -298,7 +298,7 @@ def downloadLatestSparkReleaseJar(
   // spark-catalyst_2.13/4.0.0-SNAPSHOT/
   val latestSparkComponentJarDir = sparkMasterSnapshotsURL +
     s"$componentName/$SPARK_MASTER_VERSION/"
-  val metadataUrl = new URL(latestComponentJarDir + "maven-metadata.xml")
+  val metadataUrl = new URL(latestSparkComponentJarDir + "maven-metadata.xml")
 
   // Fetch and parse the maven-metadata.xml file.
   val metadataXml = XML.load(metadataUrl)
