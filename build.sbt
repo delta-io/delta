@@ -367,7 +367,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
           // https://repository.apache.org/content/groups/snapshots/org/apache/spark/
           // spark-catalyst_2.13/4.0.0-SNAPSHOT/
           val latestSparkComponentJarDir = "https://repository.apache.org/content/groups/snapshots/" +
-            s"org/apache/spark/$sparkJarName/$SPARK_MASTER_VERSION/"
+            s"org/apache/spark/$sparkComponentName/$SPARK_MASTER_VERSION/"
           val metadataUrl = latestSparkComponentJarDir + "maven-metadata.xml"
 
           // Fetch and parse the maven-metadata.xml file.
@@ -384,12 +384,12 @@ lazy val connectClient = (project in file("spark-connect/client"))
               "information of the latest snapshot jar.")
           }
 
-          val latestSparkJarName = s"$sparkJarName-$version-$timestamp-$buildNumber.jar"
+          val latestSparkJarName = s"$sparkComponentName-$version-$timestamp-$buildNumber.jar"
           // Construct the URL for the latest snapshot JAR.
           val latestSparkJarUrl = latestSparkComponentJarDir + latestSparkJarName
 
           // Download the latest snapshot JAR and delete the outdated one.
-          val latestSparkJarPath = SparkJarsDir / latestSparkJarName
+          val latestSparkJarPath = sparkJarsDir / latestSparkJarName
           new URL(latestSparkJarUrl) #> latestSparkJarPath!
           outdatedJar.delete()
         }
