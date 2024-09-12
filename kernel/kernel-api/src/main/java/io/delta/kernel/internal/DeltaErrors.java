@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /** Contains methods to create user-facing Delta exceptions. */
@@ -149,12 +150,13 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException unsupportedReaderFeature(String tablePath, String readerFeature) {
+  public static KernelException unsupportedReaderFeature(
+      String tablePath, Set<String> unsupportedFeatures) {
     String message =
         String.format(
-            "Unsupported Delta reader feature: table `%s` requires reader table feature \"%s\" "
+            "Unsupported Delta reader features: table `%s` requires reader table features [%s] "
                 + "which is unsupported by this version of Delta Kernel.",
-            tablePath, readerFeature);
+            tablePath, String.join(", ", unsupportedFeatures));
     return new KernelException(message);
   }
 
