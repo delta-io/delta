@@ -134,7 +134,12 @@ case class CreateDeltaTableCommand(
     }
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
-    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
+    // To be safe, here we only extract file system options from table storage properties, to create
+    // the DeltaLog.
+    val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
+      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+    }
+    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
 
