@@ -25,7 +25,7 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class StringType extends BasePrimitiveType {
   public static final StringType STRING =
-      new StringType(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER);
+      new StringType(CollationIdentifier.fromString("SPARK.UTF8_BINARY"));
 
   private final CollationIdentifier collationIdentifier;
 
