@@ -276,6 +276,53 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     ),
   )
 
+/**
+ * Downloads the latest snapshot JAR for a given Spark component and saves it to
+ * the specified directory.
+ *
+ * @param sparkComponentName The name of the Spark component.
+ * @param destDir The directory where the JAR should be saved.
+ */
+def downloadLatestSparkReleaseJar(
+    sparkComponentName: String,
+    destDir: File): Unit = {
+  val sparkMasterSnapshotsURL = "https://repository.apache.org/content/groups/snapshots/" +
+    "org/apache/spark/"
+
+  // Construct the URL to the maven-metadata.xml file, the maven-metadata.xml has
+  // metadata information about the latest snapshot version of the jar, since the
+  // jar directory also retains slightly older jar versions.
+  //
+  // An example folder is:
+  // https://repository.apache.org/content/groups/snapshots/org/apache/spark/
+  // spark-catalyst_2.13/4.0.0-SNAPSHOT/
+  val latestSparkComponentJarDir = sparkMasterSnapshotsURL +
+    s"$componentName/$SPARK_MASTER_VERSION/"
+  val metadataUrl = new URL(latestComponentJarDir + "maven-metadata.xml")
+
+  // Fetch and parse the maven-metadata.xml file.
+  val metadataXml = XML.load(metadataUrl)
+
+  // Extract the latest snapshot jar version's metadata information.
+  val version = (metadataXml \ "version").text.replace("-SNAPSHOT", "")
+  val timestamp = (metadataXml \\ "snapshot" \ "timestamp").text
+  val buildNumber = (metadataXml \\ "snapshot" \ "buildNumber").text
+
+  // Ensure the metadata information is properly extracted.
+  if (version.isEmpty || timestamp.isEmpty || buildNumber.isEmpty) {
+    throw new RuntimeException("Could not extract the required metadata " +
+      "from maven-metadata.xml")
+  }
+
+  // Construct the URL for the latest snapshot JAR.
+  val latestSparkJarName = s"$componentName-$version-$timestamp-$buildNumber.jar"
+  val latestSparkJarUrl = latestSparkComponentJarDir + latestSparkJarName
+  val latestSparkJarPath = destDir / latestSparkJarName
+
+  // Download the latest snapshot JAR.
+  new URL(latestSparkJarUrl) #> latestSparkJarPath!
+}
+
 lazy val connectClient = (project in file("spark-connect/client"))
   .disablePlugins(JavaFormatterPlugin)
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
@@ -351,46 +398,16 @@ lazy val connectClient = (project in file("spark-connect/client"))
         if (!sparkJarsDir.exists()) {
           throw new RuntimeException(s"Jars directory $sparkJarsDir does not exist after extraction.")
         }
-        // The Spark Jars have the format "SparkComponentName-4.0.0-preview1.jar", for example:
+
+        // The Spark Jars have the format "sparkComponentName-4.0.0-preview1.jar", for example:
         // spark-catalyst_2.13-4.0.0-preview1.jar, spark-core_2.13-4.0.0-preview1.jar, etc.
         val outdatedJars = sparkJarsDir.listFiles().filter(_.getName.endsWith("preview1.jar"))
 
-        // Replace outdated Spark 4.0 First Preview jars with latest nightly release jars.
+        // Replace outdated Spark 4.0 First Preview jars with latest nightly release Spark
+        // Master jars.
         outdatedJars.foreach { outdatedJar =>
           val sparkComponentName = outdatedJar.getName.stripSuffix("-4.0.0-preview1.jar")
-
-          // Construct the URL to the maven-metadata.xml file, the maven-metadata.xml has
-          // metadata information about the latest snapshot version of the jar, since the
-          // jar directory also keeps slightly older versions of the jar.
-          //
-          // An example folder is:
-          // https://repository.apache.org/content/groups/snapshots/org/apache/spark/
-          // spark-catalyst_2.13/4.0.0-SNAPSHOT/
-          val latestSparkComponentJarDir = "https://repository.apache.org/content/groups/snapshots/" +
-            s"org/apache/spark/$sparkComponentName/$SPARK_MASTER_VERSION/"
-          val metadataUrl = latestSparkComponentJarDir + "maven-metadata.xml"
-
-          // Fetch and parse the maven-metadata.xml file.
-          val metadataXml = XML.load(metadataUrl)
-
-          // Extract the latest snapshot jar version's metadata information.
-          val version = (metadataXml \ "version").text.replace("-SNAPSHOT", "")
-          val timestamp = (metadataXml \\ "snapshot" \ "timestamp").text
-          val buildNumber = (metadataXml \\ "snapshot" \ "buildNumber").text
-
-          // Ensure the metadata information is properly extracted.
-          if (version.isEmpty || timestamp.isEmpty || buildNumber.isEmpty) {
-            throw new RuntimeException("Could not extract the required metadata " +
-              "information of the latest snapshot jar.")
-          }
-
-          val latestSparkJarName = s"$sparkComponentName-$version-$timestamp-$buildNumber.jar"
-          // Construct the URL for the latest snapshot JAR.
-          val latestSparkJarUrl = latestSparkComponentJarDir + latestSparkJarName
-
-          // Download the latest snapshot JAR and delete the outdated one.
-          val latestSparkJarPath = sparkJarsDir / latestSparkJarName
-          new URL(latestSparkJarUrl) #> latestSparkJarPath!
+          downloadLatestSparkReleaseJar(sparkComponentName, sparkJarsDir)
           outdatedJar.delete()
         }
 
@@ -400,33 +417,10 @@ lazy val connectClient = (project in file("spark-connect/client"))
       }
     }.taskValue,
     (Test / resourceGenerators) += Def.task {
-      val sparkConnectComponentName = "spark-connect_2.13"
-      val latestSparkConnectJarDir = "https://repository.apache.org/content/groups/snapshots/" +
-        s"org/apache/spark/$sparkConnectComponentName/$SPARK_MASTER_VERSION/"
-      // Construct the URL to maven-metadata.xml for spark-connect_2.13, similar to how we do it
-      // for the Spark Jars right above.
-      val metadataUrl = new URL(latestSparkConnectJarDir + "maven-metadata.xml")
       val dest = (Test / resourceManaged).value / "spark-connect.jar"
 
       if (!dest.exists()) {
-        // Fetch and parse the maven-metadata.xml file.
-        val metadataXml = XML.load(metadataUrl)
-
-        // Extract the latest snapshot jar version's metadata information.
-        val version = (metadataXml \ "version").text.replace("-SNAPSHOT", "")
-        val timestamp = (metadataXml \\ "snapshot" \ "timestamp").text
-        val buildNumber = (metadataXml \\ "snapshot" \ "buildNumber").text
-
-        // Ensure the metadata information is properly extracted.
-        if (version.isEmpty || timestamp.isEmpty || buildNumber.isEmpty) {
-          throw new RuntimeException("Could not extract the required metadata information.")
-        }
-
-        // Construct the URL for the latest snapshot JAR.
-        val jarUrl = latestSparkConnectJarDir +
-          s"$sparkConnectComponentName-$version-$timestamp-$buildNumber.jar"
-
-        new URL(jarUrl) #> dest!
+        downloadLatestSparkReleaseJar("spark-connect_2.13", (Test / resourceManaged).value)
       }
 
       Seq(dest)
