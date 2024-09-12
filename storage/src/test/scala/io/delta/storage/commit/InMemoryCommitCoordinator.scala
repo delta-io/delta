@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
 import io.delta.storage.LogStore
+import io.delta.storage.commit.CoordinatedCommitsUtils
 import io.delta.storage.commit.actions.AbstractMetadata
 import io.delta.storage.commit.actions.AbstractProtocol
 import org.apache.hadoop.conf.Configuration
