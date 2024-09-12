@@ -417,10 +417,11 @@ lazy val connectClient = (project in file("spark-connect/client"))
       }
     }.taskValue,
     (Test / resourceGenerators) += Def.task {
-      val dest = (Test / resourceManaged).value / "spark-connect.jar"
+      val sparkConnectComponentName = "spark-connect_2.13"
+      val dest = (Test / resourceManaged).value / s"$sparkConnectComponentName.jar"
 
       if (!dest.exists()) {
-        downloadLatestSparkReleaseJar("spark-connect_2.13", (Test / resourceManaged).value)
+        downloadLatestSparkReleaseJar(sparkConnectComponentName, (Test / resourceManaged).value)
       }
 
       Seq(dest)
