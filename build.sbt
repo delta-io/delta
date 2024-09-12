@@ -317,7 +317,7 @@ def downloadLatestSparkReleaseJar(
   // Construct the URL for the latest nightly release JAR.
   val latestSparkJarName = s"$sparkComponentName-$sparkVersion-$timestamp-$buildNumber.jar"
   val latestSparkJarUrl = latestSparkComponentJarDir + latestSparkJarName
-  val latestSparkJarPath = destDir / sparkComponentName
+  val latestSparkJarPath = destDir / s"$sparkComponentName.jar"
 
   // Download the latest nightly release JAR.
   new URL(latestSparkJarUrl) #> latestSparkJarPath!
