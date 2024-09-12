@@ -26,6 +26,8 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  * Identifies collation for string type.
  * <a href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md#collation-identifiers">
  *   Collation identifiers</a>
+ *
+ * @since 3.3.0
  */
 @Evolving
 public class CollationIdentifier {
