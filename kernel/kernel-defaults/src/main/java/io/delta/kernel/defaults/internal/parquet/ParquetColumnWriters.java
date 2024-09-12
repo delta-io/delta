@@ -20,10 +20,14 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.*;
+import io.delta.kernel.defaults.internal.expressions.CollationFactory;
+import io.delta.kernel.expressions.CollationIdentifier;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Comparator;
+
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.io.api.RecordConsumer;
 
@@ -109,6 +113,10 @@ class ParquetColumnWriters {
       return new FloatWriter(colName, fieldIndex, columnVector);
     } else if (dataType instanceof DoubleType) {
       return new DoubleWriter(colName, fieldIndex, columnVector);
+    } else if ((dataType instanceof StringType) &&
+            !(((StringType) dataType).getCollationIdentifier()
+                    .equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER))) {
+      return new CollatedStringWriter(colName, fieldIndex, columnVector, ((StringType) dataType).getCollationIdentifier());
     } else if (dataType instanceof StringType) {
       return new StringWriter(colName, fieldIndex, columnVector);
     } else if (dataType instanceof BinaryType) {
@@ -159,6 +167,14 @@ class ParquetColumnWriters {
         writeNonNullRowValue(recordConsumer, rowId);
         recordConsumer.endField(colName, fieldIndex);
       }
+    }
+
+    public String getColName() {
+      return colName;
+    }
+
+    ColumnWriter getNestedColumnWriter(String name) {
+      throw new UnsupportedOperationException("Not implemented for primitive type column writers");
     }
 
     /**
@@ -337,6 +353,55 @@ class ParquetColumnWriters {
     void writeNonNullRowValue(RecordConsumer recordConsumer, int rowId) {
       long microsSinceEpochUTC = columnVector.getLong(rowId);
       recordConsumer.addLong(microsSinceEpochUTC);
+    }
+  }
+
+  static class CollatedStringWriter extends ColumnWriter {
+    private final CollationIdentifier collationIdentifier;
+    private final Comparator<String> comparator;
+    private String minValue = null;
+    private String maxValue = null;
+    private boolean initialized = false;
+
+    CollatedStringWriter(String name, int fieldId, ColumnVector columnVector, CollationIdentifier collationIdentifier) {
+      super(name, fieldId, columnVector);
+      this.collationIdentifier = collationIdentifier;
+      this.comparator = CollationFactory.fetchCollation(collationIdentifier).getComparator();
+    }
+
+    @Override
+    void writeNonNullRowValue(RecordConsumer recordConsumer, int rowId) {
+      String value = columnVector.getString(rowId);
+      if (!initialized) {
+        minValue = maxValue = value;
+        initialized = true;
+      } else {
+        if (comparator.compare(value, minValue) < 0) {
+          minValue = value;
+        } else if (comparator.compare(value, maxValue) > 0) {
+          maxValue = value;
+        }
+      }
+
+      Binary binary = Binary.fromConstantByteArray(
+              value.getBytes(StandardCharsets.UTF_8));
+      recordConsumer.addBinary(binary);
+    }
+
+    public String getMinValue() {
+      return minValue;
+    }
+
+    public String getMaxValue() {
+      return maxValue;
+    }
+
+    public String getName() {
+      return colName;
+    }
+
+    public CollationIdentifier getCollationIdentifier() {
+      return collationIdentifier;
     }
   }
 

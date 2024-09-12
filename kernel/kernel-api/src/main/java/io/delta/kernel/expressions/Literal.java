@@ -120,6 +120,10 @@ public final class Literal implements Expression {
     return new Literal(value, StringType.STRING);
   }
 
+  public static Literal ofString(String value, CollationIdentifier collationIdentifier) {
+    return new Literal(value, new StringType(collationIdentifier));
+  }
+
   /**
    * Create a {@code binary} type literal expression.
    *

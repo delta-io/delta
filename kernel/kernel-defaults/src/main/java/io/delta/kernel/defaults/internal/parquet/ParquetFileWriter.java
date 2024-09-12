@@ -15,17 +15,24 @@
  */
 package io.delta.kernel.defaults.internal.parquet;
 
+import static io.delta.kernel.defaults.internal.DefaultKernelUtils.getDataType;
 import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readDataFileStatistics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.emptyMap;
 import static java.util.Objects.requireNonNull;
 import static org.apache.parquet.hadoop.ParquetOutputFormat.*;
 
+import com.sun.corba.se.impl.io.TypeMismatchException;
 import io.delta.kernel.Meta;
 import io.delta.kernel.data.*;
 import io.delta.kernel.defaults.internal.parquet.ParquetColumnWriters.ColumnWriter;
+import io.delta.kernel.expressions.CollationIdentifier;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
 import java.io.IOException;
@@ -164,7 +171,7 @@ public class ParquetFileWriter {
         }
 
         return Optional.of(
-            constructDataFileStatus(filePath.toString(), dataSchema, currentFileRowCount));
+            constructDataFileStatus(filePath.toString(), dataSchema, currentFileRowCount, batchWriteSupport));
       }
 
       /**
@@ -309,6 +316,10 @@ public class ParquetFileWriter {
       }
       recordConsumer.endMessage();
     }
+
+    public ColumnWriter[] getColumnWriters() {
+      return columnWriters;
+    }
   }
 
   /** Generate the next file path to write the data. */
@@ -378,7 +389,7 @@ public class ParquetFileWriter {
    *     construct the {@link DataFileStatistics}. Otherwise, the stats are read from the file.
    * @return the {@link DataFileStatus} for the file
    */
-  private DataFileStatus constructDataFileStatus(String path, StructType dataSchema, long numRows) {
+  private DataFileStatus constructDataFileStatus(String path, StructType dataSchema, long numRows, BatchWriteSupport batchWriteSupport) {
     try {
       // Get the FileStatus to figure out the file size and modification time
       Path hadoopPath = new Path(path);
@@ -394,7 +405,10 @@ public class ParquetFileWriter {
                 emptyMap() /* maxValues */,
                 emptyMap() /* nullCounts */);
       } else {
-        stats = readDataFileStatistics(resolvedPath, configuration, dataSchema, statsColumns);
+        stats = appendCollatedStatistics(
+                batchWriteSupport,
+                dataSchema,
+                readDataFileStatistics(resolvedPath, configuration, dataSchema, statsColumns));
       }
 
       return new DataFileStatus(
@@ -405,5 +419,61 @@ public class ParquetFileWriter {
     } catch (IOException ioe) {
       throw new UncheckedIOException("Failed to read the stats for: " + path, ioe);
     }
+  }
+
+  private DataFileStatistics appendCollatedStatistics(BatchWriteSupport batchWriteSupport,
+                                                      StructType dataSchema,
+                                                      DataFileStatistics stats) {
+    Map<CollationIdentifier, Map<Column, Literal>> collatedMinValues = new HashMap<>();
+    Map<CollationIdentifier, Map<Column, Literal>> collatedMaxValues = new HashMap<>();
+    for (Column column : statsColumns) {
+      DataType dataType = getDataType(dataSchema, column);
+      if (dataType instanceof StringType &&
+              ((StringType) dataType).getCollationIdentifier().equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) {
+        StringType stringType = (StringType) dataType;
+
+        Tuple2<Literal, Literal> collatedMinMax = collectCollatedMinMax(column, batchWriteSupport);
+        collatedMinValues.getOrDefault(stringType.getCollationIdentifier(), emptyMap()).put(column, collatedMinMax._1);
+        collatedMaxValues.getOrDefault(stringType.getCollationIdentifier(), emptyMap()).put(column, collatedMinMax._2);
+      }
+    }
+
+    return new DataFileStatistics(
+          stats.getNumRecords(),
+          stats.getMinValues(),
+          stats.getMaxValues(),
+          stats.getNullCounts(),
+          collatedMinValues,
+          collatedMaxValues);
+  }
+
+  private Tuple2<Literal, Literal> collectCollatedMinMax(Column column, BatchWriteSupport batchWriteSupport) {
+    String[] parts = column.getNames();
+    ColumnWriter[] columnWriters = batchWriteSupport.getColumnWriters();
+    ParquetColumnWriters.CollatedStringWriter collatedStringWriter = getNestedCollatedStringWriter(columnWriters, parts);
+    CollationIdentifier collationIdentifier = collatedStringWriter.getCollationIdentifier();
+
+    return new Tuple2<>(Literal.ofString(collatedStringWriter.getMinValue(), collationIdentifier),
+            Literal.ofString(collatedStringWriter.getMaxValue(), collationIdentifier));
+  }
+
+  private ParquetColumnWriters.CollatedStringWriter getNestedCollatedStringWriter(ColumnWriter[] columnWriters, String[] parts) {
+    ColumnWriter[] startingColumnWriters = Arrays.stream(columnWriters).
+            filter(columnWriter -> columnWriter.colName.equals(parts[0]))
+            .toArray(ColumnWriter[]::new);
+    if (startingColumnWriters.length != 1) {
+      throw new IllegalArgumentException(String.format("Invalid column name: %s.", parts[0]));
+    }
+
+    ColumnWriter columnWriter = startingColumnWriters[0];
+    for (int i = 1; i < parts.length; i++) {
+      columnWriter = columnWriter.getNestedColumnWriter(parts[i]);
+    }
+
+    if (!(columnWriter instanceof ParquetColumnWriters.CollatedStringWriter)) {
+      throw new TypeMismatchException(String.format(
+              "Invalid column writer type: %s. CollatedStringWriter expected. ", columnWriter.getClass().getName()));
+    }
+    return (ParquetColumnWriters.CollatedStringWriter) columnWriter;
   }
 }

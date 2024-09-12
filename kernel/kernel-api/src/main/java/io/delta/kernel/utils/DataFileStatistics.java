@@ -17,10 +17,12 @@ package io.delta.kernel.utils;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.expressions.CollationIdentifier;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
 
 /** Statistics about data file in a Delta Lake table. */
 public class DataFileStatistics {
@@ -28,6 +30,8 @@ public class DataFileStatistics {
   private final Map<Column, Literal> minValues;
   private final Map<Column, Literal> maxValues;
   private final Map<Column, Long> nullCounts;
+  private final Map<CollationIdentifier, Map<Column, Literal>> collatedMinValues;
+  private final Map<CollationIdentifier, Map<Column, Literal>> collatedMaxValues;
 
   /**
    * Create a new instance of {@link DataFileStatistics}.
@@ -49,6 +53,23 @@ public class DataFileStatistics {
     this.minValues = Collections.unmodifiableMap(minValues);
     this.maxValues = Collections.unmodifiableMap(maxValues);
     this.nullCounts = Collections.unmodifiableMap(nullCounts);
+    this.collatedMinValues = Collections.emptyMap();
+    this.collatedMaxValues = Collections.emptyMap();
+  }
+
+  public DataFileStatistics(
+      long numRecords,
+      Map<Column, Literal> minValues,
+      Map<Column, Literal> maxValues,
+      Map<Column, Long> nullCounts,
+      Map<CollationIdentifier, Map<Column, Literal>> collatedMinValues,
+      Map<CollationIdentifier, Map<Column, Literal>> collatedMaxValues) {
+    this.numRecords = numRecords;
+    this.minValues = Collections.unmodifiableMap(minValues);
+    this.maxValues = Collections.unmodifiableMap(maxValues);
+    this.nullCounts = Collections.unmodifiableMap(nullCounts);
+    this.collatedMinValues = collatedMinValues;
+    this.collatedMaxValues = collatedMaxValues;
   }
 
   /**
@@ -88,6 +109,14 @@ public class DataFileStatistics {
    */
   public Map<Column, Long> getNullCounts() {
     return nullCounts;
+  }
+
+  public Map<CollationIdentifier, Map<Column, Literal>> getCollatedMinValues() {
+    return collatedMinValues;
+  }
+
+  public Map<CollationIdentifier, Map<Column, Literal>> getCollatedMaxValues() {
+    return collatedMaxValues;
   }
 
   @Override
