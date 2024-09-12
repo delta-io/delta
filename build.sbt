@@ -277,7 +277,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
   )
 
 /**
- * Downloads the latest snapshot JAR for a given Spark component and saves it to
+ * Downloads the latest nightly release JAR of a given Spark component and saves it to
  * the specified directory.
  *
  * @param sparkComponentName The name of the Spark component.
@@ -290,7 +290,7 @@ def downloadLatestSparkReleaseJar(
     "org/apache/spark/"
 
   // Construct the URL to the maven-metadata.xml file, the maven-metadata.xml has
-  // metadata information about the latest snapshot version of the jar, since the
+  // metadata information about the latest nightly release of the jar, since the
   // jar directory also retains slightly older jar versions.
   //
   // An example folder is:
@@ -303,7 +303,7 @@ def downloadLatestSparkReleaseJar(
   // Fetch and parse the maven-metadata.xml file.
   val metadataXml = XML.load(metadataUrl)
 
-  // Extract the metadata information about the latest jar release.
+  // Extract the metadata information about the latest nightly release JAR.
   val sparkVersion = SPARK_MASTER_VERSION.replace("-SNAPSHOT", "")
   val timestamp = (metadataXml \\ "snapshot" \ "timestamp").text
   val buildNumber = (metadataXml \\ "snapshot" \ "buildNumber").text
@@ -314,12 +314,12 @@ def downloadLatestSparkReleaseJar(
       "from maven-metadata.xml")
   }
 
-  // Construct the URL for the latest snapshot JAR.
+  // Construct the URL for the latest nightly release JAR.
   val latestSparkJarName = s"$sparkComponentName-$sparkVersion-$timestamp-$buildNumber.jar"
   val latestSparkJarUrl = latestSparkComponentJarDir + latestSparkJarName
   val latestSparkJarPath = destDir / sparkComponentName
 
-  // Download the latest snapshot JAR.
+  // Download the latest nightly release JAR.
   new URL(latestSparkJarUrl) #> latestSparkJarPath!
 }
 
