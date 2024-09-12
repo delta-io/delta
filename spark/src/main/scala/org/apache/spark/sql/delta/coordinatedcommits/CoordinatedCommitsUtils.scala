@@ -461,12 +461,28 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   }
 
   /**
+   * Verifies that the property keys do not contain any ICT dependencies for Coordinated Commits.
+   */
+  private def verifyNotContainsICTConfigurations(
+      propKeys: Seq[String], command: String, errorClass: String): Unit = {
+    ICT_TABLE_PROPERTY_KEYS.foreach { key =>
+      if (propKeys.contains(key)) {
+        throw new DeltaIllegalArgumentException(
+          errorClass,
+          messageParameters = Array(command))
+      }
+    }
+  }
+
+  /**
    * Validates the Coordinated Commits configurations in explicit command overrides for
    * `AlterTableSetPropertiesDeltaCommand`.
    *
    * If the table already has Coordinated Commits configurations present, then we do not allow
    * users to override them via `ALTER TABLE t SET TBLPROPERTIES ...`. Users must downgrade the
    * table and then upgrade it with the new Coordinated Commits configurations.
+   * If the table is a Coordinated Commits table or will be one via this ALTER command, then we
+   * do not allow users to disable any ICT properties that Coordinated Commits depends on.
    */
   def validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
       existingConfs: Map[String, String],
@@ -479,8 +495,14 @@ object CoordinatedCommitsUtils extends DeltaLogging {
           "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
           Array("ALTER"))
       }
+      verifyNotContainsICTConfigurations(propertyOverrides.keys.toSeq, command = "ALTER",
+        errorClass = "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES")
       verifyContainsOnlyCoordinatorNameAndConf(
         coordinatedCommitsOverrides, command = "ALTER", fromDefault = false)
+    }
+    if (existingCoordinatedCommitsConfs.nonEmpty) {
+      verifyNotContainsICTConfigurations(propertyOverrides.keys.toSeq, command = "ALTER",
+        errorClass = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES")
     }
   }
 
@@ -489,7 +511,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    *
    * If the table already has Coordinated Commits configurations present, then we do not allow users
    * to unset them via `ALTER TABLE t UNSET TBLPROPERTIES ...`. Users could only downgrade the table
-   * via `ALTER TABLE t DROP FEATURE ...`.
+   * via `ALTER TABLE t DROP FEATURE ...`. We also do not allow users to unset any ICT properties
+   * that Coordinated Commits depends on.
    */
   def validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
       existingConfs: Map[String, String],
@@ -504,6 +527,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
           "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
           Array.empty)
       }
+      verifyNotContainsICTConfigurations(propKeysToUnset, command = "ALTER",
+        errorClass = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES")
     }
   }
 

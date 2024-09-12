@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATU
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest

@@ -19,6 +19,7 @@ import java.io.File
 
 import scala.collection.JavaConverters._
 
+import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.data.Row
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.utils.TestUtils
@@ -49,7 +50,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
    * For the given parameters, read the table changes from Kernel using
    * TableImpl.getChangesByVersion and compare results with Spark
    */
-  def testGetChangesByVersionVsSpark(
+  def testGetChangesVsSpark(
     tablePath: String,
     startVersion: Long,
     endVersion: Long,
@@ -61,7 +62,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
 
     val kernelChanges = Table.forPath(defaultEngine, tablePath)
       .asInstanceOf[TableImpl]
-      .getChangesByVersion(defaultEngine, startVersion, endVersion, actionSet.asJava)
+      .getChanges(defaultEngine, startVersion, endVersion, actionSet.asJava)
       .toSeq
 
     // Check schema is as expected (version + timestamp column + the actions requested)
@@ -74,41 +75,41 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
   }
 
   // Golden table from Delta Standalone test
-  test("getChangesByVersion - golden table deltalog-getChanges valid queries") {
+  test("getChanges - golden table deltalog-getChanges valid queries") {
     withGoldenTable("deltalog-getChanges") { tablePath =>
       // request subset of actions
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tablePath,
         0,
         2,
         Set(DeltaAction.REMOVE)
       )
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tablePath,
         0,
         2,
         Set(DeltaAction.ADD)
       )
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tablePath,
         0,
         2,
         Set(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA, DeltaAction.PROTOCOL)
       )
       // request full actions, various versions
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tablePath,
         0,
         2,
         FULL_ACTION_SET
       )
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tablePath,
         1,
         2,
         FULL_ACTION_SET
       )
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tablePath,
         0,
         0,
@@ -117,7 +118,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - returns correct timestamps") {
+  test("getChanges - returns correct timestamps") {
     withTempDir { tempDir =>
 
       def generateCommits(path: String, commits: Long*): Unit = {
@@ -141,7 +142,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
       // Check the timestamps are returned correctly
       Table.forPath(defaultEngine, tempDir.getCanonicalPath)
         .asInstanceOf[TableImpl]
-        .getChangesByVersion(defaultEngine, 0, 2, Set(DeltaAction.ADD).asJava)
+        .getChanges(defaultEngine, 0, 2, Set(DeltaAction.ADD).asJava)
         .toSeq
         .flatMap(_.getRows.toSeq)
         .foreach { row =>
@@ -153,7 +154,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         }
 
       // Check contents as well
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tempDir.getCanonicalPath,
         0,
         2,
@@ -162,53 +163,53 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - empty _delta_log folder") {
+  test("getChanges - empty _delta_log folder") {
     withTempDir { tempDir =>
       new File(tempDir, "delta_log").mkdirs()
       intercept[TableNotFoundException] {
         Table.forPath(defaultEngine, tempDir.getCanonicalPath)
           .asInstanceOf[TableImpl]
-          .getChangesByVersion(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
       }
     }
   }
 
-  test("getChangesByVersion - empty folder no _delta_log dir") {
+  test("getChanges - empty folder no _delta_log dir") {
     withTempDir { tempDir =>
       intercept[TableNotFoundException] {
         Table.forPath(defaultEngine, tempDir.getCanonicalPath)
           .asInstanceOf[TableImpl]
-          .getChangesByVersion(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
       }
     }
   }
 
-  test("getChangesByVersion - non-empty folder not a delta table") {
+  test("getChanges - non-empty folder not a delta table") {
     withTempDir { tempDir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(tempDir.getCanonicalPath)
       intercept[TableNotFoundException] {
         Table.forPath(defaultEngine, tempDir.getCanonicalPath)
           .asInstanceOf[TableImpl]
-          .getChangesByVersion(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
       }
     }
   }
 
-  test("getChangesByVersion - directory does not exist") {
+  test("getChanges - directory does not exist") {
     intercept[TableNotFoundException] {
       Table.forPath(defaultEngine, "/fake/table/path")
         .asInstanceOf[TableImpl]
-        .getChangesByVersion(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+        .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
     }
   }
 
-  test("getChangesByVersion - golden table deltalog-getChanges invalid queries") {
+  test("getChanges - golden table deltalog-getChanges invalid queries") {
     withGoldenTable("deltalog-getChanges") { tablePath =>
       def getChangesByVersion(
         startVersion: Long, endVersion: Long): CloseableIterator[ColumnarBatch] = {
         Table.forPath(defaultEngine, tablePath)
           .asInstanceOf[TableImpl]
-          .getChangesByVersion(defaultEngine, startVersion, endVersion, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, startVersion, endVersion, FULL_ACTION_SET.asJava)
       }
 
       // startVersion after latest available version
@@ -233,7 +234,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - with truncated log") {
+  test("getChanges - with truncated log") {
     withTempDir { tempDir =>
       // PREPARE TEST TABLE
       val tablePath = tempDir.getCanonicalPath
@@ -269,24 +270,24 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
       assert(intercept[KernelException] {
         Table.forPath(defaultEngine, tablePath)
           .asInstanceOf[TableImpl]
-          .getChangesByVersion(defaultEngine, 0, 9, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 0, 9, FULL_ACTION_SET.asJava)
       }.getMessage.contains("no log files found in the requested version range"))
 
       // startVersion less than the earliest available version
       assert(intercept[KernelException] {
         Table.forPath(defaultEngine, tablePath)
           .asInstanceOf[TableImpl]
-          .getChangesByVersion(defaultEngine, 5, 11, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 5, 11, FULL_ACTION_SET.asJava)
       }.getMessage.contains("no log file found for version 5"))
 
       // TEST VALID CASES
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tablePath,
         10,
         12,
         FULL_ACTION_SET
       )
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tablePath,
         11,
         12,
@@ -295,7 +296,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("getChangesByVersion - table with a lot of changes") {
+  test("getChanges - table with a lot of changes") {
     withTempDir { tempDir =>
       spark.sql(
         f"""
@@ -333,20 +334,38 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
            |""".stripMargin)
 
       // Check all actions are correctly retrieved
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tempDir.getCanonicalPath,
         0,
         6,
         FULL_ACTION_SET
       )
       // Check some subset of actions
-      testGetChangesByVersionVsSpark(
+      testGetChangesVsSpark(
         tempDir.getCanonicalPath,
         0,
         6,
         Set(DeltaAction.ADD)
       )
     }
+  }
+
+  test("getChanges - fails when protocol is not readable by Kernel") {
+    // Existing tests suffice to check if the protocol column is present/dropped correctly
+    // We test our protocol checks for table features in TableFeaturesSuite
+    // Min reader version is too high
+    assert(intercept[KernelException] {
+      // Use toSeq because we need to consume the iterator to force the exception
+      Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
+        .asInstanceOf[TableImpl]
+        .getChanges(defaultEngine, 0, 0, FULL_ACTION_SET.asJava).toSeq
+    }.getMessage.contains("Unsupported Delta protocol reader version"))
+    // We still get an error if we don't request the protocol file action
+    assert(intercept[KernelException] {
+      Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
+        .asInstanceOf[TableImpl]
+        .getChanges(defaultEngine, 0, 0, Set(DeltaAction.ADD).asJava).toSeq
+    }.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
   //////////////////////////////////////////////////////////////////////////////////
