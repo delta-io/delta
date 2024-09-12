@@ -618,7 +618,7 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
       }
       // upgrade to name mode
       val protocol = deltaLog.snapshot.protocol
-      val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+      val (r, w) = if (protocol.supportsTableFeatures) {
         (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
       } else {

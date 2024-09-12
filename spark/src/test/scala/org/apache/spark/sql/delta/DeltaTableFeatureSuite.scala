@@ -197,9 +197,8 @@ class DeltaTableFeatureSuite
 
     val protocol =
       Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).withFeature(TestLegacyReaderWriterFeature)
-    assert(!protocol.readerFeatures.isDefined)
-    assert(
-      protocol.writerFeatures.get === Set(TestLegacyReaderWriterFeature.name))
+    assert(protocol.readerFeatures.get === Set.empty)
+    assert(protocol.writerFeatures.get === Set(TestLegacyReaderWriterFeature.name))
   }
 
   test("merge protocols") {

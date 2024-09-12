@@ -214,39 +214,38 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   test("upgrade to support table features - many features") {
-    withTempDir { path =>
-      val log = createTableWithProtocol(Protocol(2, 5), path)
-      assert(log.update().protocol === Protocol(2, 5))
-      val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
-      table.upgradeTableProtocol(2, TABLE_FEATURES_MIN_WRITER_VERSION)
-      // Setting table feature versions to a protocol without table features is a noop.
-      assert(log.update().protocol === Protocol(2, 5))
-      spark.sql(
-        s"ALTER TABLE delta.`${path.getPath}` SET TBLPROPERTIES (" +
-          s"  delta.feature.${TestWriterFeature.name}='enabled'" +
-          s")")
-      table.upgradeTableProtocol(
-        TABLE_FEATURES_MIN_READER_VERSION,
-        TABLE_FEATURES_MIN_WRITER_VERSION)
-      assert(
-        log.snapshot.protocol === Protocol(
-          minReaderVersion = 2,
-          minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
-          readerFeatures = None,
-          writerFeatures = Some(
-            Set(
-              AppendOnlyTableFeature,
-              ChangeDataFeedTableFeature,
-              CheckConstraintsTableFeature,
-              ColumnMappingTableFeature,
-              GeneratedColumnsTableFeature,
-              InvariantsTableFeature,
-              TestLegacyWriterFeature,
-              TestRemovableLegacyWriterFeature,
-              TestLegacyReaderWriterFeature,
-              TestRemovableLegacyReaderWriterFeature,
-              TestWriterFeature)
-              .map(_.name))))
+    withSQLConf(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED.key -> false.toString) {
+      withTempDir { path =>
+        val log = createTableWithProtocol(Protocol(2, 5), path)
+        assert(log.update().protocol === Protocol(2, 5))
+        val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
+        table.upgradeTableProtocol(2, TABLE_FEATURES_MIN_WRITER_VERSION)
+        // Setting table feature versions to a protocol without table features is a noop.
+        assert(log.update().protocol === Protocol(2, 5))
+        spark.sql(
+          s"ALTER TABLE delta.`${path.getPath}` SET TBLPROPERTIES (" +
+            s"  delta.feature.${RowTrackingFeature.name}='enabled'" +
+            s")")
+        table.upgradeTableProtocol(
+          TABLE_FEATURES_MIN_READER_VERSION,
+          TABLE_FEATURES_MIN_WRITER_VERSION)
+        assert(
+          log.snapshot.protocol === Protocol(
+            minReaderVersion = 2,
+            minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
+            readerFeatures = Some(Set(ColumnMappingTableFeature.name)),
+            writerFeatures = Some(
+              Set(
+                AppendOnlyTableFeature,
+                InvariantsTableFeature,
+                ChangeDataFeedTableFeature,
+                CheckConstraintsTableFeature,
+                ColumnMappingTableFeature,
+                GeneratedColumnsTableFeature,
+                DomainMetadataTableFeature,
+                RowTrackingFeature)
+                .map(_.name))))
+      }
     }
   }
 
@@ -1313,7 +1312,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         deltaLog.snapshot.protocol === Protocol(
           minReaderVersion = 2,
           minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION,
-          readerFeatures = None,
+          readerFeatures = Some(Set.empty),
           writerFeatures = Some(Set(TestLegacyReaderWriterFeature.name))))
       assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
     }
@@ -2136,7 +2135,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(log.snapshot.protocol === Protocol(
         2,
         TABLE_FEATURES_MIN_WRITER_VERSION,
-        readerFeatures = None,
+        readerFeatures = Some(Set.empty),
         writerFeatures = Some(Set(TestLegacyReaderWriterFeature.name))))
     }
   }
@@ -2377,6 +2376,27 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("Column mapping appears in reader features") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(
+        s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
+           |TBLPROPERTIES (
+           |delta.feature.${ColumnMappingTableFeature.name} = 'supported',
+           |delta.feature.${TestWriterFeature.name} = 'supported'
+           |)""".stripMargin)
+      assert(deltaLog.update().protocol === Protocol(
+        minReaderVersion = 2,
+        minWriterVersion = 7,
+        readerFeatures = Some(Set(ColumnMappingTableFeature.name)),
+        writerFeatures = Some(Set(
+          InvariantsTableFeature.name,
+          AppendOnlyTableFeature.name,
+          ColumnMappingTableFeature.name,
+          TestWriterFeature.name))))
+    }
+  }
+
   def protocolWithFeatures(
       readerFeatures: Seq[TableFeature] = Seq.empty,
       writerFeatures: Seq[TableFeature] = Seq.empty): Protocol = {
@@ -2434,8 +2454,17 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     val readerVersion = Math.max(feature.minReaderVersion, 1)
     val expectedWriterFeatures =
       Some(Set(feature.name, InvariantsTableFeature.name, AppendOnlyTableFeature.name))
+    val supportsColumnMapping =
+      canSupportColumnMappingFeature(readerVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
     val expectedReaderFeatures: Option[Set[String]] =
-      if (supportsReaderFeatures(readerVersion)) Some(Set(feature.name)) else None
+      if ((feature == ColumnMappingTableFeature && supportsColumnMapping) ||
+          supportsReaderFeatures(readerVersion)) {
+        Some(Set(feature.name))
+      } else if (supportsColumnMapping) {
+        Some(Set.empty)
+      } else {
+        None
+      }
 
     assert(
       deltaLog.update().protocol === Protocol(
