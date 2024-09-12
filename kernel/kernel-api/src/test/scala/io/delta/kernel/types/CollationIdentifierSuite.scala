@@ -15,12 +15,14 @@
  */
 package io.delta.kernel.types
 
-import io.delta.kernel.types.CollationIdentifier._
 import org.scalatest.funsuite.AnyFunSuite
 
-import java.util.Optional
-
 class CollationIdentifierSuite extends AnyFunSuite {
+  val PROVIDER_SPARK = "SPARK"
+  val PROVIDER_ICU = "ICU"
+  val DEFAULT_COLLATION_NAME = "UTF8_BINARY"
+  val DEFAULT_COLLATION_IDENTIFIER = CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+
   test("check fromString with valid string") {
     Seq(
       (

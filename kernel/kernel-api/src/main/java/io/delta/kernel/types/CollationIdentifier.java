@@ -26,40 +26,11 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
  * Identifies collation for string type.
  * <a href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md#collation-identifiers">
  *   Collation identifiers</a>
+ *
+ * @since 3.3.0
  */
 @Evolving
 public class CollationIdentifier {
-  /**
-   * Spark collation provider.
-   * It provides two collations: {@code UTF8_BINARY} and {@code UTF8_LCASE}.
-   * <br>
-   * {@code UTF8_BINARY} is default string collation. Comparing strings using this collation
-   * is comparing the binary values of their UTF-8 encoded forms.
-   * <br>
-   * The {@code UTF8_LCASE} collation performs case-insensitive comparisons of UTF-8 encoded strings.
-   */
-  public static final String PROVIDER_SPARK = "SPARK";
-  /**
-   * ICU collation provider.
-   * <a href="https://unicode-org.github.io/icu/userguide/collation/">ICU library collations</a>
-   */
-  public static final String PROVIDER_ICU = "ICU";
-
-  /**
-   * ICU library supported version.
-   */
-  public static final String ICU_COLLATOR_VERSION = "75.1";
-
-  /**
-   * Default collation name.
-   */
-  public static final String DEFAULT_COLLATION_NAME = "UTF8_BINARY";
-
-  /**
-   * Default collation identifier.
-   */
-  public static final CollationIdentifier DEFAULT_COLLATION_IDENTIFIER =
-          new CollationIdentifier(PROVIDER_SPARK, DEFAULT_COLLATION_NAME);
 
   private final String provider;
   private final String name;
