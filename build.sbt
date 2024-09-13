@@ -376,7 +376,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
                 if (entry.isDirectory) {
                   dest.mkdirs()
                 } else {
-                  // Ensure parent directories exist.
+                  // Ensure the parent directories exist.
                   dest.getParentFile.mkdirs()
 
                   Using(Files.newOutputStream(dest.toPath)) { os =>
@@ -410,10 +410,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
           val sparkComponentName = outdatedJar.getName.stripSuffix("-4.0.0-preview1.jar")
           downloadLatestSparkReleaseJar(sparkComponentName, sparkJarsDir)
         }
-
-        outdatedJars.foreach { outdatedJar =>
-          outdatedJar.delete()
-        }
+        outdatedJars.foreach(_.delete())
       }
 
       Seq(destDir)
