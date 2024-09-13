@@ -362,6 +362,88 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           )
         ),
         AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("<",
+            new CollatedPredicate("<",
+              new Column("c1"),
+              new Literal("a"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+            Literal.ofBoolean(true)
+          )
+        ),
+        new Predicate(">=",
+          AlwaysTrue.ALWAYS_TRUE,
+          Literal.ofBoolean(true)
+        )
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("<",
+            Literal.ofBoolean(true),
+            new CollatedPredicate("<",
+              new Column("c1"),
+              new Literal("a"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+          )
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("<=",
+            new CollatedPredicate("<",
+              new Column("c1"),
+              new Literal("a"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+            Literal.ofBoolean(true)
+          )
+        ),
+        new Predicate(">",
+          AlwaysTrue.ALWAYS_TRUE,
+          Literal.ofBoolean(true)
+        )
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate(">",
+            Literal.ofBoolean(true),
+            new CollatedPredicate("<",
+              new Column("c1"),
+              new Literal("a"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+          )
+        ),
+        new Predicate("<=",
+          Literal.ofBoolean(true),
+          AlwaysTrue.ALWAYS_TRUE)
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate(">",
+            new CollatedPredicate("<",
+              new Column("c1"),
+              new Literal("a"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+            Literal.ofBoolean(true)
+          )
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate(">=",
+            Literal.ofBoolean(true),
+            new CollatedPredicate("<",
+              new Column("c1"),
+              new Literal("a"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+          )
+        ),
+        new Predicate("<",
+          Literal.ofBoolean(true),
+          AlwaysTrue.ALWAYS_TRUE)
       )
     ).foreach {
       case(startingPredicate, resultingPredicate) =>
