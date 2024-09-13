@@ -500,6 +500,49 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("create table with collation string") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val schema = new StructType()
+        .add("c1", new StringType("ICU.UNICODE_CI"), true)
+        .add("c2", STRING, true)
+
+      val txn = txnBuilder
+        .withSchema(engine, schema)
+        .build(engine)
+
+      val txnResult = txn.commit(engine, emptyIterable())
+
+      // scalastyle:off
+      val dataStringC1 = Seq("a", "c", "A", "a", "A", "A")
+      val dataStringC2 = Seq("A", "b", "a", "a", "a", "e")
+      // scalastyle:on
+
+      val columnVectorStringC1 =
+        VectorUtils.stringVector(scala.collection.JavaConverters.seqAsJavaList(dataStringC1))
+      val columnVectorStringC2 =
+        VectorUtils.stringVector(scala.collection.JavaConverters.seqAsJavaList(dataStringC2))
+      val columnarBatch = new DefaultColumnarBatch(2, schema,
+        List(columnVectorStringC1, columnVectorStringC2).asJava.toArray(Array.empty[ColumnVector]))
+      val filteredColumnarBatch = new FilteredColumnarBatch(
+        columnarBatch, Optional.empty())
+
+      appendData(engine = engine,
+        tablePath = tablePath,
+        data = Seq(Map.empty[String, Literal] -> Seq(filteredColumnarBatch)))
+
+      val collationIdentifier =
+        new CollationIdentifier("ICU", "UNICODE_CI") // sr_Latn_SRB_AI
+      val scalarExpression = new CollatedPredicate("=", new Column("c1"),
+        new Column("c2"), collationIdentifier)
+      val output = new DefaultExpressionEvaluator(schema,
+        scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
+      println(output)
+    }
+  }
+
   test("insert into partitioned table - handling case sensitivity of partition columns") {
     withTempDirAndEngine { (tblPath, engine) =>
       val schema = new StructType()
