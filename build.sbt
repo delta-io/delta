@@ -274,14 +274,16 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
+    Compile / packageBin := assembly.value,
     (assembly / test) := { },
     (assembly / logLevel) := Level.Info,
     // Exclude `scala-library` from assembly.
     (assembly / assemblyPackageScala / assembleArtifact) := false,
     (assembly / assemblyShadeRules) := Seq(
-      ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.common.io.grpc.@1").inAll,
-      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.common.com.google.@1").inAll,
-      ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.common.javax.annotation.@1").inAll,
+      ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
+      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
+      ShadeRule.rename("org.checkerframework.**" -> "org.deltaproject.connect.checkerframework.@1").inAll,
+      ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.javax.annotation.@1").inAll,
     ),
     (assembly / assemblyMergeStrategy) := {
       case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
@@ -376,13 +378,17 @@ lazy val connectClient = (project in file("spark-connect/client"))
         dest.get()
       }
     }.taskValue,
+    Compile / packageBin := assembly.value,
     (assembly / test) := { },
     (assembly / logLevel) := Level.Info,
     // Exclude `scala-library` from assembly.
     (assembly / assemblyPackageScala / assembleArtifact) := false,
     (assembly / assemblyShadeRules) := Seq(
-      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.client.com.google.@1").inAll,
-      ShadeRule.rename("org.scalatest.**" -> "org.deltaproject.connect.client.org.scalatest.@1").inAll,
+      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
+      ShadeRule.rename("org.scalatest.**" -> "org.deltaproject.connect.org.scalatest.@1").inAll,
+      ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
+      ShadeRule.rename("org.checkerframework.**" -> "org.deltaproject.connect.checkerframework.@1").inAll,
+      ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.javax.annotation.@1").inAll,
     ),
     (assembly / assemblyMergeStrategy) := {
       case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
@@ -434,12 +440,16 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
+    Compile / packageBin := assembly.value,
     (assembly / test) := { },
     (assembly / logLevel) := Level.Info,
     // Exclude `scala-library` from assembly.
     (assembly / assemblyPackageScala / assembleArtifact) := false,
     (assembly / assemblyShadeRules) := Seq(
-      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.server.com.google.@1").inAll,
+      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
+      ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
+      ShadeRule.rename("org.checkerframework.**" -> "org.deltaproject.connect.checkerframework.@1").inAll,
+      ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.javax.annotation.@1").inAll,
     ),
     (assembly / assemblyMergeStrategy) := {
       case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
