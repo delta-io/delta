@@ -18,6 +18,7 @@ package io.delta.sharing.spark
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sharing.client.{
   DeltaSharingClient,
@@ -59,16 +60,19 @@ private[spark] class TestClientForDeltaFormatSharing(
     tokenRenewalThresholdInSeconds: Int = 600)
     extends DeltaSharingClient {
 
+  private val supportedReaderFeatures: Seq[String] = Seq(
+    DeletionVectorsTableFeature,
+    ColumnMappingTableFeature,
+    TimestampNTZTableFeature,
+    TypeWideningPreviewTableFeature,
+    TypeWideningTableFeature
+  ).map(_.name)
+
   assert(
     responseFormat == DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET ||
-    (
-      readerFeatures.contains("deletionVectors") &&
-      readerFeatures.contains("columnMapping") &&
-      readerFeatures.contains("timestampNtz") &&
-      readerFeatures.contains("variantType-preview")
-    ),
-    "deletionVectors, columnMapping, timestampNtz, variantType-preview should be supported in " +
-    "all types of queries."
+      supportedReaderFeatures.forall(readerFeatures.split(",").contains),
+    s"${supportedReaderFeatures.diff(readerFeatures.split(",")).mkString(", ")} " +
+      s"should be supported in all types of queries."
   )
 
   import TestClientForDeltaFormatSharing._
