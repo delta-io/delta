@@ -418,7 +418,7 @@ class RowTrackingBackfillConflictsSuite extends RowTrackingBackfillConflictsTest
                 backfillObserver.setNextObserver(
                   NoOpTransactionExecutionObserver, autoAdvance = true)
                 unblockCommit(backfillObserver)
-                backfillObserver.phases.backfillPhase.exitBarrier.unblock()
+                backfillObserver.phases.postCommitPhase.exitBarrier.unblock()
                 waitForCommit(backfillObserver)
             }
 

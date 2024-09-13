@@ -27,7 +27,8 @@ private[delta] class PhaseLockingTransactionExecutionObserver(
     phases.initialPhase,
     phases.preparePhase,
     phases.commitPhase,
-    phases.backfillPhase)
+    phases.backfillPhase,
+    phases.postCommitPhase)
 
   override def createChild(): TransactionExecutionObserver = {
     // Just return the current thread observer.
@@ -59,11 +60,16 @@ private[delta] class PhaseLockingTransactionExecutionObserver(
     phases.backfillPhase.waitToEnter()
   }
 
+  override def beginPostCommit(): Unit = {
+    phases.backfillPhase.leave()
+    phases.postCommitPhase.waitToEnter()
+  }
+
   override def transactionCommitted(): Unit = {
     if (nextObserver.nonEmpty && autoAdvanceNextObserver) {
-      waitForCommitPhaseAndAdvanceToNextObserver()
+      waitForLastPhaseAndAdvanceToNextObserver()
     } else {
-      phases.backfillPhase.leave()
+      phases.postCommitPhase.leave()
     }
   }
 
@@ -74,25 +80,31 @@ private[delta] class PhaseLockingTransactionExecutionObserver(
       }
       phases.commitPhase.leave()
     }
-    if (!phases.backfillPhase.hasEntered) {
-      phases.backfillPhase.waitToEnter()
+    if (!phases.backfillPhase.hasLeft) {
+      if (!phases.backfillPhase.hasEntered) {
+        phases.backfillPhase.waitToEnter()
+      }
+      phases.backfillPhase.leave()
+    }
+    if (!phases.postCommitPhase.hasEntered) {
+      phases.postCommitPhase.waitToEnter()
     }
     if (nextObserver.nonEmpty && autoAdvanceNextObserver) {
-      waitForCommitPhaseAndAdvanceToNextObserver()
+      waitForLastPhaseAndAdvanceToNextObserver()
     } else {
-      phases.backfillPhase.leave()
+      phases.postCommitPhase.leave()
     }
   }
 
   /*
-   * Wait for the backfill phase to pass but do not unblock it so that callers can write tests
+   * Wait for the last phase to pass but do not unblock it so that callers can write tests
    * that capture errors caused by code between the end of the last txn and the start of the
    * new txn. After the commit phase is passed, update the thread observer of the thread to
    * the next observer.
    */
-  def waitForCommitPhaseAndAdvanceToNextObserver(): Unit = {
+  def waitForLastPhaseAndAdvanceToNextObserver(): Unit = {
     require(nextObserver.nonEmpty)
-    phases.backfillPhase.waitToLeave()
+    phases.postCommitPhase.waitToLeave()
     advanceToNextThreadObserver()
   }
 
@@ -103,7 +115,7 @@ private[delta] class PhaseLockingTransactionExecutionObserver(
    * Note that when a next observer is set, the caller needs to manually unblock the exit barrier
    * of the commit phase.
    *
-   * For example, see [[waitForCommitPhaseAndAdvanceToNextObserver]].
+   * For example, see [[waitForLastPhaseAndAdvanceToNextObserver]].
    */
   def setNextObserver(
       nextTxnObserver: TransactionExecutionObserver,
