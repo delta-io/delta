@@ -368,7 +368,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           new Predicate("<",
             new CollatedPredicate("<",
               new Column("c1"),
-              new Literal("a"),
+              Literal.ofString("a"),
               CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
             Literal.ofBoolean(true)
           )
@@ -384,7 +384,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             Literal.ofBoolean(true),
             new CollatedPredicate("<",
               new Column("c1"),
-              new Literal("a"),
+              Literal.ofString("a"),
               CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
           )
         ),
@@ -395,7 +395,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           new Predicate("<=",
             new CollatedPredicate("<",
               new Column("c1"),
-              new Literal("a"),
+              Literal.ofString("a"),
               CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
             Literal.ofBoolean(true)
           )
@@ -411,7 +411,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             Literal.ofBoolean(true),
             new CollatedPredicate("<",
               new Column("c1"),
-              new Literal("a"),
+              Literal.ofString("a"),
               CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
           )
         ),
@@ -424,7 +424,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           new Predicate(">",
             new CollatedPredicate("<",
               new Column("c1"),
-              new Literal("a"),
+              Literal.ofString("a"),
               CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
             Literal.ofBoolean(true)
           )
@@ -437,7 +437,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             Literal.ofBoolean(true),
             new CollatedPredicate("<",
               new Column("c1"),
-              new Literal("a"),
+              Literal.ofString("a"),
               CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
           )
         ),

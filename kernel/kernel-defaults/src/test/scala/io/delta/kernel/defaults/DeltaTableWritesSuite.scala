@@ -536,7 +536,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val collationIdentifier =
         new CollationIdentifier("ICU", "UNICODE_CI") // sr_Latn_SRB_AI
       val scalarExpression = new CollatedPredicate("=", new Column("c1"),
-        new Column("c2"), collationIdentifier)
+        Literal.ofString("a"), collationIdentifier)
       val output = new DefaultExpressionEvaluator(schema,
         scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
       println(output)
