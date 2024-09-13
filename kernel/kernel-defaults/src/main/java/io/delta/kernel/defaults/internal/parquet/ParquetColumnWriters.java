@@ -169,10 +169,6 @@ class ParquetColumnWriters {
       }
     }
 
-    public String getColName() {
-      return colName;
-    }
-
     ColumnWriter getNestedColumnWriter(String name) {
       throw new UnsupportedOperationException("Not implemented for primitive type column writers");
     }
@@ -514,6 +510,17 @@ class ParquetColumnWriters {
         fieldWriter.writeRowValue(recordConsumer, rowId);
       }
       recordConsumer.endGroup();
+    }
+
+    @Override
+    public ColumnWriter getNestedColumnWriter(String name) {
+      for (ColumnWriter fieldWriter : fieldWriters) {
+        if (fieldWriter.colName.equals(name)) {
+          return fieldWriter;
+        }
+      }
+      throw new IllegalArgumentException(
+              String.format("Invalid nested column name: \"%s\".", name));
     }
   }
 }
