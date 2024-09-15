@@ -463,6 +463,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       .foreach {
         name =>
           Seq(
+            // (starting predicate, resulting predicate)
             (
               new Predicate("NOT",
                 new Predicate(name,
@@ -510,6 +511,152 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
                 === resultingPredicate.toString)
           }
       }
+
+    Seq("<", "<=")
+      .foreach {
+        name =>
+          // (starting predicate, resulting predicate)
+          Seq(
+            (
+              new Predicate("NOT",
+                new Predicate(name,
+                  Literal.ofString("a"),
+                  new Column("c1")
+                )
+              ),
+                new Predicate(reverseSign(name),
+                  Literal.ofString("a"),
+                  new Column("c1")
+                )
+            ),
+            (
+              new Predicate("NOT",
+                new Predicate(name,
+                  Literal.ofBoolean(true),
+                  new CollatedPredicate("=",
+                    Literal.ofString("a"),
+                    new Column("c1"),
+                    CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+                  )
+                )
+              ),
+              AlwaysTrue.ALWAYS_TRUE
+            ),
+            (
+              new Predicate("NOT",
+                new Predicate(name,
+                  new CollatedPredicate("=",
+                    Literal.ofString("a"),
+                    new Column("c1"),
+                    CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+                  ),
+                  Literal.ofBoolean(true)
+                )
+              ),
+              new Predicate(reverseSign(name),
+                AlwaysTrue.ALWAYS_TRUE,
+                Literal.ofBoolean(true)
+              )
+            )
+          ).foreach {
+            case(startingPredicate, resultingPredicate) =>
+              assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+                === resultingPredicate.toString)
+          }
+      }
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - IS_NOT_NULL") {
+    Seq(
+      // (starting predicate, resulting predicate)
+      (
+        new Predicate("IS_NOT_NULL",
+          new Predicate("=",
+            Literal.ofString("a"),
+            new Column("c1")
+          )
+        ),
+        new Predicate("IS_NOT_NULL",
+          new Predicate("=",
+            Literal.ofString("a"),
+            new Column("c1")
+          )
+        )
+      ),
+      (
+        new Predicate("IS_NOT_NULL",
+          new CollatedPredicate("<",
+            Literal.ofString("a"),
+            new Column("c1"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)
+        ),
+        new Predicate("IS_NOT_NULL",
+          AlwaysTrue.ALWAYS_TRUE)
+      ),
+      (
+        new Predicate("IS_NOT_NULL",
+          new Predicate("<",
+            new CollatedPredicate("<",
+              Literal.ofString("a"),
+              new Column("c1"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+            Literal.ofBoolean(false)
+          )
+        ),
+        new Predicate("IS_NOT_NULL",
+          AlwaysTrue.ALWAYS_TRUE)
+      )
+    ).foreach {
+      case(startingPredicate, resultingPredicate) =>
+        assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+          === resultingPredicate.toString)
+    }
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - IS_NULL") {
+    Seq(
+      // (starting predicate, resulting predicate)
+      (
+        new Predicate("IS_NULL",
+          new Predicate("<",
+            Literal.ofString("a"),
+            new Column("c1")
+          )
+        ),
+        new Predicate("IS_NULL",
+          new Predicate("<",
+            Literal.ofString("a"),
+            new Column("c1")
+          )
+        )
+      ),
+      (
+        new Predicate("IS_NULL",
+          new CollatedPredicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+            CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER
+          )
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Predicate("IS_NULL",
+          new Predicate("<",
+            new CollatedPredicate("<",
+              Literal.ofString("a"),
+              new Column("c1"),
+              CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER),
+            Literal.ofBoolean(false)
+          )
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      )
+    ).foreach {
+      case(startingPredicate, resultingPredicate) =>
+        assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+          === resultingPredicate.toString)
+    }
   }
 
   test("pruneStatsSchema - multiple basic cases one level of nesting") {
