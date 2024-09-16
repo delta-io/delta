@@ -1395,7 +1395,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       statement = s"ALTER TABLE $tableName CHANGE COLUMN m.value SET NOT NULL"
       checkError(
         exception = intercept[AnalysisException] { sql(statement) },
-        errorClass = "_LEGACY_ERROR_TEMP_2330",
+        condition = "_LEGACY_ERROR_TEMP_2330",
         parameters = Map(
           "fieldName" -> "m.value"
         ),
@@ -1405,7 +1405,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       statement = s"ALTER TABLE $tableName CHANGE COLUMN a.element SET NOT NULL"
       checkError(
         exception = intercept[AnalysisException] { sql(statement) },
-        errorClass = "_LEGACY_ERROR_TEMP_2330",
+        condition = "_LEGACY_ERROR_TEMP_2330",
         parameters = Map(
           "fieldName" -> "a.element"
         ),
