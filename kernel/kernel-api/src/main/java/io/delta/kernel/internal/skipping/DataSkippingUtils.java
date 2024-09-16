@@ -205,7 +205,7 @@ public class DataSkippingUtils {
         if (childResult._2) {
           return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
         } else {
-          return new Tuple2<>(new Predicate("IS_NULL", childResult._1), false);
+          return new Tuple2<>(new Predicate(predicateName, childResult._1), false);
         }
       case "IS_NOT_NULL":
         child = getUnaryChild(dataFilters);
