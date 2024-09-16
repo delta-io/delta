@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2024) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -75,12 +76,14 @@ public class MetadataCleanup {
    * </ul>
    *
    * @param engine {@link Engine} instance to delete the expired log files
+   * @param clock {@link Clock} instance to get the current time. Useful in testing to mock the
+   *     current time.
    * @param tablePath Table location
    * @param metadata Metadata of the table
    * @throws IOException if an error occurs while deleting the log files
    */
-  public static void cleanupExpiredLogs(Engine engine, Path tablePath, Metadata metadata)
-      throws IOException {
+  public static void cleanupExpiredLogs(
+      Engine engine, Clock clock, Path tablePath, Metadata metadata) throws IOException {
     Boolean enableExpireLogCleanup = ENABLE_EXPIRED_LOG_CLEANUP.fromMetadata(engine, metadata);
     if (!enableExpireLogCleanup) {
       logger.info(
@@ -93,7 +96,7 @@ public class MetadataCleanup {
     List<String> lastSeenCheckpointFiles = new ArrayList<>();
 
     long retentionMillis = LOG_RETENTION.fromMetadata(engine, metadata);
-    long fileCutOffTime = System.currentTimeMillis() - retentionMillis;
+    long fileCutOffTime = clock.getTimeMillis() - retentionMillis;
     logger.info("{}: Starting the deletion of log files older than {}", tablePath, fileCutOffTime);
     long numDeleted = 0;
     try (CloseableIterator<FileStatus> files = listExpiredDeltaLogs(engine, tablePath)) {
@@ -172,6 +175,7 @@ public class MetadataCleanup {
           lastSeenCheckpointFiles.add(nextFile.getPath());
           lastSeenCheckpointVersion = newLastSeenCheckpointVersion;
         }
+        // ignore all other files: TODO: do we need to delete unknown file types?
       }
     }
     logger.info("{}: Deleted {} log files older than {}", tablePath, numDeleted, fileCutOffTime);

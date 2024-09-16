@@ -37,6 +37,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.CloseableIterator;
@@ -187,7 +188,8 @@ public class SnapshotManager {
     return getSnapshotAt(engine, versionToRead);
   }
 
-  public void checkpoint(Engine engine, long version) throws TableNotFoundException, IOException {
+  public void checkpoint(Engine engine, Clock clock, long version)
+      throws TableNotFoundException, IOException {
     logger.info("{}: Starting checkpoint for version: {}", tablePath, version);
     // Get the snapshot corresponding the version
     SnapshotImpl snapshot = (SnapshotImpl) getSnapshotAt(engine, version);
@@ -232,7 +234,7 @@ public class SnapshotManager {
     logger.info("{}: Last checkpoint metadata file is written for version: {}", tablePath, version);
 
     logger.info("{}: Finished checkpoint for version: {}", tablePath, version);
-    cleanupExpiredLogs(engine, tablePath, snapshot.getMetadata());
+    cleanupExpiredLogs(engine, clock, tablePath, snapshot.getMetadata());
   }
 
   ////////////////////
