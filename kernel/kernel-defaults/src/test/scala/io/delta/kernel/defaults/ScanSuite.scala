@@ -1048,6 +1048,26 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           )
         ),
         1
+      ),
+      (
+        new Predicate("IS_NULL",
+          new CollatedPredicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+            CollationIdentifier.fromString("ICU.UNICODE_CI")
+          )
+        ),
+        2
+      ),
+      (
+        new Predicate("IS_NOT_NULL",
+          new CollatedPredicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+            CollationIdentifier.fromString("ICU.UNICODE_CI")
+          )
+        ),
+        2
       )
     ).foreach {
       case(predicate, expNumFiles) =>
