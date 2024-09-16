@@ -117,7 +117,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils wi
           200 // retention period
         )
       )
-    ),
+    )
   ).foreach {
     case (logFiles, testCases) =>
       testCases.foreach {
