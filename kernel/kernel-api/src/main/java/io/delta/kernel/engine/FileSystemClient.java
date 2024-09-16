@@ -78,9 +78,9 @@ public interface FileSystemClient {
   boolean mkdirs(String path) throws IOException;
 
   /**
-   * Delete a file.
+   * Delete the file at given path.
    *
-   * @param path the path to delete.
+   * @param path the path to delete. If path is a directory throws an exception.
    * @return true if delete is successful else false.
    * @throws IOException for any IO error.
    */
