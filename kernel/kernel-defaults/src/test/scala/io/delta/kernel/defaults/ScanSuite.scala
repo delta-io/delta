@@ -1000,12 +1000,12 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     Seq(
       (
         new Predicate("<", new Column("c1"), Literal.ofString("B")),
-        1
+        2
       ),
       (
         new CollatedPredicate("<", new Column("c1"), Literal.ofString("b"),
           CollationIdentifier.fromString("ICU.UNICODE_CI")),
-        2
+        3
       ),
       (
         new And(
@@ -1018,7 +1018,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             Literal.ofString("A")
           )
         ),
-        1
+        2
       ),
       (
         new Or(
@@ -1031,7 +1031,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             Literal.ofString("A")
           )
         ),
-        2
+        3
       ),
       (
         new Predicate("NOT",
@@ -1047,7 +1047,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             )
           )
         ),
-        1
+        2
       ),
       (
         new Predicate("IS_NULL",
@@ -1057,7 +1057,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             CollationIdentifier.fromString("ICU.UNICODE_CI")
           )
         ),
-        2
+        3
       ),
       (
         new Predicate("IS_NOT_NULL",
@@ -1067,7 +1067,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             CollationIdentifier.fromString("ICU.UNICODE_CI")
           )
         ),
-        2
+        3
       )
     ).foreach {
       case(predicate, expNumFiles) =>
