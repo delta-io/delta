@@ -2392,7 +2392,7 @@ class DeltaTableCreationSuite
         }
         checkError(
           exception = e,
-          errorClass = "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
+          condition = "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
           parameters = Map(
             "tableName" -> tableName,
             "tablePath" -> deltaLog.logPath.toString,

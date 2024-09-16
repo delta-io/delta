@@ -88,7 +88,7 @@ class SchemaUtilsSuite extends QueryTest
     assert(err.isDefined, "exception with the error class not found")
     checkError(
       exception = err.get,
-      errorClass = errorClass,
+      condition = errorClass,
       parameters = params,
       matchPVals = true)
   }
@@ -1681,7 +1681,7 @@ class SchemaUtilsSuite extends QueryTest
     }
     checkError(
       exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      condition = "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "x.Y.bb", "schema" -> "root\n")
     )
@@ -1949,7 +1949,7 @@ class SchemaUtilsSuite extends QueryTest
     }
     checkError(
       exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      condition = "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "two", "schema" -> tableSchema.treeString)
     )
@@ -1975,7 +1975,7 @@ class SchemaUtilsSuite extends QueryTest
     }
     checkError(
       exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      condition = "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "s.two", "schema" -> tableSchema.treeString)
     )
@@ -2349,7 +2349,7 @@ class SchemaUtilsSuite extends QueryTest
         }
       checkError(
         exception = e.getCause.asInstanceOf[AnalysisException],
-        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        condition = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         parameters = Map("currentDataType" -> "LongType",
           "updateDataType" -> sourceType.head.dataType.toString))
     }
@@ -2640,7 +2640,7 @@ class SchemaUtilsSuite extends QueryTest
           exception = intercept[AnalysisException] {
             SchemaUtils.checkFieldNames(Seq(name))
           },
-          errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
+          condition = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
           parameters = Map("columnName" -> s"$name")
         )
       }

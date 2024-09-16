@@ -1306,7 +1306,7 @@ class DeltaSuite extends QueryTest
       }
       checkError(
         exception = e,
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        condition = "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map("currentField" -> "value", "updateField" -> "value"))
     }
   }

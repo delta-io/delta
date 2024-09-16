@@ -60,7 +60,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
         exception = intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
         },
-        errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        condition = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a",
           "constraints" -> "delta.constraints.ck -> hash ( a ) > 0"
@@ -84,7 +84,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
         exception = intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
         },
-        errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        condition = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a.x",
           "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
@@ -108,7 +108,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
           exception = intercept[DeltaAnalysisException] {
             sql("INSERT INTO t VALUES (200)")
           },
-          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          condition = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a",
             "columnType" -> "TINYINT",
@@ -131,7 +131,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
           exception = intercept[DeltaAnalysisException] {
             sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
           },
-          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          condition = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a.x",
             "columnType" -> "TINYINT",
@@ -166,7 +166,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
                  |""".stripMargin
             )
           },
-          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          condition = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a.x.z",
             "columnType" -> "TINYINT",

@@ -142,7 +142,7 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
         }
         checkError(
           exception = ex.getCause.asInstanceOf[SparkThrowable],
-          errorClass = "CANNOT_UP_CAST_DATATYPE",
+          condition = "CANNOT_UP_CAST_DATATYPE",
           parameters = Map(
             "expression" -> "value",
             "sourceType" -> toSQLType("BIGINT"),
@@ -174,7 +174,7 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
         }
         checkError(
           exception = getSparkArithmeticException(ex),
-          errorClass = "CAST_OVERFLOW_IN_TABLE_INSERT",
+          condition = "CAST_OVERFLOW_IN_TABLE_INSERT",
           parameters = Map(
           "sourceType" -> "\"BIGINT\"",
           "targetType" -> "\"INT\"",
@@ -277,7 +277,7 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
       }
       checkError(
         exception = ex.getCause.asInstanceOf[SparkThrowable],
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        condition = "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map(
         "currentField" -> "s",
         "updateField" -> "s")
@@ -474,7 +474,7 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
         }
         checkError(
           exception = ex.getCause.asInstanceOf[SparkThrowable],
-          errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+          condition = "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
           "currentField" -> "value",
           "updateField" -> "value")

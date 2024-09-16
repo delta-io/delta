@@ -1322,7 +1322,7 @@ class CoordinatedCommitsSuite
                 tableMutationFn()
               }
               checkError(e,
-                errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+                condition = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
                 sqlState = "0AKDC",
                 parameters = Map("coordinatorName" -> "tracking-in-memory")
               )
@@ -1586,7 +1586,7 @@ class CoordinatedCommitsSuite
       }
       checkError(
         exception = e,
-        errorClass = "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+        condition = "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
     }
@@ -1606,7 +1606,7 @@ class CoordinatedCommitsSuite
       }
       checkError(
         exception = e,
-        errorClass = "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
+        condition = "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
         sqlState = "42616",
         parameters = Map[String, String]())
     }
@@ -1627,7 +1627,7 @@ class CoordinatedCommitsSuite
       }
       checkError(
         exception = e,
-        errorClass = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+        condition = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
     }
@@ -1644,7 +1644,7 @@ class CoordinatedCommitsSuite
         }
         checkError(
           exception = e,
-          errorClass = "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES",
+          condition = "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES",
           sqlState = "42616",
           parameters = Map("Command" -> "ALTER"))
       }
@@ -1665,7 +1665,7 @@ class CoordinatedCommitsSuite
       }
       checkError(
         exception = e,
-        errorClass = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+        condition = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
     }

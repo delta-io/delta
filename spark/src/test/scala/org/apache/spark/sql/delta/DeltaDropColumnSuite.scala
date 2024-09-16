@@ -453,7 +453,7 @@ class DeltaDropColumnSuite extends QueryTest
         exception = intercept[AnalysisException] {
           sql(s"ALTER TABLE delta_test DROP COLUMN $field")
         },
-        errorClass = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
+        condition = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
         parameters = Map(
           "struct" -> "IntegerType"
         )

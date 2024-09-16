@@ -100,7 +100,7 @@ class DeltaVariantSuite
       // check previously thrown error message
       checkError(
         e,
-        errorClass = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
+        condition = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
         parameters = Map(
           "unsupportedFeatures" -> VariantTypeTableFeature.name,
           "supportedFeatures" -> currentFeatures
@@ -129,7 +129,7 @@ class DeltaVariantSuite
               |USING delta
               |PARTITIONED BY (v)""".stripMargin)
         },
-        errorClass = "INVALID_PARTITION_COLUMN_DATA_TYPE",
+        condition = "INVALID_PARTITION_COLUMN_DATA_TYPE",
         parameters = Map("type" -> "\"VARIANT\"")
       )
     }
@@ -516,7 +516,7 @@ class DeltaVariantSuite
       }
       checkError(
         insertException,
-        errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        condition = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
         parameters = Map("columnName" -> "v")
       )
 
@@ -539,7 +539,7 @@ class DeltaVariantSuite
       }
       checkError(
         insertException,
-        errorClass = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
+        condition = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
         parameters = Map(
           "constraintName" -> "variantgtezero",
           "expression" -> "(variant_get(v, '$', 'INT') >= 0)", "values" -> " - v : -1"

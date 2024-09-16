@@ -482,7 +482,7 @@ trait DeltaErrorsSuiteBase
           newTableId = "027fb01c-94aa-4cab-87cb-5aab6aec6d17",
           oldTableId = "2edf2c02-bb63-44e9-a84c-517fad0db296")
       },
-      errorClass = "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE",
+      condition = "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE",
       parameters = Map(
         "oldTableId" -> "2edf2c02-bb63-44e9-a84c-517fad0db296",
         "newTableId" -> "027fb01c-94aa-4cab-87cb-5aab6aec6d17")
@@ -962,11 +962,11 @@ trait DeltaErrorsSuiteBase
       }
       checkError(
         exception = e,
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        condition = "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map("currentField" -> "c0", "updateField" -> "c0"))
       checkError(
         exception = e.getCause.asInstanceOf[DeltaAnalysisException],
-        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        condition = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         parameters = Map("currentDataType" -> "IntegerType", "updateDataType" -> "StringType"))
     }
     {
@@ -1003,7 +1003,7 @@ trait DeltaErrorsSuiteBase
             oldField = StructField("c", IntegerType),
             newField = StructField("c", LongType))
         },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        condition = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.b.c",
           "oldField" -> "INT",
@@ -1428,7 +1428,7 @@ trait DeltaErrorsSuiteBase
             dataType = IntegerType,
             constraints = Map("ck1" -> "a > 0", "ck2" -> "hash(b) > 0"))
         },
-        errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        condition = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a.x",
           "columnType" -> "TINYINT",
@@ -1448,7 +1448,7 @@ trait DeltaErrorsSuiteBase
               "gen2" -> "3 + a . x"
             ))
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        condition = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a.x",
           "columnType" -> "TINYINT",
@@ -1919,7 +1919,7 @@ trait DeltaErrorsSuiteBase
         exception = intercept[DeltaIllegalStateException] {
           throw MaterializedRowId.missingMetadataException("table_name")
         },
-        errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+        condition = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
         parameters = Map(
           "rowTrackingColumn" -> "Row ID",
           "tableName" -> "table_name"
@@ -1931,7 +1931,7 @@ trait DeltaErrorsSuiteBase
         exception = intercept[DeltaIllegalStateException] {
           throw MaterializedRowCommitVersion.missingMetadataException("table_name")
         },
-        errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+        condition = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
         parameters = Map(
           "rowTrackingColumn" -> "Row Commit Version",
           "tableName" -> "table_name"

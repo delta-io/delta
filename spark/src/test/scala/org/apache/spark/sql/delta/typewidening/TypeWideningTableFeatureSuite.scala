@@ -114,7 +114,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
         sql(s"ALTER TABLE delta.`$tempPath` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'bla')")
       },
-      errorClass = "_LEGACY_ERROR_TEMP_2045",
+      condition = "_LEGACY_ERROR_TEMP_2045",
       parameters = Map(
         "message" -> "For input string: \"bla\""
       )
@@ -131,7 +131,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
       exception = intercept[AnalysisException] {
         sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE SMALLINT")
       },
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+      condition = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
       parameters = Map(
         "fieldPath" -> "a",
         "oldField" -> "TINYINT",
@@ -150,7 +150,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
       exception = intercept[AnalysisException] {
         sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
       },
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+      condition = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
       parameters = Map(
         "fieldPath" -> "a",
         "oldField" -> "SMALLINT",
@@ -197,7 +197,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
               s"DROP FEATURE '${TypeWideningPreviewTableFeature.name}'"
             ).collect()
           },
-          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
             "feature" -> TypeWideningPreviewTableFeature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
@@ -445,7 +445,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
       exception = intercept[DeltaIllegalStateException] {
         readDeltaTable(tempPath).collect()
       },
-      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      condition = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
       parameters = Map(
         "fieldName" -> "a.element",
         "fromType" -> "INT",

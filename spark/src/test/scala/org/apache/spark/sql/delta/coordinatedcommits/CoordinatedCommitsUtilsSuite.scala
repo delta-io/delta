@@ -86,7 +86,7 @@ class CoordinatedCommitsUtilsSuite extends QueryTest
           }
           checkError(
             exception = e,
-            errorClass = errorOpt.get.getErrorClass,
+            condition = errorOpt.get.getErrorClass,
             sqlState = errorOpt.get.getSqlState,
             parameters = errorOpt.get.getMessageParameters.asScala.toMap)
         } else {
@@ -261,7 +261,7 @@ class CoordinatedCommitsUtilsSuite extends QueryTest
       }
       checkError(
         exception = e,
-        errorClass = errorOpt.get.getErrorClass,
+        condition = errorOpt.get.getErrorClass,
         sqlState = errorOpt.get.getSqlState,
         parameters = errorOpt.get.getMessageParameters.asScala.toMap)
     } else {
@@ -329,7 +329,7 @@ class CoordinatedCommitsUtilsSuite extends QueryTest
       }
       checkError(
         exception = e,
-        errorClass = errorOpt.get.getErrorClass,
+        condition = errorOpt.get.getErrorClass,
         sqlState = errorOpt.get.getSqlState,
         parameters = errorOpt.get.getMessageParameters.asScala.toMap)
     } else {

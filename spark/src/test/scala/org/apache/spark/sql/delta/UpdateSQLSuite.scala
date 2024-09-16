@@ -120,7 +120,7 @@ class UpdateSQLSuite extends UpdateSuiteBase
       exception = intercept[AnalysisException] {
         executeUpdate(target = s"delta.`$tempPath`", set = "value = 'false'")
       },
-      errorClass = "CANNOT_UP_CAST_DATATYPE",
+      condition = "CANNOT_UP_CAST_DATATYPE",
       parameters = Map(
         "expression" -> "'false'",
         "sourceType" -> toSQLType("STRING"),
@@ -142,7 +142,7 @@ class UpdateSQLSuite extends UpdateSuiteBase
       exception = intercept[AnalysisException] {
         executeUpdate(target = s"delta.`$tempPath`", set = "value = '5'")
       },
-      errorClass = "CANNOT_UP_CAST_DATATYPE",
+      condition = "CANNOT_UP_CAST_DATATYPE",
         parameters = Map(
         "expression" -> "'5'",
         "sourceType" -> toSQLType("STRING"),
