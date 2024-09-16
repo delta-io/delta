@@ -36,6 +36,7 @@ import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField 
 import org.apache.spark.sql.{Row => SparkRow}
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.io.File
 import java.math.{BigDecimal => JBigDecimal}
 import java.sql.Date
 import java.time.temporal.ChronoUnit
@@ -992,6 +993,79 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           getTimestampPredicate(">=", col("c10"), "2003-01-01T01:00:00-07:00", "TIMESTAMP_NTZ")
         )
       )
+    }
+  }
+
+  test("data skipping with collated predicate") {
+    Seq(
+      (
+        new Predicate("<", new Column("c1"), Literal.ofString("B")),
+        1
+      ),
+      (
+        new CollatedPredicate("<", new Column("c1"), Literal.ofString("b"),
+          CollationIdentifier.fromString("ICU.UNICODE_CI")),
+        2
+      ),
+      (
+        new And(
+          new CollatedPredicate("=",
+            new Column("c1"),
+            Literal.ofString("a"),
+            CollationIdentifier.fromString("ICU.UNICODE_CI")),
+          new Predicate("=",
+            new Column("c1"),
+            Literal.ofString("A")
+          )
+        ),
+        1
+      ),
+      (
+        new Or(
+          new CollatedPredicate("=",
+            new Column("c1"),
+            Literal.ofString("a"),
+            CollationIdentifier.fromString("ICU.UNICODE_CI")),
+          new Predicate("=",
+            new Column("c1"),
+            Literal.ofString("A")
+          )
+        ),
+        2
+      ),
+      (
+        new Predicate("NOT",
+          new Or(
+            new Predicate(">",
+              new Column("c1"),
+              Literal.ofString("A")
+            ),
+            new CollatedPredicate(">",
+              new Column("c1"),
+              Literal.ofString("A"),
+              CollationIdentifier.fromString("ICU.UNICODE_CI")
+            )
+          )
+        ),
+        1
+      )
+    ).foreach {
+      case(predicate, expNumFiles) =>
+        checkResults(
+          goldenTablePath("data-skipping-basic-stats-collated-data"),
+          predicate,
+          expNumFiles)
+    }
+
+    def checkResults(
+          tablePath: String, predicate: Predicate, expNumFiles: Long): Unit = {
+      val snapshot = latestSnapshot(tablePath)
+      val scanFiles = collectScanFileRows(
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, predicate)
+          .build())
+      assert(scanFiles.length == expNumFiles,
+        s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
     }
   }
 
