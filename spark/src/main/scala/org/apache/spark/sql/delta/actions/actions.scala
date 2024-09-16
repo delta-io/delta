@@ -425,6 +425,11 @@ object Protocol {
     (getReaderVersionFromTableConf(conf), getWriterVersionFromTableConf(conf))
   }
 
+  def filterProtocolPropsFromTableProps(properties: Map[String, String]): Map[String, String] =
+    properties.filterNot {
+      case (k, _) => TableFeatureProtocolUtils.isTableProtocolProperty(k)
+    }
+
   /** Assert a table metadata contains no protocol-related table properties. */
   def assertMetadataContainsNoProtocolProps(metadata: Metadata): Unit = {
     assert(

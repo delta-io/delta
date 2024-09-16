@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
@@ -541,6 +541,10 @@ case class CreateDeltaTableCommand(
         // internal column mapping properties for the sake of comparison.
         var filteredTableProperties = filterColumnMappingProperties(
           tableDesc.properties)
+        // We also need to remove any protocol-related properties as we're filtering these
+        // from the metadata so they won't be present in the table properties.
+        filteredTableProperties =
+          Protocol.filterProtocolPropsFromTableProps(filteredTableProperties)
         var filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
         // Clustered table has internal table properties in Metadata configurations and they are
