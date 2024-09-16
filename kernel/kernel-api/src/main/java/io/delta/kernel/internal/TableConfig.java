@@ -79,8 +79,8 @@ public class TableConfig<T> {
           true);
 
   /**
-   * The shortest duration we have to keep delta/checkpoint files around before deleting them.
-   * We can only delete delta files that are before a checkpoint.
+   * The shortest duration we have to keep delta/checkpoint files around before deleting them. We
+   * can only delete delta files that are before a checkpoint.
    */
   public static final TableConfig<Long> LOG_RETENTION =
       new TableConfig<>(
