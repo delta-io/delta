@@ -21,7 +21,7 @@ import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
 import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
-import static io.delta.kernel.internal.snapshot.MetadataCleanup.doLogCleanup;
+import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
@@ -232,7 +232,7 @@ public class SnapshotManager {
     logger.info("{}: Last checkpoint metadata file is written for version: {}", tablePath, version);
 
     logger.info("{}: Finished checkpoint for version: {}", tablePath, version);
-    doLogCleanup(engine, tablePath, snapshot.getMetadata());
+    cleanupExpiredLogs(engine, tablePath, snapshot.getMetadata());
   }
 
   ////////////////////

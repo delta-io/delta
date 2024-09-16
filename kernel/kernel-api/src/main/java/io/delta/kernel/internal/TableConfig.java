@@ -101,7 +101,8 @@ public class TableConfig<T> {
           (engineOpt, v) -> IntervalParserUtils.safeParseIntervalAsMillis(v),
           value -> true,
           "needs to be provided as a calendar interval such as '2 weeks'. Months "
-              + "and years are not accepted. You may specify '365 days' for a year instead.");
+              + "and years are not accepted. You may specify '365 days' for a year instead.",
+          true /* editable */);
 
   /** Whether to clean up expired checkpoints and delta logs. */
   public static final TableConfig<Boolean> ENABLE_EXPIRED_LOG_CLEANUP =
@@ -110,7 +111,8 @@ public class TableConfig<T> {
           "true",
           (engineOpt, v) -> Boolean.valueOf(v),
           value -> true,
-          "needs to be a boolean.");
+          "needs to be a boolean.",
+          true /* editable */);
 
   /**
    * This table property is used to track the enablement of the {@code inCommitTimestamps}.
