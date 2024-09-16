@@ -31,15 +31,15 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils wi
     deltaVersions: Seq[Long] = Seq.empty,
     classicCheckpointVersions: Seq[Long] = Seq.empty,
     multipartCheckpointVersions: Seq[Long] = Seq.empty,
-    v2CheckpointVersions: Seq[(Long, Boolean, Int)] = Seq.empty) {
+    v2CheckpointVersions: Seq[Long] = Seq.empty,
+    v2CheckpointManifestFormat: String = "parquet") {
 
     def fileList(): Seq[String] = {
       (deltaFileStatuses(deltaVersions) ++
         singularCheckpointFileStatuses(classicCheckpointVersions) ++
         multiCheckpointFileStatuses(multipartCheckpointVersions, multiPartCheckpointPartsSize) ++
-        v2CheckpointFileStatuses(v2CheckpointVersions, "parquet").map(_._1))
-        .sortBy(_.getPath)
-        .map(_.getPath)
+        v2CPFileStatuses(v2CheckpointVersions, v2CheckpointManifestFormat)
+        ).sortBy(_.getPath).map(_.getPath)
     }
   }
 
@@ -64,23 +64,31 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils wi
     ),
     (
       // _deltalog directory contains a combination of delta files and classic checkpoint files
-      deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8)) ++
-        singularCheckpointFileStatuses(Seq(3, 6)),
+      deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) ++
+        singularCheckpointFileStatuses(Seq(3, 6, 9)),
       Seq(
         (
           "classic checkpoint: delete expired delta files up to the checkpoint version," +
             "not all expired delta files are deleted",
           DeletedFileList(deltaVersions = Seq(0, 1, 2)),
-          90, // current time
-          40 // retention period
+          130, // current time
+          80 // retention period
         ),
         (
-          "classic checkpoint: expired delta files + expired checkpoint files should be deleted",
+          "classic checkpoint: expired delta files + expired checkpoint should be deleted",
           DeletedFileList(
             deltaVersions = Seq(0, 1, 2, 3, 4, 5),
             classicCheckpointVersions = Seq(3)),
-          100, // current time
-          30 // retention period
+          130, // current time
+          60 // retention period
+        ),
+        (
+          "classic checkpoint: expired delta files + expired checkpoints should be deleted",
+          DeletedFileList(
+            deltaVersions = Seq(0, 1, 2, 3, 4, 5, 6, 7, 8),
+            classicCheckpointVersions = Seq(3, 6)),
+          130, // current time
+          20 // retention period
         ),
         (
           "classic checkpoint: no delta/checkpoint files should be deleted as none expired",
@@ -92,26 +100,70 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils wi
     ),
     (
       // _deltalog directory contains a combination of delta files and multi-part checkpoint files
-      deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8)) ++
-        multiCheckpointFileStatuses(Seq(3, 6), numParts = multiPartCheckpointPartsSize),
+      deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) ++
+        multiCheckpointFileStatuses(Seq(3, 6, 9), numParts = multiPartCheckpointPartsSize),
       Seq(
         (
           "multi-part checkpoint: delete expired delta files up to the checkpoint version," +
             "not all expired delta files are deleted",
           DeletedFileList(deltaVersions = Seq(0, 1, 2)),
-          90, // current time
-          40 // retention period
+          130, // current time
+          80 // retention period
         ),
         (
-          "multi-part checkpoint: expired delta files + expired checkpoint files should be deleted",
+          "multi-part checkpoint: expired delta files + expired checkpoint should be deleted",
           DeletedFileList(
             deltaVersions = Seq(0, 1, 2, 3, 4, 5),
             multipartCheckpointVersions = Seq(3)),
-          100, // current time
-          30 // retention period
+          130, // current time
+          60 // retention period
+        ),
+        (
+          "multi-part checkpoint: expired delta files + expired checkpoints should be deleted",
+          DeletedFileList(
+            deltaVersions = Seq(0, 1, 2, 3, 4, 5, 6, 7, 8),
+            multipartCheckpointVersions = Seq(3, 6)),
+          130, // current time
+          20 // retention period
         ),
         (
           "multi-part checkpoint: no delta/checkpoint files should be deleted as none expired",
+          DeletedFileList(),
+          200, // current time
+          200 // retention period
+        )
+      )
+    ),
+    (
+      // _deltalog directory contains a combination of delta files and v2 checkpoint files
+      deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) ++
+        v2CPFileStatuses(Seq[Long](3, 6, 9), "parquet"),
+      Seq(
+        (
+          "v2 checkpoint: delete expired delta files up to the checkpoint version," +
+            "not all expired delta files are deleted",
+          DeletedFileList(deltaVersions = Seq(0, 1, 2)),
+          130, // current time
+          80 // retention period
+        ),
+        (
+          "v2 checkpoint: expired delta files + expired checkpoint should be deleted",
+          DeletedFileList(
+            deltaVersions = Seq(0, 1, 2, 3, 4, 5),
+            v2CheckpointVersions = Seq(3)),
+          130, // current time
+          60 // retention period
+        ),
+        (
+          "v2 checkpoint: expired delta files + expired checkpoints should be deleted",
+          DeletedFileList(
+            deltaVersions = Seq(0, 1, 2, 3, 4, 5, 6, 7, 8),
+            v2CheckpointVersions = Seq(3, 6)),
+          130, // current time
+          20 // retention period
+        ),
+        (
+          "v2 checkpoint: no delta/checkpoint files should be deleted as none expired",
           DeletedFileList(),
           200, // current time
           200 // retention period
@@ -143,5 +195,21 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils wi
 
   def mockEngine(fsClient: MockListFromDeleteFileSystemClient): Engine = {
     mockEngine(fileSystemClient = fsClient)
+  }
+
+  def v2CPFileStatuses(versions: Seq[Long], format: String): Seq[FileStatus] = {
+    // Replace the UUID with a standard UUID to make the test deterministic
+    val standardUUID = "123e4567-e89b-12d3-a456-426614174000"
+    val uuidPattern =
+      "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}".r
+
+    v2CheckpointFileStatuses(
+      versions.map(v => (v, true, 20)), // to (version, useUUID, numSidecars)
+      format
+    ).map(_._1)
+      .map(f => FileStatus.of(
+        uuidPattern.replaceAllIn(f.getPath, standardUUID),
+        f.getSize,
+        f.getModificationTime))
   }
 }
