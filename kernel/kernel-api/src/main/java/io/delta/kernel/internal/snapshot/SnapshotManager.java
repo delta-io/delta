@@ -17,6 +17,8 @@
 package io.delta.kernel.internal.snapshot;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.TableConfig.ENABLE_EXPIRED_LOG_CLEANUP;
+import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
 import static io.delta.kernel.internal.fs.Path.getName;
@@ -32,6 +34,7 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
@@ -234,7 +237,15 @@ public class SnapshotManager {
     logger.info("{}: Last checkpoint metadata file is written for version: {}", tablePath, version);
 
     logger.info("{}: Finished checkpoint for version: {}", tablePath, version);
-    cleanupExpiredLogs(engine, clock, tablePath, snapshot.getMetadata());
+
+    // Clean up delta log files if enabled.
+    Metadata metadata = snapshot.getMetadata();
+    if (ENABLE_EXPIRED_LOG_CLEANUP.fromMetadata(engine, metadata)) {
+      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(engine, metadata));
+    } else {
+      logger.info(
+          "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
+    }
   }
 
   ////////////////////

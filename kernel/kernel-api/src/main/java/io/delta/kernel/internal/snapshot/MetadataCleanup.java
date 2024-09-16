@@ -16,8 +16,6 @@
 package io.delta.kernel.internal.snapshot;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.TableConfig.ENABLE_EXPIRED_LOG_CLEANUP;
-import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.getLatestCompleteCheckpointFromList;
 import static io.delta.kernel.internal.lang.ListUtils.getFirst;
 import static io.delta.kernel.internal.lang.ListUtils.getLast;
@@ -25,7 +23,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.Clock;
@@ -79,23 +76,15 @@ public class MetadataCleanup {
    * @param clock {@link Clock} instance to get the current time. Useful in testing to mock the
    *     current time.
    * @param tablePath Table location
-   * @param metadata Metadata of the table
+   * @param retentionMillis Log file retention period in milliseconds
    * @throws IOException if an error occurs while deleting the log files
    */
   public static void cleanupExpiredLogs(
-      Engine engine, Clock clock, Path tablePath, Metadata metadata) throws IOException {
-    Boolean enableExpireLogCleanup = ENABLE_EXPIRED_LOG_CLEANUP.fromMetadata(engine, metadata);
-    if (!enableExpireLogCleanup) {
-      logger.info(
-          "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
-      return;
-    }
-
+      Engine engine, Clock clock, Path tablePath, long retentionMillis) throws IOException {
     List<String> potentialLogFilesToDelete = new ArrayList<>();
     long lastSeenCheckpointVersion = -1;
     List<String> lastSeenCheckpointFiles = new ArrayList<>();
 
-    long retentionMillis = LOG_RETENTION.fromMetadata(engine, metadata);
     long fileCutOffTime = clock.getTimeMillis() - retentionMillis;
     logger.info("{}: Starting the deletion of log files older than {}", tablePath, fileCutOffTime);
     long numDeleted = 0;
@@ -175,7 +164,7 @@ public class MetadataCleanup {
           lastSeenCheckpointFiles.add(nextFile.getPath());
           lastSeenCheckpointVersion = newLastSeenCheckpointVersion;
         }
-        // ignore all other files: TODO: do we need to delete unknown file types?
+        // TODO: do we need to delete unknown file types?
       }
     }
     logger.info("{}: Deleted {} log files older than {}", tablePath, numDeleted, fileCutOffTime);
@@ -184,6 +173,9 @@ public class MetadataCleanup {
   private static CloseableIterator<FileStatus> listExpiredDeltaLogs(Engine engine, Path tablePath)
       throws IOException {
     Path logPath = new Path(tablePath, "_delta_log");
+    // TODO: Currently we don't update the timestamps of files to be monotonically increasing.
+    // In future we can do something similar to Delta Spark to make the timestamps monotonically
+    // increasing. See `BufferingLogDeletionIterator` in Delta Spark.
     return engine.getFileSystemClient().listFrom(FileNames.listingPrefix(logPath, 0));
   }
 

@@ -15,44 +15,133 @@
  */
 package io.delta.kernel.internal.snapshot
 
-import io.delta.kernel.internal.TableConfig.{ENABLE_EXPIRED_LOG_CLEANUP, ICEBERG_COMPAT_V2_ENABLED, LOG_RETENTION}
-import io.delta.kernel.internal.actions.{Format, Metadata}
-import io.delta.kernel.internal.types.DataTypeJsonSerDe
-import io.delta.kernel.internal.util.VectorUtils
-import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.test.MockFileSystemClientUtils
-import io.delta.kernel.types.StructType
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs
+import io.delta.kernel.internal.util.ManualClock
+import io.delta.kernel.test.{MockEngineUtils, MockFileSystemClientUtils, MockListFromDeleteFileSystemClient}
+import io.delta.kernel.utils.FileStatus
 import org.scalatest.funsuite.AnyFunSuite
 
-import java.util.{Collections, Optional}
-import scala.collection.JavaConverters._
+class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils with MockEngineUtils {
 
-class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
-  // Input
-  //  1. List of delta log file contents (that includes delta and checkpoint files)
-  //  2. Current time through mocked Clock
-  //  3. Table metadata retention enabled and a period of time for
-  //  which metadata should be retained
+  private val multiPartCheckpointPartsSize = 4;
 
-  // Output
-  // 1. List of delta log files that should be deleted
+  /** Case class containing the list of expected files in the deleted file list */
+  case class DeletedFileList(
+    deltaVersions: Seq[Long] = Seq.empty,
+    classicCheckpointVersions: Seq[Long] = Seq.empty,
+    multipartCheckpointVersions: Seq[Long] = Seq.empty,
+    v2CheckpointVersions: Seq[(Long, Boolean, Int)] = Seq.empty) {
 
+    def fileList(): Seq[String] = {
+      (deltaFileStatuses(deltaVersions) ++
+        singularCheckpointFileStatuses(classicCheckpointVersions) ++
+        multiCheckpointFileStatuses(multipartCheckpointVersions, multiPartCheckpointPartsSize) ++
+        v2CheckpointFileStatuses(v2CheckpointVersions, "parquet").map(_._1))
+        .sortBy(_.getPath)
+        .map(_.getPath)
+    }
+  }
 
-  def metadata(logCleanupEnabled: Boolean = true, retentionMillis: Int = 24): Metadata = {
-    val configurationMap = Map(
-      ENABLE_EXPIRED_LOG_CLEANUP.getKey -> logCleanupEnabled.toString,
-      LOG_RETENTION.getKey -> retentionMillis.toString
-    )
-    new Metadata(
-      "id",
-      Optional.empty(), /* name */
-      Optional.empty(), /* description */
-      new Format(),
-      DataTypeJsonSerDe.serializeDataType(new StructType()),
-      new StructType(),
-      VectorUtils.stringArrayValue(Collections.emptyList()), // partitionColumns
-      Optional.empty(), // createdTime
-      stringStringMapValue(configurationMap.asJava) // configurationMap
-    )
+  Seq(
+    (
+      // _deltalog directory contents - contains only delta files
+      deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6)),
+      Seq(
+        (
+          "no files should be deleted even some of them are expired",
+          DeletedFileList(), // expected deleted files - none of them should be deleted
+          70, // current time
+          30 // retention period
+        ),
+        (
+          "no files should be deleted as none of them are expired",
+          DeletedFileList(), // expected deleted files - none of them should be deleted
+          200, // current time
+          200 // retention period
+        )
+      )
+    ),
+    (
+      // _deltalog directory contains a combination of delta files and classic checkpoint files
+      deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8)) ++
+        singularCheckpointFileStatuses(Seq(3, 6)),
+      Seq(
+        (
+          "classic checkpoint: delete expired delta files up to the checkpoint version," +
+            "not all expired delta files are deleted",
+          DeletedFileList(deltaVersions = Seq(0, 1, 2)),
+          90, // current time
+          40 // retention period
+        ),
+        (
+          "classic checkpoint: expired delta files + expired checkpoint files should be deleted",
+          DeletedFileList(
+            deltaVersions = Seq(0, 1, 2, 3, 4, 5),
+            classicCheckpointVersions = Seq(3)),
+          100, // current time
+          30 // retention period
+        ),
+        (
+          "classic checkpoint: no delta/checkpoint files should be deleted as none expired",
+          DeletedFileList(),
+          200, // current time
+          200 // retention period
+        )
+      )
+    ),
+    (
+      // _deltalog directory contains a combination of delta files and multi-part checkpoint files
+      deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6, 7, 8)) ++
+        multiCheckpointFileStatuses(Seq(3, 6), numParts = multiPartCheckpointPartsSize),
+      Seq(
+        (
+          "multi-part checkpoint: delete expired delta files up to the checkpoint version," +
+            "not all expired delta files are deleted",
+          DeletedFileList(deltaVersions = Seq(0, 1, 2)),
+          90, // current time
+          40 // retention period
+        ),
+        (
+          "multi-part checkpoint: expired delta files + expired checkpoint files should be deleted",
+          DeletedFileList(
+            deltaVersions = Seq(0, 1, 2, 3, 4, 5),
+            multipartCheckpointVersions = Seq(3)),
+          100, // current time
+          30 // retention period
+        ),
+        (
+          "multi-part checkpoint: no delta/checkpoint files should be deleted as none expired",
+          DeletedFileList(),
+          200, // current time
+          200 // retention period
+        )
+      )
+    ),
+  ).foreach {
+    case (logFiles, testCases) =>
+      testCases.foreach {
+        case (testName, expectedDeletedFiles, currentTime, retentionPeriod) =>
+          test(s"metadataCleanup: $testName: $currentTime, $retentionPeriod") {
+            val fsClient = mockFsClient(logFiles)
+
+            cleanupExpiredLogs(
+              mockEngine(fsClient),
+              new ManualClock(currentTime),
+              logPath,
+              retentionPeriod
+            )
+
+            assert(fsClient.getDeleteCalls === expectedDeletedFiles.fileList())
+          }
+      }
+  }
+
+  def mockFsClient(logFiles: Seq[FileStatus]): MockListFromDeleteFileSystemClient = {
+    new MockListFromDeleteFileSystemClient(logFiles)
+  }
+
+  def mockEngine(fsClient: MockListFromDeleteFileSystemClient): Engine = {
+    mockEngine(fileSystemClient = fsClient)
   }
 }
