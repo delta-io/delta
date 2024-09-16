@@ -17,6 +17,8 @@ package io.delta.kernel.types
 
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.util.Optional
+
 class CollationIdentifierSuite extends AnyFunSuite {
   val PROVIDER_SPARK = "SPARK"
   val PROVIDER_ICU = "ICU"
@@ -35,7 +37,7 @@ class CollationIdentifierSuite extends AnyFunSuite {
       ),
       (
         s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1",
-        new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", "75.1")
+        new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", Optional.of("75.1"))
       )
     ).foreach {
       case(stringIdentifier, collationIdentifier) =>
@@ -67,7 +69,7 @@ class CollationIdentifierSuite extends AnyFunSuite {
         s"$PROVIDER_ICU.SR_CYRL_SRB"
       ),
       (
-        new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", "75.1"),
+        new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", Optional.of("75.1")),
         s"$PROVIDER_ICU.SR_CYRL_SRB"
       )
     ).foreach {
@@ -87,7 +89,7 @@ class CollationIdentifierSuite extends AnyFunSuite {
         s"$PROVIDER_ICU.SR_CYRL_SRB"
       ),
       (
-        new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", "75.1"),
+        new CollationIdentifier(PROVIDER_ICU, "sr_Cyrl_SRB", Optional.of("75.1")),
         s"$PROVIDER_ICU.SR_CYRL_SRB.75.1"
       )
     ).foreach {
