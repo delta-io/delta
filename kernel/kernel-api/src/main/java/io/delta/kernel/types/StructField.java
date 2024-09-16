@@ -127,7 +127,7 @@ public class StructField {
       StringType stringType = (StringType) parent;
       if (!stringType
           .getCollationIdentifier()
-          .equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) {
+          .equals(CollationIdentifier.fromString("SPARK.UTF8_BINARY"))) {
         nestedCollatedFields.add(
             new Tuple2<>(
                 path, ((StringType) parent).getCollationIdentifier().toStringWithoutVersion()));

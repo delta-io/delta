@@ -45,14 +45,14 @@ public class CollationIdentifier {
     this.version = Optional.empty();
   }
 
-  public CollationIdentifier(String provider, String collationName, String version) {
+  public CollationIdentifier(String provider, String collationName, Optional<String> version) {
     Objects.requireNonNull(provider, "Collation provider cannot be null.");
     Objects.requireNonNull(collationName, "Collation name cannot be null.");
     Objects.requireNonNull(version, "Provider version cannot be null.");
 
     this.provider = provider.toUpperCase();
     this.name = collationName.toUpperCase();
-    this.version = Optional.of(version);
+    this.version = version.map(String::toUpperCase);
   }
 
   /**
@@ -92,7 +92,7 @@ public class CollationIdentifier {
       return new CollationIdentifier(parts[0], parts[1]);
     } else {
       String[] parts = identifier.split("\\.", 3);
-      return new CollationIdentifier(parts[0], parts[1], parts[2]);
+      return new CollationIdentifier(parts[0], parts[1], Optional.of(parts[2]));
     }
   }
 
@@ -132,3 +132,4 @@ public class CollationIdentifier {
     }
   }
 }
+
