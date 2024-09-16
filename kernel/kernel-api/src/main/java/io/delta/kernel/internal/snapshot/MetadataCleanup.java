@@ -81,6 +81,8 @@ public class MetadataCleanup {
    */
   public static void cleanupExpiredLogs(
       Engine engine, Clock clock, Path tablePath, long retentionMillis) throws IOException {
+    checkArgument(retentionMillis >= 0, "Retention period must be non-negative");
+
     List<String> potentialLogFilesToDelete = new ArrayList<>();
     long lastSeenCheckpointVersion = -1;
     List<String> lastSeenCheckpointFiles = new ArrayList<>();

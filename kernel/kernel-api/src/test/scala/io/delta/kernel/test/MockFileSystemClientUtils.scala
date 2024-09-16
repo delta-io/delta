@@ -57,7 +57,7 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     checkpointVersions.flatMap(v =>
       FileNames.checkpointFileWithParts(logPath, v, numParts).asScala
         .map(p => FileStatus.of(p.toString, v, v*10))
-    )
+    ).toSeq
   }
 
   /**
