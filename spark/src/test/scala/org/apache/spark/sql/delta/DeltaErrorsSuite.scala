@@ -1003,7 +1003,7 @@ trait DeltaErrorsSuiteBase
             oldField = StructField("c", IntegerType),
             newField = StructField("c", LongType))
         },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.b.c",
           "oldField" -> "INT",
@@ -1428,7 +1428,7 @@ trait DeltaErrorsSuiteBase
             dataType = IntegerType,
             constraints = Map("ck1" -> "a > 0", "ck2" -> "hash(b) > 0"))
         },
-        errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a.x",
           "columnType" -> "TINYINT",
@@ -1448,7 +1448,7 @@ trait DeltaErrorsSuiteBase
               "gen2" -> "3 + a . x"
             ))
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a.x",
           "columnType" -> "TINYINT",
@@ -1919,7 +1919,7 @@ trait DeltaErrorsSuiteBase
         exception = intercept[DeltaIllegalStateException] {
           throw MaterializedRowId.missingMetadataException("table_name")
         },
-        errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+        "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
         parameters = Map(
           "rowTrackingColumn" -> "Row ID",
           "tableName" -> "table_name"
@@ -1931,7 +1931,7 @@ trait DeltaErrorsSuiteBase
         exception = intercept[DeltaIllegalStateException] {
           throw MaterializedRowCommitVersion.missingMetadataException("table_name")
         },
-        errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+        "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
         parameters = Map(
           "rowTrackingColumn" -> "Row Commit Version",
           "tableName" -> "table_name"
