@@ -60,7 +60,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
         exception = intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
         },
-        condition = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a",
           "constraints" -> "delta.constraints.ck -> hash ( a ) > 0"

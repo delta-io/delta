@@ -151,7 +151,7 @@ trait TypeWideningDropFeatureTestMixin
       case ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE =>
         checkError(
           exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
-          condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
             "feature" -> feature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,

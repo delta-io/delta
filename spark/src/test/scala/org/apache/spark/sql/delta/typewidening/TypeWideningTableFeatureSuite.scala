@@ -114,7 +114,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
         sql(s"ALTER TABLE delta.`$tempPath` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'bla')")
       },
-      condition = "_LEGACY_ERROR_TEMP_2045",
+      "_LEGACY_ERROR_TEMP_2045",
       parameters = Map(
         "message" -> "For input string: \"bla\""
       )

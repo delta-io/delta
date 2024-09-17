@@ -17,14 +17,12 @@
 package io.delta.tables
 
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.connect.SparkConnectServerTest
 import org.apache.spark.sql.connect.config.Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT
 import org.apache.spark.sql.functions.{col, expr}
 import org.apache.spark.sql.test.DeltaQueryTest
 
 class DeltaMergeBuilderSuite extends DeltaQueryTest
-  with RemoteSparkSession
-  with SparkConnectServerTest {
+  with RemoteSparkSession {
   private def writeTargetTable(path: String): Unit = {
     val session = spark
     import session.implicits._
@@ -386,7 +384,7 @@ class DeltaMergeBuilderSuite extends DeltaQueryTest
   }
 
   test("merge dataframe with many columns") {
-    withSparkEnvConfs((CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT.key, "4096")) {
+    withSQLConf("spark.connect.grpc.marshallerRecursionLimit" -> "4096") {
       withTempPath { dir =>
         val path = dir.getAbsolutePath
         var df1 = spark.range(1).toDF

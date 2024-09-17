@@ -86,7 +86,7 @@ trait TypeWideningAlterTableNestedTests {
     alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE array<int>"
     checkError(
       exception = intercept[AnalysisException] { sql(alterTableSql) },
-      condition = "CANNOT_UPDATE_FIELD.ARRAY_TYPE",
+      "CANNOT_UPDATE_FIELD.ARRAY_TYPE",
       parameters = Map(
         "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
         "fieldName" -> "`a`"
