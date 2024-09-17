@@ -177,6 +177,31 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Optimize the data layout of the table. This returns
+   * a [[DeltaOptimizeBuilder]] object that can be used to specify
+   * the partition filter to limit the scope of optimize and
+   * also execute different optimization techniques such as file
+   * compaction or order data using Z-Order curves.
+   *
+   * See the [[DeltaOptimizeBuilder]] for a full description
+   * of this operation.
+   *
+   * Scala example to run file compaction on a subset of
+   * partitions in the table:
+   * {{{
+   *    deltaTable
+   *     .optimize()
+   *     .where("date='2021-11-18'")
+   *     .executeCompaction();
+   * }}}
+   *
+   * @since 4.0.0
+   */
+  def optimize(): DeltaOptimizeBuilder = {
+    DeltaOptimizeBuilder(sparkSession, table)
+  }
+
+  /**
    * Helper method for the update APIs.
    *
    * @param condition boolean expression as Column object specifying which rows to update.

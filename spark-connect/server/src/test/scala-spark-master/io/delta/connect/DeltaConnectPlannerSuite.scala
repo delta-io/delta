@@ -20,13 +20,14 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.UUID
 
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import com.google.protobuf
 import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Dataset, QueryTest, Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
@@ -594,6 +595,117 @@ class DeltaConnectPlannerSuite
           Seq.tabulate(50)(i => Row(i + 100, i + 1100))
       )
     }
+  }
+
+  test("optimize - compaction") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000).select(col("id") % 3 as "key", col("id") as "val")
+        .write.format("delta").saveAsTable(tableName)
+
+      val plan = transform(createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setOptimizeTable(
+            proto.OptimizeTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+          )
+      ))
+      assert(plan.columns.toSeq === Seq("path", "metrics"))
+      val df = Dataset.ofRows(spark, plan)
+
+      checkOptimizeMetrics(df)
+      checkOptimizeUsingHistory(tableName, expectedPredicates = Nil, expectedZorderCols = Nil)
+    }
+  }
+
+  test("optimize - compaction with partition filters") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000).select(col("id") % 3 as "key", col("id") as "val")
+        .write.partitionBy("key").format("delta").saveAsTable(tableName)
+
+      val plan = transform(createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setOptimizeTable(
+            proto.OptimizeTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .addPartitionFilters("key = 1")
+          )
+      ))
+      assert(plan.columns.toSeq === Seq("path", "metrics"))
+      val df = Dataset.ofRows(spark, plan)
+
+      checkOptimizeMetrics(df)
+      checkOptimizeUsingHistory(
+        tableName, expectedPredicates = Seq("'key = 1"), expectedZorderCols = Nil)
+    }
+  }
+
+  test("optimize - z-order") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000).select(col("id") % 3 as "key", col("id") as "val")
+        .write.format("delta").saveAsTable(tableName)
+
+      val plan = transform(createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setOptimizeTable(
+            proto.OptimizeTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .addZorderColumns("val")
+          )
+      ))
+      assert(plan.columns.toSeq === Seq("path", "metrics"))
+      val df = Dataset.ofRows(spark, plan)
+
+      checkOptimizeMetrics(df)
+      checkOptimizeUsingHistory(
+        tableName, expectedPredicates = Nil, expectedZorderCols = Seq("val"))
+    }
+  }
+
+  test("optimize - z-order with partition filters") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000).select(col("id") % 3 as "key", col("id") as "val")
+        .write.partitionBy("key").format("delta").saveAsTable(tableName)
+
+      val plan = transform(createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setOptimizeTable(
+            proto.OptimizeTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .addPartitionFilters("key = 1")
+              .addZorderColumns("val")
+          )
+      ))
+      assert(plan.columns.toSeq === Seq("path", "metrics"))
+      val df = Dataset.ofRows(spark, plan)
+
+      checkOptimizeMetrics(df)
+      checkOptimizeUsingHistory(
+        tableName, expectedPredicates = Seq("'key = 1"), expectedZorderCols = Seq("val"))
+    }
+  }
+
+  private def checkOptimizeMetrics(df: DataFrame): Unit = {
+    import testImplicits._
+    val result = df.as[(String, OptimizeMetrics)].collect()
+    assert(result.length === 1)
+    val (_, metrics) = result.head
+    assert(metrics.numFilesRemoved > metrics.numFilesAdded)
+  }
+
+  private def checkOptimizeUsingHistory(
+      tableName: String, expectedPredicates: Seq[String], expectedZorderCols: Seq[String]): Unit = {
+    import testImplicits._
+    val (operation, operationParameters) = DeltaTable.forName(spark, tableName).history()
+      .select("operation", "operationParameters").as[(String, Map[String, String])].head()
+    assert(operation === "OPTIMIZE")
+    assert(operationParameters("predicate") ===
+      expectedPredicates.map(p => s"""\"($p)\"""").mkString(start = "[", sep = ",", end = "]"))
+    assert(operationParameters("zOrderBy") ===
+      expectedZorderCols.map(c => s"""\"$c\"""").mkString(start = "[", sep = ",", end = "]"))
   }
 
   private def createScan(tableName: String): spark_proto.Relation = {
