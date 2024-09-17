@@ -1944,11 +1944,12 @@ class DeltaColumnMappingSuite extends QueryTest
                |TBLPROPERTIES('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='none')
                |""".stripMargin)
         }
+        val condition = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
         checkError(
           e,
-          "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
+          condition,
           parameters = DeltaThrowableHelper
-            .getParameterNames(errorClass, errorSubClass = null)
+            .getParameterNames(condition, errorSubClass = null)
             .zip(invalidColumns).toMap
         )
       }
