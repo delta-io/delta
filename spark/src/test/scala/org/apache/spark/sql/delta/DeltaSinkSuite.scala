@@ -408,7 +408,7 @@ class DeltaSinkSuite
         }
         checkError(
           exception = e,
-          errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map("currentField" -> "id", "updateField" -> "id"))
       } finally {
         query.stop()
@@ -443,7 +443,7 @@ class DeltaSinkSuite
         assert(wrapperException.cause.isInstanceOf[AnalysisException])
         checkError(
           exception = wrapperException.cause.asInstanceOf[AnalysisException],
-          errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map("currentField" -> "id", "updateField" -> "id"))
       }
     }

@@ -51,7 +51,7 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         exception = intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+       "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a",
           "generatedColumns" -> "gen -> hash(a)"
@@ -80,7 +80,7 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         exception = intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+       "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a.x",
           "generatedColumns" -> "gen -> hash(a.x)"
@@ -109,7 +109,7 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         exception = intercept[DeltaAnalysisException] {
           sql("INSERT INTO t (a) VALUES (200)")
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+       "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a",
           "columnType" -> "TINYINT",
@@ -137,7 +137,7 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
           exception = intercept[DeltaAnalysisException] {
             sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
           },
-          errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+         "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a.x",
             "columnType" -> "TINYINT",
@@ -178,7 +178,7 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
                  |""".stripMargin
             )
           },
-          errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+         "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a.x.z",
             "columnType" -> "TINYINT",

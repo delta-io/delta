@@ -482,7 +482,7 @@ trait DeltaErrorsSuiteBase
           newTableId = "027fb01c-94aa-4cab-87cb-5aab6aec6d17",
           oldTableId = "2edf2c02-bb63-44e9-a84c-517fad0db296")
       },
-      errorClass = "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE",
+      "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE",
       parameters = Map(
         "oldTableId" -> "2edf2c02-bb63-44e9-a84c-517fad0db296",
         "newTableId" -> "027fb01c-94aa-4cab-87cb-5aab6aec6d17")
@@ -962,11 +962,11 @@ trait DeltaErrorsSuiteBase
       }
       checkError(
         exception = e,
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map("currentField" -> "c0", "updateField" -> "c0"))
       checkError(
         exception = e.getCause.asInstanceOf[DeltaAnalysisException],
-        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         parameters = Map("currentDataType" -> "IntegerType", "updateDataType" -> "StringType"))
     }
     {

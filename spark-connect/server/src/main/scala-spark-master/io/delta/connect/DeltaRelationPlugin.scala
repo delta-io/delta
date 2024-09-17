@@ -45,12 +45,12 @@ import org.apache.spark.sql.types.StructType
 class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   override def transform(raw: Array[Byte], planner: SparkConnectPlanner): Optional[LogicalPlan] = {
     val relation = parseAnyFrom(raw,
-      SparkEnv.get.conf.get(Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT))
+      SparkEnv.get.conf.get(4 * Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT))
     if (relation.is(classOf[proto.DeltaRelation])) {
       Optional.of(
         transform(
           parseRelationFrom(relation.getValue,
-            SparkEnv.get.conf.get(Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT)),
+            SparkEnv.get.conf.get(4 * Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT)),
           planner
         ))
     } else {

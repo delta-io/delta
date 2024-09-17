@@ -349,7 +349,7 @@ class SchemaValidationSuite
 
       checkErrorMatchPVals(
         exception = e,
-        errorClass = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map(
           "schemaDiff" -> ".*id.*",
           "legacyFlagMessage" -> ""
@@ -384,7 +384,7 @@ class SchemaValidationSuite
       }
       checkErrorMatchPVals(
         exception = e,
-        errorClass = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map(
           "schemaDiff" -> ".*col2.*",
           "legacyFlagMessage" -> ""

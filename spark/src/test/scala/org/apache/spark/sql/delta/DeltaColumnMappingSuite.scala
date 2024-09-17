@@ -1947,7 +1947,7 @@ class DeltaColumnMappingSuite extends QueryTest
         val errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
         checkError(
           exception = e,
-          errorClass = errorClass,
+          errorClass,
           parameters = DeltaThrowableHelper
             .getParameterNames(errorClass, errorSubClass = null)
             .zip(invalidColumns).toMap

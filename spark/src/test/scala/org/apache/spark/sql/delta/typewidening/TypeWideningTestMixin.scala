@@ -151,7 +151,7 @@ trait TypeWideningDropFeatureTestMixin
       case ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE =>
         checkError(
           exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
-          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
             "feature" -> feature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
@@ -164,7 +164,7 @@ trait TypeWideningDropFeatureTestMixin
       case ExpectedOutcome.FAIL_HISTORICAL_VERSION_USES_FEATURE =>
         checkError(
           exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
-          errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+         "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
           parameters = Map(
             "feature" -> feature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
@@ -177,7 +177,7 @@ trait TypeWideningDropFeatureTestMixin
       case ExpectedOutcome.FAIL_FEATURE_NOT_PRESENT =>
         checkError(
           exception = intercept[DeltaTableFeatureException] { dropFeature.run(spark) },
-          errorClass = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
+         "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
           parameters = Map("feature" -> feature.name)
         )
     }

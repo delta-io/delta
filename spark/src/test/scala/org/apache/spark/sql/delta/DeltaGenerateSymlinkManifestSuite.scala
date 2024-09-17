@@ -531,7 +531,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
         }
         checkErrorHelper(
           exception = e,
-          errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
+         "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
       }
     }
   }
@@ -551,7 +551,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       }
       checkErrorHelper(
         exception = e,
-        errorClass = "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
+       "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
       )
     }
 
@@ -633,7 +633,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
         }
         checkErrorHelper(
           exception = e2,
-          errorClass = "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
+         "DELTA_UNSUPPORTED_GENERATE_WITH_DELETION_VECTORS")
         // This is fine, since the new snapshot won't contain DVs.
         spark.range(10).write.format("delta").mode("overwrite").save(tablePath)
 

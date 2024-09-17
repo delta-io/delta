@@ -2532,7 +2532,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       }
       checkError(
         exception = e1,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+       "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> feature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",

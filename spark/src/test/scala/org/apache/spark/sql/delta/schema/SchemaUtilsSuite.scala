@@ -88,7 +88,7 @@ class SchemaUtilsSuite extends QueryTest
     assert(err.isDefined, "exception with the error class not found")
     checkError(
       exception = err.get,
-      errorClass = errorClass,
+     errorClass,
       parameters = params,
       matchPVals = true)
   }

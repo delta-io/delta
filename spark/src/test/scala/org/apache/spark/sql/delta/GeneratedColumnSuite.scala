@@ -724,7 +724,7 @@ trait GeneratedColumnSuiteBase
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "c1",
           "columnType" -> "INT",
@@ -761,7 +761,7 @@ trait GeneratedColumnSuiteBase
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a",
           "columnType" -> "SMALLINT",

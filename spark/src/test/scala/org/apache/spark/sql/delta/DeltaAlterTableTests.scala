@@ -927,14 +927,14 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN a.key COMMENT 'a comment'")
         },
-        errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+        "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
         parameters = Map("fieldPath" -> "a.key")
       )
       checkError(
         exception = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN a.value COMMENT 'a comment'")
         },
-        errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+        "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
         parameters = Map("fieldPath" -> "a.value")
       )
     }
@@ -948,7 +948,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element COMMENT 'a comment'")
         },
-        errorClass = "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+        "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
         parameters = Map("fieldPath" -> "a.element")
       )
     }
@@ -962,7 +962,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName RENAME COLUMN a.key TO key2")
         },
-        errorClass = "INVALID_FIELD_NAME",
+        "INVALID_FIELD_NAME",
         parameters = Map(
           "fieldName" -> "`a`.`key2`",
           "path" -> "`a`"
@@ -972,7 +972,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName RENAME COLUMN a.value TO value2")
         },
-        errorClass = "INVALID_FIELD_NAME",
+        "INVALID_FIELD_NAME",
         parameters = Map(
           "fieldName" -> "`a`.`value2`",
           "path" -> "`a`"
@@ -989,7 +989,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[AnalysisException] {
           sql(s"ALTER TABLE $tableName RENAME COLUMN a.element TO element2")
         },
-        errorClass = "INVALID_FIELD_NAME",
+        "INVALID_FIELD_NAME",
         parameters = Map(
           "fieldName" -> "`a`.`element2`",
           "path" -> "`a`"
@@ -1011,7 +1011,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 long")
         },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "v1",
           "oldField" -> "INT",
@@ -1029,7 +1029,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 long")
         },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "struct.v1",
           "oldField" -> "INT",
@@ -1047,7 +1047,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN a.key key long")
         },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.key",
           "oldField" -> "INT NOT NULL",
@@ -1065,7 +1065,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN a.value value long")
         },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.value",
           "oldField" -> "INT",
@@ -1083,7 +1083,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         exception = intercept[DeltaAnalysisException] {
           sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element element long")
         },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.element",
           "oldField" -> "INT",
@@ -1384,7 +1384,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       var statement = s"ALTER TABLE $tableName CHANGE COLUMN m.key DROP NOT NULL"
       checkError(
         exception = intercept[AnalysisException] { sql(statement) },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "m.key",
           "oldField" -> "INT NOT NULL",
@@ -1395,7 +1395,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       statement = s"ALTER TABLE $tableName CHANGE COLUMN m.value SET NOT NULL"
       checkError(
         exception = intercept[AnalysisException] { sql(statement) },
-        errorClass = "_LEGACY_ERROR_TEMP_2330",
+        "_LEGACY_ERROR_TEMP_2330",
         parameters = Map(
           "fieldName" -> "m.value"
         ),
@@ -1405,7 +1405,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       statement = s"ALTER TABLE $tableName CHANGE COLUMN a.element SET NOT NULL"
       checkError(
         exception = intercept[AnalysisException] { sql(statement) },
-        errorClass = "_LEGACY_ERROR_TEMP_2330",
+        "_LEGACY_ERROR_TEMP_2330",
         parameters = Map(
           "fieldName" -> "a.element"
         ),
