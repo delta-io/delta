@@ -678,7 +678,7 @@ class DeltaDataFrameWriterV2Suite
         val e = intercept[DeltaAnalysisException](f)
         checkError(
           exception = e.getCause.asInstanceOf[DeltaAnalysisException],
-          condition = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+         "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
           parameters = Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType"))
       }
       verifyNotImplicitCasting {

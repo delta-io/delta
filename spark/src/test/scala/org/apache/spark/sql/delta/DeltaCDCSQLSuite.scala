@@ -292,7 +292,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
         exception = intercept[AnalysisException] {
           sql(s"SELECT * FROM table_changes('$tbl', 0, id)")
         },
-        condition = "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION",
+       "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION",
         parameters = Map("objectName" -> "`id`"),
         queryContext = Array(ExpectedContext(
           fragment = "id",
