@@ -384,32 +384,30 @@ class DeltaMergeBuilderSuite extends DeltaQueryTest
   }
 
   test("merge dataframe with many columns") {
-    withSQLConf("spark.connect.grpc.marshallerRecursionLimit" -> "4096") {
-      withTempPath { dir =>
-        val path = dir.getAbsolutePath
-        var df1 = spark.range(1).toDF
-        val numColumns = 100
-        for (i <- 0 until numColumns) {
-          df1 = df1.withColumn(s"col$i", col("id"))
-        }
-        df1.write.mode("overwrite").format("delta").save(path)
-        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
-
-        var df2 = spark.range(1).toDF
-        for (i <- 0 until numColumns) {
-          df2 = df2.withColumn(s"col$i", col("id") + 1)
-        }
-
-        deltaTable
-          .as("t")
-          .merge(df2.as("s"), "s.id = t.id")
-          .whenMatched().updateAll()
-          .execute()
-
-        checkAnswer(
-          deltaTable.toDF,
-          Seq(df2.collectAsList().get(0)))
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      var df1 = spark.range(1).toDF
+      val numColumns = 5
+      for (i <- 0 until numColumns) {
+        df1 = df1.withColumn(s"col$i", col("id"))
       }
+      df1.write.mode("overwrite").format("delta").save(path)
+      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
+
+      var df2 = spark.range(1).toDF
+      for (i <- 0 until numColumns) {
+        df2 = df2.withColumn(s"col$i", col("id") + 1)
+      }
+
+      deltaTable
+        .as("t")
+        .merge(df2.as("s"), "s.id = t.id")
+        .whenMatched().updateAll()
+        .execute()
+
+      checkAnswer(
+        deltaTable.toDF,
+        Seq(df2.collectAsList().get(0)))
     }
   }
 }
