@@ -65,7 +65,7 @@ public class MetadataCleanup {
    *                   checkpoint is potential candidate to delete later if we find another
    *                   checkpoint
    *             </ul>
-   *         <li>Step 2: If the timestamp is earlier than the retention period, stop
+   *         <li>Step 2: If the timestamp falls within the retention period, stop
    *         <li>Step 3: If the file is a delta log file, add it to the `potentialFilesToDelete`
    *             list
    *         <li>Step 4: If the file is a checkpoint file, add it to the `lastSeenCheckpointFiles`
