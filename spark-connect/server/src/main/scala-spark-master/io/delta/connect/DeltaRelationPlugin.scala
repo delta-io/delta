@@ -284,7 +284,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
     val df = if (optimizeTable.getZorderColumnsList.isEmpty) {
       optimizeBuilder.executeCompaction()
     } else {
-      optimizeBuilder.executeZOrderBy(optimizeTable.getZorderColumnsList.asScala: _*)
+      optimizeBuilder.executeZOrderBy(optimizeTable.getZorderColumnsList.asScala.toSeq: _*)
     }
     df.queryExecution.commandExecuted
   }
