@@ -77,9 +77,10 @@ public class MetadataCleanup {
    *     current time.
    * @param tablePath Table location
    * @param retentionMillis Log file retention period in milliseconds
+   * @return number of log files deleted
    * @throws IOException if an error occurs while deleting the log files
    */
-  public static void cleanupExpiredLogs(
+  public static long cleanupExpiredLogs(
       Engine engine, Clock clock, Path tablePath, long retentionMillis) throws IOException {
     checkArgument(retentionMillis >= 0, "Retention period must be non-negative");
 
@@ -172,6 +173,7 @@ public class MetadataCleanup {
       }
     }
     logger.info("{}: Deleted {} log files older than {}", tablePath, numDeleted, fileCutOffTime);
+    return numDeleted;
   }
 
   private static CloseableIterator<FileStatus> listDeltaLogs(Engine engine, Path tablePath)
@@ -186,7 +188,7 @@ public class MetadataCleanup {
   private static int deleteLogFiles(Engine engine, List<String> logFiles) throws IOException {
     int numDeleted = 0;
     for (String logFile : logFiles) {
-      if (!wrapEngineExceptionThrowsIO(
+      if (wrapEngineExceptionThrowsIO(
           () -> engine.getFileSystemClient().delete(logFile),
           "Failed to delete the log file as part of the metadata cleanup %s",
           logFile)) {

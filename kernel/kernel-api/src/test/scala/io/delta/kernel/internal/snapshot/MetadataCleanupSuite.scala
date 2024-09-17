@@ -21,6 +21,12 @@ import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromDeleteFileSy
 import io.delta.kernel.utils.FileStatus
 import org.scalatest.funsuite.AnyFunSuite
 
+/**
+ * Test suite for the metadata cleanup logic in the Delta log directory. It mocks the
+ * `FileSystemClient` to test the cleanup logic for various combinations of delta files and
+ * checkpoint files. Utility methods in `MockFileSystemClientUtils` are used to generate the
+ * log file statuses which usually have modification time as the `version * 10`.
+ */
 class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   import MetadataCleanupSuite._
@@ -51,7 +57,9 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
     case (testName, expectedDeletedFiles, currentTime, retentionPeriod) =>
       // _deltalog directory contents - contains only delta files
       val logFiles = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6))
-      testCleanup(testName, logFiles, expectedDeletedFiles, currentTime, retentionPeriod)
+      test(s"metadataCleanup: $testName: $currentTime, $retentionPeriod") {
+        cleanupAndVerify(logFiles, expectedDeletedFiles.fileList(), currentTime, retentionPeriod)
+      }
   }
 
   // with various checkpoint types
@@ -134,8 +142,9 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
           }
         )
 
-        val testDesc = s"$checkpointType: $testName"
-        testCleanup(testDesc, logFiles, expectedDeletedFiles, currentTime, retentionPeriod)
+        test(s"metadataCleanup: $checkpointType: $testName: $currentTime, $retentionPeriod") {
+          cleanupAndVerify(logFiles, expectedDeletedFiles.fileList(), currentTime, retentionPeriod)
+        }
     }
   }
 
@@ -168,14 +177,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
       )
     ).foreach {
       case (currentTime, retentionPeriod, expectedDeletedFiles) =>
-        val fsClient = mockFsClient(logFiles)
-        cleanupExpiredLogs(
-          mockEngine(fsClient),
-          new ManualClock(currentTime),
-          logPath,
-          retentionPeriod)
-
-        assert(fsClient.getDeleteCalls.toSet === expectedDeletedFiles.fileList().toSet)
+        cleanupAndVerify(logFiles, expectedDeletedFiles.fileList(), currentTime, retentionPeriod)
     }
   }
 
@@ -225,44 +227,42 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
       case (expDeletedDeltaVersions, expDeletedCheckpointVersions,
       currentTime, retentionPeriod) =>
 
-        val expectedDeletedFiles = deltaFileStatuses(expDeletedDeltaVersions) ++
+        val expectedDeletedFiles = (deltaFileStatuses(expDeletedDeltaVersions) ++
           expDeletedCheckpointVersions.flatMap {
             case v@3 => multiCheckpointFileStatuses(Seq(v), multiPartCheckpointPartsSize)
               .filterNot(_.getPath.contains(s"%010d.%010d".format(2, 4)))
             case v@6 => multiCheckpointFileStatuses(Seq(v), multiPartCheckpointPartsSize)
             case v@9 => v2CPFileStatuses(Seq(v))
-          }
+          }).map(_.getPath)
 
-        val fsClient = mockFsClient(logFiles)
-        cleanupExpiredLogs(
-          mockEngine(fsClient),
-          new ManualClock(currentTime),
-          logPath,
-          retentionPeriod
-        )
-
-        assert(fsClient.getDeleteCalls.toSet === expectedDeletedFiles.map(_.getPath).toSet)
+        cleanupAndVerify(logFiles, expectedDeletedFiles, currentTime, retentionPeriod)
     }
   }
 
   /* ------------------- HELPER UTILITIES/CONSTANTS ------------------ */
-  def testCleanup(
-    testName: String,
-    logFiles: Seq[FileStatus],
-    expectedDeletedFiles: DeletedFileList,
-    currentTime: Long,
-    retentionPeriod: Long): Unit = {
-    test(s"metadataCleanup: $testName: $currentTime, $retentionPeriod") {
-      val fsClient = mockFsClient(logFiles)
-      cleanupExpiredLogs(
-        mockEngine(fsClient),
-        new ManualClock(currentTime),
-        logPath,
-        retentionPeriod
-      )
+  /**
+   * Cleanup the metadata log files and verify the expected deleted files.
+   *
+   * @param logFiles List of log files in the _delta_log directory
+   * @param expectedDeletedFiles List of expected deleted file paths
+   * @param currentTimeMillis Current time in millis
+   * @param retentionPeriodMillis Retention period in millis
+   */
+  def cleanupAndVerify(
+      logFiles: Seq[FileStatus],
+      expectedDeletedFiles: Seq[String],
+      currentTimeMillis: Long,
+      retentionPeriodMillis: Long): Unit = {
+    val fsClient = mockFsClient(logFiles)
+    val resultDeletedCount = cleanupExpiredLogs(
+      mockEngine(fsClient),
+      new ManualClock(currentTimeMillis),
+      logPath,
+      retentionPeriodMillis
+    )
 
-      assert(fsClient.getDeleteCalls === expectedDeletedFiles.fileList())
-    }
+    assert(resultDeletedCount === expectedDeletedFiles.size)
+    assert(fsClient.getDeleteCalls.toSet === expectedDeletedFiles.toSet)
   }
 }
 
