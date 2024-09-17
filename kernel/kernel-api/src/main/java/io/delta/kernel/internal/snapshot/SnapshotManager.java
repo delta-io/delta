@@ -17,7 +17,7 @@
 package io.delta.kernel.internal.snapshot;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.TableConfig.ENABLE_EXPIRED_LOG_CLEANUP;
+import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
@@ -240,7 +240,7 @@ public class SnapshotManager {
 
     // Clean up delta log files if enabled.
     Metadata metadata = snapshot.getMetadata();
-    if (ENABLE_EXPIRED_LOG_CLEANUP.fromMetadata(engine, metadata)) {
+    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(engine, metadata)) {
       cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(engine, metadata));
     } else {
       logger.info(

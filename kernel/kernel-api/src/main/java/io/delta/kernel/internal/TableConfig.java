@@ -93,7 +93,7 @@ public class TableConfig<T> {
           true /* editable */);
 
   /** Whether to clean up expired checkpoints and delta logs. */
-  public static final TableConfig<Boolean> ENABLE_EXPIRED_LOG_CLEANUP =
+  public static final TableConfig<Boolean> EXPIRED_LOG_CLEANUP_ENABLED =
       new TableConfig<>(
           "delta.enableExpiredLogCleanup",
           "true",

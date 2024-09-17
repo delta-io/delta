@@ -139,6 +139,46 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
   }
 
+  test("first log entry is a checkpoint") {
+    val logFiles = multiCheckpointFileStatuses(Seq(25), multiPartCheckpointPartsSize) ++
+      singularCheckpointFileStatuses(Seq(29)) ++
+      deltaFileStatuses(Seq(25, 26, 27, 28, 29, 30, 31, 32))
+
+    Seq(
+      (
+        330, // current time
+        50, // retention period
+        DeletedFileList() // expected deleted files - none of them should be deleted
+      ),
+      (
+        330, // current time
+        30, // retention period
+        DeletedFileList(
+          deltaVersions = Seq(25, 26, 27, 28),
+          multipartCheckpointVersions = Seq(25),
+        )
+      ),
+      (
+        330, // current time
+        10, // retention period
+        DeletedFileList(
+          deltaVersions = Seq(25, 26, 27, 28),
+          multipartCheckpointVersions = Seq(25),
+        )
+      )
+    ).foreach {
+      case (currentTime, retentionPeriod, expectedDeletedFiles) =>
+        val fsClient = mockFsClient(logFiles)
+        cleanupExpiredLogs(
+          mockEngine(fsClient),
+          new ManualClock(currentTime),
+          logPath,
+          retentionPeriod)
+
+        assert(fsClient.getDeleteCalls.toSet === expectedDeletedFiles.fileList().toSet)
+    }
+  }
+
   /* ------------------- NEGATIVE TESTS ------------------ */
   test("metadataCleanup: invalid retention period") {
     val e = intercept[IllegalArgumentException] {

@@ -39,17 +39,17 @@ import org.slf4j.LoggerFactory;
 public class MetadataCleanup {
   private static final Logger logger = LoggerFactory.getLogger(MetadataCleanup.class);
 
-  public MetadataCleanup() {}
+  private MetadataCleanup() {}
 
   /**
-   * Delete the Delta log files (delta and checkpoint files) that are expired according the table
+   * Delete the Delta log files (delta and checkpoint files) that are expired according to the table
    * metadata retention settings. While deleting the log files, it makes sure the time travel
    * continues to work for all unexpired table versions.
    *
    * <p>Here is algorithm:
    *
    * <ul>
-   *   <li>Initial the potential delete file list: `potentialFilesToDelete` as empty list
+   *   <li>Initial the potential delete file list: `potentialFilesToDelete` as an empty list
    *   <li>Initialize the last seen checkpoint file list: `lastSeenCheckpointFiles`. There could be
    *       one or more checkpoint files for a given version.
    *   <li>List the delta log files starting with prefix "00000000000000000000." (%020d). For each
@@ -84,13 +84,13 @@ public class MetadataCleanup {
     checkArgument(retentionMillis >= 0, "Retention period must be non-negative");
 
     List<String> potentialLogFilesToDelete = new ArrayList<>();
-    long lastSeenCheckpointVersion = -1;
+    long lastSeenCheckpointVersion = -1; // -1 indicates no checkpoint seen yet
     List<String> lastSeenCheckpointFiles = new ArrayList<>();
 
     long fileCutOffTime = clock.getTimeMillis() - retentionMillis;
     logger.info("{}: Starting the deletion of log files older than {}", tablePath, fileCutOffTime);
     long numDeleted = 0;
-    try (CloseableIterator<FileStatus> files = listExpiredDeltaLogs(engine, tablePath)) {
+    try (CloseableIterator<FileStatus> files = listDeltaLogs(engine, tablePath)) {
       while (files.hasNext()) {
         // Step 1: Check if the `lastSeenCheckpointFiles` contains a complete checkpoint
         Optional<CheckpointInstance> lastCompleteCheckpoint =
@@ -104,16 +104,18 @@ public class MetadataCleanup {
           //   commit/checkpoint files before this checkpoint version are not needed. add
           //   `lastCheckpointFiles` to `potentialFileStoDelete` list. This checkpoint is potential
           //   candidate to delete later if we find another checkpoint
-          logger.info(
-              "{}: Deleting log files (start = {}, end = {}) because a checkpoint at "
-                  + "version {} indicates that these log files are no longer needed.",
-              tablePath,
-              getFirst(potentialLogFilesToDelete),
-              getLast(potentialLogFilesToDelete),
-              lastSeenCheckpointVersion);
+          if (!potentialLogFilesToDelete.isEmpty()) {
+            logger.info(
+                "{}: Deleting log files (start = {}, end = {}) because a checkpoint at "
+                    + "version {} indicates that these log files are no longer needed.",
+                tablePath,
+                getFirst(potentialLogFilesToDelete),
+                getLast(potentialLogFilesToDelete),
+                lastSeenCheckpointVersion);
 
-          numDeleted += deleteLogFiles(engine, potentialLogFilesToDelete);
-          potentialLogFilesToDelete.clear();
+            numDeleted += deleteLogFiles(engine, potentialLogFilesToDelete);
+            potentialLogFilesToDelete.clear();
+          }
 
           // Step 1.2: add `lastCheckpointFiles` to `potentialFileStoDelete` list. This checkpoint
           // is potential candidate to delete later if we find another checkpoint
@@ -172,7 +174,7 @@ public class MetadataCleanup {
     logger.info("{}: Deleted {} log files older than {}", tablePath, numDeleted, fileCutOffTime);
   }
 
-  private static CloseableIterator<FileStatus> listExpiredDeltaLogs(Engine engine, Path tablePath)
+  private static CloseableIterator<FileStatus> listDeltaLogs(Engine engine, Path tablePath)
       throws IOException {
     Path logPath = new Path(tablePath, "_delta_log");
     // TODO: Currently we don't update the timestamps of files to be monotonically increasing.
