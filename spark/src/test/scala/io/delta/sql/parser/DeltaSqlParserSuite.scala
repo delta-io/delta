@@ -465,7 +465,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
           clusterByStatement(clause, asSelect, "a int, b string", "CLUSTER BY (a) CLUSTER BY (b)")
         checkError(exception = intercept[ParseException] {
           parser.parsePlan(sql)
-        },"DUPLICATE_CLAUSES", parameters = Map("clauseName" -> "CLUSTER BY"))
+        }, "DUPLICATE_CLAUSES", parameters = Map("clauseName" -> "CLUSTER BY"))
       }
 
       test("CLUSTER BY set clustering column property is ignored - " +
@@ -494,7 +494,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
           "Please remove PARTITIONED BY if you want to create a Delta table with clustering"
         checkError(exception = intercept[ParseException] {
           parser.parsePlan(sql)
-        },"_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
+        }, "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
       }
 
       test(s"CLUSTER BY with bucketing - $clause TABLE asSelect = $asSelect") {
@@ -510,7 +510,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
           "want to create a Delta table with clustering"
         checkError(exception = intercept[ParseException] {
           parser.parsePlan(sql)
-        },"_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
+        }, "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
       }
     }
   }
