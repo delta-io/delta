@@ -677,8 +677,8 @@ class DeltaDataFrameWriterV2Suite
       def verifyNotImplicitCasting(f: => Unit): Unit = {
         val e = intercept[DeltaAnalysisException](f)
         checkError(
-          exception = e.getCause.asInstanceOf[DeltaAnalysisException],
-          condition = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+          e.getCause.asInstanceOf[DeltaAnalysisException],
+          "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
           parameters = Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType"))
       }
       verifyNotImplicitCasting {

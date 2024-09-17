@@ -213,10 +213,10 @@ class DeltaInsertIntoSQLSuite
     withTable("t") {
       sql(s"CREATE TABLE t(i STRING, c string) USING $v2Format PARTITIONED BY (c)")
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql("INSERT OVERWRITE t PARTITION (c='1') (c) VALUES ('2')")
         },
-        condition = "STATIC_PARTITION_COLUMN_IN_INSERT_COLUMN_LIST",
+        "STATIC_PARTITION_COLUMN_IN_INSERT_COLUMN_LIST",
         parameters = Map("staticName" -> "c"))
     }
   }
@@ -596,22 +596,22 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The table feature is not enabled via TBLPROPERTIES.
       withTable("createTableWithDefaultFeatureNotEnabled") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql(s"create table createTableWithDefaultFeatureNotEnabled(" +
               s"i boolean, s bigint, q int default 42) using $v2Format " +
               "partitioned by (i)")
           },
-          condition = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           parameters = Map("commandType" -> "CREATE TABLE")
         )
       }
       withTable("alterTableSetDefaultFeatureNotEnabled") {
         sql(s"create table alterTableSetDefaultFeatureNotEnabled(a int) using $v2Format")
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("alter table alterTableSetDefaultFeatureNotEnabled alter column a set default 42")
           },
-          condition = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           parameters = Map("commandType" -> "ALTER TABLE")
         )
       }
@@ -620,19 +620,19 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
         sql(s"create table alterTableTest(i boolean, s bigint, q int default 42) using $v2Format " +
           s"partitioned by (i) $tblPropertiesAllowDefaults")
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("alter table alterTableTest add column z int default 42")
           },
-          condition = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
         )
       }
       // The default value fails to analyze.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        condition = INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
+        INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -642,11 +642,11 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The error message reports that we failed to execute the command because subquery
       // expressions are not allowed in DEFAULT values.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default (select min(x) from badtable)) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        condition = "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
+        "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -656,22 +656,22 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The error message reports that we failed to execute the command because subquery
       // expressions are not allowed in DEFAULT values.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default (select 42 as alias)) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        condition = "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
+        "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
           "defaultValue" -> "(select 42 as alias)"))
       // The default value parses but the type is not coercible.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s bigint default false) " +
             s"using $v2Format $tblPropertiesAllowDefaults")
         },
-        condition = "INVALID_DEFAULT_VALUE.DATA_TYPE",
+        "INVALID_DEFAULT_VALUE.DATA_TYPE",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -702,11 +702,11 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
     // Column default values are disabled per configuration in general.
     withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "false") {
       checkError(
-        exception = intercept[ParseException] {
+        intercept[ParseException] {
           sql(s"create table t4 (s int default 41 + 1) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        condition = "UNSUPPORTED_DEFAULT_VALUE.WITH_SUGGESTION",
+        "UNSUPPORTED_DEFAULT_VALUE.WITH_SUGGESTION",
         parameters = Map.empty,
         context = ExpectedContext(fragment = "s int default 41 + 1", start = 17, stop = 36))
     }

@@ -87,8 +87,8 @@ class SchemaUtilsSuite extends QueryTest
     val err = getError(e)
     assert(err.isDefined, "exception with the error class not found")
     checkError(
-      exception = err.get,
-      condition = errorClass,
+      err.get,
+      errorClass,
       parameters = params,
       matchPVals = true)
   }
@@ -1680,8 +1680,8 @@ class SchemaUtilsSuite extends QueryTest
         Seq("x", "Y"), new StructType())
     }
     checkError(
-      exception = exception,
-      condition = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "x.Y.bb", "schema" -> "root\n")
     )

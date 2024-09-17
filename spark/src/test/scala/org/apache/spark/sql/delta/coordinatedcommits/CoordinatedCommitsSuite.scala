@@ -1322,7 +1322,7 @@ class CoordinatedCommitsSuite
                 tableMutationFn()
               }
               checkError(e,
-                condition = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+                "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
                 sqlState = "0AKDC",
                 parameters = Map("coordinatorName" -> "tracking-in-memory")
               )
@@ -1585,8 +1585,8 @@ class CoordinatedCommitsSuite
           s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
       }
       checkError(
-        exception = e,
-        condition = "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+        e,
+        "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
     }

@@ -100,7 +100,7 @@ class DeltaVariantSuite
       // check previously thrown error message
       checkError(
         e,
-        condition = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
+        "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
         parameters = Map(
           "unsupportedFeatures" -> VariantTypeTableFeature.name,
           "supportedFeatures" -> currentFeatures

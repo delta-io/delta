@@ -89,7 +89,7 @@ class MaterializedColumnSuite extends RowIdTestUtils
               sql(s"ALTER TABLE $testTableName " +
                 s"RENAME COLUMN $testDataColumnName TO `$materializedColumnName`")
             }
-            checkError(error, condition = "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED",
+            checkError(error, "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED",
               parameters = Map("colName" -> materializedColumnName))
           }
         }
@@ -111,7 +111,7 @@ class MaterializedColumnSuite extends RowIdTestUtils
           val error = intercept[DeltaRuntimeException] {
             sql(s"CREATE OR REPLACE TABLE $targetName SHALLOW CLONE $sourceName")
           }
-          checkError(error, condition = "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED",
+          checkError(error, "DELTA_ADDING_COLUMN_WITH_INTERNAL_NAME_FAILED",
             parameters = Map("colName" -> materializedColumnName))
         }
       }

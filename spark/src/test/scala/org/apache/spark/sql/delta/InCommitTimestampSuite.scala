@@ -205,8 +205,8 @@ class InCommitTimestampSuite
         latestSnapshot.timestamp
       }
       checkError(
-        exception = e,
-        condition = "DELTA_MISSING_COMMIT_INFO",
+        e,
+        "DELTA_MISSING_COMMIT_INFO",
         parameters = Map(
           "featureName" -> InCommitTimestampTableFeature.name,
           "version" -> "1"))
@@ -244,8 +244,8 @@ class InCommitTimestampSuite
         latestSnapshot.timestamp
       }
       checkError(
-        exception = e,
-        condition = "DELTA_MISSING_COMMIT_TIMESTAMP",
+        e,
+        "DELTA_MISSING_COMMIT_TIMESTAMP",
         parameters = Map("featureName" -> InCommitTimestampTableFeature.name, "version" -> "1"))
     }
   }

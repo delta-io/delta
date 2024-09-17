@@ -2531,8 +2531,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           feature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> feature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2550,8 +2550,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           feature.name).run(spark)
       }
       checkError(
-        exception = e2,
-        condition = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+        e2,
+        "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
         parameters = Map(
           "feature" -> feature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",

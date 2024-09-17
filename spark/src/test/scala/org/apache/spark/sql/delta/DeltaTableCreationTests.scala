@@ -2391,8 +2391,8 @@ class DeltaTableCreationSuite
               s" LOCATION '${subdir.getCanonicalPath}'")
         }
         checkError(
-          exception = e,
-          condition = "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
+          e,
+          "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
           parameters = Map(
             "tableName" -> tableName,
             "tablePath" -> deltaLog.logPath.toString,

@@ -450,10 +450,10 @@ class DeltaDropColumnSuite extends QueryTest
         field <- Seq("m.key", "m.value", "a.element")
       }
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"ALTER TABLE delta_test DROP COLUMN $field")
         },
-        condition = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
+        "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
         parameters = Map(
           "struct" -> "IntegerType"
         )
