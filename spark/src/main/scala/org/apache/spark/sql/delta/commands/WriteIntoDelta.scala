@@ -154,7 +154,8 @@ case class WriteIntoDelta(
       // If READ_SIDE_CHAR_PADDING is not enabled, CHAR type is the same as VARCHAR. The change
       // below makes DESC TABLE to show VARCHAR instead of CHAR.
       CharVarcharUtils.replaceCharVarcharWithStringInSchema(
-        replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
+        CharVarcharUtils.replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema))
+          .asInstanceOf[StructType])
     }
     val finalSchema = schemaInCatalog.getOrElse(dataSchema)
     if (txn.metadata.schemaString != null) {
