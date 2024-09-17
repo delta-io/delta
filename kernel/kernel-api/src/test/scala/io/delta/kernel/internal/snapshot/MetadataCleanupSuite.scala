@@ -155,7 +155,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
         30, // retention period
         DeletedFileList(
           deltaVersions = Seq(25, 26, 27, 28),
-          multipartCheckpointVersions = Seq(25),
+          multipartCheckpointVersions = Seq(25)
         )
       ),
       (
@@ -163,7 +163,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
         10, // retention period
         DeletedFileList(
           deltaVersions = Seq(25, 26, 27, 28),
-          multipartCheckpointVersions = Seq(25),
+          multipartCheckpointVersions = Seq(25)
         )
       )
     ).foreach {
