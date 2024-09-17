@@ -17,10 +17,14 @@
 package io.delta.tables
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.connect.SparkConnectServerTest
+import org.apache.spark.sql.connect.config.Connect.CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT
 import org.apache.spark.sql.functions.{col, expr}
 import org.apache.spark.sql.test.DeltaQueryTest
 
-class DeltaMergeBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
+class DeltaMergeBuilderSuite extends DeltaQueryTest
+  with RemoteSparkSession
+  with SparkConnectServerTest {
   private def writeTargetTable(path: String): Unit = {
     val session = spark
     import session.implicits._
@@ -382,30 +386,32 @@ class DeltaMergeBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   test("merge dataframe with many columns") {
-    withTempPath { dir =>
-      val path = dir.getAbsolutePath
-      var df1 = spark.range(1).toDF
-      val numColumns = 100
-      for (i <- 0 until numColumns) {
-        df1 = df1.withColumn(s"col$i", col("id"))
+    withSparkEnvConfs((CONNECT_GRPC_MARSHALLER_RECURSION_LIMIT.key, "4096")) {
+      withTempPath { dir =>
+        val path = dir.getAbsolutePath
+        var df1 = spark.range(1).toDF
+        val numColumns = 100
+        for (i <- 0 until numColumns) {
+          df1 = df1.withColumn(s"col$i", col("id"))
+        }
+        df1.write.mode("overwrite").format("delta").save(path)
+        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
+
+        var df2 = spark.range(1).toDF
+        for (i <- 0 until numColumns) {
+          df2 = df2.withColumn(s"col$i", col("id") + 1)
+        }
+
+        deltaTable
+          .as("t")
+          .merge(df2.as("s"), "s.id = t.id")
+          .whenMatched().updateAll()
+          .execute()
+
+        checkAnswer(
+          deltaTable.toDF,
+          Seq(df2.collectAsList().get(0)))
       }
-      df1.write.mode("overwrite").format("delta").save(path)
-      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
-
-      var df2 = spark.range(1).toDF
-      for (i <- 0 until numColumns) {
-        df2 = df2.withColumn(s"col$i", col("id") + 1)
-      }
-
-      deltaTable
-        .as("t")
-        .merge(df2.as("s"), "s.id = t.id")
-        .whenMatched().updateAll()
-        .execute()
-
-      checkAnswer(
-        deltaTable.toDF,
-        Seq(df2.collectAsList().get(0)))
     }
   }
 }
