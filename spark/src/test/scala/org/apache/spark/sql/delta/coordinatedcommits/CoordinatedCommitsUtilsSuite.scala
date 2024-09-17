@@ -85,8 +85,8 @@ class CoordinatedCommitsUtilsSuite extends QueryTest
               spark, propertyOverrides, tableExists, command)
           }
           checkError(
-            exception = e,
-            condition = errorOpt.get.getErrorClass,
+            e,
+            errorOpt.get.getErrorClass,
             sqlState = errorOpt.get.getSqlState,
             parameters = errorOpt.get.getMessageParameters.asScala.toMap)
         } else {
@@ -260,8 +260,8 @@ class CoordinatedCommitsUtilsSuite extends QueryTest
           existingConfs, propertyOverrides)
       }
       checkError(
-        exception = e,
-        condition = errorOpt.get.getErrorClass,
+        e,
+        errorOpt.get.getErrorClass,
         sqlState = errorOpt.get.getSqlState,
         parameters = errorOpt.get.getMessageParameters.asScala.toMap)
     } else {
@@ -328,8 +328,8 @@ class CoordinatedCommitsUtilsSuite extends QueryTest
           existingConfs, propKeysToUnset)
       }
       checkError(
-        exception = e,
-        condition = errorOpt.get.getErrorClass,
+        e,
+        errorOpt.get.getErrorClass,
         sqlState = errorOpt.get.getSqlState,
         parameters = errorOpt.get.getMessageParameters.asScala.toMap)
     } else {

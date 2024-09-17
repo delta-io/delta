@@ -2592,8 +2592,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           dropCommand.run(spark)
         }
         checkError(
-          exception = e3,
-          condition = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+          e3,
+          "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
           parameters = Map(
             "feature" -> feature.name,
             "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2707,8 +2707,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         command.run(spark)
       }
       checkError(
-        exception = e,
-        condition = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
+        e,
+        "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
         parameters = Map("feature" -> TestWriterMetadataNoAutoUpdateFeature.name))
     }
   }
@@ -2730,8 +2730,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         command.run(spark)
       }
       checkError(
-        exception = e,
-        condition = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
+        e,
+        "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
         parameters = Map("feature" -> AppendOnlyTableFeature.name))
     }
   }
@@ -2756,8 +2756,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         command.run(spark)
       }
       checkError(
-        exception = e,
-        condition = "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
+        e,
+        "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
         parameters = Map("feature" -> "NonSupportedFeature"))
     }
   }
@@ -2782,8 +2782,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         command.run(spark)
       }
       checkError(
-        exception = e,
-        condition = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
+        e,
+        "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
         parameters = Map("feature" -> TestRemovableWriterFeature.name))
     }
   }
@@ -2863,8 +2863,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        condition = "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+        e1,
+        "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
         parameters = Map(
           "feature" -> TestRemovableWriterFeature.name,
           "dependentFeatures" -> TestRemovableWriterFeatureWithDependency.name))
@@ -2904,8 +2904,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
                |TRUNCATE HISTORY""".stripMargin)
       }
       checkError(
-        exception = e,
-        condition = "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED",
+        e,
+        "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED",
         parameters = Map.empty)
     }
   }
@@ -2932,8 +2932,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2963,8 +2963,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
 
       checkError(
-        exception = e2,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e2,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2991,8 +2991,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3011,8 +3011,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e2,
-        condition = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+        e2,
+        "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3063,8 +3063,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3086,8 +3086,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e2,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e2,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3114,8 +3114,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3531,8 +3531,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableWriterWithHistoryTruncationFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableWriterWithHistoryTruncationFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3611,8 +3611,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           dropV2CheckpointsTableFeature(spark, targetLog)
         }
         checkError(
-          exception = e1,
-          condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          e1,
+          "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
             "feature" -> V2CheckpointTableFeature.name,
             "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3645,8 +3645,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           dropV2CheckpointsTableFeature(spark, targetLog)
         }
         checkError(
-          exception = e2,
-          condition = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+          e2,
+          "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
           parameters = Map(
             "feature" -> V2CheckpointTableFeature.name,
             "logRetentionPeriodKey" -> "delta.logRetentionDuration",

@@ -1948,8 +1948,8 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
     checkError(
-      exception = exception,
-      condition = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "two", "schema" -> tableSchema.treeString)
     )
@@ -1974,8 +1974,8 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
     checkError(
-      exception = exception,
-      condition = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "s.two", "schema" -> tableSchema.treeString)
     )
@@ -2348,8 +2348,8 @@ class SchemaUtilsSuite extends QueryTest
           mergeSchemas(longType, sourceType)
         }
       checkError(
-        exception = e.getCause.asInstanceOf[AnalysisException],
-        condition = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        e.getCause.asInstanceOf[AnalysisException],
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         parameters = Map("currentDataType" -> "LongType",
           "updateDataType" -> sourceType.head.dataType.toString))
     }
@@ -2637,10 +2637,10 @@ class SchemaUtilsSuite extends QueryTest
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
         checkError(
-          exception = intercept[AnalysisException] {
+          intercept[AnalysisException] {
             SchemaUtils.checkFieldNames(Seq(name))
           },
-          condition = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
+          "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
           parameters = Map("columnName" -> s"$name")
         )
       }

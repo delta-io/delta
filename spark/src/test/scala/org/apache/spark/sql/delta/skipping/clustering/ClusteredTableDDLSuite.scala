@@ -1169,7 +1169,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-          condition = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "",
@@ -1194,7 +1194,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-          condition = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "col2",
@@ -1235,7 +1235,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-          condition = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "col1",

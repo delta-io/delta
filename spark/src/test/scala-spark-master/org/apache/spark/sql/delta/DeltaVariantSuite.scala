@@ -123,13 +123,13 @@ class DeltaVariantSuite
   test("VariantType may not be used as a partition column") {
     withTable("delta_test") {
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(
             """CREATE TABLE delta_test(s STRING, v VARIANT)
               |USING delta
               |PARTITIONED BY (v)""".stripMargin)
         },
-        condition = "INVALID_PARTITION_COLUMN_DATA_TYPE",
+        "INVALID_PARTITION_COLUMN_DATA_TYPE",
         parameters = Map("type" -> "\"VARIANT\"")
       )
     }
@@ -516,7 +516,7 @@ class DeltaVariantSuite
       }
       checkError(
         insertException,
-        condition = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
         parameters = Map("columnName" -> "v")
       )
 
@@ -539,7 +539,7 @@ class DeltaVariantSuite
       }
       checkError(
         insertException,
-        condition = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
+        "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
         parameters = Map(
           "constraintName" -> "variantgtezero",
           "expression" -> "(variant_get(v, '$', 'INT') >= 0)", "values" -> " - v : -1"
