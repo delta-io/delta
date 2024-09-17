@@ -387,7 +387,7 @@ class DeltaMergeBuilderSuite extends DeltaQueryTest
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       var df1 = spark.range(1).toDF
-      val numColumns = 5
+      val numColumns = 20
       for (i <- 0 until numColumns) {
         df1 = df1.withColumn(s"col$i", col("id"))
       }
