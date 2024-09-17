@@ -95,7 +95,7 @@ public class DataFileStatistics {
    * Get the maximum values of the columns in the data file. The map may contain statistics for only
    * a subset of columns in the data file.
    *
-   * @return Map of column to minimum value of it in the data file.
+   * @return Map of column to maximum value of it in the data file.
    */
   public Map<Column, Literal> getMaxValues() {
     return maxValues;
@@ -111,10 +111,22 @@ public class DataFileStatistics {
     return nullCounts;
   }
 
+  /**
+   * Get the collated minimum of the columns in the data file. The map may contain statistics for
+   * only a subset of columns in data file.
+   *
+   * @return Map of collation identifier to map of column to collated minimum value of it in the data file
+   */
   public Map<CollationIdentifier, Map<Column, Literal>> getCollatedMinValues() {
     return collatedMinValues;
   }
 
+  /**
+   * Get the collated maximum of the columns in the data file. The map may contain statistics for
+   * only a subset of columns in data file.
+   *
+   * @return Map of collation identifier to map of column to collated maximum value of it in the data file
+   */
   public Map<CollationIdentifier, Map<Column, Literal>> getCollatedMaxValues() {
     return collatedMaxValues;
   }
