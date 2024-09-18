@@ -75,8 +75,7 @@ public class StatsSchemaHelper {
       statsSchema =
           statsSchema
               .add(MIN, getMinMaxStatsSchema(dataSchema), true)
-              .add(MAX, getMinMaxStatsSchema(dataSchema), true)
-              .add(STATS_WITH_COLLATION, getMinMaxStatsSchema(dataSchema, true));
+              .add(MAX, getMinMaxStatsSchema(dataSchema), true);
     }
     StructType nullCountSchema = getNullCountSchema(dataSchema);
     if (nullCountSchema.length() > 0) {
@@ -200,7 +199,6 @@ public class StatsSchemaHelper {
   private static final String NUM_RECORDS = "numRecords";
   private static final String MIN = "minValues";
   private static final String MAX = "maxValues";
-  private static final String STATS_WITH_COLLATION = "statsWithCollation";
   private static final String NULL_COUNT = "nullCount";
 
   private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES =
@@ -228,26 +226,21 @@ public class StatsSchemaHelper {
         dataType instanceof DecimalType;
   }
 
-  private static StructType getMinMaxStatsSchema(StructType dataSchema) {
-    return getMinMaxStatsSchema(dataSchema, false);
-  }
-
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means
    * 1) replace logical names with physical names 2) set nullable=true 3) only keep stats eligible
    * fields (i.e. don't include fields with isSkippingEligibleDataType=false)
    */
-  private static StructType getMinMaxStatsSchema(StructType dataSchema, boolean areCollatedStats) {
+  private static StructType getMinMaxStatsSchema(StructType dataSchema) {
     List<StructField> fields = new ArrayList<>();
     for (StructField field : dataSchema.fields()) {
-      if ((!areCollatedStats || field.getDataType() instanceof StringType)
-              && isSkippingEligibleDataType(field.getDataType())) {
+      if (isSkippingEligibleDataType(field.getDataType())) {
         fields.add(new StructField(getPhysicalName(field), field.getDataType(), true));
       } else if (field.getDataType() instanceof StructType) {
         fields.add(
             new StructField(
                 getPhysicalName(field),
-                getMinMaxStatsSchema((StructType) field.getDataType(), areCollatedStats),
+                getMinMaxStatsSchema((StructType) field.getDataType()),
                 true));
       }
     }
