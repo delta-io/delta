@@ -33,11 +33,23 @@ public class CoordinatedCommitsUtils {
     private CoordinatedCommitsUtils() {}
 
     /** The subdirectory in which to store the unbackfilled commit files. */
-    final static String COMMIT_SUBDIR = "_commits";
+    private static final String COMMIT_SUBDIR = "_commits";
 
-    /** The configuration key for the coordinated commits owner. */
-    private static final String COORDINATED_COMMITS_COORDINATOR_CONF_KEY =
+    /** The configuration key for the coordinated commits owner name. */
+    private static final String COORDINATED_COMMITS_COORDINATOR_NAME_KEY =
             "delta.coordinatedCommits.commitCoordinator-preview";
+
+    /**
+     * Creates a new unbackfilled delta file path for the given commit version.
+     * The path is of the form `tablePath/_delta_log/_commits/00000000000000000001.uuid.json`.
+     */
+    public static Path generateUnbackfilledDeltaFilePath(
+            Path logPath,
+            long version) {
+        String uuid = UUID.randomUUID().toString();
+        Path basePath = new Path(logPath, COMMIT_SUBDIR);
+        return new Path(basePath, String.format("%020d.%s.json", version, uuid));
+    }
 
     /**
      * Returns the path to the backfilled delta file for the given commit version.
@@ -108,10 +120,10 @@ public class CoordinatedCommitsUtils {
         return new Path(logPath, COMMIT_SUBDIR);
     }
 
-    private static String getCoordinator(AbstractMetadata metadata) {
+    public static String getCoordinator(AbstractMetadata metadata) {
         String coordinator = metadata
                 .getConfiguration()
-                .get(COORDINATED_COMMITS_COORDINATOR_CONF_KEY);
+                .get(COORDINATED_COMMITS_COORDINATOR_NAME_KEY);
         return coordinator != null ? coordinator : "";
     }
 }

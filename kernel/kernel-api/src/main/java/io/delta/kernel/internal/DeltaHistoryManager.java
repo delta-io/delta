@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.fs.Path.getName;
 
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
@@ -40,36 +41,58 @@ public final class DeltaHistoryManager {
   private static final Logger logger = LoggerFactory.getLogger(DeltaHistoryManager.class);
 
   /**
-   * Returns the latest recreatable commit that happened at or before {@code timestamp}. If the
-   * provided timestamp is after the timestamp of the latest version of the table throws an
-   * exception. If the provided timestamp is before the timestamp of the earliest version of the
-   * table throws an exception.
+   * Returns the latest commit that happened at or before {@code timestamp}.
+   *
+   * <p>If the timestamp is outside the range of [earliestCommit, latestCommit] then use parameters
+   * {@code canReturnLastCommit} and {@code canReturnEarliestCommit} to control whether an exception
+   * is thrown or the corresponding earliest/latest commit is returned.
    *
    * @param engine instance of {@link Engine} to use
    * @param logPath the _delta_log path of the table
    * @param timestamp the timestamp find the version for in milliseconds since the unix epoch
-   * @return the active recreatable commit version at the provided timestamp
+   * @param mustBeRecreatable whether the state at the returned commit should be recreatable
+   * @param canReturnLastCommit whether we can return the latest version of the table if the
+   *     provided timestamp is after the latest commit
+   * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
+   *     provided timestamp is before the earliest commit
+   * @throws KernelException if the provided timestamp is before the earliest commit and
+   *     canReturnEarliestCommit is false
+   * @throws KernelException if the provided timestamp is after the latest commit and
+   *     canReturnLastCommit is false
    * @throws TableNotFoundException when there is no Delta table at the given path
    */
-  public static long getActiveCommitAtTimestamp(Engine engine, Path logPath, long timestamp)
+  public static Commit getActiveCommitAtTimestamp(
+      Engine engine,
+      Path logPath,
+      long timestamp,
+      boolean mustBeRecreatable,
+      boolean canReturnLastCommit,
+      boolean canReturnEarliestCommit)
       throws TableNotFoundException {
 
-    long earliestRecreatableCommit = getEarliestRecreatableCommit(engine, logPath);
+    long earliestVersion =
+        (mustBeRecreatable)
+            ? getEarliestRecreatableCommit(engine, logPath)
+            : getEarliestDeltaFile(engine, logPath);
 
     // Search for the commit
-    List<Commit> commits = getCommits(engine, logPath, earliestRecreatableCommit);
+    List<Commit> commits = getCommits(engine, logPath, earliestVersion);
     Commit commit =
         lastCommitBeforeOrAtTimestamp(commits, timestamp)
-            .orElseThrow(
-                () ->
-                    DeltaErrors.timestampBeforeFirstAvailableCommit(
-                        logPath.getParent().toString(), /* use dataPath */
-                        timestamp,
-                        commits.get(0).timestamp,
-                        commits.get(0).version));
+            .orElse(commits.get(0)); // This is only returned if canReturnEarliestCommit (see below)
 
+    // If timestamp is before the earliest commit
+    if (commit.timestamp > timestamp && !canReturnEarliestCommit) {
+      throw DeltaErrors.timestampBeforeFirstAvailableCommit(
+          logPath.getParent().toString(), /* use dataPath */
+          timestamp,
+          commits.get(0).timestamp,
+          commits.get(0).version);
+    }
     // If timestamp is after the last commit of the table
-    if (commit == commits.get(commits.size() - 1) && commit.timestamp < timestamp) {
+    if (commit == commits.get(commits.size() - 1)
+        && commit.timestamp < timestamp
+        && !canReturnLastCommit) {
       throw DeltaErrors.timestampAfterLatestCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
@@ -77,7 +100,7 @@ public final class DeltaHistoryManager {
           commit.version);
     }
 
-    return commit.version;
+    return commit;
   }
 
   /**
@@ -155,6 +178,30 @@ public final class DeltaHistoryManager {
         throw new RuntimeException(String.format("No recreatable commits found at %s", logPath));
       } else {
         throw new RuntimeException(String.format("No commits found at %s", logPath));
+      }
+    } catch (IOException e) {
+      throw new RuntimeException("Could not close iterator", e);
+    }
+  }
+
+  /**
+   * Get the earliest commit available for this table. Note that this version isn't guaranteed to
+   * exist when performing an action as a concurrent operation can delete the file during cleanup.
+   * This value must be used as a lower bound.
+   */
+  public static long getEarliestDeltaFile(Engine engine, Path logPath)
+      throws TableNotFoundException {
+
+    try (CloseableIterator<FileStatus> files =
+        listFrom(engine, logPath, 0).filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))) {
+
+      if (files.hasNext()) {
+        return FileNames.deltaVersion(files.next().getPath());
+      } else {
+        // listFrom already throws an error if the directory is truly empty, thus this must
+        // be because no files are delta files
+        throw new RuntimeException(
+            String.format("No delta files found in the directory: %s", logPath));
       }
     } catch (IOException e) {
       throw new RuntimeException("Could not close iterator", e);
@@ -242,14 +289,22 @@ public final class DeltaHistoryManager {
     return Optional.ofNullable((i < 0) ? null : commits.get(i));
   }
 
-  private static class Commit {
+  public static class Commit {
 
-    final long version;
-    final long timestamp;
+    private final long version;
+    private final long timestamp;
 
     Commit(long version, long timestamp) {
       this.version = version;
       this.timestamp = timestamp;
+    }
+
+    public long getVersion() {
+      return version;
+    }
+
+    public long getTimestamp() {
+      return timestamp;
     }
 
     @Override

@@ -72,13 +72,6 @@ public class ArrayType extends DataType {
   }
 
   @Override
-  public String toJson() {
-    return String.format(
-        "{" + "\"type\": \"array\"," + "\"elementType\": %s," + "\"containsNull\": %s" + "}",
-        getElementType().toJson(), containsNull());
-  }
-
-  @Override
   public String toString() {
     return "array[" + getElementType() + "]";
   }

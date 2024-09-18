@@ -545,8 +545,8 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
     addSingleFile(Seq(2), IntegerType)
     addSingleFile(Seq(3), IntegerType)
-    val filePath = deltaLog.update().allFiles.first().path
-    val pw = new PrintWriter(new File(tempPath, filePath))
+    val filePath = deltaLog.update().allFiles.first().absolutePath(deltaLog).toUri.getPath
+    val pw = new PrintWriter(filePath)
     pw.write("corrupted")
     pw.close()
 

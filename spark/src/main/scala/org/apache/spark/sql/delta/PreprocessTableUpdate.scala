@@ -37,6 +37,8 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
 
   override def conf: SQLConf = sqlConf
 
+  override protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = true
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: DeltaUpdateTable if u.resolved =>
       u.condition.foreach { cond =>

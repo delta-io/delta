@@ -91,7 +91,21 @@ case class DeltaTableV2(
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = {
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable, tableIdentifier) {
-      DeltaLog.forTable(spark, rootPath, options)
+      // Ideally the table storage properties should always be the same as the options load from
+      // the Delta log, as Delta CREATE TABLE command guarantees it. However, custom catalogs such
+      // as Unity Catalog may add more table storage properties on the fly. We should respect it
+      // and merge the table storage properties and Delta options.
+      val dataSourceOptions = if (catalogTable.isDefined) {
+        // To be safe, here we only extra file system options from table storage properties and
+        // the original `options` has higher priority than the table storage properties.
+        val fileSystemOptions = catalogTable.get.storage.properties.filter { case (k, _) =>
+          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+        }
+        fileSystemOptions ++ options
+      } else {
+        options
+      }
+      DeltaLog.forTable(spark, rootPath, dataSourceOptions)
     }
   }
 

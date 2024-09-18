@@ -42,6 +42,8 @@ import org.apache.spark.sql.types.{DataType, DateType, StringType, StructField, 
 case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
+  override protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = true
+
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case m: DeltaMergeInto if m.resolved => apply(m, true)

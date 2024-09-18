@@ -460,7 +460,8 @@ class RowTrackingBackfillSuite
       assert(
         afterProtocol.minWriterVersion ===
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-      assert(afterProtocol.readerFeatures === None)
+      assert(afterProtocol.readerFeatures === Some(Set(
+        ColumnMappingTableFeature.name)))
       assert(
         afterProtocol.writerFeatures === Some((
           prevProtocol.implicitlyAndExplicitlySupportedFeatures ++

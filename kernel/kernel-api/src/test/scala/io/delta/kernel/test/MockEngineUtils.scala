@@ -89,9 +89,6 @@ trait BaseMockJsonHandler extends JsonHandler {
       selectionVector: Optional[ColumnVector]): ColumnarBatch =
     throw new UnsupportedOperationException("not supported in this test suite")
 
-  override def deserializeStructType(structTypeJson: String): StructType =
-    throw new UnsupportedOperationException("not supported in this test suite")
-
   override def readJsonFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
@@ -161,5 +158,8 @@ trait BaseMockFileSystemClient extends FileSystemClient {
     throw new UnsupportedOperationException("not supported in this test suite")
 
   override def mkdirs(path: String): Boolean =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def delete(path: String): Boolean =
     throw new UnsupportedOperationException("not supported in this test suite")
 }

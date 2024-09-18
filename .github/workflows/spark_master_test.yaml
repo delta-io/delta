@@ -1,7 +1,8 @@
-name: "Delta Spark Master Tests"
+name: "Delta Spark Master"
 on: [push, pull_request]
 jobs:
   test:
+    name: "DSM: Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-20.04
     strategy:
       matrix:

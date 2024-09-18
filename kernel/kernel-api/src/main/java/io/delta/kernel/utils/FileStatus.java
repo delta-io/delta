@@ -74,4 +74,23 @@ public class FileStatus {
   public static FileStatus of(String path, long size, long modificationTime) {
     return new FileStatus(path, size, modificationTime);
   }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    FileStatus that = (FileStatus) o;
+    return Objects.equals(this.path, that.path)
+        && Objects.equals(this.size, that.size)
+        && Objects.equals(this.modificationTime, that.modificationTime);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(path, size, modificationTime);
+  }
 }

@@ -213,4 +213,5 @@ spark.read.format("deltaSharing")
 spark.readStream.format("deltaSharing").option("responseFormat", "delta").load(tablePath)
 ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

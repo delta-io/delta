@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._

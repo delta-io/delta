@@ -170,4 +170,5 @@ properties are set. Available Delta table properties include:
 | Default: `classic`                                                                        |
 +-------------------------------------------------------------------------------------------+
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

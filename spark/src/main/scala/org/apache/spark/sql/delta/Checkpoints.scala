@@ -40,6 +40,7 @@ import org.apache.hadoop.mapreduce.{Job, TaskType}
 import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
@@ -361,7 +362,9 @@ trait Checkpoints extends DeltaLogging {
     //   00015.json
     //   00016.json
     //   00018.checkpoint.parquet
-    snapshotToCheckpoint.ensureCommitFilesBackfilled()
+    // TODO(table-identifier-plumbing): Plumb the right tableIdentifier from the Checkpoint Hook
+    //  and pass it to `ensureCommitFilesBackfilled`.
+    snapshotToCheckpoint.ensureCommitFilesBackfilled(tableIdentifierOpt = None)
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 

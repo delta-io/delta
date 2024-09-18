@@ -28,16 +28,19 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
    *    without clear benefits.
    * 2. Allow creating paths with special characters for better test coverage.
    */
+
+  protected val defaultTempDirPrefix: String = "spark%dir%prefix"
+
   override protected def withTempDir(f: File => Unit): Unit = {
-    withTempDir(prefix = "spark")(f)
+    withTempDir(prefix = defaultTempDirPrefix)(f)
   }
 
   override protected def withTempPaths(numPaths: Int)(f: Seq[File] => Unit): Unit = {
-    withTempPaths(numPaths, prefix = "spark")(f)
+    withTempPaths(numPaths, prefix = defaultTempDirPrefix)(f)
   }
 
   override def withTempPath(f: File => Unit): Unit = {
-    withTempPath(prefix = "spark")(f)
+    withTempPath(prefix = defaultTempDirPrefix)(f)
   }
 
   /**

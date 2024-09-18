@@ -197,9 +197,8 @@ class DeltaTableFeatureSuite
 
     val protocol =
       Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).withFeature(TestLegacyReaderWriterFeature)
-    assert(!protocol.readerFeatures.isDefined)
-    assert(
-      protocol.writerFeatures.get === Set(TestLegacyReaderWriterFeature.name))
+    assert(protocol.readerFeatures.get === Set.empty)
+    assert(protocol.writerFeatures.get === Set(TestLegacyReaderWriterFeature.name))
   }
 
   test("merge protocols") {
@@ -406,9 +405,10 @@ class DeltaTableFeatureSuite
         withTable("tbl") {
           spark.range(0).write.format("delta").saveAsTable("tbl")
           val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-          val protocol = log.update().protocol
-          assert(protocol.minReaderVersion === 2)
-          assert(protocol.minWriterVersion === 5)
+          assert(log.update().protocol === Protocol(2, 7).withFeatures(Seq(
+            AppendOnlyTableFeature,
+            InvariantsTableFeature,
+            ColumnMappingTableFeature)))
           val tblProperties = Seq(s"'$FEATURE_PROP_PREFIX${TestWriterFeature.name}' = 'enabled'",
             s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION")
           sql(buildTablePropertyModifyingCommand(
@@ -416,16 +416,9 @@ class DeltaTableFeatureSuite
           val newProtocol = log.update().protocol
           assert(newProtocol.readerAndWriterFeatureNames === Set(
             AppendOnlyTableFeature.name,
-            ColumnMappingTableFeature.name,
             InvariantsTableFeature.name,
-            CheckConstraintsTableFeature.name,
-            ChangeDataFeedTableFeature.name,
-            GeneratedColumnsTableFeature.name,
-            TestWriterFeature.name,
-            TestLegacyWriterFeature.name,
-            TestLegacyReaderWriterFeature.name,
-            TestRemovableLegacyWriterFeature.name,
-            TestRemovableLegacyReaderWriterFeature.name))
+            ColumnMappingTableFeature.name,
+            TestWriterFeature.name))
         }
       }
     }
@@ -469,7 +462,8 @@ class DeltaTableFeatureSuite
       // Add coordinated commits table feature to the table
       CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(batchSize = 100))
       val tblProperties1 =
-        Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'")
+        Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'",
+          s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}'")
       sql(buildTablePropertyModifyingCommand(
         "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
 

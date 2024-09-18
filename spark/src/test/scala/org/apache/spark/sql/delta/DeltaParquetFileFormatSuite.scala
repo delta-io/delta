@@ -152,7 +152,7 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
             removeRowsFromFile(deltaLog, addFile, Seq(0, 200, 300, 756, 10352, 19999))
           }
 
-          val addFilePath = new Path(tempDir.toString, addFile.path)
+          val addFilePath = addFile.absolutePath(deltaLog)
           assertParquetHasMultipleRowGroups(addFilePath)
 
           val deltaParquetFormat = new DeltaParquetFileFormat(
@@ -258,7 +258,7 @@ class DeltaParquetFileFormatWithPredicatePushdownSuite extends DeltaParquetFileF
       val addFile = deltaLog.update().allFiles.collect()(0)
       removeRowsFromFile(deltaLog, addFile, Seq(0, 200, 300, 756, 10352, 19999))
 
-      val addFilePath = new Path(tempDir.toString, addFile.path)
+      val addFilePath = addFile.absolutePath(deltaLog)
       assertParquetHasMultipleRowGroups(addFilePath)
 
       val deltaParquetFormat = new DeltaParquetFileFormat(

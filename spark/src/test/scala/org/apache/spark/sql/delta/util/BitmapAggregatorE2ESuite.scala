@@ -25,7 +25,9 @@ import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.deletionvectors.{PortableRoaringBitmapArraySerializationFormat, RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
-import org.apache.spark.sql.{Column, QueryTest}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
 class BitmapAggregatorE2ESuite extends QueryTest

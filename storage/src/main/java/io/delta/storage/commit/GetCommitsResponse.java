@@ -23,7 +23,7 @@ import org.apache.hadoop.fs.Path;
 
 /**
  * Response container for
- * {@link io.delta.storage.commit.CommitCoordinatorClient#getCommits(Path, Map, Long, Long)}.
+ * {@link CommitCoordinatorClient#getCommits(TableDescriptor, Long, Long)}.
  */
 public class GetCommitsResponse {
 

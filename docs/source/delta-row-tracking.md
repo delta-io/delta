@@ -111,4 +111,5 @@ The following limitations exist:
 - Row Tracking can currently only be enabled when creating the table or when the table is empty. Enabling row tracking on a non-empty table is currently not supported.
 - Once the Row Tracking feature is added to the table it cannot be removed without recreating the table.
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

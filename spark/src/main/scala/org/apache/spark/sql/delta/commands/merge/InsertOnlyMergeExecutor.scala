@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.expressions.{Alias, CaseWhen, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 

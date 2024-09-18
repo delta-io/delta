@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
 import scala.collection.JavaConverters._
@@ -26,6 +27,7 @@ import com.amazonaws.services.dynamodbv2.model.{AttributeValue, ConditionalCheck
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.dynamodbcommitcoordinator.{DynamoDBCommitCoordinatorClient, DynamoDBCommitCoordinatorClientBuilder}
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, GetCommitsResponse => JGetCommitsResponse}
@@ -156,10 +158,10 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
   extends CommitCoordinatorClientImplSuiteBase {
 
   override protected def createTableCommitCoordinatorClient(
-      deltaLog: DeltaLog)
-      : TableCommitCoordinatorClient = {
+      deltaLog: DeltaLog): TableCommitCoordinatorClient = {
     val cs = TestDynamoDBCommitCoordinatorBuilder(batchSize = batchSize).build(spark, Map.empty)
-    val tableConf = cs.registerTable(deltaLog.logPath, -1L, Metadata(), Protocol(1, 1))
+    val tableConf = cs.registerTable(
+      deltaLog.logPath, Optional.empty(), -1L, Metadata(), Protocol(1, 1))
     TableCommitCoordinatorClient(cs, deltaLog, tableConf.asScala.toMap)
   }
 
@@ -213,10 +215,7 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
         1, // writeCapacityUnits
         skipPathCheck)
       val tableConf = commitCoordinator.registerTable(
-        logPath,
-        -1L,
-        Metadata(),
-        Protocol(1, 1))
+        logPath, Optional.empty(), -1L, Metadata(), Protocol(1, 1))
       val wrongTablePath = new Path(logPath.getParent, "wrongTable")
       val wrongLogPath = new Path(wrongTablePath, logPath.getName)
       val fs = wrongLogPath.getFileSystem(log.newDeltaHadoopConf())

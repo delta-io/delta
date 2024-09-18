@@ -101,7 +101,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
     val foundFiles =
       collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
         _.getPath.split('/').last).toSet
-    val expectedFiles = snapshotFromSpark.allFiles.collect().map(_.path).toSet
+    val expectedFiles = snapshotFromSpark.allFiles.collect().map(_.toPath.toString).toSet
     if (strictFileValidation) {
       assert(foundFiles == expectedFiles)
     } else {

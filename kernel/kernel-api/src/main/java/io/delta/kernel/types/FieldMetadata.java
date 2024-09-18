@@ -111,15 +111,17 @@ public final class FieldMetadata {
     return get(key, FieldMetadata[].class);
   }
 
-  public String toJson() {
-    return metadata.entrySet().stream()
-        .map(e -> String.format("\"%s\" : %s", e.getKey(), valueToJson(e.getValue())))
-        .collect(Collectors.joining(",\n", "{", "}"));
-  }
-
   @Override
   public String toString() {
-    return toJson();
+    return metadata.entrySet().stream()
+        .map(
+            entry ->
+                entry.getKey()
+                    + "="
+                    + (entry.getValue().getClass().isArray()
+                        ? Arrays.toString((Object[]) entry.getValue())
+                        : entry.getValue().toString()))
+        .collect(Collectors.joining(", ", "{", "}"));
   }
 
   @Override
@@ -180,18 +182,6 @@ public final class FieldMetadata {
         type,
         value.getClass());
     return type.cast(value);
-  }
-
-  // TODO this is a hack for now until we have real serialization as part of the JsonHandler
-  /** Wraps string objects in quotations, otherwise converts using toString() */
-  private String valueToJson(Object value) {
-    if (value == null) {
-      return "null";
-    } else if (value instanceof String) {
-      return String.format("\"%s\"", value);
-    } else {
-      return value.toString();
-    }
   }
 
   /** Builder class for {@link FieldMetadata}. */

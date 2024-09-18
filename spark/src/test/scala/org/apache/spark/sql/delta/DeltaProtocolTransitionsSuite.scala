@@ -156,6 +156,38 @@ class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
       expectedProtocol = Protocol(3, 7).withFeature(TestRemovableReaderWriterFeature))
   }
 
+  test("Setting partial versions") {
+    testProtocolTransition(
+      createTableProperties = Seq(
+        ("delta.minWriterVersion", 3.toString)),
+      expectedProtocol = Protocol(1, 3))
+
+    testProtocolTransition(
+      alterTableProperties = Seq(
+        ("delta.minWriterVersion", 3.toString)),
+      expectedProtocol = Protocol(1, 3))
+
+    testProtocolTransition(
+      createTableProperties = Seq(
+        ("delta.minWriterVersion", 3.toString),
+        (s"delta.feature.${DeletionVectorsTableFeature.name}", "supported")),
+      expectedProtocol = Protocol(3, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        CheckConstraintsTableFeature,
+        DeletionVectorsTableFeature)))
+
+    testProtocolTransition(
+      alterTableProperties = Seq(
+        ("delta.minWriterVersion", 3.toString),
+        (s"delta.feature.${DeletionVectorsTableFeature.name}", "supported")),
+      expectedProtocol = Protocol(3, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        CheckConstraintsTableFeature,
+        DeletionVectorsTableFeature)))
+  }
+
   for ((readerVersion, writerVersion) <- Seq((2, 1), (2, 2), (2, 3), (2, 4), (1, 5)))
   test("Invalid legacy protocol normalization" +
     s" - invalidProtocol($readerVersion, $writerVersion)") {
@@ -448,17 +480,42 @@ class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
   test("Default Enabled legacy features") {
     testProtocolTransition(
       createTableProperties = Seq((DeltaConfigs.CHANGE_DATA_FEED.key, true.toString)),
-      expectedProtocol = Protocol(1, 4))
+      expectedProtocol = Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ChangeDataFeedTableFeature)))
 
     testProtocolTransition(
       createTableProperties = Seq(
         ("delta.minReaderVersion", 1.toString),
         ("delta.minWriterVersion", 3.toString),
         (DeltaConfigs.CHANGE_DATA_FEED.key, true.toString)),
+      expectedProtocol = Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        CheckConstraintsTableFeature,
+        ChangeDataFeedTableFeature)))
+
+    testProtocolTransition(
+      createTableProperties = Seq(
+        ("delta.minReaderVersion", 1.toString),
+        ("delta.minWriterVersion", 4.toString),
+        (DeltaConfigs.CHANGE_DATA_FEED.key, true.toString)),
+      expectedProtocol = Protocol(1, 4))
+
+    testProtocolTransition(
+      alterTableProperties = Seq(
+        ("delta.minReaderVersion", 1.toString),
+        ("delta.minWriterVersion", 4.toString),
+        (DeltaConfigs.CHANGE_DATA_FEED.key, true.toString)),
       expectedProtocol = Protocol(1, 4))
 
     withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
-      testProtocolTransition(expectedProtocol = Protocol(1, 4))
+      testProtocolTransition(
+        expectedProtocol = Protocol(1, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          ChangeDataFeedTableFeature)))
     }
 
     testProtocolTransition(
@@ -497,7 +554,10 @@ class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
     testProtocolTransition(
       createTableColumns = Seq(("id", "INT")),
       createTableGeneratedColumns = Seq(("id2", "INT", "id + 1")),
-      expectedProtocol = Protocol(1, 4))
+      expectedProtocol = Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        GeneratedColumnsTableFeature)))
 
     testProtocolTransition(
       createTableColumns = Seq(("id", "INT")),
@@ -517,10 +577,6 @@ class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
     }
 
     testProtocolTransition(
-      alterTableProperties = Seq((DeltaConfigs.CHANGE_DATA_FEED.key, "true")),
-      expectedProtocol = Protocol(1, 4))
-
-    testProtocolTransition(
       alterTableProperties = Seq(
         ("delta.minReaderVersion", 1.toString),
         ("delta.minWriterVersion", 7.toString),
@@ -534,7 +590,27 @@ class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
   test("Column Mapping does not require a manual protocol versions upgrade") {
     testProtocolTransition(
       createTableProperties = Seq((DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")),
-      expectedProtocol = Protocol(2, 5))
+      expectedProtocol = Protocol(2, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ColumnMappingTableFeature)))
+
+    withSQLConf(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED.key -> false.toString) {
+      testProtocolTransition(
+        createTableProperties = Seq(
+          ("delta.minReaderVersion", 1.toString),
+          ("delta.minWriterVersion", 4.toString),
+          (DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")),
+        expectedProtocol = Protocol(2, 5))
+
+      testProtocolTransition(
+        createTableProperties = Seq(
+          ("delta.minReaderVersion", 1.toString),
+          ("delta.minWriterVersion", 4.toString)),
+        alterTableProperties = Seq(
+          (DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")),
+        expectedProtocol = Protocol(2, 5))
+    }
 
     testProtocolTransition(
       createTableProperties = Seq(
@@ -553,7 +629,10 @@ class DeltaProtocolTransitionsSuite extends DeltaProtocolTransitionsBaseSuite {
 
     testProtocolTransition(
       alterTableProperties = Seq((DeltaConfigs.COLUMN_MAPPING_MODE.key, "name")),
-      expectedProtocol = Protocol(2, 5))
+      expectedProtocol = Protocol(2, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ColumnMappingTableFeature)))
 
     testProtocolTransition(
       alterTableProperties = Seq(

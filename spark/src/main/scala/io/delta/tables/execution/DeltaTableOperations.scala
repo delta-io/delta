@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaD
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}

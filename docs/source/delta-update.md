@@ -1014,4 +1014,5 @@ You can use a combination of `merge` and `foreachBatch` (see [foreachbatch](http
     (reported through `StreamingQueryProgress` and visible in the notebook rate graph) may be reported
     as a multiple of the actual rate at which data is generated at the source. This is because `merge` reads the input data multiple times causing the input metrics to be multiplied. If this is a bottleneck, you can cache the batch DataFrame before `merge` and then uncache it after `merge`.
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

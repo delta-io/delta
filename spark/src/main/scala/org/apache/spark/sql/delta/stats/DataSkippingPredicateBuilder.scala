@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.stats
 import org.apache.spark.sql.delta.stats.DeltaStatistics.{MAX, MIN}
 
 import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
 
 /**
  * A trait that defines interfaces for a data skipping predicate builder.

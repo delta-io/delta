@@ -25,6 +25,8 @@ import org.apache.spark.sql.delta.stats.DeltaStatistics.{MIN, NULL_COUNT, NUM_RE
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.JsonUtils
+import com.fasterxml.jackson.databind.node.ObjectNode
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.{col, lit, map_values, when}
@@ -113,11 +115,19 @@ class TightBoundsSuite
       }
 
       val exception = intercept[DeltaIllegalStateException] {
-        txn.commitManually(addFiles: _*)
+        txn.commitActions(DeltaOperations.TestOperation(), addFiles: _*)
       }
       assert(exception.getErrorClass ===
         "DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED")
     }
+  }
+
+  protected def getStats(snapshot: Snapshot, statName: String): Array[Row] = {
+    val statsColumnName = snapshot.getBaseStatsColumnName
+    snapshot
+      .withStatsDeduplicated
+      .select(s"$statsColumnName.$statName")
+      .collect()
   }
 
   protected def getStatFromLastFile(snapshot: Snapshot, statName: String): Row = {
@@ -282,6 +292,79 @@ class TightBoundsSuite
       val statsAfterDelete = getStatsInPartitionOrder(targetLog.update())
       val expectedStatsAfterDelete = Seq(Row(10, false))
       assert(statsAfterDelete === expectedStatsAfterDelete)
+    }
+  }
+
+  def tableAddDVAndTightStats(
+      targetTable: () => io.delta.tables.DeltaTable,
+      targetLog: DeltaLog,
+      deleteCond: String): Unit = {
+    // Add DVs. Stats should have tightBounds = false afterwards.
+    targetTable().delete(deleteCond)
+    val initialStats = getStats(targetLog.update(), "*")
+    assert(initialStats.forall(_.get(4) === false)) // tightBounds
+
+    // Other systems may support Compute Stats that recomputes tightBounds stats on tables with DVs.
+    // Simulate this with a manual update commit that introduces tight stats.
+    val txn = targetLog.startTransaction()
+    val addFiles = txn.snapshot.allFiles.collect().toSeq.map { action =>
+      val node = JsonUtils.mapper.readTree(action.stats).asInstanceOf[ObjectNode]
+      assert(node.has("numRecords"))
+      val numRecords = node.get("numRecords").asInt()
+      action.copy(stats = s"""{ "numRecords" : $numRecords, "tightBounds" : true }""")
+    }
+    txn.commitActions(DeltaOperations.ManualUpdate, addFiles: _*)
+  }
+
+  test("CLONE on table with DVs and tightBound stats") {
+    val targetDF = spark.range(0, 100, 1, 1).toDF()
+    withTempDeltaTable(targetDF) { (targetTable, targetLog) =>
+      val targetPath = targetLog.dataPath.toString
+      tableAddDVAndTightStats(targetTable, targetLog, "id >= 80")
+      // CLONE shouldn't throw
+      // DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED
+      withTempPath("cloned") { clonedPath =>
+        sql(s"CREATE TABLE delta.`$clonedPath` SHALLOW CLONE delta.`$targetPath`")
+      }
+    }
+  }
+
+  test("RESTORE TABLE on table with DVs and tightBound stats") {
+    val targetDF = spark.range(0, 100, 1, 1).toDF()
+    withTempDeltaTable(targetDF) { (targetTable, targetLog) =>
+      val targetPath = targetLog.dataPath.toString
+      // adds version 1 (delete) and 2 (compute stats)
+      tableAddDVAndTightStats(targetTable, targetLog, "id >= 80")
+      // adds version 3 (delete more)
+      targetTable().delete("id < 20")
+      // Restore back to version 2 (after compute stats)
+      // After 2nd delete, new DVs are added to the file, so the restore will
+      // have to recommit the file with old DVs.
+      targetTable().restoreToVersion(2)
+      // Verify that the restored table has DVs and tight bounds.
+      val stats = getStatFromLastFileWithDVs(targetLog.update(), "*")
+      assert(stats.get(4) === true) // tightBounds
+    }
+  }
+
+  test("Row Tracking backfill on table with DVs and tightBound stats") {
+    // Enabling Row Tracking and backfill shouldn't throw
+    // DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED
+    withSQLConf(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "false") {
+      val targetDF = spark.range(0, 100, 1, 1).toDF()
+      withTempDeltaTable(targetDF) { (targetTable, targetLog) =>
+        val targetPath = targetLog.dataPath.toString
+        tableAddDVAndTightStats(targetTable, targetLog, "id >= 80")
+        // Make sure that we start with no RowTracking feature.
+        assert(!RowTracking.isSupported(targetLog.unsafeVolatileSnapshot.protocol))
+        assert(!RowId.isEnabled(targetLog.unsafeVolatileSnapshot.protocol,
+          targetLog.unsafeVolatileSnapshot.metadata))
+
+        sql(s"ALTER TABLE delta.`$targetPath` SET TBLPROPERTIES " +
+          "('delta.enableRowTracking' = 'true')")
+        assert(targetLog.history.getHistory(None)
+          .count(_.operation == DeltaOperations.ROW_TRACKING_BACKFILL_OPERATION_NAME) == 1)
+      }
     }
   }
 }

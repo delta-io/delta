@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{FileNotFoundException, PrintWriter}
+import java.io.{File, FileNotFoundException, PrintWriter}
 
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.GeneratedAlways
 import org.apache.spark.sql.delta.actions.RemoveFile

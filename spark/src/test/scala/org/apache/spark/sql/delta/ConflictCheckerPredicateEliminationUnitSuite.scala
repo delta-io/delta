@@ -19,7 +19,9 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 
-import org.apache.spark.sql.{Column, QueryTest}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.dsl.expressions.DslExpression
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, Rand, ScalarSubquery}
 import org.apache.spark.sql.functions.{col, udf}

@@ -333,7 +333,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
             TestColumnSpec(colName = "id", dataType = LongType),
             TestColumnSpec(colName = "value", dataType = IntegerType))
         )
-        assert(getProtocolVersions == (1, 2) || getProtocolVersions == (2, 5))
+        assert(getProtocolVersions == (1, 2) || getProtocolVersions == (2, 7))
         assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.version == 0)
 
         replaceTable(
@@ -347,8 +347,11 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
             TestColumnSpec(colName = "value", dataType = IntegerType)
           )
         )
-        assert(getProtocolVersions == (1, 6) || getProtocolVersions == (2, 6))
-        assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.version == 1)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+        val protocol = deltaLog.update().protocol
+        assert(getProtocolVersions == (1, 7) ||
+          protocol.readerAndWriterFeatures.contains(IdentityColumnsTableFeature))
+        assert(deltaLog.update().version == 1)
       }
     }
   }

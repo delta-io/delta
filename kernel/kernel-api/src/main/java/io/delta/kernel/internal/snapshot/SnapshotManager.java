@@ -17,10 +17,13 @@
 package io.delta.kernel.internal.snapshot;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
+import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
 import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
+import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
@@ -31,11 +34,13 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.CloseableIterator;
@@ -169,7 +174,14 @@ public class SnapshotManager {
       throws TableNotFoundException {
     long startTimeMillis = System.currentTimeMillis();
     long versionToRead =
-        DeltaHistoryManager.getActiveCommitAtTimestamp(engine, logPath, millisSinceEpochUTC);
+        DeltaHistoryManager.getActiveCommitAtTimestamp(
+                engine,
+                logPath,
+                millisSinceEpochUTC,
+                true /* mustBeRecreatable */,
+                false /* canReturnLastCommit */,
+                false /* canReturnEarliestCommit */)
+            .getVersion();
     logger.info(
         "{}: Took {}ms to fetch version at timestamp {}",
         tablePath,
@@ -179,7 +191,8 @@ public class SnapshotManager {
     return getSnapshotAt(engine, versionToRead);
   }
 
-  public void checkpoint(Engine engine, long version) throws TableNotFoundException, IOException {
+  public void checkpoint(Engine engine, Clock clock, long version)
+      throws TableNotFoundException, IOException {
     logger.info("{}: Starting checkpoint for version: {}", tablePath, version);
     // Get the snapshot corresponding the version
     SnapshotImpl snapshot = (SnapshotImpl) getSnapshotAt(engine, version);
@@ -224,6 +237,15 @@ public class SnapshotManager {
     logger.info("{}: Last checkpoint metadata file is written for version: {}", tablePath, version);
 
     logger.info("{}: Finished checkpoint for version: {}", tablePath, version);
+
+    // Clean up delta log files if enabled.
+    Metadata metadata = snapshot.getMetadata();
+    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(engine, metadata)) {
+      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(engine, metadata));
+    } else {
+      logger.info(
+          "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
+    }
   }
 
   ////////////////////

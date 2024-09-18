@@ -37,6 +37,77 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
     }
   }
 
+  test("Insert Partitioned Table") {
+    val partitionColumns = Array(
+      "str STRING",
+      "i INTEGER",
+      "l LONG",
+      "s SHORT",
+      "b BYTE",
+      "dt DATE",
+      "bin BINARY",
+      "bool BOOLEAN",
+      "ts_ntz TIMESTAMP_NTZ",
+      "ts TIMESTAMP")
+
+    val partitionValues: Array[Any] = Array(
+      "'some_value'",
+      1,
+      1234567L,
+      1000,
+      119,
+      "to_date('2016-12-31', 'yyyy-MM-dd')",
+      "'asdf'",
+      true,
+      "TIMESTAMP_NTZ'2021-12-06 00:00:00'",
+      "TIMESTAMP'2023-08-18 05:00:00UTC-7'"
+    )
+
+    partitionColumns zip partitionValues map {
+      partitionColumnsAndValues =>
+        val partitionColumnName =
+          partitionColumnsAndValues._1.split(" ")(0)
+        val tableName = testTableName + "_" + partitionColumnName
+        withTable(tableName) {
+          write(
+            s"""CREATE TABLE $tableName (${partitionColumnsAndValues._1}, col1 INT)
+               | USING DELTA
+               | PARTITIONED BY ($partitionColumnName)
+               | TBLPROPERTIES (
+               |  'delta.columnMapping.mode' = 'name',
+               |  'delta.enableIcebergCompatV2' = 'true',
+               |  'delta.universalFormat.enabledFormats' = 'iceberg'
+               |)""".stripMargin)
+          write(s"INSERT INTO $tableName VALUES (${partitionColumnsAndValues._2}, 123)")
+          val verificationQuery = s"SELECT col1 FROM $tableName " +
+            s"where ${partitionColumnName}=${partitionColumnsAndValues._2}"
+          // Verify against Delta read and Iceberg read
+          checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
+          checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(123)))
+        }
+    }
+  }
+
+  test("Insert Partitioned Table - Multiple Partitions") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName (id int, ts timestamp, col1 INT)
+           | USING DELTA
+           | PARTITIONED BY (id, ts)
+           | TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      write(s"INSERT INTO $testTableName VALUES (1, TIMESTAMP'2023-08-18 05:00:00UTC-7', 123)")
+      val verificationQuery = s"SELECT col1 FROM $testTableName " +
+        s"where id=1 and ts=TIMESTAMP'2023-08-18 05:00:00UTC-7'"
+      // Verify against Delta read and Iceberg read
+      checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
+      checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(123)))
+    }
+  }
+
   test("CIUD") {
     withTable(testTableName) {
       write(
@@ -95,6 +166,29 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
       val result = read(s"SELECT * FROM $tableFullName")
 
       assert(result.head === data.head)
+    }
+  }
+
+  test("Re-enable test") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName (col1 INT) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV1' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      write(s"INSERT INTO $testTableName VALUES (1)")
+      readAndVerify(testTableName, "col1", "col1", Seq(Row(1)))
+
+      write(s"ALTER TABLE `$testTableName` UNSET TBLPROPERTIES " +
+        s"('delta.universalFormat.enabledFormats')")
+      write(s"""
+               | REORG TABLE $testTableName APPLY
+               | (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = 2))
+               |""".stripMargin)
+      write(s"INSERT INTO $testTableName VALUES (2)")
+      readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2)))
     }
   }
 }

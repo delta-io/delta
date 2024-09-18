@@ -21,7 +21,7 @@ import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.internal.actions.Metadata
 import io.delta.kernel.internal.TableConfig
-import io.delta.storage.commit.{Commit, CommitCoordinatorClient, CommitResponse, GetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.{Commit, CommitCoordinatorClient, CommitResponse, GetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
@@ -29,7 +29,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.{lang, util}
-import java.util.Collections
+import java.util.{Collections, Optional}
 import scala.collection.convert.ImplicitConversions.`map AsScala`
 import scala.collection.JavaConverters._
 
@@ -88,17 +88,18 @@ class CommitCoordinatorProviderSuite extends AnyFunSuite with TestUtils {
 
       assert(
         obj1.registerTable("logPath", 1, null, null) ===
-          obj2.registerTable(new Path("logPath"), 1, null, null))
+          obj2.registerTable(new Path("logPath"), Optional.empty(), 1, null, null))
 
+      val tableDesc =
+        new TableDescriptor(new Path("logPath"), Optional.empty(), Collections.emptyMap())
       assert(
         obj1.getCommits("logPath", Collections.emptyMap(), 1, 2).getLatestTableVersion ===
-          obj2.getCommits(
-            new Path("logPath"), Collections.emptyMap(), 1, 2).getLatestTableVersion)
+          obj2.getCommits(tableDesc, 1, 2).getLatestTableVersion)
 
       assert(
         obj1.commit("logPath", Collections.emptyMap(), 1, null, null).getCommit.getVersion ===
           obj2
-            .commit(null, null, new Path("logPath"), Collections.emptyMap(), 1, null, null)
+            .commit(null, null, tableDesc, 1, null, null)
             .getCommit
             .getVersion)
 
@@ -127,6 +128,7 @@ class CommitCoordinatorProviderSuite extends AnyFunSuite with TestUtils {
 protected trait TestCommitCoordinatorClientBase extends CommitCoordinatorClient {
   override def registerTable(
     logPath: Path,
+    tableIdentifier: Optional[TableIdentifier],
     currentVersion: Long,
     currentMetadata: AbstractMetadata,
     currentProtocol: AbstractProtocol): util.Map[String, String] = {
@@ -136,8 +138,7 @@ protected trait TestCommitCoordinatorClientBase extends CommitCoordinatorClient 
   override def commit(
     logStore: LogStore,
     hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     commitVersion: Long,
     actions: util.Iterator[String],
     updatedActions: UpdatedActions): CommitResponse = {
@@ -145,8 +146,7 @@ protected trait TestCommitCoordinatorClientBase extends CommitCoordinatorClient 
   }
 
   override def getCommits(
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     startVersion: lang.Long,
     endVersion: lang.Long = null): GetCommitsResponse =
     new GetCommitsResponse(Collections.emptyList(), -1)
@@ -154,8 +154,7 @@ protected trait TestCommitCoordinatorClientBase extends CommitCoordinatorClient 
   override def backfillToVersion(
     logStore: LogStore,
     hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     version: Long,
     lastKnownBackfilledVersion: lang.Long): Unit = {}
 
@@ -221,6 +220,7 @@ class TestCommitCoordinatorClient4 extends TestCommitCoordinatorClientBase {
   fileStatus.setPath(new Path("logPath"))
   override def registerTable(
     logPath: Path,
+    tableIdentifier: Optional[TableIdentifier],
     currentVersion: Long,
     currentMetadata: AbstractMetadata,
     currentProtocol: AbstractProtocol): util.Map[String, String] = {
@@ -228,8 +228,7 @@ class TestCommitCoordinatorClient4 extends TestCommitCoordinatorClientBase {
   }
 
   override def getCommits(
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     startVersion: lang.Long,
     endVersion: lang.Long = null): GetCommitsResponse = {
     new GetCommitsResponse(
@@ -239,8 +238,7 @@ class TestCommitCoordinatorClient4 extends TestCommitCoordinatorClientBase {
   override def commit(
     logStore: LogStore,
     hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     commitVersion: Long,
     actions: util.Iterator[String],
     updatedActions: UpdatedActions): CommitResponse = {
@@ -250,12 +248,12 @@ class TestCommitCoordinatorClient4 extends TestCommitCoordinatorClientBase {
   override def backfillToVersion(
     logStore: LogStore,
     hadoopConf: Configuration,
-    logPath: Path,
-    coordinatedCommitsTableConf: util.Map[String, String],
+    tableDesc: TableDescriptor,
     version: Long,
     lastKnownBackfilledVersion: lang.Long): Unit = {
     throw new UnsupportedOperationException(
-      "BackfillToVersion not implemented in TestCommitCoordinatorClient for %s".format(logPath))
+      "BackfillToVersion not implemented in TestCommitCoordinatorClient" +
+        " for %s".format(tableDesc.getLogPath))
   }
 }
 

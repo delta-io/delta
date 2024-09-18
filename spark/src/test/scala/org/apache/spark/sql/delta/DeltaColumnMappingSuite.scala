@@ -482,12 +482,13 @@ class DeltaColumnMappingSuite extends QueryTest
       expectedSchema: StructType,
       ignorePhysicalName: Boolean,
       mode: String,
-      createNewTable: Boolean = true)(fn: => Unit): Unit = {
+      createNewTable: Boolean = true,
+      tableFeaturesProtocolExpected: Boolean = true)(fn: => Unit): Unit = {
     withTable(tableName) {
         fn
       checkProperties(tableName,
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = if (tableFeaturesProtocolExpected) 7 else 5,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(expectedSchema)
       )
@@ -826,7 +827,7 @@ class DeltaColumnMappingSuite extends QueryTest
       checkSchema("t1", schemaWithId)
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(schemaWithId)
       )
@@ -849,7 +850,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(schemaWithIdNested))
       checkSchema(
@@ -871,7 +872,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
 
@@ -886,7 +887,7 @@ class DeltaColumnMappingSuite extends QueryTest
       )
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1",
@@ -938,7 +939,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
       checkSchema("t1",
@@ -960,7 +961,7 @@ class DeltaColumnMappingSuite extends QueryTest
       )
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1",
@@ -998,7 +999,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
       checkSchema("t1", schemaWithId)
@@ -1013,7 +1014,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
 
@@ -1037,7 +1038,7 @@ class DeltaColumnMappingSuite extends QueryTest
       val curMaxId2 = DeltaColumnMapping.findMaxColumnId(schemaWithId) + 1
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1", schemaWithId.add("c", StringType, true, withId(3)))
@@ -1168,8 +1169,10 @@ class DeltaColumnMappingSuite extends QueryTest
         checkAnswer(spark.table(tableName),
           Row("str1", 1) :: Row("str2", 2) :: Row("str3", 3) :: Row("str4", 4) :: Nil)
         // both new table writes and appends should use prefix
-        val pattern = s"[A-Za-z0-9]{$prefixLen}/part-.*parquet"
-        assert(snapshot.allFiles.collect().map(_.path).forall(_.matches(pattern)))
+        val pattern = s"[A-Za-z0-9]{$prefixLen}/.*part-.*parquet"
+        for (file <- snapshot.allFiles.collect()) {
+          assert(file.path.matches(pattern))
+        }
       }
     }
   }
@@ -1568,7 +1571,7 @@ class DeltaColumnMappingSuite extends QueryTest
       files.foreach { f =>
         val footer = ParquetFileReader.readFooter(
           log.newDeltaHadoopConf(),
-          new Path(log.dataPath, f.path),
+          f.absolutePath(log),
           ParquetMetadataConverter.NO_FILTER)
         footer.getFileMetaData.getSchema.getFields.asScala.foreach(f =>
           // getId.intValue will throw NPE if field id does not exist
@@ -1625,7 +1628,8 @@ class DeltaColumnMappingSuite extends QueryTest
       schemaWithDottedColumnNames,
       false,
       "name",
-      createNewTable = false
+      createNewTable = false,
+      tableFeaturesProtocolExpected = false
     ) {
       sql(s"CREATE TABLE t1 (${schemaWithDottedColumnNames.toDDL}) USING DELTA")
       alterTableWithProps("t1", props = Map(

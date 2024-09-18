@@ -97,9 +97,8 @@ class IcebergConversionTransaction(
           tablePath,
           partitionSpec,
           logicalToPhysicalPartitionNames,
-          postCommitSnapshot.statsSchema,
           statsParser,
-          postCommitSnapshot.deltaLog
+          postCommitSnapshot
         )
       )
     }
@@ -138,9 +137,8 @@ class IcebergConversionTransaction(
           tablePath,
           partitionSpec,
           logicalToPhysicalPartitionNames,
-          postCommitSnapshot.statsSchema,
           statsParser,
-          postCommitSnapshot.deltaLog
+          postCommitSnapshot
         )
       )
     }
@@ -148,7 +146,11 @@ class IcebergConversionTransaction(
     def remove(remove: RemoveFile): Unit = {
       overwriter.deleteFile(
         convertDeltaRemoveFileToIcebergDataFile(
-          remove, tablePath, partitionSpec, logicalToPhysicalPartitionNames)
+          remove,
+          tablePath,
+          partitionSpec,
+          logicalToPhysicalPartitionNames,
+          postCommitSnapshot)
       )
     }
   }
@@ -167,7 +169,11 @@ class IcebergConversionTransaction(
       val dataFilesToDelete = removes.map { f =>
         assert(!f.dataChange, "Rewrite operation should not add data")
         convertDeltaRemoveFileToIcebergDataFile(
-          f, tablePath, partitionSpec, logicalToPhysicalPartitionNames)
+          f,
+          tablePath,
+          partitionSpec,
+          logicalToPhysicalPartitionNames,
+          postCommitSnapshot)
       }.toSet.asJava
 
       val dataFilesToAdd = adds.map { f =>
@@ -177,9 +183,8 @@ class IcebergConversionTransaction(
           tablePath,
           partitionSpec,
           logicalToPhysicalPartitionNames,
-          postCommitSnapshot.statsSchema,
           statsParser,
-          postCommitSnapshot.deltaLog
+          postCommitSnapshot
         )
       }.toSet.asJava
 

@@ -2,7 +2,7 @@
 description: Learn how to set up an integration to enable you to read Delta tables from <Redshift>.
 ---
 
-# <Redshift> to <Delta> integration
+# <Redshift> connector
 
 .. admonition::  Experimental
     :class: preview
@@ -130,6 +130,6 @@ This is an experimental integration and its performance and scalability characte
 <Delta> supports schema evolution and queries on a Delta table automatically use the latest schema regardless of the schema defined in the table in the Hive metastore. However, <Redshift> uses the schema defined in its table definition, and will not query with the updated schema until the table definition is updated to the new schema.
 
 
-.. <Redshift> replace:: Redshift Spectrum
-
-.. include:: /shared/replacements.md
+.. <Redshift> replace:: AWS Redshift Spectrum
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

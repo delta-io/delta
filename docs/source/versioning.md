@@ -143,4 +143,5 @@ To upgrade a table to a newer protocol version, use the `DeltaTable.upgradeTable
   delta.upgradeTableProtocol(1, 3) // Upgrades to readerVersion=1, writerVersion=3.
   ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

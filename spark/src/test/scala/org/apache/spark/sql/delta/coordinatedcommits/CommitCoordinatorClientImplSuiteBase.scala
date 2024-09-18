@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider}
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClient

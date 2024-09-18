@@ -16,17 +16,22 @@
 package io.delta.kernel.internal.replay;
 
 import io.delta.kernel.data.ColumnarBatch;
+import java.util.Optional;
 
 /** Internal wrapper class holding information needed to perform log replay. */
-class ActionWrapper {
+public class ActionWrapper {
   private final ColumnarBatch columnarBatch;
   private final boolean isFromCheckpoint;
   private final long version;
+  /* Timestamp of the commit file if isFromCheckpoint=false */
+  private final Optional<Long> timestamp;
 
-  ActionWrapper(ColumnarBatch data, boolean isFromCheckpoint, long version) {
+  ActionWrapper(
+      ColumnarBatch data, boolean isFromCheckpoint, long version, Optional<Long> timestamp) {
     this.columnarBatch = data;
     this.isFromCheckpoint = isFromCheckpoint;
     this.version = version;
+    this.timestamp = timestamp;
   }
 
   public ColumnarBatch getColumnarBatch() {
@@ -39,5 +44,9 @@ class ActionWrapper {
 
   public long getVersion() {
     return version;
+  }
+
+  public Optional<Long> getTimestamp() {
+    return timestamp;
   }
 }

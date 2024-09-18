@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.reflect.runtime.universe._
 
@@ -24,7 +26,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -39,8 +41,7 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         commitVersion: Long,
         actions: java.util.Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
@@ -48,8 +49,7 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
     }
 
     override def getCommits(
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         startVersion: java.lang.Long,
         endVersion: java.lang.Long): JGetCommitsResponse =
       new JGetCommitsResponse(Seq.empty.asJava, -1)
@@ -57,13 +57,13 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
     override def backfillToVersion(
         logStore: LogStore,
         hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
+        tableDesc: TableDescriptor,
         version: Long,
         lastKnownBackfilledVersion: java.lang.Long): Unit = {}
 
     override def registerTable(
         logPath: Path,
+        tableIdentifier: Optional[TableIdentifier],
         currentVersion: Long,
         currentMetadata: AbstractMetadata,
         currentProtocol: AbstractProtocol): java.util.Map[String, String] =

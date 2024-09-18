@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{Commit, CommitCoordinatorClient, GetCommitsResponse}
+import io.delta.storage.commit.{Commit, CommitCoordinatorClient, GetCommitsResponse, TableDescriptor}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -546,8 +546,7 @@ case class ConcurrentBackfillCommitCoordinatorClient(
 ) extends InMemoryCommitCoordinator(batchSize) {
   private val deferredBackfills: mutable.Map[Long, () => Unit] = mutable.Map.empty
   override def getCommits(
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       startVersion: java.lang.Long,
       endVersion: java.lang.Long): GetCommitsResponse = {
     if (ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills) {
@@ -556,7 +555,7 @@ case class ConcurrentBackfillCommitCoordinatorClient(
       deferredBackfills.keys.toSeq.sorted.foreach((version: Long) => deferredBackfills(version)())
       deferredBackfills.clear()
     }
-    super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+    super.getCommits(tableDesc, startVersion, endVersion)
   }
   override def backfill(
       logStore: LogStore,

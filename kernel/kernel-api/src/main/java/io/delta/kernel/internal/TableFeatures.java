@@ -24,10 +24,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StructType;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /** Contains utility methods related to the Delta table feature support in protocol. */
@@ -43,34 +40,40 @@ public class TableFeatures {
             }
           });
 
+  private static final Set<String> SUPPORTED_READER_FEATURES =
+      Collections.unmodifiableSet(
+          new HashSet<String>() {
+            {
+              add("columnMapping");
+              add("deletionVectors");
+              add("timestampNtz");
+              add("vacuumProtocolCheck");
+              add("variantType-preview");
+              add("v2Checkpoint");
+            }
+          });
+
   ////////////////////
   // Helper Methods //
   ////////////////////
 
   public static void validateReadSupportedTable(
-      Protocol protocol, Metadata metadata, String tablePath) {
+      Protocol protocol, String tablePath, Optional<Metadata> metadata) {
     switch (protocol.getMinReaderVersion()) {
       case 1:
         break;
       case 2:
-        ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
+        metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
         break;
       case 3:
         List<String> readerFeatures = protocol.getReaderFeatures();
-        for (String readerFeature : readerFeatures) {
-          switch (readerFeature) {
-            case "columnMapping":
-              ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
-              break;
-            case "deletionVectors": // fall through
-            case "timestampNtz": // fall through
-            case "vacuumProtocolCheck": // fall through
-            case "variantType-preview": // fall through
-            case "v2Checkpoint":
-              break;
-            default:
-              throw DeltaErrors.unsupportedReaderFeature(tablePath, readerFeature);
-          }
+        if (!SUPPORTED_READER_FEATURES.containsAll(readerFeatures)) {
+          Set<String> unsupportedFeatures = new HashSet<>(readerFeatures);
+          unsupportedFeatures.removeAll(SUPPORTED_READER_FEATURES);
+          throw DeltaErrors.unsupportedReaderFeature(tablePath, unsupportedFeatures);
+        }
+        if (readerFeatures.contains("columnMapping")) {
+          metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
         }
         break;
       default:

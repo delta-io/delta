@@ -76,4 +76,5 @@ See [_](delta-drop-feature.md) for more information on dropping Delta table feat
 When dropping the type widening feature, the underlying Parquet files are rewritten when necessary to ensure that the column types in the files match the column types in the Delta table schema.
 After the type widening feature is removed from the table, Delta clients that don't support the feature can read and write to the table.
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

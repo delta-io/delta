@@ -2,9 +2,7 @@
 description: Learn how to set up an integration to enable you to read Delta tables from <Snowflake>.
 ---
 
-# <Delta> to <Snowflake> integration
-
-## <Snowflake> <Delta> connector
+# <Snowflake> connector
 
 Visit the [Snowflake Delta Lake support](https://docs.snowflake.com/en/user-guide/tables-external-intro.html#delta-lake-support) documentation to use the connector.
 
@@ -181,5 +179,5 @@ This is an experimental integration and its performance and scalability characte
 <Delta> supports schema evolution and queries on a Delta table automatically use the latest schema regardless of the schema defined in the table in the Hive metastore. However, <Snowflake> uses the schema defined in its table definition, and will not query with the updated schema until the table definition is updated to the new schema.
 
 .. <Snowflake> replace:: Snowflake
-
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

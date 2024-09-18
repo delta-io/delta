@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.{Map => JMap, Optional}
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
@@ -29,7 +30,9 @@ import io.delta.storage.commit.{
   CommitCoordinatorClient,
   CommitFailedException => JCommitFailedException,
   CommitResponse,
-  GetCommitsResponse => JGetCommitsResponse
+  GetCommitsResponse => JGetCommitsResponse,
+  TableDescriptor,
+  TableIdentifier
 }
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
@@ -150,14 +153,13 @@ class InMemoryCommitCoordinator(val batchSize: Long)
   }
 
   override def getCommits(
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       startVersion: java.lang.Long,
       endVersion: java.lang.Long): JGetCommitsResponse = {
-    withReadLock[JGetCommitsResponse](logPath) {
+    withReadLock[JGetCommitsResponse](tableDesc.getLogPath) {
       val startVersionOpt: Option[Long] = Option(startVersion).map(_.toLong)
       val endVersionOpt: Option[Long] = Option(endVersion).map(_.toLong)
-      val tableData = perTableMap.get(logPath)
+      val tableData = perTableMap.get(tableDesc.getLogPath)
       val effectiveStartVersion = startVersionOpt.getOrElse(0L)
       // Calculate the end version for the range, or use the last key if endVersion is not provided
       val effectiveEndVersion = endVersionOpt.getOrElse(
@@ -187,9 +189,10 @@ class InMemoryCommitCoordinator(val batchSize: Long)
 
   override def registerTable(
       logPath: Path,
+      tableIdentifier: Optional[TableIdentifier],
       currentVersion: Long,
       currentMetadata: AbstractMetadata,
-      currentProtocol: AbstractProtocol): java.util.Map[String, String] = {
+      currentProtocol: AbstractProtocol): JMap[String, String] = {
     val newPerTableData = new PerTableData(currentVersion + 1)
     perTableMap.compute(logPath, (_, existingData) => {
       if (existingData != null) {

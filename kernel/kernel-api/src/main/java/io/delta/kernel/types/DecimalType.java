@@ -58,11 +58,6 @@ public final class DecimalType extends DataType {
   }
 
   @Override
-  public String toJson() {
-    return String.format("\"decimal(%d, %d)\"", precision, scale);
-  }
-
-  @Override
   public String toString() {
     return String.format("Decimal(%d, %d)", precision, scale);
   }

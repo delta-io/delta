@@ -29,6 +29,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.annotation._
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types.StructType
 

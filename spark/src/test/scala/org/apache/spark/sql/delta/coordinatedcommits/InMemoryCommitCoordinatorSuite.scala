@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.storage.commit.{GetCommitsResponse => JGetCommitsResponse}
 import org.apache.hadoop.fs.Path
 
@@ -29,7 +32,8 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
   override protected def createTableCommitCoordinatorClient(
       deltaLog: DeltaLog): TableCommitCoordinatorClient = {
     val cs = InMemoryCommitCoordinatorBuilder(batchSize).build(spark, Map.empty)
-    val conf = cs.registerTable(deltaLog.logPath, -1L, initMetadata, Protocol(1, 1))
+    val conf = cs.registerTable(
+      deltaLog.logPath, Optional.empty(), -1L, initMetadata, Protocol(1, 1))
     TableCommitCoordinatorClient(cs, deltaLog, conf.asScala.toMap)
   }
 

@@ -60,6 +60,7 @@ object IcebergCompatV2 extends IcebergCompat(
     CheckOnlySingleVersionEnabled,
     CheckAddFileHasStats,
     CheckTypeInV2AllowList,
+    CheckPartitionDataTypeInV2AllowList,
     CheckNoPartitionEvolution,
     CheckDeletionVectorDisabled
   )
@@ -394,6 +395,26 @@ object CheckTypeInV2AllowList extends IcebergCompatCheck {
         throw DeltaErrors.icebergCompatUnsupportedDataTypeException(
           context.version, unsupportedType, context.newestMetadata.schema)
       case _ =>
+    }
+  }
+}
+
+object CheckPartitionDataTypeInV2AllowList extends IcebergCompatCheck {
+  private val allowedTypes = Set[Class[_]] (
+    ByteType.getClass, ShortType.getClass, IntegerType.getClass, LongType.getClass,
+    FloatType.getClass, DoubleType.getClass, DecimalType.getClass,
+    StringType.getClass, BinaryType.getClass,
+    BooleanType.getClass,
+    TimestampType.getClass, TimestampNTZType.getClass, DateType.getClass
+  )
+  override def apply(context: IcebergCompatContext): Unit = {
+    val partitionSchema = context.newestMetadata.partitionSchema
+    partitionSchema.fields.find(field => !allowedTypes.contains(field.dataType.getClass))
+    match {
+      case Some(field) =>
+        throw DeltaErrors.icebergCompatUnsupportedPartitionDataTypeException(
+            context.version, field.dataType, partitionSchema)
+       case _ =>
     }
   }
 }

@@ -1359,4 +1359,5 @@ For example, you can pass your storage credentails through DataFrame options:
 
 You can find the details of the Hadoop file system configurations for your storage in [_](/delta-storage.md).
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

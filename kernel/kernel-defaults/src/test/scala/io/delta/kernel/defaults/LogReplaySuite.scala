@@ -113,7 +113,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       .getScanState(defaultEngine)
 
     // schema is updated
-    assert(ScanStateRow.getLogicalSchema(defaultEngine, scanStateRow)
+    assert(ScanStateRow.getLogicalSchema(scanStateRow)
       .fieldNames().asScala.toSet == Set("col1", "col2")
     )
 

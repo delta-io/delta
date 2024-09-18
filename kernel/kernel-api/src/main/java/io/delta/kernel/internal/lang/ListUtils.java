@@ -18,6 +18,7 @@ package io.delta.kernel.internal.lang;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -33,5 +34,23 @@ public final class ListUtils {
 
   public static <T> T last(List<T> list) {
     return list.get(list.size() - 1);
+  }
+
+  /** Remove once supported JDK (build) version is 21 or above */
+  public static <T> T getFirst(List<T> list) {
+    if (list.isEmpty()) {
+      throw new NoSuchElementException();
+    } else {
+      return list.get(0);
+    }
+  }
+
+  /** Remove once supported JDK (build) version is 21 or above */
+  public static <T> T getLast(List<T> list) {
+    if (list.isEmpty()) {
+      throw new NoSuchElementException();
+    } else {
+      return list.get(list.size() - 1);
+    }
   }
 }

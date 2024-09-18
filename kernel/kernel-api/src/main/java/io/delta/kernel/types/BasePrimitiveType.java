@@ -91,9 +91,4 @@ public abstract class BasePrimitiveType extends DataType {
   public String toString() {
     return primitiveTypeName;
   }
-
-  @Override
-  public String toJson() {
-    return String.format("\"%s\"", primitiveTypeName);
-  }
 }

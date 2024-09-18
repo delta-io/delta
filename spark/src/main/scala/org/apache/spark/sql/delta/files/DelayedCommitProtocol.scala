@@ -35,7 +35,9 @@ import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.delta.files.DeltaFileFormatWriter.PartitionedTaskAttemptContextImpl
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StringType, TimestampType}
+import org.apache.spark.util.Utils
 
 /**
  * Writes out the files to `path` and returns a list of them in `addedStatuses`. Includes
@@ -108,6 +110,9 @@ class DelayedCommitProtocol(
     addedFiles = new ArrayBuffer[(Map[String, String], String)]
   }
 
+  /** Prefix added in testing mode to all filenames to test special chars that need URL-encoding. */
+  val FILE_NAME_PREFIX = SQLConf.get.getConf(DeltaSQLConf.TEST_FILE_NAME_PREFIX)
+
   protected def getFileName(
       taskContext: TaskAttemptContext,
       ext: String,
@@ -118,11 +123,9 @@ class DelayedCommitProtocol(
     val split = taskContext.getTaskAttemptID.getTaskID.getId
     val uuid = UUID.randomUUID.toString
     // CDC files (CDC_PARTITION_COL = true) are named with "cdc-..." instead of "part-...".
-    if (partitionValues.get(CDC_PARTITION_COL).contains("true")) {
-      f"cdc-$split%05d-$uuid$ext"
-    } else {
-      f"part-$split%05d-$uuid$ext"
-    }
+    val typePrefix =
+      if (partitionValues.get(CDC_PARTITION_COL).contains("true")) "cdc-" else "part-"
+    f"${FILE_NAME_PREFIX}${typePrefix}${split}%05d-${uuid}${ext}"
   }
 
   protected def parsePartitions(

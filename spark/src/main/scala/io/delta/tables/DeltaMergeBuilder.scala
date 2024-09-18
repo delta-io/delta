@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.spark.annotation._
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.ExtendedAnalysisException
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, NamedExpression}
