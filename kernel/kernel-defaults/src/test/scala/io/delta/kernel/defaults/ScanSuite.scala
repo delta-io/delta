@@ -1642,6 +1642,19 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  test("...") {
+    checkSkipping(
+      goldenTablePath("data-skipping-basic-stats-collated-data"),
+      filterToNumExpFiles = Map(
+        new Predicate("<",
+          new Column("c1"),
+          Literal.ofString("C"))
+          -> 1
+      )
+    )
+  }
+
+
   //////////////////////////////////////////////////////////////////////////////////////////
   // Check the includeStats parameter on ScanImpl.getScanFiles(engine, includeStats)
   //////////////////////////////////////////////////////////////////////////////////////////
