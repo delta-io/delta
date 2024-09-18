@@ -58,8 +58,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
       dropColumnMappingTableFeature()
     }
     checkError(e,
-      DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(".")
-      .getErrorClass,
+      DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(".").getErrorClass,
       parameters = Map("feature" -> "columnMapping"))
   }
 
@@ -76,7 +75,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
       dropColumnMappingTableFeature()
     }
     checkError(e,
-     "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
+      "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
       parameters = Map("invalidColumnNames" -> "col1 with special chars ,;{}()\n\t="))
   }
 
@@ -125,7 +124,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     }
     checkError(
       e,
-     "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+      "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
       parameters = Map(
         "feature" -> "columnMapping",
         "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -168,7 +167,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     }
     checkError(
       e,
-     "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+      "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
       parameters = Map(
         "feature" -> "columnMapping",
         "logRetentionPeriodKey" -> "delta.logRetentionDuration",

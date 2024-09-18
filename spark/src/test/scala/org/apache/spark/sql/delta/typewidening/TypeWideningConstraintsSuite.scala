@@ -57,7 +57,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       // Changing the type of a column that a CHECK constraint depends on is not allowed.
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
         },
         "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
@@ -81,10 +81,10 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
       checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
 
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
         },
-       "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a.x",
           "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
@@ -105,10 +105,10 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("INSERT INTO t VALUES (200)")
           },
-         "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a",
             "columnType" -> "TINYINT",
@@ -128,10 +128,10 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
           },
-         "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a.x",
             "columnType" -> "TINYINT",
@@ -157,7 +157,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql(
               s"""
                  | INSERT INTO t (a) VALUES (
@@ -166,7 +166,7 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
                  |""".stripMargin
             )
           },
-         "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a.x.z",
             "columnType" -> "TINYINT",

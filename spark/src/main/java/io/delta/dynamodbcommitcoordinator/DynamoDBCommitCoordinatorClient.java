@@ -416,7 +416,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                 Long.parseLong(item.get(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION).getN());
         AttributeValue allStoredCommits = item.get(DynamoDBTableEntryConstants.COMMITS);
         ArrayList<Commit> commits = new ArrayList<>();
-        Path unbackfilledCommitsPath = new Path(logPath, CoordinatedCommitsUtils.COMMIT_SUBDIR);
+        Path unbackfilledCommitsPath = CoordinatedCommitsUtils.commitDirPath(logPath);
         for(AttributeValue attr: allStoredCommits.getL()) {
             java.util.Map<String, AttributeValue> commitMap = attr.getM();
             long commitVersion =

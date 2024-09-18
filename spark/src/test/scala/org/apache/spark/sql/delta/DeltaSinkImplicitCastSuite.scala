@@ -141,8 +141,8 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
           stream.write(Long.MaxValue)("CAST(value AS LONG)")
         }
         checkError(
-          exception = ex.getCause.asInstanceOf[SparkThrowable],
-         "CANNOT_UP_CAST_DATATYPE",
+          ex.getCause.asInstanceOf[SparkThrowable],
+          "CANNOT_UP_CAST_DATATYPE",
           parameters = Map(
             "expression" -> "value",
             "sourceType" -> toSQLType("BIGINT"),
@@ -173,8 +173,8 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
           case e => fail(s"Unexpected exception: $e")
         }
         checkError(
-          exception = getSparkArithmeticException(ex),
-         "CAST_OVERFLOW_IN_TABLE_INSERT",
+          getSparkArithmeticException(ex),
+          "CAST_OVERFLOW_IN_TABLE_INSERT",
           parameters = Map(
           "sourceType" -> "\"BIGINT\"",
           "targetType" -> "\"INT\"",
@@ -276,8 +276,8 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
         stream.write(-12)("array(value) AS s")
       }
       checkError(
-        exception = ex.getCause.asInstanceOf[SparkThrowable],
-       "DELTA_FAILED_TO_MERGE_FIELDS",
+        ex.getCause.asInstanceOf[SparkThrowable],
+        "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map(
         "currentField" -> "s",
         "updateField" -> "s")
@@ -473,8 +473,8 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
           stream.write(23)("CAST(value AS LONG)")
         }
         checkError(
-          exception = ex.getCause.asInstanceOf[SparkThrowable],
-         "DELTA_FAILED_TO_MERGE_FIELDS",
+          ex.getCause.asInstanceOf[SparkThrowable],
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
           "currentField" -> "value",
           "updateField" -> "value")

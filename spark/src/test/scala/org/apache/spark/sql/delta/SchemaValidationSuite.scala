@@ -348,7 +348,7 @@ class SchemaValidationSuite
       }
 
       checkErrorMatchPVals(
-        exception = e,
+        e,
         "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map(
           "schemaDiff" -> ".*id.*",
@@ -383,7 +383,7 @@ class SchemaValidationSuite
           .execute()
       }
       checkErrorMatchPVals(
-        exception = e,
+        e,
         "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map(
           "schemaDiff" -> ".*col2.*",

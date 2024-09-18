@@ -492,10 +492,7 @@ class DeltaTableBuilderSuite
           .execute()
       }
 
-      checkError(
-        exception = e,
-        "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY"
-      )
+      checkError(e, "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY")
     }
   }
 }

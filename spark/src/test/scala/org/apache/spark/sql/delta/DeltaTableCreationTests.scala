@@ -2391,7 +2391,7 @@ class DeltaTableCreationSuite
               s" LOCATION '${subdir.getCanonicalPath}'")
         }
         checkError(
-          exception = e,
+          e,
           "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
           parameters = Map(
             "tableName" -> tableName,

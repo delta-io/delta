@@ -289,10 +289,10 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     withTable(tbl) {
       spark.range(10).write.format("delta").saveAsTable(tbl)
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"SELECT * FROM table_changes('$tbl', 0, id)")
         },
-       "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION",
+        "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION",
         parameters = Map("objectName" -> "`id`"),
         queryContext = Array(ExpectedContext(
           fragment = "id",

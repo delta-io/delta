@@ -117,7 +117,7 @@ class UpdateSQLSuite extends UpdateSuiteBase
       SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
     checkError(
-      exception = intercept[AnalysisException] {
+      intercept[AnalysisException] {
         executeUpdate(target = s"delta.`$tempPath`", set = "value = 'false'")
       },
       "CANNOT_UP_CAST_DATATYPE",
@@ -139,11 +139,11 @@ class UpdateSQLSuite extends UpdateSuiteBase
         SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
         DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false") {
     checkError(
-      exception = intercept[AnalysisException] {
+      intercept[AnalysisException] {
         executeUpdate(target = s"delta.`$tempPath`", set = "value = '5'")
       },
       "CANNOT_UP_CAST_DATATYPE",
-        parameters = Map(
+      parameters = Map(
         "expression" -> "'5'",
         "sourceType" -> toSQLType("STRING"),
         "targetType" -> toSQLType("INT"),

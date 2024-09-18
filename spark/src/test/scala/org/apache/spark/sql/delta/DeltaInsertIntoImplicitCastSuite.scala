@@ -71,7 +71,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       expectedResult = ExpectedResult.Failure(ex => {
         checkError(
           ex,
-         "DELTA_FAILED_TO_MERGE_FIELDS",
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "a",
             "updateField" -> "a"
@@ -129,7 +129,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       expectedResult = ExpectedResult.Failure(ex => {
         checkError(
           ex,
-         "DELTA_FAILED_TO_MERGE_FIELDS",
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "a",
             "updateField" -> "a"
@@ -187,7 +187,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       expectedResult = ExpectedResult.Failure(ex => {
         checkError(
           ex,
-         "DELTA_FAILED_TO_MERGE_FIELDS",
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "m",
             "updateField" -> "m"

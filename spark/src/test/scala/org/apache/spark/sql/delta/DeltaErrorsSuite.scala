@@ -477,7 +477,7 @@ trait DeltaErrorsSuiteBase
         Some(s"Delta table $table doesn't exist."))
     }
     checkError(
-      exception = intercept[DeltaIllegalStateException] {
+      intercept[DeltaIllegalStateException] {
         throw DeltaErrors.differentDeltaTableReadByStreamingSource(
           newTableId = "027fb01c-94aa-4cab-87cb-5aab6aec6d17",
           oldTableId = "2edf2c02-bb63-44e9-a84c-517fad0db296")
@@ -961,11 +961,11 @@ trait DeltaErrorsSuiteBase
         SchemaMergingUtils.mergeSchemas(s1, s2)
       }
       checkError(
-        exception = e,
+        e,
         "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map("currentField" -> "c0", "updateField" -> "c0"))
       checkError(
-        exception = e.getCause.asInstanceOf[DeltaAnalysisException],
+        e.getCause.asInstanceOf[DeltaAnalysisException],
         "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         parameters = Map("currentDataType" -> "IntegerType", "updateDataType" -> "StringType"))
     }
@@ -997,7 +997,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           throw DeltaErrors.alterTableChangeColumnException(
             fieldPath = "a.b.c",
             oldField = StructField("c", IntegerType),
@@ -1421,7 +1421,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           throw DeltaErrors.constraintDataTypeMismatch(
             columnPath = Seq("a", "x"),
             columnType = ByteType,
@@ -1438,7 +1438,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           throw DeltaErrors.generatedColumnsDataTypeMismatch(
             columnPath = Seq("a", "x"),
             columnType = ByteType,
@@ -1916,7 +1916,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaIllegalStateException] {
+        intercept[DeltaIllegalStateException] {
           throw MaterializedRowId.missingMetadataException("table_name")
         },
         "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
@@ -1928,7 +1928,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaIllegalStateException] {
+        intercept[DeltaIllegalStateException] {
           throw MaterializedRowCommitVersion.missingMetadataException("table_name")
         },
         "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",

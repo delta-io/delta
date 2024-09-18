@@ -1585,8 +1585,8 @@ class CoordinatedCommitsSuite
           s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
       }
       checkError(
-        exception = e,
-       "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+        e,
+        "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
     }
@@ -1605,8 +1605,8 @@ class CoordinatedCommitsSuite
           s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}')")
       }
       checkError(
-        exception = e,
-       "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
+        e,
+        "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
         sqlState = "42616",
         parameters = Map[String, String]())
     }
@@ -1626,8 +1626,8 @@ class CoordinatedCommitsSuite
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
       }
       checkError(
-        exception = e,
-       "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+        e,
+        "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
     }
@@ -1643,8 +1643,8 @@ class CoordinatedCommitsSuite
             s"'${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
         }
         checkError(
-          exception = e,
-         "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES",
+          e,
+          "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES",
           sqlState = "42616",
           parameters = Map("Command" -> "ALTER"))
       }
@@ -1664,8 +1664,8 @@ class CoordinatedCommitsSuite
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}')")
       }
       checkError(
-        exception = e,
-       "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+        e,
+        "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
     }

@@ -267,8 +267,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                   assert(dataTypeOpt.nonEmpty, s"Can't find column $colName " +
                     s"in schema ${tableSchema.treeString}")
                   checkError(
-                    exception = e,
-                   "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
+                    e,
+                    "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
                     parameters = Map("columnsWithDataTypes" -> s"$colName : ${dataTypeOpt.get.sql}")
                   )
                 }
@@ -287,8 +287,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
           "CREATE", testTable, "a INT, b INT, c INT, d INT, e INT", "a, b, c, d, e")
       }
       checkError(
-        exception = e,
-       "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+        e,
+        "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
         parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
       )
     }
@@ -305,8 +305,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             "CREATE", testTable, sourceTable, "a, b, c, d, e", location = location)
         }
         checkError(
-          exception = e,
-         "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+          e,
+          "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
           parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
         )
       }
@@ -354,8 +354,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                 indexedColumns,
                 Some(tableSchema)))
             checkError(
-              exception = e,
-             "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+              e,
+              "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
               parameters = Map(
                 "columns" -> "col1.col12, col2",
                 "schema" -> """root
@@ -411,8 +411,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                   None,
                   location = Some(dir.getPath)))
               checkError(
-                exception = e,
-               "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+                e,
+                "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
                 parameters = Map(
                   "columns" -> "col1.col12, col2",
                   "schema" -> """root
@@ -456,8 +456,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             indexedColumns,
             Some(nonEligibleTableSchema)))
         checkError(
-          exception = e,
-         "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
+          e,
+          "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
           parameters = Map("columnsWithDataTypes" -> "col1.col11 : ARRAY<INT>")
         )
       }
@@ -553,8 +553,8 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1)")
       }
       checkError(
-        exception = e,
-       "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        e,
+        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
         parameters = Map("columnList" -> "col1")
       )
       // Drop non-clustering columns are allowed.
@@ -568,8 +568,8 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1, col2)")
       }
       checkError(
-        exception = e,
-       "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        e,
+        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
         parameters = Map("columnList" -> "col1,col2")
       )
     }
@@ -582,8 +582,8 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1, col3)")
       }
       checkError(
-        exception = e,
-       "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        e,
+        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
         parameters = Map("columnList" -> "col1")
       )
     }
@@ -659,7 +659,7 @@ trait ClusteredTableDDLSuiteBase
       }
       checkError(
         e,
-       "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+        "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
         parameters = Map(
           "numColumnsLimit" -> "4",
           "actualNumColumns" -> "5")
@@ -782,8 +782,8 @@ trait ClusteredTableDDLSuiteBase
         sql(s"OPTIMIZE $testTable ZORDER BY (a)")
       }
       checkError(
-        exception = e2,
-       "DELTA_CLUSTERING_WITH_ZORDER_BY",
+        e2,
+        "DELTA_CLUSTERING_WITH_ZORDER_BY",
         parameters = Map("zOrderBy" -> "a")
       )
     }
@@ -911,7 +911,7 @@ trait ClusteredTableDDLSuiteBase
       }
       checkError(
         e,
-       "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
         parameters = Map("prop" -> "clusteringColumns"))
     }
   }
@@ -1169,7 +1169,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-         "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "",
@@ -1194,7 +1194,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-         "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "col2",
@@ -1235,7 +1235,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-         "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "col1",

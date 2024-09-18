@@ -123,7 +123,7 @@ class DeltaVariantSuite
   test("VariantType may not be used as a partition column") {
     withTable("delta_test") {
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(
             """CREATE TABLE delta_test(s STRING, v VARIANT)
               |USING delta

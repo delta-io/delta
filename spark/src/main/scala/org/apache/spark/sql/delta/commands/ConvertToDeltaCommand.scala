@@ -376,13 +376,7 @@ abstract class ConvertToDeltaCommandBase(
         createdTime = Some(System.currentTimeMillis()))
       txn.updateMetadataForNewTable(metadata)
 
-      // TODO: we have not decided on how to implement CONVERT TO DELTA under column mapping modes
-      //  for some convert targets so we block this feature for them here
-      checkColumnMapping(txn.metadata, targetTable)
-      RowTracking.checkStatsCollectedIfRowTrackingSupported(
-        txn.protocol,
-        collectStats,
-        statsEnabled)
+      checkConversionIsAllowed(txn, targetTable)
 
       val numFiles = targetTable.numFiles
       val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs)
@@ -442,6 +436,18 @@ abstract class ConvertToDeltaCommandBase(
     }
   }
 
+  /** Check if the conversion is allowed. */
+  private def checkConversionIsAllowed(
+      txn: OptimisticTransaction,
+      targetTable: ConvertTargetTable): Unit = {
+    // TODO: we have not decided on how to implement CONVERT TO DELTA under column mapping modes
+    //  for some convert targets so we block this feature for them here
+    checkColumnMapping(txn.metadata, targetTable)
+    RowTracking.checkStatsCollectedIfRowTrackingSupported(
+      txn.protocol,
+      collectStats,
+      statsEnabled)
+  }
 }
 
 case class ConvertToDeltaCommand(

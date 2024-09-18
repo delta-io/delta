@@ -407,7 +407,7 @@ class DeltaSinkSuite
             .save(outputDir.getCanonicalPath)
         }
         checkError(
-          exception = e,
+          e,
           "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map("currentField" -> "id", "updateField" -> "id"))
       } finally {
@@ -442,7 +442,7 @@ class DeltaSinkSuite
         }
         assert(wrapperException.cause.isInstanceOf[AnalysisException])
         checkError(
-          exception = wrapperException.cause.asInstanceOf[AnalysisException],
+          wrapperException.cause.asInstanceOf[AnalysisException],
           "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map("currentField" -> "id", "updateField" -> "id"))
       }

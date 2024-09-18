@@ -41,6 +41,35 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
   }
 
+  test("protocol-related properties are not considered during duplicate table creation") {
+    def createTable(tableName: String, location: String): Unit = {
+      sql(s"""
+             |CREATE TABLE $tableName (id INT, val STRING)
+             |USING DELTA
+             |LOCATION '$location'
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.minReaderVersion' = '2',
+             |  'delta.minWriterVersion' = '5'
+             |)""".stripMargin
+      )
+    }
+    withTempDir { dir =>
+      val table1 = "t1"
+      val table2 = "t2"
+      withTable(table1, table2) {
+        withSQLConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
+          createTable(table1, dir.getCanonicalPath)
+          createTable(table2, dir.getCanonicalPath)
+          val catalogTable1 = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table1))
+          val catalogTable2 = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table2))
+          assert(catalogTable1.properties("delta.columnMapping.mode") == "name")
+          assert(catalogTable2.properties("delta.columnMapping.mode") == "name")
+        }
+      }
+    }
+  }
+
   test("table creation with ambiguous paths only allowed with legacy flag") {
     // ambiguous paths not allowed
     withTempDir { foo =>
