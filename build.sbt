@@ -260,6 +260,12 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       projectName = "delta-connect-common",
       emptyValue = ()
     ).value,
+    assembly := runTaskOnlyOnSparkMaster(
+      task = assembly,
+      taskName = "assembly",
+      projectName = "delta-connect-common",
+      emptyValue = file("")
+    ).value,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
       "io.grpc" % "grpc-protobuf" % grpcVersion,
@@ -317,6 +323,12 @@ lazy val connectClient = (project in file("spark-connect/client"))
       taskName = "publish",
       projectName = "delta-connect-client",
       emptyValue = ()
+    ).value,
+    assembly := runTaskOnlyOnSparkMaster(
+      task = assembly,
+      taskName = "assembly",
+      projectName = "delta-connect-client",
+      emptyValue = file("")
     ).value,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
@@ -423,6 +435,12 @@ lazy val connectServer = (project in file("spark-connect/server"))
       taskName = "publish",
       projectName = "delta-connect-server",
       emptyValue = ()
+    ).value,
+    assembly := runTaskOnlyOnSparkMaster(
+      task = assembly,
+      taskName = "assembly",
+      projectName = "delta-connect-server",
+      emptyValue = file("")
     ).value,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
