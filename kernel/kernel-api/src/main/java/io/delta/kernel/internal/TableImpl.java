@@ -108,7 +108,7 @@ public class TableImpl implements Table {
   @Override
   public void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
-    snapshotManager.checkpoint(engine, version);
+    snapshotManager.checkpoint(engine, clock, version);
   }
 
   @Override
