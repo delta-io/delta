@@ -463,9 +463,9 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         val parser = new DeltaSqlParser(new SparkSqlParser())
         val sql =
           clusterByStatement(clause, asSelect, "a int, b string", "CLUSTER BY (a) CLUSTER BY (b)")
-        checkError(exception = intercept[ParseException] {
+        checkError(intercept[ParseException] {
           parser.parsePlan(sql)
-        }, errorClass = "DUPLICATE_CLAUSES", parameters = Map("clauseName" -> "CLUSTER BY"))
+        }, "DUPLICATE_CLAUSES", parameters = Map("clauseName" -> "CLUSTER BY"))
       }
 
       test("CLUSTER BY set clustering column property is ignored - " +
@@ -492,9 +492,9 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
             "CLUSTER BY (a) PARTITIONED BY (b)")
         val errorMsg = "Clustering and partitioning cannot both be specified. " +
           "Please remove PARTITIONED BY if you want to create a Delta table with clustering"
-        checkError(exception = intercept[ParseException] {
+        checkError(intercept[ParseException] {
           parser.parsePlan(sql)
-        }, errorClass = "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
+        }, "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
       }
 
       test(s"CLUSTER BY with bucketing - $clause TABLE asSelect = $asSelect") {
@@ -508,9 +508,9 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         val errorMsg = "Clustering and bucketing cannot both be specified. " +
           "Please remove CLUSTERED BY INTO BUCKETS if you " +
           "want to create a Delta table with clustering"
-        checkError(exception = intercept[ParseException] {
+        checkError(intercept[ParseException] {
           parser.parsePlan(sql)
-        }, errorClass = "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
+        }, "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
       }
     }
   }

@@ -110,11 +110,11 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     sql(s"CREATE TABLE delta.`$tempPath` (a int) USING DELTA " +
        s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
     checkError(
-      exception = intercept[SparkException] {
+      intercept[SparkException] {
         sql(s"ALTER TABLE delta.`$tempPath` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'bla')")
       },
-      errorClass = "_LEGACY_ERROR_TEMP_2045",
+      "_LEGACY_ERROR_TEMP_2045",
       parameters = Map(
         "message" -> "For input string: \"bla\""
       )
@@ -128,10 +128,10 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
     checkError(
-      exception = intercept[AnalysisException] {
+      intercept[AnalysisException] {
         sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE SMALLINT")
       },
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+      "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
       parameters = Map(
         "fieldPath" -> "a",
         "oldField" -> "TINYINT",
@@ -147,10 +147,10 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
       s"SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
     checkError(
-      exception = intercept[AnalysisException] {
+      intercept[AnalysisException] {
         sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
       },
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+      "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
       parameters = Map(
         "fieldPath" -> "a",
         "oldField" -> "SMALLINT",
@@ -192,12 +192,12 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some(databaseName)))
 
         checkError(
-          exception = intercept[DeltaTableFeatureException] {
+          intercept[DeltaTableFeatureException] {
             sql(s"ALTER TABLE $databaseName.$tableName " +
               s"DROP FEATURE '${TypeWideningPreviewTableFeature.name}'"
             ).collect()
           },
-          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
             "feature" -> TypeWideningPreviewTableFeature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
@@ -442,10 +442,10 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     }
 
     checkError(
-      exception = intercept[DeltaIllegalStateException] {
+      intercept[DeltaIllegalStateException] {
         readDeltaTable(tempPath).collect()
       },
-      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
       parameters = Map(
         "fieldName" -> "a.element",
         "fromType" -> "INT",
