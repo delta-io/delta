@@ -169,7 +169,7 @@ public class MetadataCleanup {
           lastSeenCheckpointFiles.add(nextFile.getPath());
           lastSeenCheckpointVersion = newLastSeenCheckpointVersion;
         }
-        // TODO: do we need to delete unknown file types?
+        // Ignore non-delta and non-checkpoint files.
       }
     }
     logger.info("{}: Deleted {} log files older than {}", tablePath, numDeleted, fileCutOffTime);
