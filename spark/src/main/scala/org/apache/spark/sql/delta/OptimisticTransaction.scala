@@ -2225,6 +2225,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     commitEndNano = System.nanoTime()
 
+    executionObserver.beginPostCommit()
     val postCommitSnapshot = deltaLog.updateAfterCommit(
       attemptVersion,
       commit,
