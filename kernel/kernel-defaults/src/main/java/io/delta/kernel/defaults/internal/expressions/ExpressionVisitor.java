@@ -98,8 +98,10 @@ abstract class ExpressionVisitor<R> {
       case ">":
       case ">=":
       case "IS NOT DISTINCT FROM":
-        if (expression instanceof Predicate) {
-          return visitComparator((Predicate) expression);
+        if (expression instanceof CollatedPredicate) {
+          CollatedPredicate collatedPredicate = (CollatedPredicate) expression;
+          return visitComparator(new CollatedPredicate(
+                  name, children.get(0), children.get(1), collatedPredicate.getCollationIdentifier()));
         } else {
           return visitComparator(new Predicate(name, children));
         }
