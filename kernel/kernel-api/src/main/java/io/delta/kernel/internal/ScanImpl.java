@@ -255,11 +255,8 @@ public class ScanImpl implements Scan {
   private Optional<DataSkippingPredicate> getDataSkippingFilter() {
     return getDataFilters()
         .flatMap(
-            dataFilters -> {
-              dataFilters = DataSkippingUtils.omitCollatedPredicateFromDataSkippingFilter(dataFilters);
-              return DataSkippingUtils.constructDataSkippingFilter(
-                      dataFilters, metadata.getDataSchema());
-            }
+            dataFilters -> DataSkippingUtils.constructDataSkippingFilter(
+                      dataFilters, metadata.getDataSchema())
         );
   }
 
