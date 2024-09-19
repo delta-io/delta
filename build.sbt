@@ -444,7 +444,7 @@ lazy val spark = (project in file("spark"))
 
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-    testListeners += TestTimeListener,
+    Test / testListeners += TestTimeListener,
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
