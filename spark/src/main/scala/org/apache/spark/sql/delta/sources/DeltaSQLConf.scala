@@ -1606,6 +1606,21 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_COLUMN_MAPPING_STRIP_METADATA =
+    buildConf("columnMapping.stripMetadata")
+      .doc(
+        """
+          |Transactions might try to update the schema of a table with columns that contain
+          |column mapping metadata, even when column mapping is not enabled. For example, this
+          |can happen when transactions copy the schema from another table. When this setting is
+          |enabled, we will strip the column mapping metadata from the schema before applying it.
+          |Note that this config applies only when the existing schema of the table does not
+          |contain any column mapping metadata.
+          |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +
