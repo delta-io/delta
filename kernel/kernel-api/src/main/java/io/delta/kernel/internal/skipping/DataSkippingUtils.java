@@ -415,7 +415,7 @@ public class DataSkippingUtils {
             CollationIdentifier collationIdentifier = ((CollatedPredicate) dataFilters).getCollationIdentifier();
             return Optional.of(
                 constructComparatorDataSkippingFilters(
-                        dataFilters.getName(), leftCol, rightLit, schemaHelper, Optional.of(collationIdentifier)));
+                    dataFilters.getName(), leftCol, rightLit, schemaHelper, Optional.of(collationIdentifier)));
           }
           if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
               && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
