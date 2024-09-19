@@ -36,8 +36,8 @@ object TestTimeListener extends TestReportListener {
   private val testResults = new ConcurrentHashMap[String, Seq[(String, Long, String)]]()
 
   /** Generate a unique file name per JVM using process ID and timestamp */
-  private val jvmId: String = ManagementFactory.getRuntimeMXBean().getName.split("@")(0)
-  private val individualTestCsvPath = s"test_results_jvm_${jvmId}.csv"
+  private val jvmId = ManagementFactory.getRuntimeMXBean().getName.split("@")(0)
+  private val individualTestCsvPath = s"test_results_${jvmId}_${System.currentTimeMillis()}.csv"
 
   /** Lock to ensure only one thread writes to a file at a time within this JVM */
   private val writeLock = new ReentrantLock()
