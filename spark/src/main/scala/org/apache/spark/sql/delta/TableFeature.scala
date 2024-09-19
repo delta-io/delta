@@ -540,10 +540,7 @@ object ColumnMappingTableFeature
 
   override def validateRemoval(snapshot: Snapshot): Boolean = {
     val schemaHasNoColumnMappingMetadata =
-      SchemaMergingUtils.explode(snapshot.schema).forall { case (_, col) =>
-        !DeltaColumnMapping.hasPhysicalName(col) &&
-          !DeltaColumnMapping.hasColumnId(col)
-      }
+      !DeltaColumnMapping.schemaHasColumnMappingMetadata(snapshot.schema)
     val metadataHasNoMappingMode = snapshot.metadata.columnMappingMode match {
       case NoMapping => true
       case _ => false

@@ -555,6 +555,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
     newMetadataTmp = DeltaColumnMapping.verifyAndUpdateMetadataChange(
+      spark,
       deltaLog,
       protocolBeforeUpdate,
       snapshot.metadata,
