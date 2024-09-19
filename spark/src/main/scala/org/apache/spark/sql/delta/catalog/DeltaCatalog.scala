@@ -347,21 +347,24 @@ class DeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]) : Table =
     recordFrameProfile("DeltaCatalog", "createTable") {
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-        val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
-        writeOptions.foreach { case (k, v) =>
-          // Continue putting in Delta prefixed options to avoid breaking workloads
-          if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
-            props.put(k, v)
-          }
+        // TODO: we should extract write options from table properties for all the cases. We
+        //       can remove the UC check when we have confidence.
+        val respectOptions = isUnityCatalog || properties.containsKey("test.simulateUC")
+        val (props, writeOptions) = if (respectOptions) {
+          val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
+          expandTableProps(props, writeOptions, spark.sessionState.conf)
+          props.remove("test.simulateUC")
+          (props, writeOptions)
+        } else {
+          (properties, Map.empty[String, String])
         }
+
         createDeltaTable(
           ident,
           schema,
           partitions,
-          // TODO: we should extract write options from table properties for all the cases. We
-          //       can remove the UC check when we have confidence.
-          if (isUnityCatalog) props else properties,
-          if (isUnityCatalog) writeOptions else Map.empty,
+          props,
+          writeOptions,
           sourceQuery = None,
           TableCreationModes.Create
         )
@@ -553,6 +556,23 @@ class DeltaCatalog extends DelegatingCatalogExtension
     (props, writeOptions.asScala.toMap)
   }
 
+  private def expandTableProps(
+      props: util.Map[String, String],
+      options: Map[String, String],
+      conf: SQLConf): Unit = {
+    if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
+      // Legacy behavior
+      options.foreach { case (k, v) => props.put(k, v) }
+    } else {
+      options.foreach { case (k, v) =>
+        // Continue putting in Delta prefixed options to avoid breaking workloads
+        if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
+          props.put(k, v)
+        }
+      }
+    }
+  }
+
   /**
    * A staged delta table, which creates a HiveMetaStore entry and appends data if this was a
    * CTAS/RTAS command. We have a ugly way of using this API right now, but it's the best way to
@@ -578,17 +598,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       if (writeOptions.isEmpty && sqlWriteOptions.nonEmpty) {
         writeOptions = sqlWriteOptions
       }
-      if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
-        // Legacy behavior
-        writeOptions.foreach { case (k, v) => props.put(k, v) }
-      } else {
-        writeOptions.foreach { case (k, v) =>
-          // Continue putting in Delta prefixed options to avoid breaking workloads
-          if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
-            props.put(k, v)
-          }
-        }
-      }
+      expandTableProps(props, writeOptions, conf)
       createDeltaTable(
         ident,
         schema,
