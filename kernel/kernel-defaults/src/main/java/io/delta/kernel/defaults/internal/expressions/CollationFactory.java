@@ -1,17 +1,16 @@
 package io.delta.kernel.defaults.internal.expressions;
 
+import static io.delta.kernel.defaults.internal.expressions.CollationFactory.Collation.DEFAULT_COLLATION;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.STRING_COMPARATOR;
+import static io.delta.kernel.expressions.CollationIdentifier.*;
+
 import com.ibm.icu.text.Collator;
 import com.ibm.icu.util.ULocale;
 import io.delta.kernel.expressions.CollationIdentifier;
 import io.delta.kernel.internal.util.Tuple2;
-
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
-
-import static io.delta.kernel.defaults.internal.expressions.CollationFactory.Collation.DEFAULT_COLLATION;
-import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.STRING_COMPARATOR;
-import static io.delta.kernel.expressions.CollationIdentifier.*;
 
 public class CollationFactory {
   private static final Map<CollationIdentifier, Collation> collationMap = new ConcurrentHashMap<>();
@@ -36,7 +35,8 @@ public class CollationFactory {
       } else if (collationIdentifier.getProvider().equals(PROVIDER_ICU)) {
         collation = ICUCollationFactory.fetchCollation(collationIdentifier);
       } else {
-        throw new IllegalArgumentException(String.format("Invalid collation provider: %s.", collationIdentifier.getProvider()));
+        throw new IllegalArgumentException(
+            String.format("Invalid collation provider: %s.", collationIdentifier.getProvider()));
       }
       collationMap.put(collationIdentifier, collation);
       return collation;
@@ -49,7 +49,8 @@ public class CollationFactory {
         return DEFAULT_COLLATION;
       } else {
         // TODO UTF8_LCASE
-        throw new IllegalArgumentException(String.format("Invalid collation identifier: %s.", collationIdentifier));
+        throw new IllegalArgumentException(
+            String.format("Invalid collation identifier: %s.", collationIdentifier));
       }
     }
   }
@@ -60,7 +61,8 @@ public class CollationFactory {
      * collation.
      */
     private enum CaseSensitivity {
-      CS, CI
+      CS,
+      CI
     }
 
     /**
@@ -68,34 +70,35 @@ public class CollationFactory {
      * collation.
      */
     private enum AccentSensitivity {
-      AS, AI
+      AS,
+      AI
     }
 
-    /**
-     * Mapping of locale names to corresponding `ULocale` instance.
-     */
+    /** Mapping of locale names to corresponding `ULocale` instance. */
     private static final Map<String, ULocale> ICULocaleMap = new HashMap<>();
 
     private static Collation fetchCollation(CollationIdentifier collationIdentifier) {
-      if (collationIdentifier.getVersion().isPresent() &&
-              !collationIdentifier.getVersion().get().equals(ICU_COLLATOR_VERSION)) {
-        throw new IllegalArgumentException(String.format("Invalid collation version: %s.", collationIdentifier.getVersion().get()));
+      if (collationIdentifier.getVersion().isPresent()
+          && !collationIdentifier.getVersion().get().equals(ICU_COLLATOR_VERSION)) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Invalid collation version: %s.", collationIdentifier.getVersion().get()));
       }
 
       String locale = getICULocale(collationIdentifier);
 
-      Tuple2<CaseSensitivity, AccentSensitivity> caseAndAccentSensitivity = getICUCaseAndAccentSensitivity(collationIdentifier, locale);
+      Tuple2<CaseSensitivity, AccentSensitivity> caseAndAccentSensitivity =
+          getICUCaseAndAccentSensitivity(collationIdentifier, locale);
       CaseSensitivity caseSensitivity = caseAndAccentSensitivity._1;
       AccentSensitivity accentSensitivity = caseAndAccentSensitivity._2;
 
       Collator collator = getICUCollator(locale, caseSensitivity, accentSensitivity);
 
-      return new Collation(
-              collationIdentifier,
-              collator::compare);
+      return new Collation(collationIdentifier, collator::compare);
     }
 
-    private static String collationName(String locale, CaseSensitivity caseSensitivity, AccentSensitivity accentSensitivity) {
+    private static String collationName(
+        String locale, CaseSensitivity caseSensitivity, AccentSensitivity accentSensitivity) {
       StringBuilder builder = new StringBuilder();
       builder.append(locale);
       if (caseSensitivity != CaseSensitivity.CS) {
@@ -124,64 +127,66 @@ public class CollationFactory {
         }
       }
       if (lastPos == -1) {
-        throw new IllegalArgumentException(String.format("Invalid collation name: %s.", collationIdentifier.toStringWithoutVersion()));
+        throw new IllegalArgumentException(
+            String.format(
+                "Invalid collation name: %s.", collationIdentifier.toStringWithoutVersion()));
       } else {
         return collationName.substring(0, lastPos);
       }
     }
 
-    private static Tuple2<CaseSensitivity, AccentSensitivity> getICUCaseAndAccentSensitivity(CollationIdentifier collationIdentifier, String locale) {
+    private static Tuple2<CaseSensitivity, AccentSensitivity> getICUCaseAndAccentSensitivity(
+        CollationIdentifier collationIdentifier, String locale) {
       String collationName = collationIdentifier.getName();
 
       // Try all combinations of AS/AI and CS/CI.
       CaseSensitivity caseSensitivity;
       AccentSensitivity accentSensitivity;
-      if (collationName.equals(locale) ||
-              collationName.equals(locale + "_AS") ||
-              collationName.equals(locale + "_CS") ||
-              collationName.equals(locale + "_AS_CS") ||
-              collationName.equals(locale + "_CS_AS")
-      ) {
+      if (collationName.equals(locale)
+          || collationName.equals(locale + "_AS")
+          || collationName.equals(locale + "_CS")
+          || collationName.equals(locale + "_AS_CS")
+          || collationName.equals(locale + "_CS_AS")) {
         caseSensitivity = CaseSensitivity.CS;
         accentSensitivity = AccentSensitivity.AS;
-      } else if (collationName.equals(locale + "_CI") ||
-              collationName.equals(locale + "_AS_CI") ||
-              collationName.equals(locale + "_CI_AS")) {
+      } else if (collationName.equals(locale + "_CI")
+          || collationName.equals(locale + "_AS_CI")
+          || collationName.equals(locale + "_CI_AS")) {
         caseSensitivity = CaseSensitivity.CI;
         accentSensitivity = AccentSensitivity.AS;
-      } else if (collationName.equals(locale + "_AI") ||
-              collationName.equals(locale + "_CS_AI") ||
-              collationName.equals(locale + "_AI_CS")) {
+      } else if (collationName.equals(locale + "_AI")
+          || collationName.equals(locale + "_CS_AI")
+          || collationName.equals(locale + "_AI_CS")) {
         caseSensitivity = CaseSensitivity.CS;
         accentSensitivity = AccentSensitivity.AI;
-      } else if (collationName.equals(locale + "_AI_CI") ||
-              collationName.equals(locale + "_CI_AI")) {
+      } else if (collationName.equals(locale + "_AI_CI")
+          || collationName.equals(locale + "_CI_AI")) {
         caseSensitivity = CaseSensitivity.CI;
         accentSensitivity = AccentSensitivity.AI;
       } else {
-        throw new IllegalArgumentException(String.format("Invalid collation name: %s.", collationIdentifier.toStringWithoutVersion()));
+        throw new IllegalArgumentException(
+            String.format(
+                "Invalid collation name: %s.", collationIdentifier.toStringWithoutVersion()));
       }
 
       return new Tuple2<>(caseSensitivity, accentSensitivity);
     }
 
-    private static Collator getICUCollator(String locale, CaseSensitivity caseSensitivity, AccentSensitivity accentSensitivity) {
+    private static Collator getICUCollator(
+        String locale, CaseSensitivity caseSensitivity, AccentSensitivity accentSensitivity) {
       ULocale.Builder builder = new ULocale.Builder();
       builder.setLocale(ICULocaleMap.get(locale));
       // Compute unicode locale keyword for all combinations of case/accent sensitivity.
-      if (caseSensitivity == CaseSensitivity.CS &&
-              accentSensitivity == AccentSensitivity.AS) {
+      if (caseSensitivity == CaseSensitivity.CS && accentSensitivity == AccentSensitivity.AS) {
         builder.setUnicodeLocaleKeyword("ks", "level3");
-      } else if (caseSensitivity == CaseSensitivity.CS &&
-              accentSensitivity == AccentSensitivity.AI) {
-        builder
-                .setUnicodeLocaleKeyword("ks", "level1")
-                .setUnicodeLocaleKeyword("kc", "true");
-      } else if (caseSensitivity == CaseSensitivity.CI &&
-              accentSensitivity == AccentSensitivity.AS) {
+      } else if (caseSensitivity == CaseSensitivity.CS
+          && accentSensitivity == AccentSensitivity.AI) {
+        builder.setUnicodeLocaleKeyword("ks", "level1").setUnicodeLocaleKeyword("kc", "true");
+      } else if (caseSensitivity == CaseSensitivity.CI
+          && accentSensitivity == AccentSensitivity.AS) {
         builder.setUnicodeLocaleKeyword("ks", "level2");
-      } else if (caseSensitivity == CaseSensitivity.CI &&
-              accentSensitivity == AccentSensitivity.AI) {
+      } else if (caseSensitivity == CaseSensitivity.CI
+          && accentSensitivity == AccentSensitivity.AI) {
         builder.setUnicodeLocaleKeyword("ks", "level1");
       }
       ULocale resultLocale = builder.build();
@@ -227,9 +232,11 @@ public class CollationFactory {
 
   public static class Collation {
 
-    public static Collation DEFAULT_COLLATION = new Collation(DEFAULT_COLLATION_IDENTIFIER, STRING_COMPARATOR);
+    public static Collation DEFAULT_COLLATION =
+        new Collation(DEFAULT_COLLATION_IDENTIFIER, STRING_COMPARATOR);
 
-    public Collation(CollationIdentifier collationIdentifier, Comparator<String> collationComparator) {
+    public Collation(
+        CollationIdentifier collationIdentifier, Comparator<String> collationComparator) {
       this.identifier = collationIdentifier;
       this.comparator = collationComparator;
       this.equalsFunction = (s1, s2) -> this.comparator.compare(s1, s2) == 0;

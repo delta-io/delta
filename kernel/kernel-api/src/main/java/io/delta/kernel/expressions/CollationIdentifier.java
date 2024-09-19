@@ -26,7 +26,7 @@ public class CollationIdentifier {
   public static final String DEFAULT_COLLATION_NAME = "UTF8_BINARY";
 
   public static final CollationIdentifier DEFAULT_COLLATION_IDENTIFIER =
-          new CollationIdentifier(PROVIDER_SPARK, DEFAULT_COLLATION_NAME);
+      new CollationIdentifier(PROVIDER_SPARK, DEFAULT_COLLATION_NAME);
 
   private final String provider;
   private final String name;
@@ -69,7 +69,7 @@ public class CollationIdentifier {
     long numDots = identifier.chars().filter(ch -> ch == '.').count();
     if (numDots == 0) {
       throw new IllegalArgumentException(
-              String.format("Invalid collation identifier: %s", identifier));
+          String.format("Invalid collation identifier: %s", identifier));
     } else if (numDots == 1) {
       String[] parts = identifier.split("\\.");
       return new CollationIdentifier(parts[0], parts[1]);
@@ -87,8 +87,8 @@ public class CollationIdentifier {
 
     CollationIdentifier other = (CollationIdentifier) o;
     return this.provider.equals(other.provider)
-            && this.name.equals(other.name)
-            && this.version.equals(other.version);
+        && this.name.equals(other.name)
+        && this.version.equals(other.version);
   }
 
   @Override

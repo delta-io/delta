@@ -3,7 +3,6 @@ package io.delta.kernel.internal.skipping;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
-
 import java.util.*;
 
 public class DefaultDataSkippingPredicate extends Predicate implements DataSkippingPredicate {
@@ -30,7 +29,8 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
    * @param left left input to this predicate
    * @param right right input to this predicate
    */
-  DefaultDataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
+  DefaultDataSkippingPredicate(
+      String name, DataSkippingPredicate left, DataSkippingPredicate right) {
     this(
         name,
         Arrays.asList(left.asPredicate(), right.asPredicate()),

@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.skipping;
 
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import java.util.*;
 

@@ -171,7 +171,8 @@ public class ParquetFileWriter {
         }
 
         return Optional.of(
-            constructDataFileStatus(filePath.toString(), dataSchema, currentFileRowCount, batchWriteSupport));
+            constructDataFileStatus(
+                filePath.toString(), dataSchema, currentFileRowCount, batchWriteSupport));
       }
 
       /**
@@ -389,7 +390,8 @@ public class ParquetFileWriter {
    *     construct the {@link DataFileStatistics}. Otherwise, the stats are read from the file.
    * @return the {@link DataFileStatus} for the file
    */
-  private DataFileStatus constructDataFileStatus(String path, StructType dataSchema, long numRows, BatchWriteSupport batchWriteSupport) {
+  private DataFileStatus constructDataFileStatus(
+      String path, StructType dataSchema, long numRows, BatchWriteSupport batchWriteSupport) {
     try {
       // Get the FileStatus to figure out the file size and modification time
       Path hadoopPath = new Path(path);
@@ -405,7 +407,8 @@ public class ParquetFileWriter {
                 emptyMap() /* maxValues */,
                 emptyMap() /* nullCounts */);
       } else {
-        stats = appendCollatedStatistics(
+        stats =
+            appendCollatedStatistics(
                 batchWriteSupport,
                 dataSchema,
                 readDataFileStatistics(resolvedPath, configuration, dataSchema, statsColumns));
@@ -421,45 +424,55 @@ public class ParquetFileWriter {
     }
   }
 
-  private DataFileStatistics appendCollatedStatistics(BatchWriteSupport batchWriteSupport,
-                                                      StructType dataSchema,
-                                                      DataFileStatistics stats) {
+  private DataFileStatistics appendCollatedStatistics(
+      BatchWriteSupport batchWriteSupport, StructType dataSchema, DataFileStatistics stats) {
     Map<CollationIdentifier, Map<Column, Literal>> collatedMinValues = new HashMap<>();
     Map<CollationIdentifier, Map<Column, Literal>> collatedMaxValues = new HashMap<>();
     for (Column column : statsColumns) {
       DataType dataType = getDataType(dataSchema, column);
-      if (dataType instanceof StringType &&
-              ((StringType) dataType).getCollationIdentifier().equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) {
+      if (dataType instanceof StringType
+          && ((StringType) dataType)
+              .getCollationIdentifier()
+              .equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER)) {
         StringType stringType = (StringType) dataType;
 
         Tuple2<Literal, Literal> collatedMinMax = collectCollatedMinMax(column, batchWriteSupport);
-        collatedMinValues.getOrDefault(stringType.getCollationIdentifier(), emptyMap()).put(column, collatedMinMax._1);
-        collatedMaxValues.getOrDefault(stringType.getCollationIdentifier(), emptyMap()).put(column, collatedMinMax._2);
+        collatedMinValues
+            .getOrDefault(stringType.getCollationIdentifier(), emptyMap())
+            .put(column, collatedMinMax._1);
+        collatedMaxValues
+            .getOrDefault(stringType.getCollationIdentifier(), emptyMap())
+            .put(column, collatedMinMax._2);
       }
     }
 
     return new DataFileStatistics(
-          stats.getNumRecords(),
-          stats.getMinValues(),
-          stats.getMaxValues(),
-          stats.getNullCounts(),
-          collatedMinValues,
-          collatedMaxValues);
+        stats.getNumRecords(),
+        stats.getMinValues(),
+        stats.getMaxValues(),
+        stats.getNullCounts(),
+        collatedMinValues,
+        collatedMaxValues);
   }
 
-  private Tuple2<Literal, Literal> collectCollatedMinMax(Column column, BatchWriteSupport batchWriteSupport) {
+  private Tuple2<Literal, Literal> collectCollatedMinMax(
+      Column column, BatchWriteSupport batchWriteSupport) {
     String[] parts = column.getNames();
     ColumnWriter[] columnWriters = batchWriteSupport.getColumnWriters();
-    ParquetColumnWriters.CollatedStringWriter collatedStringWriter = getNestedCollatedStringWriter(columnWriters, parts);
+    ParquetColumnWriters.CollatedStringWriter collatedStringWriter =
+        getNestedCollatedStringWriter(columnWriters, parts);
     CollationIdentifier collationIdentifier = collatedStringWriter.getCollationIdentifier();
 
-    return new Tuple2<>(Literal.ofString(collatedStringWriter.getMinValue(), collationIdentifier),
-            Literal.ofString(collatedStringWriter.getMaxValue(), collationIdentifier));
+    return new Tuple2<>(
+        Literal.ofString(collatedStringWriter.getMinValue(), collationIdentifier),
+        Literal.ofString(collatedStringWriter.getMaxValue(), collationIdentifier));
   }
 
-  private ParquetColumnWriters.CollatedStringWriter getNestedCollatedStringWriter(ColumnWriter[] columnWriters, String[] parts) {
-    ColumnWriter[] startingColumnWriters = Arrays.stream(columnWriters).
-            filter(columnWriter -> columnWriter.colName.equals(parts[0]))
+  private ParquetColumnWriters.CollatedStringWriter getNestedCollatedStringWriter(
+      ColumnWriter[] columnWriters, String[] parts) {
+    ColumnWriter[] startingColumnWriters =
+        Arrays.stream(columnWriters)
+            .filter(columnWriter -> columnWriter.colName.equals(parts[0]))
             .toArray(ColumnWriter[]::new);
     if (startingColumnWriters.length != 1) {
       throw new IllegalArgumentException(String.format("Invalid column name: %s.", parts[0]));
@@ -471,8 +484,10 @@ public class ParquetFileWriter {
     }
 
     if (!(columnWriter instanceof ParquetColumnWriters.CollatedStringWriter)) {
-      throw new TypeMismatchException(String.format(
-              "Invalid column writer type: %s. CollatedStringWriter expected. ", columnWriter.getClass().getName()));
+      throw new TypeMismatchException(
+          String.format(
+              "Invalid column writer type: %s. CollatedStringWriter expected. ",
+              columnWriter.getClass().getName()));
     }
     return (ParquetColumnWriters.CollatedStringWriter) columnWriter;
   }

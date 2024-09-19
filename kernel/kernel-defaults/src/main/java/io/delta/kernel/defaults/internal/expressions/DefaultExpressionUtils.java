@@ -115,11 +115,9 @@ class DefaultExpressionUtils {
     };
   }
 
-  /**
-   * Matches predicate name to comparison function.
-   */
+  /** Matches predicate name to comparison function. */
   static IntPredicate getBooleanPredicate(Predicate predicate) {
-    switch(predicate.getName()) {
+    switch (predicate.getName()) {
       case "=":
       case "IS NOT DISTINCT FROM":
         return x -> x == 0;
@@ -132,7 +130,8 @@ class DefaultExpressionUtils {
       case ">=":
         return x -> x >= 0;
       default:
-        throw new IllegalArgumentException(String.format("Unsupported predicate '%s'", predicate.getName()));
+        throw new IllegalArgumentException(
+            String.format("Unsupported predicate '%s'", predicate.getName()));
     }
   }
 
@@ -144,8 +143,7 @@ class DefaultExpressionUtils {
    * @param predicate
    * @return
    */
-  static IntPredicate getComparator(
-      ColumnVector left, ColumnVector right, Predicate predicate) {
+  static IntPredicate getComparator(ColumnVector left, ColumnVector right, Predicate predicate) {
     checkArgument(
         left.getSize() == right.getSize(), "Left and right operand have different vector sizes.");
 
@@ -190,8 +188,10 @@ class DefaultExpressionUtils {
         vectorValueComparator =
             rowId ->
                 booleanComparator.test(
-                    CollationFactory.fetchCollation(((CollatedPredicate) predicate).getCollationIdentifier())
-                        .getComparator().compare(left.getString(rowId), right.getString(rowId)));
+                    CollationFactory.fetchCollation(
+                            ((CollatedPredicate) predicate).getCollationIdentifier())
+                        .getComparator()
+                        .compare(left.getString(rowId), right.getString(rowId)));
       } else {
         vectorValueComparator =
             rowId ->
@@ -216,8 +216,7 @@ class DefaultExpressionUtils {
    *
    * <p>Only primitive data types are supported.
    */
-  static ColumnVector comparatorVector(
-      ColumnVector left, ColumnVector right, Predicate predicate) {
+  static ColumnVector comparatorVector(ColumnVector left, ColumnVector right, Predicate predicate) {
     IntPredicate vectorValueComparator = getComparator(left, right, predicate);
 
     return new ColumnVector() {

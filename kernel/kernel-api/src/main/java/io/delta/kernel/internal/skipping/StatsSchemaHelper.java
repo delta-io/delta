@@ -156,15 +156,17 @@ public class StatsSchemaHelper {
   public Column getCollatedMinColumn(Column column, CollationIdentifier collationIdentifier) {
     checkArgument(
         isSkippingEligibleCollatedMinMaxColumn(column),
-        String.format("%s is not a valid collated min column for data schema %s", column, dataSchema));
+        String.format(
+            "%s is not a valid collated min column for data schema %s", column, dataSchema));
     Column minColumn = getStatsColumn(column, MIN);
     return getChildColumn(minColumn, collationIdentifier.toString());
   }
 
   public Column getCollatedMaxColumn(Column column, CollationIdentifier collationIdentifier) {
     checkArgument(
-            isSkippingEligibleCollatedMinMaxColumn(column),
-            String.format("%s is not a valid collated max column for data schema %s", column, dataSchema));
+        isSkippingEligibleCollatedMinMaxColumn(column),
+        String.format(
+            "%s is not a valid collated max column for data schema %s", column, dataSchema));
     Column maxColumn = getStatsColumn(column, MAX);
     return getChildColumn(maxColumn, collationIdentifier.toString());
   }
@@ -197,7 +199,8 @@ public class StatsSchemaHelper {
   }
 
   public boolean isSkippingEligibleCollatedMinMaxColumn(Column column) {
-    return logicalToDataType.containsKey(column) && logicalToDataType.get(column) instanceof StringType;
+    return logicalToDataType.containsKey(column)
+        && logicalToDataType.get(column) instanceof StringType;
   }
 
   /**

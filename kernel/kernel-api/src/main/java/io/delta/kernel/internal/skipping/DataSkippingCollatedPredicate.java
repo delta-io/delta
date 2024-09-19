@@ -1,10 +1,10 @@
 package io.delta.kernel.internal.skipping;
 
 import io.delta.kernel.expressions.*;
-
 import java.util.*;
 
-public class DataSkippingCollatedPredicate extends CollatedPredicate implements DataSkippingPredicate {
+public class DataSkippingCollatedPredicate extends CollatedPredicate
+    implements DataSkippingPredicate {
 
   /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
   private final Set<Column> referencedCols;
@@ -17,7 +17,12 @@ public class DataSkippingCollatedPredicate extends CollatedPredicate implements 
    * @param left left input to this predicate
    * @param right right input to this predicate
    */
-  DataSkippingCollatedPredicate(String name, Expression left, Expression right, Set<Column> referencedCols, CollationIdentifier collationIdentifier) {
+  DataSkippingCollatedPredicate(
+      String name,
+      Expression left,
+      Expression right,
+      Set<Column> referencedCols,
+      CollationIdentifier collationIdentifier) {
     super(name, left, right, collationIdentifier);
     this.referencedCols = referencedCols;
   }

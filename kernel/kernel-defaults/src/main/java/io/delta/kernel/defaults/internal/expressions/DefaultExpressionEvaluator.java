@@ -330,7 +330,11 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         }
       }
       if (predicate instanceof CollatedPredicate) {
-        return new CollatedPredicate(predicate.getName(), left, right, ((CollatedPredicate) predicate).getCollationIdentifier());
+        return new CollatedPredicate(
+            predicate.getName(),
+            left,
+            right,
+            ((CollatedPredicate) predicate).getCollationIdentifier());
       } else {
         return new Predicate(predicate.getName(), left, right);
       }
@@ -435,15 +439,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         case ">=":
         case "<":
         case "<=":
-          return comparatorVector(
-              argResults.leftResult,
-              argResults.rightResult,
-              predicate);
+          return comparatorVector(argResults.leftResult, argResults.rightResult, predicate);
         case "IS NOT DISTINCT FROM":
-          return nullSafeComparatorVector(
-              argResults.leftResult,
-              argResults.rightResult,
-              predicate);
+          return nullSafeComparatorVector(argResults.leftResult, argResults.rightResult, predicate);
         default:
           // We should never reach this based on the ExpressionVisitor
           throw new IllegalStateException(

@@ -27,7 +27,6 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Comparator;
-
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.io.api.RecordConsumer;
 
@@ -113,10 +112,12 @@ class ParquetColumnWriters {
       return new FloatWriter(colName, fieldIndex, columnVector);
     } else if (dataType instanceof DoubleType) {
       return new DoubleWriter(colName, fieldIndex, columnVector);
-    } else if ((dataType instanceof StringType) &&
-            !(((StringType) dataType).getCollationIdentifier()
-                    .equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER))) {
-      return new CollatedStringWriter(colName, fieldIndex, columnVector, ((StringType) dataType).getCollationIdentifier());
+    } else if ((dataType instanceof StringType)
+        && !(((StringType) dataType)
+            .getCollationIdentifier()
+            .equals(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER))) {
+      return new CollatedStringWriter(
+          colName, fieldIndex, columnVector, ((StringType) dataType).getCollationIdentifier());
     } else if (dataType instanceof StringType) {
       return new StringWriter(colName, fieldIndex, columnVector);
     } else if (dataType instanceof BinaryType) {
@@ -359,7 +360,11 @@ class ParquetColumnWriters {
     private String maxValue = null;
     private boolean initialized = false;
 
-    CollatedStringWriter(String name, int fieldId, ColumnVector columnVector, CollationIdentifier collationIdentifier) {
+    CollatedStringWriter(
+        String name,
+        int fieldId,
+        ColumnVector columnVector,
+        CollationIdentifier collationIdentifier) {
       super(name, fieldId, columnVector);
       this.collationIdentifier = collationIdentifier;
       this.comparator = CollationFactory.fetchCollation(collationIdentifier).getComparator();
@@ -379,8 +384,7 @@ class ParquetColumnWriters {
         }
       }
 
-      Binary binary = Binary.fromConstantByteArray(
-              value.getBytes(StandardCharsets.UTF_8));
+      Binary binary = Binary.fromConstantByteArray(value.getBytes(StandardCharsets.UTF_8));
       recordConsumer.addBinary(binary);
     }
 
@@ -520,7 +524,7 @@ class ParquetColumnWriters {
         }
       }
       throw new IllegalArgumentException(
-              String.format("Invalid nested column name: \"%s\".", name));
+          String.format("Invalid nested column name: \"%s\".", name));
     }
   }
 }

@@ -20,7 +20,6 @@ import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_STATS_ORDINAL;
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
 
-import com.sun.corba.se.impl.ior.OldPOAObjectKeyTemplate;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -88,8 +87,8 @@ public class DataSkippingUtils {
    * @param isNotPropagated
    * @return
    */
-  private static Tuple2<Predicate, Boolean> omitCollatedPredicateFromDataSkippingFilter(Predicate dataFilters,
-                                                                      boolean isNotPropagated) {
+  private static Tuple2<Predicate, Boolean> omitCollatedPredicateFromDataSkippingFilter(
+      Predicate dataFilters, boolean isNotPropagated) {
     if (dataFilters instanceof CollatedPredicate) {
       return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
     }
@@ -103,8 +102,10 @@ public class DataSkippingUtils {
       case "AND":
         Predicate leftPredicate = asPredicate(getLeft(dataFilters));
         Predicate rightPredicate = asPredicate(getRight(dataFilters));
-        Tuple2<Predicate, Boolean> leftResult = omitCollatedPredicateFromDataSkippingFilter(leftPredicate, isNotPropagated);
-        Tuple2<Predicate, Boolean> rightResult = omitCollatedPredicateFromDataSkippingFilter(rightPredicate, isNotPropagated);
+        Tuple2<Predicate, Boolean> leftResult =
+            omitCollatedPredicateFromDataSkippingFilter(leftPredicate, isNotPropagated);
+        Tuple2<Predicate, Boolean> rightResult =
+            omitCollatedPredicateFromDataSkippingFilter(rightPredicate, isNotPropagated);
         boolean hasCollatedPredicate = leftResult._2 || rightResult._2;
         Predicate resultingPredicate = AlwaysTrue.ALWAYS_TRUE;
         if (leftResult._1 != AlwaysTrue.ALWAYS_TRUE) {
@@ -149,9 +150,7 @@ public class DataSkippingUtils {
         }
         if (isNotPropagated) {
           return new Tuple2<>(
-                  new Or(new Predicate("<", left, right),
-                          new Predicate("<", right, left)),
-                  false);
+              new Or(new Predicate("<", left, right), new Predicate("<", right, left)), false);
         } else {
           return new Tuple2<>(new Predicate("=", left, right), false);
         }
@@ -174,8 +173,7 @@ public class DataSkippingUtils {
         if (hasCollatedPredicateOnRight) {
           return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
         }
-        return new Tuple2<>(new Predicate(predicateName, left, right),
-                hasCollatedPredicateOnLeft);
+        return new Tuple2<>(new Predicate(predicateName, left, right), hasCollatedPredicateOnLeft);
       case "<":
       case "<=":
         left = getLeft(dataFilters);
@@ -195,14 +193,14 @@ public class DataSkippingUtils {
         if (hasCollatedPredicateOnLeft) {
           return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
         }
-        return new Tuple2<>(new Predicate(predicateName, left, right),
-                hasCollatedPredicateOnRight);
+        return new Tuple2<>(new Predicate(predicateName, left, right), hasCollatedPredicateOnRight);
       case "IS_NULL":
         Expression child = getUnaryChild(dataFilters);
         if (!(child instanceof Predicate)) {
           return new Tuple2<>(dataFilters, false);
         }
-        Tuple2<Predicate, Boolean> childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, isNotPropagated);
+        Tuple2<Predicate, Boolean> childResult =
+            omitCollatedPredicateFromDataSkippingFilter((Predicate) child, isNotPropagated);
         if (childResult._2) {
           return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
         } else {
@@ -213,15 +211,15 @@ public class DataSkippingUtils {
         if (!(child instanceof Predicate)) {
           return new Tuple2<>(dataFilters, false);
         }
-        childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, isNotPropagated);
+        childResult =
+            omitCollatedPredicateFromDataSkippingFilter((Predicate) child, isNotPropagated);
         return new Tuple2<>(new Predicate(predicateName, childResult._1), childResult._2);
       case "NOT":
         Predicate childPredicate = asPredicate(getUnaryChild(dataFilters));
         return omitCollatedPredicateFromDataSkippingFilter(childPredicate, !isNotPropagated);
     }
 
-    throw new IllegalArgumentException(
-            String.format("Invalid predicate name: %s.", predicateName));
+    throw new IllegalArgumentException(String.format("Invalid predicate name: %s.", predicateName));
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -354,7 +352,8 @@ public class DataSkippingUtils {
         Optional<DataSkippingPredicate> e2OrFilter =
             constructDataSkippingFilter(asPredicate(getRight(dataFilters)), schemaHelper);
         if (e1OrFilter.isPresent() && e2OrFilter.isPresent()) {
-          return Optional.of(new DefaultDataSkippingPredicate("OR", e1OrFilter.get(), e2OrFilter.get()));
+          return Optional.of(
+              new DefaultDataSkippingPredicate("OR", e1OrFilter.get(), e2OrFilter.get()));
         } else {
           return Optional.empty();
         }
@@ -409,13 +408,18 @@ public class DataSkippingUtils {
         if (left instanceof Column && right instanceof Literal) {
           Column leftCol = (Column) left;
           Literal rightLit = (Literal) right;
-          if (dataFilters instanceof CollatedPredicate &&
-          schemaHelper.isSkippingEligibleCollatedMinMaxColumn(leftCol) &&
-          rightLit.getDataType() instanceof StringType) {
-            CollationIdentifier collationIdentifier = ((CollatedPredicate) dataFilters).getCollationIdentifier();
+          if (dataFilters instanceof CollatedPredicate
+              && schemaHelper.isSkippingEligibleCollatedMinMaxColumn(leftCol)
+              && rightLit.getDataType() instanceof StringType) {
+            CollationIdentifier collationIdentifier =
+                ((CollatedPredicate) dataFilters).getCollationIdentifier();
             return Optional.of(
                 constructComparatorDataSkippingFilters(
-                    dataFilters.getName(), leftCol, rightLit, schemaHelper, Optional.of(collationIdentifier)));
+                    dataFilters.getName(),
+                    leftCol,
+                    rightLit,
+                    schemaHelper,
+                    Optional.of(collationIdentifier)));
           }
           if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
               && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
@@ -438,13 +442,18 @@ public class DataSkippingUtils {
   }
 
   private static DataSkippingPredicate constructComparatorDataSkippingFilters(
-          String comparator, Column leftCol, Literal rightLit, StatsSchemaHelper schemaHelper) {
-    return constructComparatorDataSkippingFilters(comparator, leftCol, rightLit, schemaHelper, Optional.empty());
+      String comparator, Column leftCol, Literal rightLit, StatsSchemaHelper schemaHelper) {
+    return constructComparatorDataSkippingFilters(
+        comparator, leftCol, rightLit, schemaHelper, Optional.empty());
   }
 
   /** Construct the skipping predicate for a given comparator */
   private static DataSkippingPredicate constructComparatorDataSkippingFilters(
-      String comparator, Column leftCol, Literal rightLit, StatsSchemaHelper schemaHelper, Optional<CollationIdentifier> collationIdentifier) {
+      String comparator,
+      Column leftCol,
+      Literal rightLit,
+      StatsSchemaHelper schemaHelper,
+      Optional<CollationIdentifier> collationIdentifier) {
 
     String name = comparator.toUpperCase(Locale.ROOT);
     switch (name) {
@@ -455,11 +464,17 @@ public class DataSkippingUtils {
         if (collationIdentifier.isPresent()) {
           CollationIdentifier identifier = collationIdentifier.get();
           return new DefaultDataSkippingPredicate(
-            "AND",
-            constructBinaryDataSkippingCollatedPredicate(
-            "<=", schemaHelper.getCollatedMinColumn(leftCol, identifier), rightLit, identifier),
-            constructBinaryDataSkippingCollatedPredicate(
-            ">=", schemaHelper.getCollatedMaxColumn(leftCol, identifier), rightLit, identifier));
+              "AND",
+              constructBinaryDataSkippingCollatedPredicate(
+                  "<=",
+                  schemaHelper.getCollatedMinColumn(leftCol, identifier),
+                  rightLit,
+                  identifier),
+              constructBinaryDataSkippingCollatedPredicate(
+                  ">=",
+                  schemaHelper.getCollatedMaxColumn(leftCol, identifier),
+                  rightLit,
+                  identifier));
         }
         return new DefaultDataSkippingPredicate(
             "AND",
@@ -474,7 +489,7 @@ public class DataSkippingUtils {
         if (collationIdentifier.isPresent()) {
           CollationIdentifier identifier = collationIdentifier.get();
           return constructBinaryDataSkippingCollatedPredicate(
-                  name, schemaHelper.getCollatedMinColumn(leftCol, identifier), rightLit, identifier);
+              name, schemaHelper.getCollatedMinColumn(leftCol, identifier), rightLit, identifier);
         }
         return constructBinaryDefaultDataSkippingPredicate(
             "<", schemaHelper.getMinColumn(leftCol), rightLit);
@@ -485,7 +500,7 @@ public class DataSkippingUtils {
         if (collationIdentifier.isPresent()) {
           CollationIdentifier identifier = collationIdentifier.get();
           return constructBinaryDataSkippingCollatedPredicate(
-                  name, schemaHelper.getCollatedMaxColumn(leftCol, identifier), rightLit, identifier);
+              name, schemaHelper.getCollatedMaxColumn(leftCol, identifier), rightLit, identifier);
         }
         return constructBinaryDefaultDataSkippingPredicate(
             ">=", schemaHelper.getMaxColumn(leftCol), rightLit);
@@ -496,13 +511,9 @@ public class DataSkippingUtils {
   }
 
   private static DataSkippingPredicate constructBinaryDataSkippingCollatedPredicate(
-          String exprName, Column colExpr, Literal lit, CollationIdentifier collationIdentifier) {
+      String exprName, Column colExpr, Literal lit, CollationIdentifier collationIdentifier) {
     return new DataSkippingCollatedPredicate(
-            exprName,
-            colExpr,
-            lit,
-            Collections.singleton(colExpr),
-            collationIdentifier);
+        exprName, colExpr, lit, Collections.singleton(colExpr), collationIdentifier);
   }
 
   /**
@@ -538,10 +549,10 @@ public class DataSkippingUtils {
     if (predicate instanceof CollatedPredicate) {
       CollatedPredicate collatedPredicate = (CollatedPredicate) predicate;
       return new CollatedPredicate(
-              REVERSE_PREDICATE.get(predicate.getName().toUpperCase(Locale.ROOT)),
-              getRight(predicate),
-              getLeft(predicate),
-              collatedPredicate.getCollationIdentifier());
+          REVERSE_PREDICATE.get(predicate.getName().toUpperCase(Locale.ROOT)),
+          getRight(predicate),
+          getLeft(predicate),
+          collatedPredicate.getCollationIdentifier());
     }
     return new Predicate(
         REVERSE_PREDICATE.get(predicate.getName().toUpperCase(Locale.ROOT)),
@@ -605,30 +616,35 @@ public class DataSkippingUtils {
         if (left instanceof Column && right instanceof Literal) {
           Column leftCol = (Column) left;
           Literal rightLit = (Literal) right;
-          if (childPredicate instanceof CollatedPredicate &&
-              schemaHelper.isSkippingEligibleCollatedMinMaxColumn(leftCol) &&
-              rightLit.getDataType() instanceof StringType) {
-            CollationIdentifier collationIdentifier = ((CollatedPredicate) childPredicate).getCollationIdentifier();
+          if (childPredicate instanceof CollatedPredicate
+              && schemaHelper.isSkippingEligibleCollatedMinMaxColumn(leftCol)
+              && rightLit.getDataType() instanceof StringType) {
+            CollationIdentifier collationIdentifier =
+                ((CollatedPredicate) childPredicate).getCollationIdentifier();
             return Optional.of(
-              new DefaultDataSkippingPredicate(
-                "OR",
-                constructBinaryDataSkippingCollatedPredicate(
-                        ">", schemaHelper.getCollatedMinColumn(leftCol, collationIdentifier), rightLit, collationIdentifier),
-                constructBinaryDataSkippingCollatedPredicate(
-                        "<", schemaHelper.getCollatedMaxColumn(leftCol, collationIdentifier), rightLit, collationIdentifier)
-              )
-            );
+                new DefaultDataSkippingPredicate(
+                    "OR",
+                    constructBinaryDataSkippingCollatedPredicate(
+                        ">",
+                        schemaHelper.getCollatedMinColumn(leftCol, collationIdentifier),
+                        rightLit,
+                        collationIdentifier),
+                    constructBinaryDataSkippingCollatedPredicate(
+                        "<",
+                        schemaHelper.getCollatedMaxColumn(leftCol, collationIdentifier),
+                        rightLit,
+                        collationIdentifier)));
           } else if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
-                    && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
+              && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
             // Match any file whose min/max range contains anything other than the
             // rejected point.
             // For example a != 1 --> minValue.a < 1 OR maxValue.a > 1
             return Optional.of(
-              new DefaultDataSkippingPredicate(
-                      "OR",
-                constructBinaryDefaultDataSkippingPredicate(
+                new DefaultDataSkippingPredicate(
+                    "OR",
+                    constructBinaryDefaultDataSkippingPredicate(
                         "<", schemaHelper.getMinColumn(leftCol), rightLit),
-                constructBinaryDefaultDataSkippingPredicate(
+                    constructBinaryDefaultDataSkippingPredicate(
                         ">", schemaHelper.getMaxColumn(leftCol), rightLit)));
           }
         } else if (right instanceof Column && left instanceof Literal) {
@@ -643,11 +659,12 @@ public class DataSkippingUtils {
         if (childPredicate instanceof CollatedPredicate) {
           CollatedPredicate collatedPredicate = (CollatedPredicate) childPredicate;
           return constructDataSkippingFilter(
-            new CollatedPredicate(REVERSE_PREDICATE.get(name),
-                    getLeft(collatedPredicate),
-                    getRight(collatedPredicate),
-                    collatedPredicate.getCollationIdentifier()),
-            schemaHelper);
+              new CollatedPredicate(
+                  REVERSE_PREDICATE.get(name),
+                  getLeft(collatedPredicate),
+                  getRight(collatedPredicate),
+                  collatedPredicate.getCollationIdentifier()),
+              schemaHelper);
         }
         return constructDataSkippingFilter(
             new Predicate(REVERSE_PREDICATE.get(name), childPredicate.getChildren()), schemaHelper);

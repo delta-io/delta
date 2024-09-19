@@ -22,7 +22,6 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import java.util.Collections;
 import java.util.Map;
-import java.util.Optional;
 
 /** Statistics about data file in a Delta Lake table. */
 public class DataFileStatistics {
@@ -115,7 +114,8 @@ public class DataFileStatistics {
    * Get the collated minimum of the columns in the data file. The map may contain statistics for
    * only a subset of columns in data file.
    *
-   * @return Map of collation identifier to map of column to collated minimum value of it in the data file
+   * @return Map of collation identifier to map of column to collated minimum value of it in the
+   *     data file
    */
   public Map<CollationIdentifier, Map<Column, Literal>> getCollatedMinValues() {
     return collatedMinValues;
@@ -125,7 +125,8 @@ public class DataFileStatistics {
    * Get the collated maximum of the columns in the data file. The map may contain statistics for
    * only a subset of columns in data file.
    *
-   * @return Map of collation identifier to map of column to collated maximum value of it in the data file
+   * @return Map of collation identifier to map of column to collated maximum value of it in the
+   *     data file
    */
   public Map<CollationIdentifier, Map<Column, Literal>> getCollatedMaxValues() {
     return collatedMaxValues;
