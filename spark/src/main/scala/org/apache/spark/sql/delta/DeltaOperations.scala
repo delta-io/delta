@@ -168,7 +168,7 @@ object DeltaOperations {
     }
     override def changesData: Boolean = true
 
-    // This operation shouldn't be introducing AddFile actions with DVs and non tight bounds stats.
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
     // DVs can be introduced by the replaceWhere operation.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
@@ -200,7 +200,7 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.STREAMING_UPDATE
     override def changesData: Boolean = true
 
-    // This operation shouldn't be introducing AddFile actions with DVs and non tight bounds stats.
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
@@ -226,7 +226,7 @@ object DeltaOperations {
     }
     override def changesData: Boolean = true
 
-    // This operation shouldn't be introducing AddFile actions with DVs and non tight bounds stats.
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
@@ -237,7 +237,7 @@ object DeltaOperations {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.TRUNCATE
     override def changesData: Boolean = true
 
-    // This operation shouldn't be introducing AddFile actions with DVs and non-tight bounds stats.
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
@@ -434,6 +434,8 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map("properties" -> JsonUtils.toJson(properties))
 
     // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    // Note: This operation may trigger additional actions and additional commits. For example
+    // RowTrackingBackfill. These are separate transactions, and this check is performed separately.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
@@ -460,6 +462,8 @@ object DeltaOperations {
       "truncateHistory" -> truncateHistory)
 
     // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    // Note: this operation may trigger additional actions and additional commits. These would be
+    // separate transactions, and this check is performed separately.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
@@ -697,7 +701,7 @@ object DeltaOperations {
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
 
-    // This operation shouldn't be introducing AddFile actions with DVs and non tight bounds stats.
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
@@ -771,7 +775,7 @@ object DeltaOperations {
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
 
-    // This operation shouldn't be introducing AddFile actions with DVs and non tight bounds stats.
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
@@ -854,7 +858,7 @@ object DeltaOperations {
       OP_UPGRADE_UNIFORM_BY_REORG) {
     override val parameters: Map[String, Any] = Map("properties" -> JsonUtils.toJson(properties))
 
-    // This operation shouldn't be introducing AddFile actions with DVs and non tight bounds stats.
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
