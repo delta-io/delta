@@ -20,44 +20,9 @@ import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import java.util.*;
 
-/** A {@link Predicate} with a set of columns referenced by the expression. */
-public class DataSkippingPredicate extends Predicate {
+public interface DataSkippingPredicate {
 
-  /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
-  private final Set<Column> referencedCols;
+  public Set<Column> getReferencedCols();
 
-  /**
-   * @param name the predicate name
-   * @param children list of expressions that are input to this predicate.
-   * @param referencedCols set of columns referenced by this predicate or any of its child
-   *     expressions
-   */
-  DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols) {
-    super(name, children);
-    this.referencedCols = Collections.unmodifiableSet(referencedCols);
-  }
-
-  /**
-   * Constructor for a binary {@link DataSkippingPredicate} where both children are instances of
-   * {@link DataSkippingPredicate}.
-   *
-   * @param name the predicate name
-   * @param left left input to this predicate
-   * @param right right input to this predicate
-   */
-  DataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
-    this(
-        name,
-        Arrays.asList(left, right),
-        new HashSet<Column>() {
-          {
-            addAll(left.getReferencedCols());
-            addAll(right.getReferencedCols());
-          }
-        });
-  }
-
-  public Set<Column> getReferencedCols() {
-    return referencedCols;
-  }
+  public Predicate asPredicate();
 }

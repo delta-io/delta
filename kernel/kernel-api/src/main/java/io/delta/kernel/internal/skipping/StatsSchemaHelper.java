@@ -18,10 +18,7 @@ package io.delta.kernel.internal.skipping;
 import static io.delta.kernel.internal.util.ColumnMapping.getPhysicalName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.expressions.Column;
-import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.expressions.ScalarExpression;
+import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -156,6 +153,22 @@ public class StatsSchemaHelper {
     return new Tuple2<>(maxColumn, Optional.empty());
   }
 
+  public Column getCollatedMinColumn(Column column, CollationIdentifier collationIdentifier) {
+    checkArgument(
+        isSkippingEligibleCollatedMinMaxColumn(column),
+        String.format("%s is not a valid collated min column for data schema %s", column, dataSchema));
+    Column minColumn = getStatsColumn(column, MIN);
+    return getChildColumn(minColumn, collationIdentifier.toString());
+  }
+
+  public Column getCollatedMaxColumn(Column column, CollationIdentifier collationIdentifier) {
+    checkArgument(
+            isSkippingEligibleCollatedMinMaxColumn(column),
+            String.format("%s is not a valid collated max column for data schema %s", column, dataSchema));
+    Column maxColumn = getStatsColumn(column, MAX);
+    return getChildColumn(maxColumn, collationIdentifier.toString());
+  }
+
   /**
    * Given a logical column in the data schema provided when creating {@code this}, return the
    * corresponding NULL_COUNT column in the statistic schema that stores the null count values for
@@ -181,6 +194,10 @@ public class StatsSchemaHelper {
   public boolean isSkippingEligibleMinMaxColumn(Column column) {
     return logicalToDataType.containsKey(column)
         && isSkippingEligibleDataType(logicalToDataType.get(column));
+  }
+
+  public boolean isSkippingEligibleCollatedMinMaxColumn(Column column) {
+    return logicalToDataType.containsKey(column) && logicalToDataType.get(column) instanceof StringType;
   }
 
   /**
