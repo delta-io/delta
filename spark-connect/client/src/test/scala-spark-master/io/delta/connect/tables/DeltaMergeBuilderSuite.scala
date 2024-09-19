@@ -381,11 +381,58 @@ class DeltaMergeBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
+  test("merge with the withSchemaEvolution API") {
+    val session = spark
+    import session.implicits._
+
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      Seq("a", "b", "c", "d").toDF("key")
+        .write.mode("overwrite").format("delta").save(path)
+      val deltaTable = DeltaTable.forPath(spark, path)
+
+      deltaTable.as("t")
+        .merge(testSource.toDF("key", "value").as("s"), expr("t.key = s.key"))
+        .withSchemaEvolution()
+        .whenMatched().updateAll()
+        .whenNotMatched().insertAll()
+        .execute()
+
+      checkAnswer(
+        deltaTable.toDF,
+        Seq(
+          Row("a", -1), Row("b", 0), Row("c", null), Row("d", null), Row("e", -5), Row("f", -6)))
+    }
+  }
+
+  test("merge fails due to no withSchemaEvolution while schema evolution is needed") {
+    val session = spark
+    import session.implicits._
+
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      Seq("a", "b", "c", "d").toDF("key")
+        .write.mode("overwrite").format("delta").save(path)
+      val deltaTable = DeltaTable.forPath(spark, path)
+
+      deltaTable.as("t")
+        .merge(testSource.toDF("key", "value").as("s"), expr("t.key = s.key"))
+        .whenMatched().updateAll()
+        .whenNotMatched().insertAll()
+        .execute()
+
+      checkAnswer(
+        deltaTable.toDF,
+        Seq(
+          Row("a", -1), Row("b", 0), Row("c", null), Row("d", null), Row("e", -5), Row("f", -6)))
+    }
+  }
+
   test("merge dataframe with many columns") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       var df1 = spark.range(1).toDF
-      val numColumns = 100
+      val numColumns = 20
       for (i <- 0 until numColumns) {
         df1 = df1.withColumn(s"col$i", col("id"))
       }

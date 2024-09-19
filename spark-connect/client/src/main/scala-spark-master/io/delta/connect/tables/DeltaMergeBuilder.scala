@@ -99,6 +99,7 @@ import org.apache.spark.sql.internal.ColumnNodeToProtoConverter.toExpr
  *     .merge(
  *       source.as("source"),
  *       "target.key = source.key")
+ *     .withSchemaEvolution()
  *     .whenMatched()
  *     .updateExpr(Map(
  *       "value" -> "source.value"))
@@ -119,6 +120,7 @@ import org.apache.spark.sql.internal.ColumnNodeToProtoConverter.toExpr
  *     .merge(
  *       source.as("source"),
  *       "target.key = source.key")
+ *     .withSchemaEvolution()
  *     .whenMatched()
  *     .updateExpr(
  *        new HashMap<String, String>() {{
@@ -146,7 +148,19 @@ class DeltaMergeBuilder private(
     private val onCondition: Column,
     private val whenMatchedClauses: Seq[proto.MergeIntoTable.Action],
     private val whenNotMatchedClauses: Seq[proto.MergeIntoTable.Action],
-    private val whenNotMatchedBySourceClauses: Seq[proto.MergeIntoTable.Action]) {
+    private val whenNotMatchedBySourceClauses: Seq[proto.MergeIntoTable.Action],
+    private val schemaEvolutionEnabled: Boolean) {
+
+
+  def this(
+      targetTable: DeltaTable,
+      source: DataFrame,
+      onCondition: Column,
+      whenMatchedClauses: Seq[proto.MergeIntoTable.Action],
+      whenNotMatchedClauses: Seq[proto.MergeIntoTable.Action],
+      whenNotMatchedBySourceClauses: Seq[proto.MergeIntoTable.Action]) =
+    this(targetTable, source, onCondition, whenMatchedClauses,
+      whenNotMatchedClauses, whenNotMatchedBySourceClauses, schemaEvolutionEnabled = false)
 
   /**
    * Build the actions to perform when the merge condition was matched. This returns
@@ -200,7 +214,7 @@ class DeltaMergeBuilder private(
 
   /**
    * Build the actions to perform when the merge condition was not matched and
-   * the given `condition` is true. This returns [[DeltaMergeMatchedActionBuilder]] object
+   * the given `condition` is true. This returns [[DeltaMergeNotMatchedActionBuilder]] object
    * which can be used to specify how to insert the new sourced row into the target table.
    *
    * @param condition boolean expression as a SQL formatted string.
@@ -213,7 +227,7 @@ class DeltaMergeBuilder private(
 
   /**
    * Build the actions to perform when the merge condition was not matched and
-   * the given `condition` is true. This returns [[DeltaMergeMatchedActionBuilder]] object
+   * the given `condition` is true. This returns [[DeltaMergeNotMatchedActionBuilder]] object
    * which can be used to specify how to insert the new sourced row into the target table.
    *
    * @param condition boolean expression as a Column object.
@@ -262,6 +276,23 @@ class DeltaMergeBuilder private(
   }
 
   /**
+   * Enable schema evolution for the merge operation. This allows the schema of the target
+   * table/columns to be automatically updated based on the schema of the source table/columns.
+   *
+   * @since 4.0.0
+   */
+  def withSchemaEvolution(): DeltaMergeBuilder = {
+    new DeltaMergeBuilder(
+      this.targetTable,
+      this.source,
+      this.onCondition,
+      this.whenMatchedClauses,
+      this.whenNotMatchedClauses,
+      this.whenNotMatchedBySourceClauses,
+      schemaEvolutionEnabled = true)
+  }
+
+  /**
    * Execute the merge operation based on the built matched and not matched actions.
    *
    * @since 4.0.0
@@ -296,7 +327,8 @@ class DeltaMergeBuilder private(
       this.onCondition,
       this.whenMatchedClauses :+ clause,
       this.whenNotMatchedClauses,
-      this.whenNotMatchedBySourceClauses)
+      this.whenNotMatchedBySourceClauses,
+      this.schemaEvolutionEnabled)
   }
 
   /**
@@ -313,7 +345,8 @@ class DeltaMergeBuilder private(
       this.onCondition,
       this.whenMatchedClauses,
       this.whenNotMatchedClauses :+ clause,
-      this.whenNotMatchedBySourceClauses)
+      this.whenNotMatchedBySourceClauses,
+      this.schemaEvolutionEnabled)
   }
 
   /**
@@ -330,7 +363,8 @@ class DeltaMergeBuilder private(
       this.onCondition,
       this.whenMatchedClauses,
       this.whenNotMatchedClauses,
-      this.whenNotMatchedBySourceClauses :+ clause)
+      this.whenNotMatchedBySourceClauses :+ clause,
+      this.schemaEvolutionEnabled)
   }
 }
 

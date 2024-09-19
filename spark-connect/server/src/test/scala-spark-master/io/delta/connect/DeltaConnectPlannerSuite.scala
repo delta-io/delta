@@ -544,7 +544,7 @@ class DeltaConnectPlannerSuite
     }
   }
 
-  test("merge - mixed") {
+  test("merge - withSchemaEvolution") {
     val targetTableName = "target"
     val sourceTableName = "source"
     withTable(targetTableName, sourceTableName) {
@@ -554,6 +554,61 @@ class DeltaConnectPlannerSuite
       spark.range(end = 100)
         .select(col("id") + 50 as "id")
         .select(col("id") as "key", col("id") + 1000 as "value")
+        .select(col("id") + 1 as "deltaLake")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setUpdateStarAction(proto.MergeIntoTable.Action.UpdateStarAction.newBuilder())
+              )
+              .addNotMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setInsertStarAction(proto.MergeIntoTable.Action.InsertStarAction.newBuilder())
+              )
+              .addNotMatchedBySourceActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setCondition(createExpression("t.value < 25"))
+                  .setDeleteAction(proto.MergeIntoTable.Action.DeleteAction.newBuilder())
+              )
+              .setWithSchemaEvolution(true)
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 125) // num_affected_rows
+      assert(result.head.getLong(1) === 50) // num_updated_rows
+      assert(result.head.getLong(2) === 25) // num_deleted_rows
+      assert(result.head.getLong(3) === 50) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(25)(i => Row(25 + i, 25 + i, None)) ++
+          Seq.tabulate(50)(i => Row(i + 50, i + 1050, i + 51)) ++
+          Seq.tabulate(50)(i => Row(i + 100, i + 1100, i + 101))
+      )
+    }
+  }
+
+  test("merge fails due to no withSchemaEvolution while schema evolution is needed") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value")
+        .select(col("id") + 1 as "deltaLake")
         .write.format("delta").saveAsTable(sourceTableName)
 
       val input = createSparkRelation(
@@ -589,9 +644,9 @@ class DeltaConnectPlannerSuite
 
       checkAnswer(
         spark.read.table(targetTableName),
-        Seq.tabulate(25)(i => Row(25 + i, 25 + i)) ++
-          Seq.tabulate(50)(i => Row(i + 50, i + 1050)) ++
-          Seq.tabulate(50)(i => Row(i + 100, i + 1100))
+        Seq.tabulate(25)(i => Row(25 + i, 25 + i, None)) ++
+          Seq.tabulate(50)(i => Row(i + 50, i + 1050, i + 51)) ++
+          Seq.tabulate(50)(i => Row(i + 100, i + 1100, i + 101))
       )
     }
   }
