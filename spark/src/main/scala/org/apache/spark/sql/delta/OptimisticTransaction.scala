@@ -881,25 +881,35 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def getAssertDeletionVectorWellFormedFunc(
       spark: SparkSession,
       op: DeltaOperations.Operation): (Action => Unit) = {
-    val deletionVectorCreationAllowed =
-      DeletionVectorUtils.deletionVectorsWritable(snapshot, newProtocol, newMetadata)
-    val isComputeStatsOperation = op.isInstanceOf[DeltaOperations.ComputeStats]
     val commitCheckEnabled = spark.conf.get(DeltaSQLConf.DELETION_VECTORS_COMMIT_CHECK_ENABLED)
+    if (!commitCheckEnabled) {
+      return _ => {}
+    }
 
-    val deletionVectorDisallowedForAddFiles =
-      commitCheckEnabled && !isComputeStatsOperation && !deletionVectorCreationAllowed
+    // Whether DVs are supported, i.e. the table is allowed to contain any DVs.
+    val deletionVectorsSupported =
+      DeletionVectorUtils.deletionVectorsReadable(snapshot, newProtocol, newMetadata)
+    // Whether DVs are enabled, i.e. operations are allowed to create new DVs.
+    val deletionVectorsEnabled =
+      DeletionVectorUtils.deletionVectorsWritable(snapshot, newProtocol, newMetadata)
 
-    val addFileMustHaveWideBounds = deletionVectorCreationAllowed &&
-      op.checkAddFileWithDeletionVectorStatsAreNotTightBounds
+    // If the operation does not define whether it performs in-place metadata updates, we are
+    // conservative and assume that it is not, which makes the check stricter.
+    val isInPlaceFileMetadataUpdate = op.isInPlaceFileMetadataUpdate.getOrElse(false)
+    val deletionVectorAllowedForAddFiles =
+      deletionVectorsSupported && (deletionVectorsEnabled || isInPlaceFileMetadataUpdate)
+
+    val addFileMustHaveWideBounds = op.checkAddFileWithDeletionVectorStatsAreNotTightBounds
 
     action => action match {
-      case a: AddFile =>
-        if (deletionVectorDisallowedForAddFiles && a.deletionVector != null) {
+      case a: AddFile if a.deletionVector != null =>
+        if (!deletionVectorAllowedForAddFiles) {
           throw DeltaErrors.addingDeletionVectorsDisallowedException()
         }
+
         // Protocol requirement checks:
         // 1. All files with DVs must have `stats` with `numRecords`.
-        if (a.deletionVector != null && (a.stats == null || a.numPhysicalRecords.isEmpty)) {
+        if (a.stats == null || a.numPhysicalRecords.isEmpty) {
           throw DeltaErrors.addFileWithDVsMissingNumRecordsException
         }
 
@@ -909,7 +919,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         //    See that field comment in DeltaOperation for more details.
         //    Note, the absence of the tightBounds column when DVs exist is also an illegal state.
         if (addFileMustHaveWideBounds &&
-            a.deletionVector != null &&
             // Extra inversion to also catch absent `tightBounds`.
             !a.tightBounds.contains(false)) {
           throw DeltaErrors.addFileWithDVsAndTightBoundsException()
