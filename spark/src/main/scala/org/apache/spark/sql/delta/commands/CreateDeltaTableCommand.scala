@@ -728,6 +728,10 @@ case class CreateDeltaTableCommand(
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
       val newMetadata = getProvidedMetadata(table, schema.json)
+      val updatedConfig = UniversalFormat.enforceDependenciesInConfiguration(
+        newMetadata.configuration,
+        txn.snapshot)
+      newMetadata = newMetadata.copy(configuration = updatedConfig)
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
