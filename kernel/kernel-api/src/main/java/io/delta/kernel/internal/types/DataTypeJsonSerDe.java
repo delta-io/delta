@@ -375,10 +375,13 @@ public class DataTypeJsonSerDe {
   private static void assertValidTypeForCollations(
       String fieldPath, String fieldType, Map<String, String> collationMap) {
     if (collationMap.containsKey(fieldPath) && !fieldType.equals("string")) {
-      throw new IllegalArgumentException(String.format("Invalid collation path \"%s\"", fieldPath));
+      throw new IllegalArgumentException(String.format("Invalid data type for collations: \"%s\"", fieldType));
     }
   }
 
+  /**
+   * Returns a map of field path to collation name.
+   */
   private static HashMap<String, String> getCollationsMap(JsonNode fieldMetadata) {
     if (fieldMetadata == null || !fieldMetadata.has(DataType.COLLATIONS_METADATA_KEY)) {
       return new HashMap<>();
