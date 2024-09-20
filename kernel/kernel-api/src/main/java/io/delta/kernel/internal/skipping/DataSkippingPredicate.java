@@ -21,7 +21,9 @@ import java.util.*;
 
 public interface DataSkippingPredicate {
 
-  public Set<Column> getReferencedCols();
+  Set<Column> getReferencedCols();
 
-  public Predicate asPredicate();
+  Set<Column> getReferencedCollatedCols();
+
+  Predicate asPredicate();
 }

@@ -271,6 +271,7 @@ public class ScanImpl implements Scan {
         DataSkippingUtils.pruneStatsSchema(
             getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
 
+
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
     //    value of true means the stats say we must keep the file, and null means we could not

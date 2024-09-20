@@ -19,8 +19,8 @@ public class DataSkippingCollatedPredicate extends CollatedPredicate
    */
   DataSkippingCollatedPredicate(
       String name,
-      Expression left,
-      Expression right,
+      Column left,
+      Literal right,
       Set<Column> referencedCols,
       CollationIdentifier collationIdentifier) {
     super(name, left, right, collationIdentifier);
@@ -29,6 +29,11 @@ public class DataSkippingCollatedPredicate extends CollatedPredicate
 
   @Override
   public Set<Column> getReferencedCols() {
+    return referencedCols;
+  }
+
+  @Override
+  public Set<Column> getReferencedCollatedCols() {
     return referencedCols;
   }
 

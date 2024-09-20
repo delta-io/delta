@@ -10,6 +10,8 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
   private final Set<Column> referencedCols;
 
+  private final Set<Column> referencedCollatedCols;
+
   /**
    * @param name the predicate name
    * @param children list of expressions that are input to this predicate.
@@ -19,6 +21,13 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   DefaultDataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
+    this.referencedCollatedCols = new HashSet<>();
+    for (Expression child : children) {
+      if (child instanceof DataSkippingPredicate) {
+        DataSkippingPredicate predicate = (DataSkippingPredicate) child;
+        this.referencedCollatedCols.addAll(predicate.getReferencedCollatedCols());
+      }
+    }
   }
 
   /**
@@ -44,6 +53,11 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
 
   public Set<Column> getReferencedCols() {
     return referencedCols;
+  }
+
+  @Override
+  public Set<Column> getReferencedCollatedCols() {
+    return referencedCollatedCols;
   }
 
   @Override
