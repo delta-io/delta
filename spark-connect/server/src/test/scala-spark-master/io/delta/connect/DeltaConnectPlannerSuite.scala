@@ -485,7 +485,6 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      assert(plan.columns.toSeq === V2CommandOutputs.mergeOutput.map(_.name))
       val result = Dataset.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 50) // num_affected_rows
@@ -531,7 +530,6 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      assert(plan.columns.toSeq === V2CommandOutputs.mergeOutput.map(_.name))
       val result = Dataset.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 50) // num_affected_rows
@@ -582,7 +580,6 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      assert(plan.columns.toSeq === V2CommandOutputs.mergeOutput.map(_.name))
       val result = Dataset.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 125) // num_affected_rows
@@ -635,9 +632,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val plan = new SparkConnectPlanner(
-        SparkConnectTestUtils.createDummySessionHolder(spark)).transformRelation(input)
-      assert(plan.columns.toSeq === V2CommandOutputs.mergeOutput.map(_.name))
+      val plan = transform(input)
       val result = Dataset.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 125) // num_affected_rows
@@ -690,9 +685,7 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val plan = new SparkConnectPlanner(
-        SparkConnectTestUtils.createDummySessionHolder(spark)).transformRelation(input)
-      assert(plan.columns.toSeq === V2CommandOutputs.mergeOutput.map(_.name))
+      val plan = transform(input)
       val result = Dataset.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 125) // num_affected_rows

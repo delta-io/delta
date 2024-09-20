@@ -488,6 +488,13 @@ class DeltaMergeMatchedActionBuilder private(
     }
   }
 
+  /**
+   * Converts a map of strings to expressions as SQL formatted string
+   * into a map of strings to Column objects.
+   *
+   * @param map A map where the value is an expression as SQL formatted string.
+   * @return A map where the value is a Column object created from the expression.
+   */
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] =
     map.mapValues(functions.expr).toMap
 }
