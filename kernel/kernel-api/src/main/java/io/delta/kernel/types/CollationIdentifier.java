@@ -131,5 +131,10 @@ public class CollationIdentifier {
       return String.format("%s.%s", provider, name);
     }
   }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(provider, name, version);
+  }
 }
 
