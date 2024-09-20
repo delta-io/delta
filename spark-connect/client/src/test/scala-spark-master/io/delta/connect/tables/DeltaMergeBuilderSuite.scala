@@ -405,7 +405,8 @@ class DeltaMergeBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  test("merge fails due to no withSchemaEvolution while schema evolution is needed") {
+  test("merge with no withSchemaEvolution while the source's schema " +
+      "is different than the target's schema") {
     val session = spark
     import session.implicits._
 
@@ -423,8 +424,7 @@ class DeltaMergeBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
 
       checkAnswer(
         deltaTable.toDF,
-        Seq(
-          Row("a", -1), Row("b", 0), Row("c", null), Row("d", null), Row("e", -5), Row("f", -6)))
+        Seq(Row("a"), Row("b"), Row("c"), Row("d"), Row("e"), Row("f")))
     }
   }
 

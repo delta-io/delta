@@ -151,7 +151,7 @@ class DeltaMergeBuilder private(
     private val whenNotMatchedBySourceClauses: Seq[proto.MergeIntoTable.Action],
     private val schemaEvolutionEnabled: Boolean) {
 
-
+  // Schema Evolution is off by default in Merge.
   def this(
       targetTable: DeltaTable,
       source: DataFrame,
@@ -307,6 +307,7 @@ class DeltaMergeBuilder private(
       .addAllMatchedActions(whenMatchedClauses.asJava)
       .addAllNotMatchedActions(whenNotMatchedClauses.asJava)
       .addAllNotMatchedBySourceActions(whenNotMatchedBySourceClauses.asJava)
+      .setWithSchemaEvolution(schemaEvolutionEnabled)
     val relation = proto.DeltaRelation.newBuilder().setMergeIntoTable(merge).build()
     val extension = com.google.protobuf.Any.pack(relation)
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()

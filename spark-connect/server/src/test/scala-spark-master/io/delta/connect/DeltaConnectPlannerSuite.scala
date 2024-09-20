@@ -608,8 +608,7 @@ class DeltaConnectPlannerSuite
 
       spark.range(end = 100)
         .select(col("id") + 50 as "id")
-        .select(col("id") as "key", col("id") + 1000 as "value")
-        .select(col("id") + 1 as "keyplusone")
+        .select(col("id") as "key", col("id") + 1000 as "value", col("id") + 1 as "extracol")
         .write.format("delta").saveAsTable(sourceTableName)
 
       val input = createSparkRelation(
@@ -636,7 +635,8 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val plan = transform(input)
+      val plan = new SparkConnectPlanner(
+        SparkConnectTestUtils.createDummySessionHolder(spark)).transformRelation(input)
       assert(plan.columns.toSeq === V2CommandOutputs.mergeOutput.map(_.name))
       val result = Dataset.ofRows(spark, plan).collect()
       assert(result.length === 1)
@@ -647,14 +647,15 @@ class DeltaConnectPlannerSuite
 
       checkAnswer(
         spark.read.table(targetTableName),
-        Seq.tabulate(25)(i => Row(25 + i, 25 + i, None)) ++
+        Seq.tabulate(25)(i => Row(25 + i, 25 + i, null)) ++
           Seq.tabulate(50)(i => Row(i + 50, i + 1050, i + 51)) ++
           Seq.tabulate(50)(i => Row(i + 100, i + 1100, i + 101))
       )
     }
   }
 
-  test("merge fails due to no withSchemaEvolution while schema evolution is needed") {
+  test("merge with no withSchemaEvolution while the source's schema " +
+      "is different than the target's schema") {
     val targetTableName = "target"
     val sourceTableName = "source"
     withTable(targetTableName, sourceTableName) {
@@ -663,8 +664,7 @@ class DeltaConnectPlannerSuite
 
       spark.range(end = 100)
         .select(col("id") + 50 as "id")
-        .select(col("id") as "key", col("id") + 1000 as "value")
-        .select(col("id") + 1 as "valueplusone")
+        .select(col("id") as "key", col("id") + 1000 as "value", col("id") + 1 as "extracol")
         .write.format("delta").saveAsTable(sourceTableName)
 
       val input = createSparkRelation(
@@ -690,7 +690,8 @@ class DeltaConnectPlannerSuite
           )
       )
 
-      val plan = transform(input)
+      val plan = new SparkConnectPlanner(
+        SparkConnectTestUtils.createDummySessionHolder(spark)).transformRelation(input)
       assert(plan.columns.toSeq === V2CommandOutputs.mergeOutput.map(_.name))
       val result = Dataset.ofRows(spark, plan).collect()
       assert(result.length === 1)
@@ -701,9 +702,9 @@ class DeltaConnectPlannerSuite
 
       checkAnswer(
         spark.read.table(targetTableName),
-        Seq.tabulate(25)(i => Row(25 + i, 25 + i, None)) ++
-          Seq.tabulate(50)(i => Row(i + 50, i + 1050, i + 51)) ++
-          Seq.tabulate(50)(i => Row(i + 100, i + 1100, i + 101))
+        Seq.tabulate(25)(i => Row(25 + i, 25 + i)) ++
+          Seq.tabulate(50)(i => Row(i + 50, i + 1050)) ++
+          Seq.tabulate(50)(i => Row(i + 100, i + 1100))
       )
     }
   }
