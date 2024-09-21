@@ -235,6 +235,14 @@ def runTaskOnlyOnSparkMaster[T](
   }
 }
 
+// Common Delta Connect shade rules.
+val commonDeltaConnectShadeRules = Seq(
+  ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
+  ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
+  ShadeRule.rename("org.checkerframework.**" -> "org.deltaproject.connect.checkerframework.@1").inAll,
+  ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.javax.annotation.@1").inAll
+)
+
 lazy val connectCommon = (project in file("spark-connect/common"))
   .disablePlugins(JavaFormatterPlugin)
   .settings(
@@ -285,12 +293,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     (assembly / logLevel) := Level.Info,
     // Exclude `scala-library` from assembly.
     (assembly / assemblyPackageScala / assembleArtifact) := false,
-    (assembly / assemblyShadeRules) := Seq(
-      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
-      ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
-      ShadeRule.rename("org.checkerframework.**" -> "org.deltaproject.connect.checkerframework.@1").inAll,
-      ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.javax.annotation.@1").inAll,
-    ),
+    (assembly / assemblyShadeRules) := commonDeltaConnectShadeRules,
     (assembly / assemblyMergeStrategy) := {
       case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
       // Drop all proto files that are not needed as artifacts of the build.
@@ -395,12 +398,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
     (assembly / logLevel) := Level.Info,
     // Exclude `scala-library` from assembly.
     (assembly / assemblyPackageScala / assembleArtifact) := false,
-    (assembly / assemblyShadeRules) := Seq(
-      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
-      ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
-      ShadeRule.rename("org.checkerframework.**" -> "org.deltaproject.connect.checkerframework.@1").inAll,
-      ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.javax.annotation.@1").inAll,
-      ShadeRule.rename("org.scalatest.**" -> "org.deltaproject.connect.org.scalatest.@1").inAll,
+    (assembly / assemblyShadeRules) := commonDeltaConnectShadeRules ++ Seq(
+      ShadeRule.rename("org.scalatest.**" -> "org.deltaproject.connect.org.scalatest.@1").inAll
     ),
     (assembly / assemblyMergeStrategy) := {
       case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
@@ -463,12 +462,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
     (assembly / logLevel) := Level.Info,
     // Exclude `scala-library` from assembly.
     (assembly / assemblyPackageScala / assembleArtifact) := false,
-    (assembly / assemblyShadeRules) := Seq(
-      ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
-      ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
-      ShadeRule.rename("org.checkerframework.**" -> "org.deltaproject.connect.checkerframework.@1").inAll,
-      ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.javax.annotation.@1").inAll,
-    ),
+    (assembly / assemblyShadeRules) := commonDeltaConnectShadeRules,
     (assembly / assemblyMergeStrategy) := {
       case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
       // Drop all proto files that are not needed as artifacts of the build.
