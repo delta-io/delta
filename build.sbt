@@ -235,7 +235,6 @@ def runTaskOnlyOnSparkMaster[T](
   }
 }
 
-// Common Delta Connect shade rules.
 val commonDeltaConnectShadeRules = Seq(
   ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
   ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
