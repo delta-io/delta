@@ -24,6 +24,7 @@ import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
@@ -34,17 +35,22 @@ import java.util.stream.Collectors;
 class DefaultExpressionUtils {
 
   static final Comparator<BigDecimal> BIGDECIMAL_COMPARATOR = Comparator.naturalOrder();
-  static final Comparator<String> STRING_COMPARATOR = Comparator.naturalOrder();
   static final Comparator<byte[]> BINARY_COMPARTOR =
       (leftOp, rightOp) -> {
         int i = 0;
         while (i < leftOp.length && i < rightOp.length) {
           if (leftOp[i] != rightOp[i]) {
-            return Byte.compare(leftOp[i], rightOp[i]);
+            return Byte.toUnsignedInt(leftOp[i]) - Byte.toUnsignedInt(rightOp[i]);
           }
           i++;
         }
         return Integer.compare(leftOp.length, rightOp.length);
+      };
+  static final Comparator<String> STRING_COMPARATOR =
+      (leftOp, rightOp) -> {
+        byte[] leftBytes = leftOp.getBytes(StandardCharsets.UTF_8);
+        byte[] rightBytes = rightOp.getBytes(StandardCharsets.UTF_8);
+        return BINARY_COMPARTOR.compare(leftBytes, rightBytes);
       };
 
   private DefaultExpressionUtils() {}
@@ -101,12 +107,14 @@ class DefaultExpressionUtils {
   }
 
   /**
-   * Utility method to create a column vector that lazily evaluate the comparator ex. (ie. ==, >=,
-   * <=......) for left and right column vector according to the natural ordering of numbers
+   * Utility method for getting value comparator
    *
-   * <p>Only primitive data types are supported.
+   * @param left
+   * @param right
+   * @param booleanComparator
+   * @return
    */
-  static ColumnVector comparatorVector(
+  static IntPredicate getComparator(
       ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
     checkArgument(
         left.getSize() == right.getSize(), "Left and right operand have different vector sizes.");
@@ -160,6 +168,19 @@ class DefaultExpressionUtils {
       throw new UnsupportedOperationException(dataType + " can not be compared.");
     }
 
+    return vectorValueComparator;
+  }
+
+  /**
+   * Utility method to create a column vector that lazily evaluate the comparator ex. (ie. ==, >=,
+   * <=......) for left and right column vector according to the natural ordering of numbers
+   *
+   * <p>Only primitive data types are supported.
+   */
+  static ColumnVector comparatorVector(
+      ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
+    IntPredicate vectorValueComparator = getComparator(left, right, booleanComparator);
+
     return new ColumnVector() {
 
       @Override
@@ -185,6 +206,59 @@ class DefaultExpressionUtils {
       @Override
       public boolean getBoolean(int rowId) {
         if (isNullAt(rowId)) {
+          return false;
+        }
+        return vectorValueComparator.test(rowId);
+      }
+    };
+  }
+
+  /**
+   * Utility method to create a null safe column vector that lazily evaluate the comparator ex. (ie.
+   * <=>) for left and right column vector according to the natural ordering of numbers
+   *
+   * <p>Only primitive data types are supported.
+   */
+  static ColumnVector nullSafeComparatorVector(
+      ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
+    IntPredicate vectorValueComparator = getComparator(left, right, booleanComparator);
+    return new ColumnVector() {
+      @Override
+      public DataType getDataType() {
+        return BooleanType.BOOLEAN;
+      }
+
+      @Override
+      public void close() {
+        Utils.closeCloseables(left, right);
+      }
+
+      @Override
+      public int getSize() {
+        return left.getSize();
+      }
+
+      @Override
+      public boolean isNullAt(int rowId) {
+        // Nullsafe comparator can never return null
+        return false;
+      }
+
+      /**
+       * Null safe comparator follows the truth table in Comparison Operators part of following link
+       * https://spark.apache.org/docs/latest/sql-ref-null-semantics.html
+       *
+       * <p>If either left or right is null, return false If both left and right is null, return
+       * true else compare the non null value of left and right
+       *
+       * @param rowId
+       * @return
+       */
+      @Override
+      public boolean getBoolean(int rowId) {
+        if (left.isNullAt(rowId) && right.isNullAt(rowId)) {
+          return true;
+        } else if (left.isNullAt(rowId) || right.isNullAt(rowId)) {
           return false;
         }
         return vectorValueComparator.test(rowId);

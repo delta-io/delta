@@ -32,9 +32,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import builtins
+import collections.abc
 import delta.connect.proto.proto.base_pb2
 import google.protobuf.descriptor
+import google.protobuf.internal.containers
 import google.protobuf.message
+import pyspark.sql.connect.proto.expressions_pb2
+import pyspark.sql.connect.proto.relations_pb2
 import pyspark.sql.connect.proto.types_pb2
 import sys
 
@@ -56,6 +60,8 @@ class DeltaRelation(google.protobuf.message.Message):
     CONVERT_TO_DELTA_FIELD_NUMBER: builtins.int
     RESTORE_TABLE_FIELD_NUMBER: builtins.int
     IS_DELTA_TABLE_FIELD_NUMBER: builtins.int
+    DELETE_FROM_TABLE_FIELD_NUMBER: builtins.int
+    UPDATE_TABLE_FIELD_NUMBER: builtins.int
     @property
     def scan(self) -> global___Scan: ...
     @property
@@ -68,6 +74,10 @@ class DeltaRelation(google.protobuf.message.Message):
     def restore_table(self) -> global___RestoreTable: ...
     @property
     def is_delta_table(self) -> global___IsDeltaTable: ...
+    @property
+    def delete_from_table(self) -> global___DeleteFromTable: ...
+    @property
+    def update_table(self) -> global___UpdateTable: ...
     def __init__(
         self,
         *,
@@ -77,12 +87,16 @@ class DeltaRelation(google.protobuf.message.Message):
         convert_to_delta: global___ConvertToDelta | None = ...,
         restore_table: global___RestoreTable | None = ...,
         is_delta_table: global___IsDeltaTable | None = ...,
+        delete_from_table: global___DeleteFromTable | None = ...,
+        update_table: global___UpdateTable | None = ...,
     ) -> None: ...
     def HasField(
         self,
         field_name: typing_extensions.Literal[
             "convert_to_delta",
             b"convert_to_delta",
+            "delete_from_table",
+            b"delete_from_table",
             "describe_detail",
             b"describe_detail",
             "describe_history",
@@ -95,6 +109,8 @@ class DeltaRelation(google.protobuf.message.Message):
             b"restore_table",
             "scan",
             b"scan",
+            "update_table",
+            b"update_table",
         ],
     ) -> builtins.bool: ...
     def ClearField(
@@ -102,6 +118,8 @@ class DeltaRelation(google.protobuf.message.Message):
         field_name: typing_extensions.Literal[
             "convert_to_delta",
             b"convert_to_delta",
+            "delete_from_table",
+            b"delete_from_table",
             "describe_detail",
             b"describe_detail",
             "describe_history",
@@ -114,6 +132,8 @@ class DeltaRelation(google.protobuf.message.Message):
             b"restore_table",
             "scan",
             b"scan",
+            "update_table",
+            b"update_table",
         ],
     ) -> None: ...
     def WhichOneof(
@@ -126,6 +146,8 @@ class DeltaRelation(google.protobuf.message.Message):
             "convert_to_delta",
             "restore_table",
             "is_delta_table",
+            "delete_from_table",
+            "update_table",
         ]
         | None
     ): ...
@@ -331,3 +353,110 @@ class IsDeltaTable(google.protobuf.message.Message):
     def ClearField(self, field_name: typing_extensions.Literal["path", b"path"]) -> None: ...
 
 global___IsDeltaTable = IsDeltaTable
+
+class DeleteFromTable(google.protobuf.message.Message):
+    """Command that deletes data from the target table that matches the given condition.
+
+    Needs to be a Relation, as it returns a row containing the execution metrics.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TARGET_FIELD_NUMBER: builtins.int
+    CONDITION_FIELD_NUMBER: builtins.int
+    @property
+    def target(self) -> pyspark.sql.connect.proto.relations_pb2.Relation:
+        """(Required) Target table to delete data from. Must either be a DeltaRelation containing a Scan
+        or a SubqueryAlias with a DeltaRelation containing a Scan as its input.
+        """
+    @property
+    def condition(self) -> pyspark.sql.connect.proto.expressions_pb2.Expression:
+        """(Optional) Expression returning a boolean."""
+    def __init__(
+        self,
+        *,
+        target: pyspark.sql.connect.proto.relations_pb2.Relation | None = ...,
+        condition: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]
+    ) -> builtins.bool: ...
+    def ClearField(
+        self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]
+    ) -> None: ...
+
+global___DeleteFromTable = DeleteFromTable
+
+class UpdateTable(google.protobuf.message.Message):
+    """Command that updates data in the target table using the given assignments for rows that matches
+    the given condition.
+
+    Needs to be a Relation, as it returns a row containing the execution metrics.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TARGET_FIELD_NUMBER: builtins.int
+    CONDITION_FIELD_NUMBER: builtins.int
+    ASSIGNMENTS_FIELD_NUMBER: builtins.int
+    @property
+    def target(self) -> pyspark.sql.connect.proto.relations_pb2.Relation:
+        """(Required) Target table to delete data from. Must either be a DeltaRelation containing a Scan
+        or a SubqueryAlias with a DeltaRelation containing a Scan as its input.
+        """
+    @property
+    def condition(self) -> pyspark.sql.connect.proto.expressions_pb2.Expression:
+        """(Optional) Condition that determines which rows must be updated.
+        Must be an expression returning a boolean.
+        """
+    @property
+    def assignments(
+        self,
+    ) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Assignment]:
+        """(Optional) Set of assignments to apply to the rows matching the condition."""
+    def __init__(
+        self,
+        *,
+        target: pyspark.sql.connect.proto.relations_pb2.Relation | None = ...,
+        condition: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
+        assignments: collections.abc.Iterable[global___Assignment] | None = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal[
+            "assignments", b"assignments", "condition", b"condition", "target", b"target"
+        ],
+    ) -> None: ...
+
+global___UpdateTable = UpdateTable
+
+class Assignment(google.protobuf.message.Message):
+    """Represents an assignment of a value to a field."""
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    FIELD_FIELD_NUMBER: builtins.int
+    VALUE_FIELD_NUMBER: builtins.int
+    @property
+    def field(self) -> pyspark.sql.connect.proto.expressions_pb2.Expression:
+        """(Required) Expression identifying the (struct) field that is assigned a new value."""
+    @property
+    def value(self) -> pyspark.sql.connect.proto.expressions_pb2.Expression:
+        """(Required) Expression that produces the value to assign to the field."""
+    def __init__(
+        self,
+        *,
+        field: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
+        value: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["field", b"field", "value", b"value"]
+    ) -> builtins.bool: ...
+    def ClearField(
+        self, field_name: typing_extensions.Literal["field", b"field", "value", b"value"]
+    ) -> None: ...
+
+global___Assignment = Assignment

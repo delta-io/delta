@@ -28,7 +28,12 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, EqualNullSafe, Expression, If, Literal, Not}
@@ -306,9 +311,9 @@ case class DeleteCommand(
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(new Column(cond))
+                  data.filter(Column(cond))
                     .select(input_file_name())
-                    .filter(new Column(incrDeletedCountExpr))
+                    .filter(Column(incrDeletedCountExpr))
                     .distinct()
                     .as[String]
                     .collect()
@@ -451,15 +456,15 @@ case class DeleteCommand(
         // as table data, while all rows which don't match are removed from the rewritten table data
         // but do get included in the output as CDC events.
         baseData
-          .filter(new Column(incrTouchedCountExpr))
+          .filter(Column(incrTouchedCountExpr))
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            new Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
+            Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
           )
       } else {
         baseData
-          .filter(new Column(incrTouchedCountExpr))
-          .filter(new Column(filterCondition))
+          .filter(Column(incrTouchedCountExpr))
+          .filter(Column(filterCondition))
       }
 
       txn.writeFiles(dfToWrite)

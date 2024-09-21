@@ -33,6 +33,17 @@ object ImplicitProtoConversions {
     delta_spark_proto.Relation.parseFrom(relation.toByteArray)
   }
 
+  implicit def convertExpressionToSpark(
+      expr: delta_spark_proto.Expression): spark_proto.Expression = {
+    ConnectProtoUtils.parseExpressionWithRecursionLimit(expr.toByteArray, recursionLimit = 1024)
+  }
+
+  implicit def convertExpressionToDelta(
+      expr: spark_proto.Expression): delta_spark_proto.Expression = {
+    // TODO: Recursion limits
+    delta_spark_proto.Expression.parseFrom(expr.toByteArray)
+  }
+
   implicit def convertDataTypeToSpark(
       dataType: delta_spark_proto.DataType): spark_proto.DataType = {
     ConnectProtoUtils.parseDataTypeWithRecursionLimit(dataType.toByteArray, recursionLimit = 1024)

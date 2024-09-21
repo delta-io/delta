@@ -289,10 +289,10 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     withTable(tbl) {
       spark.range(10).write.format("delta").saveAsTable(tbl)
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"SELECT * FROM table_changes('$tbl', 0, id)")
         },
-        errorClass = "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION",
+        "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION",
         parameters = Map("objectName" -> "`id`"),
         queryContext = Array(ExpectedContext(
           fragment = "id",
@@ -308,9 +308,16 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
       // We set CDC to be enabled by default, so this should automatically bump the writer protocol
       // to the required version.
       if (columnMappingEnabled) {
-        assert(log.snapshot.protocol == Protocol(2, 5))
+        assert(log.update().protocol == Protocol(2, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          ChangeDataFeedTableFeature,
+          ColumnMappingTableFeature)))
       } else {
-        assert(log.snapshot.protocol == Protocol(1, 4))
+        assert(log.update().protocol == Protocol(1, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          ChangeDataFeedTableFeature)))
       }
     }
   }

@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
  *
  * <p>Users must pass in a `readSchema` to select which actions and sub-fields they want to consume.
  */
-class ActionsIterator implements CloseableIterator<ActionWrapper> {
+public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   private final Engine engine;
 
   private final Optional<Predicate> checkpointPredicate;
@@ -74,7 +74,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   private boolean closed;
 
-  ActionsIterator(
+  public ActionsIterator(
       Engine engine,
       List<FileStatus> files,
       StructType readSchema,
@@ -316,7 +316,11 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     nextFile,
                     readSchema);
 
-            return combine(dataIter, false /* isFromCheckpoint */, fileVersion);
+            return combine(
+                dataIter,
+                false /* isFromCheckpoint */,
+                fileVersion,
+                Optional.of(nextFile.getModificationTime()) /* timestamp */);
           }
         case CHECKPOINT_CLASSIC:
         case V2_CHECKPOINT_MANIFEST:
@@ -327,7 +331,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
             CloseableIterator<ColumnarBatch> dataIter =
                 getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
             long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version);
+            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
         case MULTIPART_CHECKPOINT:
         case SIDECAR:
@@ -349,7 +353,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     checkpointPredicate);
 
             long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version);
+            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
         default:
           throw new IOException("Unrecognized log type: " + nextLogFile.getLogType());
@@ -361,7 +365,10 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   /** Take input (iterator<T>, boolean) and produce an iterator<T, boolean>. */
   private CloseableIterator<ActionWrapper> combine(
-      CloseableIterator<ColumnarBatch> fileReadDataIter, boolean isFromCheckpoint, long version) {
+      CloseableIterator<ColumnarBatch> fileReadDataIter,
+      boolean isFromCheckpoint,
+      long version,
+      Optional<Long> timestamp) {
     return new CloseableIterator<ActionWrapper>() {
       @Override
       public boolean hasNext() {
@@ -370,7 +377,7 @@ class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
       @Override
       public ActionWrapper next() {
-        return new ActionWrapper(fileReadDataIter.next(), isFromCheckpoint, version);
+        return new ActionWrapper(fileReadDataIter.next(), isFromCheckpoint, version, timestamp);
       }
 
       @Override

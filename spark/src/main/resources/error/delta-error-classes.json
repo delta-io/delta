@@ -207,6 +207,12 @@
     ],
     "sqlState" : "42809"
   },
+  "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES" : {
+    "message" : [
+      "<Command> cannot override or unset in-commit timestamp table properties because coordinated commits is enabled in this table and depends on them. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_MODIFY_TABLE_PROPERTY" : {
     "message" : [
       "The Delta table configuration <prop> cannot be specified by the user"
@@ -267,6 +273,12 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES" : {
+    "message" : [
+      "<Command> cannot set in-commit timestamp table properties together with coordinated commits, because the latter depends on the former and sets the former internally. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
     "message" : [
       "Can't set location multiple times. Found <location>"
@@ -278,6 +290,12 @@
       "Cannot change the location of a path based table."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "ALTER cannot unset coordinated commits configurations. To downgrade a table from coordinated commits, please try again using `ALTER TABLE [table-name] DROP FEATURE 'coordinatedCommits-preview'`."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
@@ -378,6 +396,12 @@
       "The supported formats are 'delta', 'iceberg' and 'parquet'."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
+    "message" : [
+      "CLUSTER BY is not supported because the following column(s): <columnsWithDataTypes> don't support data skipping."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
     "message" : [
@@ -1147,6 +1171,12 @@
       "UNSUPPORTED_DATA_TYPE" : {
         "message" : [
           "IcebergCompatV<version> does not support the data type <dataType> in your schema. Your schema:",
+          "<schema>"
+        ]
+      },
+      "UNSUPPORTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "IcebergCompatV<version> does not support the data type <dataType> for partition columns in your schema. Your partition schema:",
           "<schema>"
         ]
       },

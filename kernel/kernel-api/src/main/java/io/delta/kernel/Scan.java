@@ -150,8 +150,8 @@ public interface Scan {
         if (inited) {
           return;
         }
-        physicalReadSchema = ScanStateRow.getPhysicalSchema(engine, scanState);
-        logicalReadSchema = ScanStateRow.getLogicalSchema(engine, scanState);
+        physicalReadSchema = ScanStateRow.getPhysicalSchema(scanState);
+        logicalReadSchema = ScanStateRow.getLogicalSchema(scanState);
 
         tablePath = ScanStateRow.getTableRoot(scanState);
         inited = true;

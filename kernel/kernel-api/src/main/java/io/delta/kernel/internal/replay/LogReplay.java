@@ -229,11 +229,12 @@ public class LogReplay {
 
           for (int i = 0; i < metadataVector.getSize(); i++) {
             if (!metadataVector.isNullAt(i)) {
-              metadata = Metadata.fromColumnVector(metadataVector, i, engine);
+              metadata = Metadata.fromColumnVector(metadataVector, i);
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                TableFeatures.validateReadSupportedTable(protocol, metadata, dataPath.toString());
+                TableFeatures.validateReadSupportedTable(
+                    protocol, dataPath.toString(), Optional.of(metadata));
                 return new Tuple2<>(protocol, metadata);
               }
 

@@ -37,6 +37,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -338,7 +339,7 @@ object DeletionVectorBitmapGenerator {
     /** Create a bitmap set aggregator over the given column */
     private def createBitmapSetAggregator(indexColumn: Column): Column = {
       val func = new BitmapAggregator(indexColumn.expr, RoaringBitmapArrayFormat.Portable)
-      new Column(func.toAggregateExpression(isDistinct = false))
+      Column(func.toAggregateExpression(isDistinct = false))
     }
 
     protected def outputColumns: Seq[Column] =

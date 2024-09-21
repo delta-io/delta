@@ -21,7 +21,9 @@ import scala.util.Random
 import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.actions.Metadata
 
-import org.apache.spark.sql.{Column, Dataset}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.expressions.ElementAt
 import org.apache.spark.sql.functions.lit
 

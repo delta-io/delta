@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.io.File
 import java.net.URI
 import java.util.Date
 import java.util.concurrent.TimeUnit
@@ -25,7 +26,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.DeltaFileOperations
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.conf.Configuration
@@ -38,7 +39,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
 import org.apache.spark.sql.types.{BooleanType, LongType, StringType, StructField, StructType}
-import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock}
+import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock, Utils}
 
 /**
  * Vacuums the table by clearing all untracked files and folders within this table.
@@ -143,9 +144,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     }.toDF("path")
   }
 
-  def getFilesFromInventory(basePath: String,
-                            partitionColumns: Seq[String],
-                            inventory: DataFrame): Dataset[SerializableFileStatus] = {
+  def getFilesFromInventory(
+      basePath: String,
+      partitionColumns: Seq[String],
+      inventory: DataFrame,
+      shouldIcebergMetadataDirBeHidden: Boolean): Dataset[SerializableFileStatus] = {
     implicit val fileNameAndSizeEncoder: Encoder[SerializableFileStatus] =
       org.apache.spark.sql.Encoders.product[SerializableFileStatus]
 
@@ -166,12 +169,19 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       .flatMap {
         row =>
           val path = row.getString(0)
-          if(!DeltaTableUtils.isHiddenDirectory(partitionColumns, path)) {
+          if(!DeltaTableUtils.isHiddenDirectory(
+              partitionColumns, path, shouldIcebergMetadataDirBeHidden)
+          ) {
             Seq(SerializableFileStatus(path,
               row.getLong(1), row.getBoolean(2), row.getLong(3)))
           } else {
             None
           }
+      }
+      .map { f =>
+        // Below logic will make paths url-encoded
+        SerializableFileStatus(pathStringtoUrlEncodedString(f.path), f.length, f.isDir,
+          f.modificationTime)
       }
   }
 
@@ -248,16 +258,31 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
+      val shouldIcebergMetadataDirBeHidden = UniversalFormat.icebergEnabled(snapshot.metadata)
       val allFilesAndDirsWithDuplicates = inventory match {
-        case Some(inventoryDF) => getFilesFromInventory(basePath, partitionColumns, inventoryDF)
+        case Some(inventoryDF) =>
+          getFilesFromInventory(
+            basePath, partitionColumns, inventoryDF, shouldIcebergMetadataDirBeHidden
+          )
         case None => DeltaFileOperations.recursiveListDirs(
           spark,
           Seq(basePath),
           hadoopConf,
-          hiddenDirNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
-          hiddenFileNameFilter = DeltaTableUtils.isHiddenDirectory(partitionColumns, _),
+          hiddenDirNameFilter =
+            DeltaTableUtils.isHiddenDirectory(
+              partitionColumns, _, shouldIcebergMetadataDirBeHidden
+            ),
+          hiddenFileNameFilter =
+            DeltaTableUtils.isHiddenDirectory(
+              partitionColumns, _, shouldIcebergMetadataDirBeHidden
+            ),
           fileListingParallelism = Option(parallelism)
         )
+        .map { f =>
+          // Below logic will make paths url-encoded
+          SerializableFileStatus(pathStringtoUrlEncodedString(f.path), f.length, f.isDir,
+            f.modificationTime)
+        }
       }
       val allFilesAndDirs = allFilesAndDirsWithDuplicates.groupByKey(_.path)
         .mapGroups { (k, v) =>
@@ -284,6 +309,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           //   5. We subtract all the valid files and tombstones in our state
           //   6. We filter all paths with a count of 1, which will correspond to files not in the
           //      state, and empty directories. We can safely delete all of these
+          val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
           val diff = allFilesAndDirs
             .where(col("modificationTime") < deleteBeforeTimestamp || col("isDir"))
             .mapPartitions { fileStatusIterator =>
@@ -292,16 +318,18 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               fileStatusIterator.flatMap { fileStatus =>
                 if (fileStatus.isDir) {
                   Iterator.single(FileNameAndSize(
-                    relativize(fileStatus.getHadoopPath, fs, reservoirBase, isDir = true), 0L))
+                    relativize(urlEncodedStringToPath(fileStatus.path), fs,
+                      reservoirBase, isDir = true), 0L))
                 } else {
-                  val dirs = getAllSubdirs(basePath, fileStatus.path, fs)
+                  val dirs = getAllSubdirs(canonicalizedBasePath, fileStatus.path, fs)
                   val dirsWithSlash = dirs.map { p =>
-                    val relativizedPath = relativize(new Path(p), fs, reservoirBase, isDir = true)
+                    val relativizedPath = relativize(urlEncodedStringToPath(p), fs,
+                      reservoirBase, isDir = true)
                     FileNameAndSize(relativizedPath, 0L)
                   }
                   dirsWithSlash ++ Iterator(
                     FileNameAndSize(relativize(
-                      fileStatus.getHadoopPath, fs, reservoirBase, isDir = false),
+                      urlEncodedStringToPath(fileStatus.path), fs, reservoirBase, isDir = false),
                       fileStatus.length))
                 }
               }
@@ -322,9 +350,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             .select(col("path"))
             .as[String]
             .map { relativePath =>
-              assert(!stringToPath(relativePath).isAbsolute,
+              assert(!urlEncodedStringToPath(relativePath).isAbsolute,
                 "Shouldn't have any absolute paths for deletion here.")
-              pathToString(DeltaFileOperations.absolutePath(basePath, relativePath))
+              pathToUrlEncodedString(DeltaFileOperations.absolutePath(basePath, relativePath))
             }
           val timeTakenToIdentifyEligibleFiles =
             System.currentTimeMillis() - startTimeToIdentifyEligibleFiles
@@ -354,7 +382,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories " +
               log"that are safe to delete. Vacuum stats: ${MDC(DeltaLogKeys.STATS, stats)}")
 
-            return diffFiles.map(f => stringToPath(f).toString).toDF("path")
+            return diffFiles.map(f => urlEncodedStringToPath(f).toString).toDF("path")
           }
           logVacuumStart(
             spark,
@@ -485,11 +513,12 @@ trait VacuumCommandImpl extends DeltaCommand {
       metrics("numFilesToDelete").set(diff.count())
       metrics("sizeOfDataToDelete").set(sizeOfDataToDelete)
       txn.registerSQLMetrics(spark, metrics)
-      txn.commit(actions = Seq(), DeltaOperations.VacuumStart(
+      val version = txn.commit(actions = Seq(), DeltaOperations.VacuumStart(
         checkEnabled,
         specifiedRetentionMillis,
         defaultRetentionMillis
       ))
+      setCommitClock(deltaLog, version)
     }
   }
 
@@ -529,14 +558,23 @@ trait VacuumCommandImpl extends DeltaCommand {
         metrics("numVacuumedDirectories").set(dirCounts.get)
         txn.registerSQLMetrics(spark, metrics)
       }
-      txn.commit(actions = Seq(), DeltaOperations.VacuumEnd(
+      val version = txn.commit(actions = Seq(), DeltaOperations.VacuumEnd(
         status
       ))
+      setCommitClock(deltaLog, version)
     }
 
     if (filesDeleted.nonEmpty) {
       logConsole(s"Deleted ${filesDeleted.get} files and directories in a total " +
         s"of ${dirCounts.get} directories.")
+    }
+  }
+  protected def setCommitClock(deltaLog: DeltaLog, version: Long) = {
+    // This is done to make sure that the commit timestamp reflects the one provided by the clock
+    // object.
+    if (Utils.isTesting) {
+      val f = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
+      f.setLastModified(deltaLog.clock.getTimeMillis())
     }
   }
 
@@ -549,7 +587,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       fs: FileSystem,
       reservoirBase: Path,
       isDir: Boolean): String = {
-    pathToString(DeltaFileOperations.tryRelativizePath(fs, reservoirBase, path))
+    pathToUrlEncodedString(DeltaFileOperations.tryRelativizePath(fs, reservoirBase, path))
   }
 
   /**
@@ -576,21 +614,22 @@ trait VacuumCommandImpl extends DeltaCommand {
       diff.repartition(parallelPartitions).mapPartitions { files =>
         val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
         val filesDeletedPerPartition =
-          files.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+          files.map(p => urlEncodedStringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
         Iterator(filesDeletedPerPartition)
       }.collect().sum
     } else {
       val fs = new Path(basePath).getFileSystem(hadoopConf.value.value)
       val fileResultSet = diff.toLocalIterator().asScala
-      fileResultSet.map(p => stringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
+      fileResultSet.map(p => urlEncodedStringToPath(p)).count(f => tryDeleteNonRecursive(fs, f))
     }
   }
 
-  // scalastyle:off pathfromuri
-  protected def stringToPath(path: String): Path = new Path(new URI(path))
-  // scalastyle:on pathfromuri
+  protected def urlEncodedStringToPath(path: String): Path = SparkPath.fromUrlString(path).toPath
 
-  protected def pathToString(path: Path): String = path.toUri.toString
+  protected def pathToUrlEncodedString(path: Path): String = SparkPath.fromPath(path).toString
+
+  protected def pathStringtoUrlEncodedString(path: String) =
+    SparkPath.fromPathString(path).toString
 
   /** Returns the relative path of a file action or None if the file lives outside of the table. */
   protected def getActionRelativePath(
@@ -598,7 +637,15 @@ trait VacuumCommandImpl extends DeltaCommand {
       fs: FileSystem,
       basePath: Path,
       relativizeIgnoreError: Boolean): Option[String] = {
-    val filePath = stringToPath(action.path)
+    getRelativePath(action.path, fs, basePath, relativizeIgnoreError)
+  }
+  /** Returns the relative path of a file or None if the file lives outside of the table. */
+  protected def getRelativePath(
+      path: String,
+      fs: FileSystem,
+      basePath: Path,
+      relativizeIgnoreError: Boolean): Option[String] = {
+    val filePath = urlEncodedStringToPath(path)
     if (filePath.isAbsolute) {
       val maybeRelative =
         DeltaFileOperations.tryRelativizePath(fs, basePath, filePath, relativizeIgnoreError)
@@ -606,10 +653,10 @@ trait VacuumCommandImpl extends DeltaCommand {
         // This file lives outside the directory of the table.
         None
       } else {
-        Some(pathToString(maybeRelative))
+        Some(pathToUrlEncodedString(maybeRelative))
       }
     } else {
-      Some(pathToString(filePath))
+      Some(pathToUrlEncodedString(filePath))
     }
   }
 
@@ -631,16 +678,16 @@ trait VacuumCommandImpl extends DeltaCommand {
       }.getOrElse(Seq.empty)
 
     val deletionVectorPath =
-      getDeletionVectorRelativePath(action).map(pathToString)
+      getDeletionVectorRelativePathAndSize(action).map(_._1)
 
     paths ++ deletionVectorPath.toSeq
   }
 
   /**
    * Returns the path of the on-disk deletion vector if it is stored relative to the
-   * `basePath` otherwise `None`.
+   * `basePath` and it's size otherwise `None`.
    */
-  protected def getDeletionVectorRelativePath(action: FileAction): Option[Path] = {
+  protected def getDeletionVectorRelativePathAndSize(action: FileAction): Option[(String, Long)] = {
     val dv = action match {
       case a: AddFile if a.deletionVector != null =>
         Some(a.deletionVector)
@@ -653,7 +700,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       case Some(dv) if dv.isOnDisk =>
         if (dv.isRelative) {
           // We actually want a relative path here.
-          Some(dv.absolutePath(new Path(".")))
+          Some((pathToUrlEncodedString(dv.absolutePath(new Path("."))), dv.sizeInBytes))
         } else {
           assert(dv.isAbsolute)
           // This is never going to be a path relative to `basePath` for DVs.

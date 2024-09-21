@@ -27,7 +27,11 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
-import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
+import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
@@ -222,7 +226,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         case Some(exprString) =>
           val expr = parseGenerationExpression(spark, exprString)
           validateColumnReferences(spark, f.name, expr, schema)
-          new Column(expr).alias(f.name)
+          Column(expr).alias(f.name)
         case None =>
           // Should not happen
           throw DeltaErrors.expressionsNotFoundInGeneratedColumn(f.name)
@@ -278,7 +282,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val generationExprs = schema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
         val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        new Column(expr).alias(col.name)
+        Column(expr).alias(col.name)
       }
     }
     if (generationExprs.isEmpty) {
@@ -327,7 +331,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val partitionGenerationExprs = partitionSchema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
         val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        new Column(expr).alias(col.name)
+        Column(expr).alias(col.name)
       }
     }
     if (partitionGenerationExprs.isEmpty) {

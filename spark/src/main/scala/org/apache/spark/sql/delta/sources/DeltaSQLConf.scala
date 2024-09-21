@@ -412,7 +412,7 @@ trait DeltaSQLConfBase {
       .doc("The default writer protocol version to create new tables with, unless a feature " +
         "that requires a higher version for correctness is enabled.")
       .intConf
-      .checkValues(Set(1, 2, 3, 4, 5, 7))
+      .checkValues(Set(1, 2, 3, 4, 5, 6, 7))
       .createWithDefault(2)
 
   val DELTA_PROTOCOL_DEFAULT_READER_VERSION =
@@ -935,7 +935,7 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("Whether Row Tracking backfill can be performed.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
     buildConf("rowTracking.backfill.maxNumBatchesInParallel")
@@ -1551,6 +1551,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS =
+    buildConf("streaming.sink.allowImplicitCasts")
+      .internal()
+      .doc(
+        """Whether to accept writing data to a Delta streaming sink when the data type doesn't
+          |match the type in the underlying Delta table. When true, data is cast to the expected
+          |type before the write. When false, the write fails.
+          |The casting behavior is governed by 'spark.sql.storeAssignmentPolicy'.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(
@@ -1590,6 +1602,21 @@ trait DeltaSQLConfBase {
         s"""If enabled, check if delta.columnMapping.maxColumnId is correctly assigned at each
            |Delta transaction commit.
            |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_COLUMN_MAPPING_STRIP_METADATA =
+    buildConf("columnMapping.stripMetadata")
+      .doc(
+        """
+          |Transactions might try to update the schema of a table with columns that contain
+          |column mapping metadata, even when column mapping is not enabled. For example, this
+          |can happen when transactions copy the schema from another table. When this setting is
+          |enabled, we will strip the column mapping metadata from the schema before applying it.
+          |Note that this config applies only when the existing schema of the table does not
+          |contain any column mapping metadata.
+          |""".stripMargin)
       .internal()
       .booleanConf
       .createWithDefault(true)
@@ -2025,6 +2052,32 @@ trait DeltaSQLConfBase {
       .doc("If true, post-commit hooks will by default throw an exception when they fail.")
       .booleanConf
       .createWithDefault(Utils.isTesting)
+
+  val TEST_FILE_NAME_PREFIX =
+    buildStaticConf("testOnly.dataFileNamePrefix")
+      .internal()
+      .doc("[TEST_ONLY]: The prefix to use for the names of all Parquet data files.")
+      .stringConf
+      .createWithDefault(if (Utils.isTesting) "test%file%prefix-" else "")
+
+  val TEST_DV_NAME_PREFIX =
+    buildStaticConf("testOnly.dvFileNamePrefix")
+      .internal()
+      .doc("[TEST_ONLY]: The prefix to use for the names of all Deletion Vector files.")
+      .stringConf
+      .createWithDefault(if (Utils.isTesting) "test%dv%prefix-" else "")
+
+  ///////////
+  // UTC TIMESTAMP PARTITION VALUES
+  ///////////////////
+  val UTC_TIMESTAMP_PARTITION_VALUES = buildConf("write.utcTimestampPartitionValues")
+    .internal()
+    .doc(
+      """
+        | If true, write UTC normalized timestamp partition values to Delta Log.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

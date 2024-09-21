@@ -57,10 +57,10 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       // Changing the type of a column that a CHECK constraint depends on is not allowed.
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
         },
-        errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a",
           "constraints" -> "delta.constraints.ck -> hash ( a ) > 0"
@@ -81,10 +81,10 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
       checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
 
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
         },
-        errorClass = "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a.x",
           "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
@@ -105,10 +105,10 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("INSERT INTO t VALUES (200)")
           },
-          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "a",
             "columnType" -> "TINYINT",
@@ -128,30 +128,63 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
           },
-          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
-            "columnName" -> "a",
-            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
-            "dataType" -> "STRUCT<x: INT, y: TINYINT>",
+            "columnName" -> "a.x",
+            "columnType" -> "TINYINT",
+            "dataType" -> "INT",
             "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
-        ))
+          )
+        )
 
-        // We're currently too strict and reject changing the type of struct field a.y even though
-        // it's not the field referenced by the CHECK constraint.
+        // changing the type of struct field `a.y` when it's not
+        // the field referenced by the CHECK constraint is allowed.
+        sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 500))")
+        checkAnswer(sql("SELECT hash(a.x) FROM t"), Seq(Row(1765031574), Row(1765031574)))
+      }
+    }
+  }
+
+  test("check constraint on nested field with complex type evolution") {
+    withTable("t") {
+      sql("CREATE TABLE t (a struct<x: struct<z: byte, h: byte>, y: byte>) USING DELTA")
+      sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (hash(a.x.z) > 0)")
+      sql("INSERT INTO t (a) VALUES (named_struct('x', named_struct('z', 2, 'h', 3), 'y', 4))")
+      checkAnswer(sql("SELECT hash(a.x.z) FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 500))")
+          intercept[DeltaAnalysisException] {
+            sql(
+              s"""
+                 | INSERT INTO t (a) VALUES (
+                 |   named_struct('x', named_struct('z', 200, 'h', 3), 'y', 4)
+                 | )
+                 |""".stripMargin
+            )
           },
-          errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
           parameters = Map(
-            "columnName" -> "a",
-            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
-            "dataType" -> "STRUCT<x: TINYINT, y: INT>",
-            "constraints" -> "delta.constraints.ck -> hash ( a . x ) > 0"
-        ))
+            "columnName" -> "a.x.z",
+            "columnType" -> "TINYINT",
+            "dataType" -> "INT",
+            "constraints" -> "delta.constraints.ck -> hash ( a . x . z ) > 0"
+          )
+        )
+
+        // changing the type of struct field `a.y` and `a.x.h` when it's not
+        // the field referenced by the CHECK constraint is allowed.
+        sql(
+          """
+            | INSERT INTO t (a) VALUES (
+            |   named_struct('x', named_struct('z', CAST(2 AS BYTE), 'h', 2002), 'y', 1030)
+            | )
+            |""".stripMargin
+        )
+        checkAnswer(sql("SELECT hash(a.x.z) FROM t"), Seq(Row(1765031574), Row(1765031574)))
       }
     }
   }

@@ -1065,6 +1065,35 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
       }
     }
   }
+
+  test("reader should accept case insensitive option") {
+    val tblName = "tbl"
+    withTable(tblName) {
+      createTblWithThreeVersions(tblName = Some(tblName))
+      val res = spark.read.format("delta")
+        .option("ReadChangeFEED", "tRuE")
+        .option("STARTINGVERSION", 0)
+        .option("endingVersion", 1)
+        .table(tblName)
+        .select("id", "_change_type")
+      assert(res.columns === Seq("id", "_change_type"))
+      checkAnswer(
+        res,
+        spark.range(20).withColumn("_change_type", lit("insert")))
+
+      val resLegacy = spark.read.format("delta")
+        .option("READCHANGEDATA", "TruE")
+        .option("startingversion", 0)
+        .option("ENDINGVERSION", 1)
+        .table(tblName)
+        .select("id", "_change_type")
+      assert(resLegacy.columns === Seq("id", "_change_type"))
+      checkAnswer(
+        resLegacy,
+        spark.range(20).withColumn("_change_type", lit("insert")))
+    }
+  }
+
 }
 
 class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite

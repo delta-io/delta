@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.expressions.{Alias, CaseWhen, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 
@@ -193,7 +194,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       } else {
         expr
       }
-      new Column(Alias(exprAfterPassthru, name)())
+      Column(Alias(exprAfterPassthru, name)())
     }
   }
 
@@ -263,7 +264,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       seqToString(outputExprs))
 
     outputExprs.zip(outputColNames).map { case (expr, name) =>
-      new Column(Alias(expr, name)())
+      Column(Alias(expr, name)())
     }
   }
 }

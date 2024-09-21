@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, Literal}
@@ -153,7 +154,8 @@ case class WriteIntoDelta(
       // If READ_SIDE_CHAR_PADDING is not enabled, CHAR type is the same as VARCHAR. The change
       // below makes DESC TABLE to show VARCHAR instead of CHAR.
       CharVarcharUtils.replaceCharVarcharWithStringInSchema(
-        replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema)).asInstanceOf[StructType])
+        CharVarcharUtils.replaceCharWithVarchar(CharVarcharUtils.getRawSchema(data.schema))
+          .asInstanceOf[StructType])
     }
     val finalSchema = schemaInCatalog.getOrElse(dataSchema)
     if (txn.metadata.schemaString != null) {
@@ -295,7 +297,7 @@ case class WriteIntoDelta(
             val insertCols = outputCols :+
               lit(CDCReader.CDC_TYPE_INSERT).as(CDCReader.CDC_TYPE_COLUMN_NAME)
             val insertDataCols = outputCols :+
-              new Column(CDCReader.CDC_TYPE_NOT_CDC)
+              Column(CDCReader.CDC_TYPE_NOT_CDC)
                 .as(CDCReader.CDC_TYPE_COLUMN_NAME)
             val packedInserts = array(
               struct(insertCols: _*),
@@ -303,7 +305,7 @@ case class WriteIntoDelta(
             ).expr
 
             dataWithDefaultExprs
-              .select(explode(new Column(packedInserts)).as("packedData"))
+              .select(explode(Column(packedInserts)).as("packedData"))
               .select(
                 (dataWithDefaultExprs.schema.map(_.name) :+ CDCReader.CDC_TYPE_COLUMN_NAME)
                   .map { n => col(s"packedData.`$n`").as(n) }: _*)

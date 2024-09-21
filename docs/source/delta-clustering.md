@@ -135,4 +135,5 @@ The following limitations exist:
   - `DESCRIBE DETAIL` to inspect the current clustering columns
   In <Delta> 3.2, the preview flag is removed and the above features are supported.
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

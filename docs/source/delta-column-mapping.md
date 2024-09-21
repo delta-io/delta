@@ -65,4 +65,5 @@ When column mapping is enabled for a Delta table, you can include spaces as well
 - In <Delta> 3.0 and above, [Spark Structured Streaming](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html) reads require schema tracking to be enabled on a column mapping enabled table that underwent column renaming or column dropping. See [_](/delta-streaming.md#schema-tracking)
 - The Delta table protocol specifies two modes of column mapping, by `name` and by `id`. <Delta> 2.1 and below do not support `id` mode.
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

@@ -58,6 +58,7 @@ import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
+import org.apache.spark.sql.errors.QueryCompilationErrorsShim._
 import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
@@ -573,7 +574,7 @@ class DeltaAnalysis(session: SparkSession)
       val v1TableName = child.identifier.asTableIdentifier
       namespace.foreach { ns =>
         if (v1TableName.database.exists(!resolver(_, ns.head))) {
-          throw QueryCompilationErrors.showColumnsWithConflictDatabasesError(ns, v1TableName)
+          throw showColumnsWithConflictDatabasesError(ns, v1TableName)
         }
       }
       ShowDeltaTableColumnsCommand(child)
@@ -807,20 +808,13 @@ class DeltaAnalysis(session: SparkSession)
           case Some(existingCatalog) => existingCatalog.identifier
           case None => TableIdentifier(path.toString, Some("delta"))
         }
-        // Reuse the existing schema so that the physical name of columns are consistent
-        val cloneSourceTable = sourceTbl match {
-          case source: CloneIcebergSource =>
-            // Reuse the existing schema so that the physical name of columns are consistent
-            source.copy(tableSchema = Some(deltaTableV2.initialSnapshot.metadata.schema))
-          case other => other
-        }
         val catalogTable = createCatalogTableForCloneCommand(
           path,
           byPath = existingTable.isEmpty,
           tblIdent,
           targetLocation,
           sourceCatalogTable,
-          cloneSourceTable,
+          sourceTbl,
           statement.tablePropertyOverrides)
 
         CreateDeltaTableCommand(
@@ -828,7 +822,7 @@ class DeltaAnalysis(session: SparkSession)
           existingTable,
           saveMode,
           Some(CloneTableCommand(
-            cloneSourceTable,
+            sourceTbl,
             tblIdent,
             statement.tablePropertyOverrides,
             path)),

@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaFileProviderUtils, Snapshot}
+import org.apache.spark.sql.delta.{DeltaFileProviderUtils, IcebergConstants, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.icebergShaded.IcebergSchemaUtils._
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
@@ -97,9 +97,8 @@ class IcebergConversionTransaction(
           tablePath,
           partitionSpec,
           logicalToPhysicalPartitionNames,
-          postCommitSnapshot.statsSchema,
           statsParser,
-          postCommitSnapshot.deltaLog
+          postCommitSnapshot
         )
       )
     }
@@ -138,9 +137,8 @@ class IcebergConversionTransaction(
           tablePath,
           partitionSpec,
           logicalToPhysicalPartitionNames,
-          postCommitSnapshot.statsSchema,
           statsParser,
-          postCommitSnapshot.deltaLog
+          postCommitSnapshot
         )
       )
     }
@@ -148,7 +146,11 @@ class IcebergConversionTransaction(
     def remove(remove: RemoveFile): Unit = {
       overwriter.deleteFile(
         convertDeltaRemoveFileToIcebergDataFile(
-          remove, tablePath, partitionSpec, logicalToPhysicalPartitionNames)
+          remove,
+          tablePath,
+          partitionSpec,
+          logicalToPhysicalPartitionNames,
+          postCommitSnapshot)
       )
     }
   }
@@ -167,7 +169,11 @@ class IcebergConversionTransaction(
       val dataFilesToDelete = removes.map { f =>
         assert(!f.dataChange, "Rewrite operation should not add data")
         convertDeltaRemoveFileToIcebergDataFile(
-          f, tablePath, partitionSpec, logicalToPhysicalPartitionNames)
+          f,
+          tablePath,
+          partitionSpec,
+          logicalToPhysicalPartitionNames,
+          postCommitSnapshot)
       }.toSet.asJava
 
       val dataFilesToAdd = adds.map { f =>
@@ -177,9 +183,8 @@ class IcebergConversionTransaction(
           tablePath,
           partitionSpec,
           logicalToPhysicalPartitionNames,
-          postCommitSnapshot.statsSchema,
           statsParser,
-          postCommitSnapshot.deltaLog
+          postCommitSnapshot
         )
       }.toSet.asJava
 
@@ -250,7 +255,7 @@ class IcebergConversionTransaction(
   }
 
   def getExpireSnapshotHelper(): ExpireSnapshotHelper = {
-    val ret = new ExpireSnapshotHelper(txn.expireSnapshots().cleanExpiredFiles(false))
+    val ret = new ExpireSnapshotHelper(txn.expireSnapshots())
     fileUpdates += ret
     ret
   }
@@ -340,7 +345,7 @@ class IcebergConversionTransaction(
     txn.updateProperties()
       .set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
-      .set(IcebergConverter.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
+      .set(IcebergConstants.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
       .commit()
 
     // We ensure the iceberg txns are serializable by only allowing them to commit against

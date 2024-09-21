@@ -332,7 +332,7 @@ object TableFeature {
    * Warning: Do not call `get` on this Map to get a specific feature because keys in this map are
    * in lower cases. Use [[featureNameToFeature]] instead.
    */
-  private[delta] def allSupportedFeaturesMap: Map[String, TableFeature] = {
+  def allSupportedFeaturesMap: Map[String, TableFeature] = {
     val testingFeaturesEnabled =
       try {
         SparkSession
@@ -350,6 +350,7 @@ object TableFeature {
       ClusteringTableFeature,
       DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
+      IdentityColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
@@ -381,9 +382,7 @@ object TableFeature {
         TestRemovableLegacyReaderWriterFeature,
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
-        TestWriterFeatureWithTransitiveDependency,
-        // Identity columns are under development and only available in testing.
-        IdentityColumnsTableFeature)
+        TestWriterFeatureWithTransitiveDependency)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
@@ -541,10 +540,7 @@ object ColumnMappingTableFeature
 
   override def validateRemoval(snapshot: Snapshot): Boolean = {
     val schemaHasNoColumnMappingMetadata =
-      SchemaMergingUtils.explode(snapshot.schema).forall { case (_, col) =>
-        !DeltaColumnMapping.hasPhysicalName(col) &&
-          !DeltaColumnMapping.hasColumnId(col)
-      }
+      !DeltaColumnMapping.schemaHasColumnMappingMetadata(snapshot.schema)
     val metadataHasNoMappingMode = snapshot.metadata.columnMappingMode match {
       case NoMapping => true
       case _ => false

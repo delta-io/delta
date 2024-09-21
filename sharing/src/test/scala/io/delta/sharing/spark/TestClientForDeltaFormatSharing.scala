@@ -53,13 +53,22 @@ private[spark] class TestClientForDeltaFormatSharing(
     maxFilesPerReq: Int = 100000,
     enableAsyncQuery: Boolean = false,
     asyncQueryPollIntervalMillis: Long = 10000L,
-    asyncQueryMaxDuration: Long = 600000L)
+    asyncQueryMaxDuration: Long = 600000L,
+    tokenExchangeMaxRetries: Int = 5,
+    tokenExchangeMaxRetryDurationInSeconds: Int = 60,
+    tokenRenewalThresholdInSeconds: Int = 600)
     extends DeltaSharingClient {
 
   assert(
     responseFormat == DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET ||
-    (readerFeatures.contains("deletionVectors") && readerFeatures.contains("columnMapping")),
-    "deletionVectors and columnMapping should be supported in all types of queries."
+    (
+      readerFeatures.contains("deletionVectors") &&
+      readerFeatures.contains("columnMapping") &&
+      readerFeatures.contains("timestampNtz") &&
+      readerFeatures.contains("variantType-preview")
+    ),
+    "deletionVectors, columnMapping, timestampNtz, variantType-preview should be supported in " +
+    "all types of queries."
   )
 
   import TestClientForDeltaFormatSharing._

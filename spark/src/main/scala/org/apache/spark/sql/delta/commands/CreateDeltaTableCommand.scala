@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
@@ -59,6 +59,8 @@ import org.apache.spark.sql.types.StructType
  *                - CTAS
  *                - saveAsTable
  * @param protocol This is used to create a table with specific protocol version
+ * @param createTableFunc If specified, call this function to create the table, instead of
+ *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
 case class CreateDeltaTableCommand(
     table: CatalogTable,
@@ -68,7 +70,8 @@ case class CreateDeltaTableCommand(
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil,
-    protocol: Option[Protocol] = None)
+    protocol: Option[Protocol] = None,
+    createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging {
@@ -131,9 +134,14 @@ case class CreateDeltaTableCommand(
     }
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
-    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
-    CoordinatedCommitsUtils.validateCoordinatedCommitsConfigurations(
-      sparkSession, deltaLog, query, tableWithLocation.properties)
+    // To be safe, here we only extract file system options from table storage properties, to create
+    // the DeltaLog.
+    val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
+      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+    }
+    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation, fileSystemOptions)
+    CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
+      sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val result = handleCommit(sparkSession, deltaLog, tableWithLocation)
@@ -538,6 +546,10 @@ case class CreateDeltaTableCommand(
         // internal column mapping properties for the sake of comparison.
         var filteredTableProperties = filterColumnMappingProperties(
           tableDesc.properties)
+        // We also need to remove any protocol-related properties as we're filtering these
+        // from the metadata so they won't be present in the table properties.
+        filteredTableProperties =
+          Protocol.filterProtocolPropsFromTableProps(filteredTableProperties)
         var filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
         // Clustered table has internal table properties in Metadata configurations and they are
@@ -634,10 +646,14 @@ case class CreateDeltaTableCommand(
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
-        spark.sessionState.catalog.createTable(
-          cleaned,
-          ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
-          validateLocation = false)
+        if (createTableFunc.isDefined) {
+          createTableFunc.get.apply(cleaned)
+        } else {
+          spark.sessionState.catalog.createTable(
+            cleaned,
+            ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
+            validateLocation = false)
+        }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
           if existingTableOpt.isDefined =>
         UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
@@ -717,7 +733,7 @@ case class CreateDeltaTableCommand(
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
       val newMetadata = getProvidedMetadata(table, schema.json)
-      txn.updateMetadataForNewTable(newMetadata)
+      txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
 

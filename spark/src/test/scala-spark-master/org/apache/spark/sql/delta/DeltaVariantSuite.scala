@@ -100,7 +100,7 @@ class DeltaVariantSuite
       // check previously thrown error message
       checkError(
         e,
-        errorClass = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
+        "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
         parameters = Map(
           "unsupportedFeatures" -> VariantTypeTableFeature.name,
           "supportedFeatures" -> currentFeatures
@@ -123,13 +123,13 @@ class DeltaVariantSuite
   test("VariantType may not be used as a partition column") {
     withTable("delta_test") {
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(
             """CREATE TABLE delta_test(s STRING, v VARIANT)
               |USING delta
               |PARTITIONED BY (v)""".stripMargin)
         },
-        errorClass = "INVALID_PARTITION_COLUMN_DATA_TYPE",
+        "INVALID_PARTITION_COLUMN_DATA_TYPE",
         parameters = Map("type" -> "\"VARIANT\"")
       )
     }
@@ -243,13 +243,8 @@ class DeltaVariantSuite
       }
       checkError(
         e,
-        "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
-        parameters = Map(
-          "columns" -> "v",
-          "schema" -> """#root
-                         # |-- v: variant (nullable = true)
-                         #""".stripMargin('#')
-        )
+        "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
+        parameters = Map("columnsWithDataTypes" -> "v : VARIANT")
       )
     }
   }
@@ -521,7 +516,7 @@ class DeltaVariantSuite
       }
       checkError(
         insertException,
-        errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
         parameters = Map("columnName" -> "v")
       )
 
@@ -544,7 +539,7 @@ class DeltaVariantSuite
       }
       checkError(
         insertException,
-        errorClass = "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
+        "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES",
         parameters = Map(
           "constraintName" -> "variantgtezero",
           "expression" -> "(variant_get(v, '$', 'INT') >= 0)", "values" -> " - v : -1"

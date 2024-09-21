@@ -23,7 +23,11 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
@@ -71,7 +75,7 @@ object IdentityColumn extends DeltaLogging {
 
   // Create a column to generate IDENTITY values for the column `field`.
   def createIdentityColumnGenerationExprAsColumn(field: StructField): Column = {
-    new Column(createIdentityColumnGenerationExpr(field)).alias(field.name)
+    Column(createIdentityColumnGenerationExpr(field)).alias(field.name)
   }
 
   /**
@@ -117,7 +121,7 @@ object IdentityColumn extends DeltaLogging {
     // The expression will be: to_json(array(max(id1), min(id2)))
     val aggregates = identityColumnInfo.map {
       case (name, positiveStep) =>
-        val col = new Column(UnresolvedAttribute.quoted(name))
+        val col = Column(UnresolvedAttribute.quoted(name))
         if (positiveStep) max(col) else min(col)
     }
     val unresolvedExpr = to_json(array(aggregates: _*))

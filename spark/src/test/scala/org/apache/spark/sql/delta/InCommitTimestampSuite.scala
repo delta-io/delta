@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
@@ -204,8 +205,8 @@ class InCommitTimestampSuite
         latestSnapshot.timestamp
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_MISSING_COMMIT_INFO",
+        e,
+        "DELTA_MISSING_COMMIT_INFO",
         parameters = Map(
           "featureName" -> InCommitTimestampTableFeature.name,
           "version" -> "1"))
@@ -243,8 +244,8 @@ class InCommitTimestampSuite
         latestSnapshot.timestamp
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_MISSING_COMMIT_TIMESTAMP",
+        e,
+        "DELTA_MISSING_COMMIT_TIMESTAMP",
         parameters = Map("featureName" -> InCommitTimestampTableFeature.name, "version" -> "1"))
     }
   }
@@ -261,24 +262,26 @@ class InCommitTimestampSuite
   }
 
   test("CREATE OR REPLACE should not disable ICT") {
-    withSQLConf(
-      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
-    ) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
-            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+    withoutCoordinatedCommitsDefaultTableProperties {
+      withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
+      ) {
+        withTempDir { tempDir =>
+          spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+          spark.sql(
+            s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+              s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
-        spark.sql(
-          s"CREATE OR REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id long) USING delta")
+          spark.sql(
+            s"CREATE OR REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id long) USING delta")
 
-        val deltaLogAfterCreateOrReplace =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val snapshot = deltaLogAfterCreateOrReplace.snapshot
-        assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
-        assert(snapshot.timestamp ==
-          getInCommitTimestamp(deltaLogAfterCreateOrReplace, snapshot.version))
+          val deltaLogAfterCreateOrReplace =
+            DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          val snapshot = deltaLogAfterCreateOrReplace.snapshot
+          assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+          assert(snapshot.timestamp ==
+            getInCommitTimestamp(deltaLogAfterCreateOrReplace, snapshot.version))
+        }
       }
     }
   }
@@ -1016,7 +1019,7 @@ class InCommitTimestampWithCoordinatedCommitsSuite
       val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
       val unbackfilledCommits =
         tableCommitCoordinatorClient
-          .getCommits(Some(1))
+          .getCommits(Some(1L))
           .getCommits.asScala
           .map { commit => DeltaHistoryManager.Commit(commit.getVersion, commit.getCommitTimestamp)}
       val commits = (Seq(commit0) ++ unbackfilledCommits).toList

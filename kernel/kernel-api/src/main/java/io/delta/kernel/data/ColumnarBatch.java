@@ -86,17 +86,6 @@ public interface ColumnarBatch {
     throw new UnsupportedOperationException("Not yet implemented");
   }
 
-  /**
-   * Return a slice of the current batch.
-   *
-   * @param start Starting record index to include in the returned columnar batch
-   * @param end Ending record index (exclusive) to include in the returned columnar batch
-   * @return a columnar batch containing the records between [start, end)
-   */
-  default ColumnarBatch slice(int start, int end) {
-    throw new UnsupportedOperationException("Not yet implemented!");
-  }
-
   /** @return iterator of {@link Row}s in this batch */
   default CloseableIterator<Row> getRows() {
     final ColumnarBatch batch = this;

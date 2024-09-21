@@ -42,6 +42,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.{FileSourceOptions, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStatistics, CatalogTable}
@@ -221,9 +222,9 @@ class DeltaLog private(
       catalogTableOpt: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None)(
       thunk: OptimisticTransaction => T): T = {
+    val txn = startTransaction(catalogTableOpt, snapshotOpt)
+    OptimisticTransaction.setActive(txn)
     try {
-      val txn = startTransaction(catalogTableOpt, snapshotOpt)
-      OptimisticTransaction.setActive(txn)
       thunk(txn)
     } finally {
       OptimisticTransaction.clearActive()
@@ -233,9 +234,9 @@ class DeltaLog private(
   /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
   @deprecated("Please use the CatalogTable overload instead", "3.0")
   def withNewTransaction[T](thunk: OptimisticTransaction => T): T = {
+    val txn = startTransaction()
+    OptimisticTransaction.setActive(txn)
     try {
-      val txn = startTransaction()
-      OptimisticTransaction.setActive(txn)
       thunk(txn)
     } finally {
       OptimisticTransaction.clearActive()
@@ -425,7 +426,7 @@ class DeltaLog private(
   def assertTableFeaturesMatchMetadata(
       targetProtocol: Protocol,
       targetMetadata: Metadata): Unit = {
-    if (!targetProtocol.supportsReaderFeatures && !targetProtocol.supportsWriterFeatures) return
+    if (!targetProtocol.supportsTableFeatures) return
 
     val protocolEnabledFeatures = targetProtocol.writerFeatureNames
       .flatMap(TableFeature.featureNameToFeature)
@@ -970,7 +971,7 @@ object DeltaLog extends DeltaLogging {
       partitionFilters
     }
     val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = new Column(expr)
+    val columnFilter = Column(expr)
     files.filter(columnFilter)
   }
 

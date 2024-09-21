@@ -21,12 +21,13 @@ import org.apache.spark.sql.delta.expressions.{HilbertByteArrayIndex, HilbertLon
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression}
 import org.apache.spark.sql.types.StringType
 
 /** Functions for multi-dimensional clustering of the data */
 object MultiDimClusteringFunctions {
-  private def withExpr(expr: Expression): Column = new Column(expr)
+  private def withExpr(expr: Expression): Column = Column(expr)
 
   /**
    * Conceptually range-partitions the domain of values of the given column into `numPartitions`

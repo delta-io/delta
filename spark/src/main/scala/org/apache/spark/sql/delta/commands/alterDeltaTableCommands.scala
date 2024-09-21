@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
@@ -39,7 +40,11 @@ import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
-import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
+import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
@@ -161,6 +166,8 @@ case class AlterTableSetPropertiesDeltaCommand(
           true
       }.toMap
 
+      CoordinatedCommitsUtils.validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
+        metadata.configuration, filteredConfs)
       val newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
         configuration = metadata.configuration ++ filteredConfs)
@@ -193,7 +200,8 @@ case class AlterTableSetPropertiesDeltaCommand(
 case class AlterTableUnsetPropertiesDeltaCommand(
     table: DeltaTableV2,
     propKeys: Seq[String],
-    ifExists: Boolean)
+    ifExists: Boolean,
+    fromDropFeatureCommand: Boolean = false)
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
@@ -223,6 +231,10 @@ case class AlterTableUnsetPropertiesDeltaCommand(
         }
       }
 
+      if (!fromDropFeatureCommand) {
+        CoordinatedCommitsUtils.validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
+          metadata.configuration, normalizedKeys)
+      }
       val newConfiguration = metadata.configuration.filterNot {
         case (key, _) => normalizedKeys.contains(key)
       }
@@ -1055,7 +1067,7 @@ case class AlterTableAddConstraintDeltaCommand(
       val unresolvedExpr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
 
       try {
-        df.where(new Column(unresolvedExpr)).queryExecution.analyzed
+        df.where(Column(unresolvedExpr)).queryExecution.analyzed
       } catch {
         case a: AnalysisException
             if a.errorClass.contains("DATATYPE_MISMATCH.FILTER_NOT_BOOLEAN") =>
@@ -1070,7 +1082,7 @@ case class AlterTableAddConstraintDeltaCommand(
       recordDeltaOperation(
           txn.snapshot.deltaLog,
           "delta.ddl.alter.addConstraint.checkExisting") {
-        val n = df.where(new Column(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr)))).count()
+        val n = df.where(Column(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr)))).count()
 
         if (n > 0) {
           throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)

@@ -28,11 +28,12 @@ import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DeltaVacuumSuiteShims._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.commands.VacuumCommand
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.DeltaFileOperations
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -56,7 +57,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
   with GivenWhenThen
   with DeltaSQLTestUtils
   with DeletionVectorsTestUtils
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with CoordinatedCommitsBaseSuite {
 
   private def executeWithEnvironment(file: File)(f: (File, ManualClock) => Unit): Unit = {
     val clock = new ManualClock()
@@ -161,13 +163,15 @@ trait DeltaVacuumSuiteBase extends QueryTest
       expectedError: Class[T],
       msg: Seq[String]) extends Operation
 
+  private final val RANDOM_FILE_CONTENT = "gibberish"
+
   protected def createFile(
       reservoirBase: String,
       filePath: String,
       file: File,
       clock: ManualClock,
       partitionValues: Map[String, String] = Map.empty): AddFile = {
-    FileUtils.write(file, "gibberish")
+    FileUtils.write(file, RANDOM_FILE_CONTENT)
     file.setLastModified(clock.getTimeMillis())
     createTestAddFile(
       encodedPath = filePath,
@@ -188,11 +192,13 @@ trait DeltaVacuumSuiteBase extends QueryTest
         if (commit) {
           if (!DeltaTableUtils.isDeltaTable(spark, new Path(basePath))) {
             // initialize the table
-            deltaLog.startTransaction().commitManually()
+            val version = deltaLog.startTransaction().commitManually()
+            setCommitClock(deltaLog, version, clock)
           }
           val txn = deltaLog.startTransaction()
           val action = createFile(basePath, sanitizedPath, file, clock, partitionValues)
-          txn.commit(Seq(action), Write(SaveMode.Append))
+          val version = txn.commit(Seq(action), Write(SaveMode.Append))
+          setCommitClock(deltaLog, version, clock)
         } else {
           createFile(basePath, path, file, clock)
         }
@@ -213,8 +219,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
         )
         txn.registerSQLMetrics(spark, metrics)
         val encodedPath = new Path(path).toUri.toString
-        txn.commit(Seq(RemoveFile(encodedPath, Option(clock.getTimeMillis()))),
+        val size = Some(RANDOM_FILE_CONTENT.length.toLong)
+        val version = txn.commit(Seq(RemoveFile(encodedPath, Option(clock.getTimeMillis()), size = size)),
           Delete(Seq(Literal.TrueLiteral)))
+        setCommitClock(deltaLog, version, clock)
       // scalastyle:on
       case e: ExecuteVacuumInSQL =>
         Given(s"*** Executing SQL: ${e.sql}")
@@ -338,6 +346,11 @@ trait DeltaVacuumSuiteBase extends QueryTest
   protected def getCDCFiles(deltaLog: DeltaLog): Seq[AddCDCFile] = {
     val changes = deltaLog.getChanges(startVersion = 0, failOnDataLoss = true)
     changes.flatMap(_._2).collect { case a: AddCDCFile => a }.toList
+  }
+
+  protected def setCommitClock(deltaLog: DeltaLog, version: Long, clock: ManualClock) = {
+    val f = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
+    f.setLastModified(clock.getTimeMillis())
   }
 
   protected def testCDCVacuumForUpdateMerge(): Unit = {
@@ -578,7 +591,9 @@ class DeltaVacuumSuite
       val schema = new StructType().add("_underscore_col_", IntegerType).add("n", IntegerType)
       val metadata =
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
-      txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      val version =
+        txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      setCommitClock(deltaLog, version, clock)
       gcTest(deltaLog, clock)(
         CreateFile("file1.txt", commitToActionLog = true, Map("_underscore_col_" -> "10")),
         CreateFile("_underscore_col_=10/test.txt", true, Map("_underscore_col_" -> "10")),
@@ -599,7 +614,9 @@ class DeltaVacuumSuite
       val schema = new StructType().add("_underscore_col_", IntegerType).add("n", IntegerType)
       val metadata =
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
-      txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      val version =
+        txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      setCommitClock(deltaLog, version, clock)
       val inventorySchema = StructType(
         Seq(
           StructField("file", StringType),
@@ -631,7 +648,9 @@ class DeltaVacuumSuite
       // Vacuum should consider partition folders even for clean up even though it starts with `_`
       val metadata =
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
-      txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      val version =
+        txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      setCommitClock(deltaLog, version, clock)
       // Create a Seq of Rows containing the data
       val data = Seq(
         Row(s"${deltaLog.dataPath}", 300000L, true, 0L),
@@ -1026,7 +1045,8 @@ class DeltaVacuumSuite
     }
   }
 
-  test("hidden metadata dir") {
+
+  test("gc metadata dir when uniform disabled") {
     withEnvironment { (tempDir, clock) =>
       spark.emptyDataset[Int].write.format("delta").save(tempDir)
       val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
@@ -1036,7 +1056,9 @@ class DeltaVacuumSuite
 
         AdvanceClock(defaultTombstoneInterval + 1000),
         GC(dryRun = false, Seq(tempDir)),
-        CheckFiles(Seq("metadata", "metadata/file1.json"))
+        CheckFiles(Seq("metadata/file1.json"), exist = false),
+        GC(dryRun = false, Seq(tempDir)), // Second GC clears empty dir
+        CheckFiles(Seq("metadata"), exist = false)
       )
     }
   }
@@ -1258,6 +1280,7 @@ class DeltaVacuumSuite
         withEnvironment { (dir, clock) =>
           spark.range(2).write.format("delta").save(dir.getAbsolutePath)
           val deltaLog = DeltaLog.forTable(spark, dir, clock)
+          setCommitClock(deltaLog, 0L, clock)
           val expectedReturn = if (isDryRun) {
             // dry run returns files that will be deleted
             Seq(new Path(dir.getAbsolutePath, "file1.txt").toString)
@@ -1333,4 +1356,8 @@ class DeltaVacuumSuite
     retentionHours = 20, // vacuum will not delete any files
     timeGapHours = 10
   )
+}
+
+class DeltaVacuumWithCoordinatedCommitsBatch100Suite extends DeltaVacuumSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
