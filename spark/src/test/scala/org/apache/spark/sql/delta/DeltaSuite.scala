@@ -20,6 +20,7 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
@@ -28,7 +29,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
-import org.apache.spark.sql.delta.util.FileNames.deltaFile
+import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
 
 import org.apache.spark.SparkException
@@ -1303,8 +1304,10 @@ class DeltaSuite extends QueryTest
           .mode("append")
           .save(tempDir.toString)
       }
-      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
-      assert(Utils.exceptionString(e).contains("incompatible"))
+      checkError(
+        e,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
+        parameters = Map("currentField" -> "value", "updateField" -> "value"))
     }
   }
 
@@ -1445,7 +1448,7 @@ class DeltaSuite extends QueryTest
         val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
-        val filesToDelete = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
+        val filesToDelete = inputFiles.filter(_.split("/").last.contains("part-00001"))
         assert(filesToDelete.size == 1)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
@@ -1478,7 +1481,7 @@ class DeltaSuite extends QueryTest
         val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
-        val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
+        val filesToCorrupt = inputFiles.filter(_.split("/").last.contains("part-00001"))
         assert(filesToCorrupt.size == 1)
         val fs = tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         filesToCorrupt.foreach { f =>
@@ -1489,7 +1492,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().collect()
         }
-        assert(thrown.getMessage.contains("is not a Parquet file"))
+        assert(thrown.getMessage.contains(THROWS_ON_CORRUPTED_FILE_ERROR_MSG))
       }
     }
   }
@@ -1541,7 +1544,7 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().collect()
       }
-      assert(thrown.getMessage.contains("FileNotFound"))
+      assert(thrown.getMessage.contains(THROWS_ON_DELETED_FILE_ERROR_MSG))
     }
   }
 
@@ -1607,6 +1610,37 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("support Java8 API for DATE type") {
+    withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+      val tableName = "my_table"
+      withTable(tableName) {
+        spark.sql(s"CREATE TABLE $tableName (id STRING, date DATE) USING DELTA;")
+        spark.sql(
+          s"""
+             |INSERT INTO $tableName REPLACE
+             |where (DATE IN (DATE('2024-03-11'), DATE('2024-03-13')))
+             |VALUES ('2', DATE('2024-03-13')), ('3', DATE('2024-03-11'))
+             |""".stripMargin)
+      }
+    }
+  }
+
+  test("support Java8 API for TIMESTAMP type") {
+    withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+      val tableName = "my_table"
+      withTable(tableName) {
+        spark.sql(s"CREATE TABLE $tableName (id STRING, timestamp TIMESTAMP) USING DELTA;")
+        spark.sql(
+          s"""
+             |INSERT INTO $tableName REPLACE
+             |where
+             | (timestamp IN (TIMESTAMP('2022-12-22 15:50:00'), TIMESTAMP('2022-12-23 15:50:00')))
+             | VALUES
+             | ('2', TIMESTAMP('2022-12-22 15:50:00')), ('3', TIMESTAMP('2022-12-23 15:50:00'))
+             |""".stripMargin)
+      }
+    }
+  }
 
   test("all operations with special characters in path") {
     withTempDir { dir =>
@@ -2004,13 +2038,13 @@ class DeltaSuite extends QueryTest
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
       overwrite = false,
       hadoopConf)
 
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 2),
       files.take(1).map(_.json).iterator,
       overwrite = false,
       hadoopConf)
@@ -2966,7 +3000,7 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
           .save(tempDir.getCanonicalPath)
 
         val protocol = DeltaLog.forTable(spark, tempDir).snapshot.protocol
-        val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+        val (r, w) = if (protocol.supportsTableFeatures) {
           (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
             TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
         } else {

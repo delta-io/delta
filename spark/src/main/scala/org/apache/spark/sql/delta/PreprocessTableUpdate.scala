@@ -37,6 +37,8 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
 
   override def conf: SQLConf = sqlConf
 
+  override protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = true
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: DeltaUpdateTable if u.resolved =>
       u.condition.foreach { cond =>
@@ -66,12 +68,17 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
     }
 
     val targetColNameParts = update.updateColumns.map(DeltaUpdateTable.getTargetColNameParts(_))
+
+    IdentityColumn.blockIdentityColumnUpdate(index.snapshotAtAnalysis.schema, targetColNameParts)
+
     val alignedUpdateExprs = generateUpdateExpressions(
-      update.child.output,
-      targetColNameParts,
-      update.updateExpressions,
-      conf.resolver,
-      generatedColumns)
+      targetSchema = update.child.schema,
+      defaultExprs = update.child.output,
+      nameParts = targetColNameParts,
+      updateExprs = update.updateExpressions,
+      resolver = conf.resolver,
+      generatedColumns = generatedColumns
+    )
     val alignedUpdateExprsAfterAddingGenerationExprs =
       if (alignedUpdateExprs.forall(_.nonEmpty)) {
         alignedUpdateExprs.map(_.get)

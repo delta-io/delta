@@ -23,7 +23,9 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import com.fasterxml.jackson.databind.ObjectMapper
 
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 
@@ -33,12 +35,12 @@ import org.apache.spark.sql.functions.col
  */
 trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSuiteUtils {
 
-  override def beforeAll(): Unit = {
+  override protected def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(ALLOW_COLUMN_MAPPING_REMOVAL.key, "true")
   }
 
-  override def afterEach(): Unit = {
+  override protected def afterEach(): Unit = {
     sql(s"DROP TABLE IF EXISTS $testTableName")
     super.afterEach()
   }
@@ -48,16 +50,18 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
   protected val rowsPerFile = totalRows / numFiles
   protected val logicalColumnName = "logical_column_name"
   protected val secondColumn = "second_column_name"
+  protected val firstColumn = "first_column_name"
+  protected val thirdColumn = "third_column_name"
+  protected val renamedThirdColumn = "renamed_third_column_name"
+
   protected val testTableName: String = "test_table_" + this.getClass.getSimpleName
+  protected def deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
 
   import testImplicits._
 
-  protected def testRemovingColumnMapping(
-    unsetTableProperty: Boolean = false): Any = {
+  protected def testRemovingColumnMapping(unsetTableProperty: Boolean = false): Any = {
     // Verify the input data is as expected.
-    checkAnswer(
-      spark.table(tableName = testTableName).select(logicalColumnName),
-      spark.range(totalRows).select(col("id").as(logicalColumnName)))
+    val originalData = spark.table(tableName = testTableName).select(logicalColumnName).collect()
     // Add a schema comment and verify it is preserved after the rewrite.
     val comment = "test comment"
     sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
@@ -66,17 +70,18 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
     val originalSnapshot = deltaLog.update()
 
     assert(originalSnapshot.schema.head.getComment().get == comment,
-      "Renamed column should preserved comment.")
+      "Renamed column should preserve comment.")
     val originalFiles = getFiles(originalSnapshot)
     val startingVersion = deltaLog.update().version
 
     unsetColumnMappingProperty(useUnset = unsetTableProperty)
 
     verifyRewrite(
-      unsetTableProperty,
+      unsetTableProperty = unsetTableProperty,
       deltaLog,
       originalFiles,
-      startingVersion)
+      startingVersion,
+      originalData = originalData)
     // Verify the schema comment is preserved after the rewrite.
     assert(deltaLog.update().schema.head.getComment().get == comment,
       "Should preserve the schema comment.")
@@ -90,22 +95,30 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
       unsetTableProperty: Boolean,
       deltaLog: DeltaLog,
       originalFiles: Array[AddFile],
-      startingVersion: Long): Unit = {
+      startingVersion: Long,
+      originalData: Array[Row],
+      droppedFeature: Boolean = false): Unit = {
     checkAnswer(
       spark.table(tableName = testTableName).select(logicalColumnName),
-      spark.range(totalRows).select(col("id").as(logicalColumnName)))
-
+      originalData)
     val newSnapshot = deltaLog.update()
-    assert(newSnapshot.version - startingVersion == 1, "Should rewrite the table in one commit.")
+    val versionsAddedByRewrite = if (droppedFeature) {
+      2
+    } else {
+      1
+    }
+    assert(newSnapshot.version - startingVersion == versionsAddedByRewrite,
+      s"Should rewrite the table in $versionsAddedByRewrite commits.")
 
-    val history = deltaLog.history.getHistory(deltaLog.update().version)
+    val rewriteVersion = deltaLog.update().version - versionsAddedByRewrite + 1
+    val history = deltaLog.history.getHistory(rewriteVersion, Some(rewriteVersion))
     verifyColumnMappingOperationIsRecordedInHistory(history)
 
     assert(newSnapshot.schema.head.name == logicalColumnName, "Should rename the first column.")
 
     verifyColumnMappingSchemaMetadataIsRemoved(newSnapshot)
 
-    verifyColumnMappingTablePropertiesAbsent(newSnapshot, unsetTableProperty)
+    verifyColumnMappingTablePropertiesAbsent(newSnapshot, unsetTableProperty || droppedFeature)
     assert(originalFiles.map(_.numLogicalRecords.get).sum ==
       newSnapshot.allFiles.map(_.numLogicalRecords.get).collect().sum,
       "Should have the same number of records.")
@@ -121,6 +134,23 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
       s"""
          |ALTER TABLE $testTableName $unsetStr
          |""".stripMargin)
+  }
+
+  protected def enableColumnMapping(): Unit = {
+    sql(
+      s"""ALTER TABLE $testTableName
+        SET TBLPROPERTIES (
+        '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name',
+        'delta.minReaderVersion' = '2',
+        'delta.minWriterVersion' = '5')""")
+  }
+
+  protected def renameColumn(): Unit = {
+    sql(s"ALTER TABLE $testTableName RENAME COLUMN $thirdColumn TO $renamedThirdColumn")
+  }
+
+  protected def dropColumn(): Unit = {
+    sql(s"ALTER TABLE $testTableName DROP COLUMN $thirdColumn")
   }
 
   /**

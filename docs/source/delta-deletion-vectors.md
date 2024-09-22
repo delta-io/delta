@@ -67,4 +67,5 @@ REORG TABLE events
   - `REORG TABLE` is _idempotent_, meaning that if it is run twice on the same dataset, the second run has no effect.
   - After running `REORG TABLE`, the soft-deleted data may still exist in the old files. You can run [VACUUM](delta-utility.md#delta-vacuum) to physically delete the old files.
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

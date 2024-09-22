@@ -25,13 +25,8 @@ import org.apache.spark.sql.functions.{array, current_date, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructType}
+import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
-
-
-
-
-
 
 /**
  * Trait collecting all other schema evolution test traits for convenience.
@@ -63,58 +58,49 @@ trait MergeIntoSchemaEvolutionMixin {
       clauses: Seq[MergeClause] = Seq.empty,
       expected: => DataFrame = null,
       expectedWithoutEvolution: => DataFrame = null,
+      expectedSchema: StructType = null,
+      expectedSchemaWithoutEvolution: StructType = null,
       expectErrorContains: String = null,
       expectErrorWithoutEvolutionContains: String = null,
       confs: Seq[(String, String)] = Seq(),
       partitionCols: Seq[String] = Seq.empty): Unit = {
-    test(s"schema evolution - $name - with evolution disabled") {
-      withSQLConf(confs: _*) {
-        append(targetData, partitionCols)
-        withTempView("source") {
-          sourceData.createOrReplaceTempView("source")
 
-          if (expectErrorWithoutEvolutionContains != null) {
-            val ex = intercept[AnalysisException] {
-              executeMerge(s"delta.`$tempPath` t", s"source s", cond,
-                clauses.toSeq: _*)
-            }
-            errorContains(ex.getMessage, expectErrorWithoutEvolutionContains)
+    def executeMergeAndAssert(df: DataFrame, schema: StructType, error: String): Unit = {
+      append(targetData, partitionCols)
+      withTempView("source") {
+        sourceData.createOrReplaceTempView("source")
+
+        if (error != null) {
+          val ex = intercept[AnalysisException] {
+            executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
+          }
+          errorContains(Utils.exceptionString(ex), error)
+        } else {
+          executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
+          checkAnswer(spark.read.format("delta").load(tempPath), df.collect())
+          if (schema != null) {
+            assert(spark.read.format("delta").load(tempPath).schema === schema)
           } else {
-            executeMerge(s"delta.`$tempPath` t", s"source s", cond,
-              clauses.toSeq: _*)
-            checkAnswer(
-              spark.read.format("delta").load(tempPath),
-              expectedWithoutEvolution.collect())
-            assert(
-              spark.read.format("delta").load(tempPath).schema.asNullable ===
-                expectedWithoutEvolution.schema.asNullable)
+            // Check against the schema of the expected result df if no explicit schema was
+            // provided. Nullability of fields will vary depending on the actual data in the df so
+            // we ignore it.
+            assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
+              df.schema.asNullable)
           }
         }
       }
     }
 
+    test(s"schema evolution - $name - with evolution disabled") {
+      withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
+        executeMergeAndAssert(expectedWithoutEvolution, expectedSchemaWithoutEvolution,
+          expectErrorWithoutEvolutionContains)
+      }
+    }
+
     test(s"schema evolution - $name") {
       withSQLConf((confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")): _*) {
-        append(targetData, partitionCols)
-        withTempView("source") {
-          sourceData.createOrReplaceTempView("source")
-
-          if (expectErrorContains != null) {
-            val ex = intercept[AnalysisException] {
-              executeMerge(s"delta.`$tempPath` t", s"source s", cond,
-                clauses.toSeq: _*)
-            }
-            errorContains(Utils.exceptionString(ex), expectErrorContains)
-          } else {
-            executeMerge(s"delta.`$tempPath` t", s"source s", cond,
-              clauses.toSeq: _*)
-            checkAnswer(
-              spark.read.format("delta").load(tempPath),
-              expected.collect())
-            assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
-              expected.schema.asNullable)
-          }
-        }
+        executeMergeAndAssert(expected, expectedSchema, expectErrorContains)
       }
     }
   }
@@ -150,6 +136,7 @@ trait MergeIntoSchemaEvolutionMixin {
         } else {
           null
         },
+      expectedSchema = resultSchema,
       expectErrorContains = expectErrorContains,
       expectedWithoutEvolution =
         if (resultWithoutEvolution != null) {
@@ -157,6 +144,7 @@ trait MergeIntoSchemaEvolutionMixin {
         } else {
           null
         },
+      expectedSchemaWithoutEvolution = targetSchema,
       expectErrorWithoutEvolutionContains = expectErrorWithoutEvolutionContains,
       confs = confs
     )
@@ -511,10 +499,12 @@ trait MergeIntoSchemaEvolutionBaseTests {
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
   )
 
-  testEvolution(s"case-sensitive insert")(
+  // TODO: Add a test for case-sensitive insert and column not in target
+
+  testEvolution("case-sensitive insert, column not in source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
-    clauses = insert("(key, value, VALUE) VALUES (s.key, s.value, s.VALUE)") :: Nil,
+    clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
     expectErrorContains = "Cannot resolve s.value in INSERT clause",
     expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT clause",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
@@ -768,6 +758,18 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expectErrorWithoutEvolutionContains = "Cannot cast"
   )
 
+  testEvolution("add non-nullable column to target schema")(
+    targetData = Seq(1, 2).toDF("key"),
+    sourceData = Seq((1, 10), (3, 30)).toDF("key", "value"),
+    clauses = update("*") :: insert("*") :: Nil,
+    expected = ((1, 10) :: (2, null) :: (3, 30) :: Nil)
+      .asInstanceOf[List[(Integer, Integer)]].toDF("key", "value"),
+    expectedSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", IntegerType, nullable = true),
+    expectedWithoutEvolution = Seq(1, 2, 3).toDF("key")
+  )
+
   testEvolution("extra nested column in source - update - single target partition")(
     targetData = Seq((1, (1, 10)), (2, (2, 2000))).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'c', x._2) as x").repartition(1),
@@ -1014,7 +1016,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq((1, 1)).toDF("key", "value"),
     sourceData = Seq((1, 100, null), (2, 200, null)).toDF("key", "value", "extra"),
     clauses = update("*") :: insert("*") :: Nil,
-    expectErrorContains = "Cannot add column 'extra' with type 'void'",
+    expectErrorContains = "Cannot add column `extra` with type VOID",
     expectedWithoutEvolution = Seq((1, 100), (2, 200)).toDF("key", "value")
   )
 
@@ -1026,6 +1028,39 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expected = ((0, 0) +: (3, 30) +: (1, 1) +: Nil)
       .toDF("key", "value"),
     expectErrorWithoutEvolutionContains = "cannot resolve s.value in UPDATE clause")
+
+  test("schema evolution enabled for the current command") {
+    withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+      withTable("target", "source") {
+        Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value")
+          .write.format("delta").saveAsTable("target")
+        Seq((1, 1, 1), (2, 2, 2)).toDF("key", "value", "extra")
+          .write.format("delta").saveAsTable("source")
+
+        // Should fail without schema evolution
+        val e = intercept[org.apache.spark.sql.AnalysisException] {
+          executeMerge(
+            "target",
+            "source",
+            "target.key = source.key",
+            update("extra = -1"), insert("*"))
+        }
+        assert(e.getErrorClass === "DELTA_MERGE_UNRESOLVED_EXPRESSION")
+        assert(e.getMessage.contains("resolve extra in UPDATE clause"))
+
+        // Should succeed with schema evolution
+        executeMergeWithSchemaEvolution(
+          "target",
+          "source",
+          "target.key = source.key",
+          update("extra = -1"), insert("*"))
+        checkAnswer(
+          spark.table("target"),
+          Seq[(Integer, Integer, Integer)]((0, 0, null), (1, 10, -1), (2, 2, 2), (3, 30, null))
+            .toDF("key", "value", "extra"))
+      }
+    }
+  }
 
   testNestedStructsEvolution("nested field assignment qualified with source alias")(
     target = Seq("""{ "a": 1, "t": { "a": 2 } }"""),
@@ -1491,7 +1526,7 @@ trait MergeIntoNestedStructEvolutionTests {
         new StructType()
           .add("a", new StructType().add("x", IntegerType).add("z", NullType))),
     clauses = update("*") :: Nil,
-    expectErrorContains = "Cannot add column 'value.a.z' with type 'void'",
+    expectErrorContains = "Cannot add column `value`.`a`.`z` with type VOID",
     expectErrorWithoutEvolutionContains = "All nested columns must match")
 
   // scalastyle:off line.size.limit
@@ -1909,14 +1944,26 @@ trait MergeIntoNestedStructEvolutionTests {
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x")
   )
 
-  testEvolution(
-    "source struct nested in map array keys contains more columns")(
+  testEvolution("struct nested in map array keys contains more columns")(
     targetData = Seq((1, 2, 3, 4), (3, 5, 6, 7)).toDF("key", "a", "b", "value")
       .selectExpr("key", "map(array(named_struct('a', a, 'b', b)), value) as x"),
     sourceData = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2)).toDF("key", "a", "b", "c", "value")
       .selectExpr("key", "map(array(named_struct('a', a, 'b', b, 'c', c)), value) as x"),
     clauses = update("*") :: insert("*") :: Nil,
     expected = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2), (3, 5, 6, null, 7))
+      .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer)]]
+      .toDF("key", "a", "b", "c", "value")
+      .selectExpr("key", "map(array(named_struct('a', a, 'b', b, 'c', c)), value) as x"),
+    expectErrorWithoutEvolutionContains = "cannot cast"
+  )
+
+  testEvolution("update-only struct nested in map array keys contains more columns")(
+    targetData = Seq((1, 2, 3, 4), (3, 5, 6, 7)).toDF("key", "a", "b", "value")
+      .selectExpr("key", "map(array(named_struct('a', a, 'b', b)), value) as x"),
+    sourceData = Seq((1, 10, 30, 50, 1), (2, 20, 40, 60, 2)).toDF("key", "a", "b", "c", "value")
+      .selectExpr("key", "map(array(named_struct('a', a, 'b', b, 'c', c)), value) as x"),
+    clauses = update("*") :: Nil,
+    expected = Seq((1, 10, 30, 50, 1), (3, 5, 6, null, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "c", "value")
       .selectExpr("key", "map(array(named_struct('a', a, 'b', b, 'c', c)), value) as x"),
@@ -1931,6 +1978,20 @@ trait MergeIntoNestedStructEvolutionTests {
       .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), named_struct('d', d, 'e', e, 'f', f)) as x"),
     clauses = update("*") :: insert("*") :: Nil,
     expected = Seq((1, 10, 30, 50, 70, 90, 110), (2, 20, 40, 60, 80, 100, 120), (3, 6, 7, null, 8, 9, null))
+      .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer, Integer, Integer)]]
+      .toDF("key", "a", "b", "c", "d", "e", "f")
+      .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), named_struct('d', d, 'e', e, 'f', f)) as x"),
+    expectErrorWithoutEvolutionContains = "cannot cast"
+  )
+
+  testEvolution("update only struct evolution in both map keys and values")(
+    targetData = Seq((1, 2, 3, 4, 5), (3, 6, 7, 8, 9)).toDF("key", "a", "b", "d", "e")
+      .selectExpr("key", "map(named_struct('a', a, 'b', b), named_struct('d', d, 'e', e)) as x"),
+    sourceData = Seq((1, 10, 30, 50, 70, 90, 110), (2, 20, 40, 60, 80, 100, 120))
+      .toDF("key", "a", "b", "c", "d", "e", "f")
+      .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), named_struct('d', d, 'e', e, 'f', f)) as x"),
+    clauses = update("*") :: Nil,
+    expected = Seq((1, 10, 30, 50, 70, 90, 110), (3, 6, 7, null, 8, 9, null))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "c", "d", "e", "f")
       .selectExpr("key", "map(named_struct('a', a, 'b', b, 'c', c), named_struct('d', d, 'e', e, 'f', f)) as x"),
@@ -3090,7 +3151,7 @@ trait MergeIntoNestedStructEvolutionTests {
     expectErrorWithoutEvolutionContains = "cannot cast",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
 
-  testNestedStructsEvolution("add non-nullable column to target schema")(
+  testNestedStructsEvolution("add non-nullable struct field to target schema")(
     target = """{ "key": "A" }""",
     source = """{ "key": "B", "value": 4}""",
     targetSchema = new StructType()
@@ -3100,9 +3161,11 @@ trait MergeIntoNestedStructEvolutionTests {
       .add("value", IntegerType, nullable = false),
     clauses = update("*") :: Nil,
     result = """{ "key": "A", "value": null }""".stripMargin,
+    // Even though `value` is non-nullable in the source, it must be nullable in the target as
+    // existing rows will contain null values.
     resultSchema = new StructType()
       .add("key", StringType)
-      .add("value", IntegerType, nullable = false),
+      .add("value", IntegerType, nullable = true),
     resultWithoutEvolution = """{ "key": "A" }""")
 
   testNestedStructsEvolution("struct in array with storeAssignmentPolicy = STRICT")(

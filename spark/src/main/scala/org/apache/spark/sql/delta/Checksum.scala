@@ -25,14 +25,17 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.CheckpointFileManager
 import org.apache.spark.util.Utils
@@ -54,6 +57,7 @@ case class VersionChecksum(
     numFiles: Long,
     numMetadata: Long,
     numProtocol: Long,
+    @JsonDeserialize(contentAs = classOf[Long])
     inCommitTimestampOpt: Option[Long],
     setTransactions: Option[Seq[SetTransaction]],
     domainMetadata: Option[Seq[DomainMetadata]],
@@ -97,12 +101,14 @@ trait RecordChecksum extends DeltaLogging {
         eventData("operationSucceeded") = true
       } catch {
         case NonFatal(e) =>
-          logWarning(s"Failed to write the checksum for version: $version", e)
+          logWarning(log"Failed to write the checksum for version: " +
+            log"${MDC(DeltaLogKeys.VERSION, version)}", e)
           stream.cancel()
       }
     } catch {
       case NonFatal(e) =>
-        logWarning(s"Failed to write the checksum for version: $version", e)
+        logWarning(log"Failed to write the checksum for version: " +
+          log"${MDC(DeltaLogKeys.VERSION, version)}", e)
     }
     recordDeltaEvent(
       deltaLog,

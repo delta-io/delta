@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.clustering
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumn
 import org.apache.spark.sql.delta.{JsonMetadataDomain, JsonMetadataDomainUtils}
+import org.apache.spark.sql.delta.actions.{Action, DomainMetadata}
 
 /**
  * Metadata domain for Clustered table which tracks clustering columns.
@@ -29,6 +30,11 @@ case class ClusteringMetadataDomain(clusteringColumns: Seq[Seq[String]])
 
 object ClusteringMetadataDomain extends JsonMetadataDomainUtils[ClusteringMetadataDomain] {
   override val domainName = "delta.clustering"
+  // Extracts the ClusteringMetadataDomain and the removed field.
+  def unapply(action: Action): Option[(ClusteringMetadataDomain, Boolean)] = action match {
+    case d: DomainMetadata if d.domain == domainName => Some((fromJsonConfiguration(d), d.removed))
+    case _ => None
+  }
 
   def fromClusteringColumns(clusteringColumns: Seq[ClusteringColumn]): ClusteringMetadataDomain = {
     ClusteringMetadataDomain(clusteringColumns.map(_.physicalName))

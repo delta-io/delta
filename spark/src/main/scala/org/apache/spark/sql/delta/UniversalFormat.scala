@@ -18,10 +18,14 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.types.{ByteType, CalendarIntervalType, NullType, ShortType, TimestampNTZType}
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).
@@ -29,8 +33,9 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
  * The UniForm Delta feature governs and implements the actual conversion of Delta metadata into
  * other formats.
  *
- * Currently, UniForm only supports Iceberg. When `delta.universalFormat.enabledFormats` contains
- * "iceberg", we say that Universal Format (Iceberg) is enabled.
+ * UniForm supports both Iceberg and Hudi. When `delta.universalFormat.enabledFormats` contains
+ * "iceberg", we say that Universal Format (Iceberg) is enabled. When it contains "hudi", we say
+ * that Universal Format (Hudi) is enabled.
  *
  * [[enforceInvariantsAndDependencies]] ensures that all of UniForm's requirements for the
  * specified format are met (e.g. for 'iceberg' that IcebergCompatV1 or V2 is enabled).
@@ -47,10 +52,49 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 object UniversalFormat extends DeltaLogging {
 
   val ICEBERG_FORMAT = "iceberg"
-  val SUPPORTED_FORMATS = Set(ICEBERG_FORMAT)
+  val HUDI_FORMAT = "hudi"
+  val SUPPORTED_FORMATS = Set(HUDI_FORMAT, ICEBERG_FORMAT)
+
+  /**
+   * Check if the operation is CREATE/REPLACE TABLE or REORG UPGRADE UNIFORM commands.
+   *
+   * @param op the delta operation to be checked.
+   * @return whether the operation is create or reorg.
+   */
+  def isCreatingOrReorgTable(op: Option[DeltaOperations.Operation]): Boolean = op match {
+    case Some(_: DeltaOperations.CreateTable) |
+         Some(_: DeltaOperations.UpgradeUniformProperties) |
+         // REPLACE TABLE is also considered creating table to preserve the
+         // the semantics for `isCreatingNewTable` in `OptimisticTransaction`.
+         Some(_: DeltaOperations.ReplaceTable) =>
+      true
+    // this is to conform with the semantics in `enforceDependenciesInConfiguration`
+    case None => true
+    case _ => false
+  }
+
+  /**
+   * Check if the operation is REORG UPGRADE UNIFORM command.
+   *
+   * @param op the delta operation to be checked.
+   * @return whether the operation is REORG UPGRADE UNIFORM.
+   */
+  def isReorgUpgradeUniform(op: Option[DeltaOperations.Operation]): Boolean = op match {
+    case Some(_: DeltaOperations.UpgradeUniformProperties) => true
+    case _ => false
+  }
 
   def icebergEnabled(metadata: Metadata): Boolean = {
     DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(ICEBERG_FORMAT)
+  }
+
+  def hudiEnabled(metadata: Metadata): Boolean = {
+    DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetaData(metadata).contains(HUDI_FORMAT)
+  }
+
+  def hudiEnabled(properties: Map[String, String]): Boolean = {
+    properties.get(DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.key)
+      .exists(value => value.contains(HUDI_FORMAT))
   }
 
   def icebergEnabled(properties: Map[String, String]): Boolean = {
@@ -68,10 +112,34 @@ object UniversalFormat extends DeltaLogging {
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
-      isCreatingOrReorgTable: Boolean,
+      operation: Option[DeltaOperations.Operation],
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
+    enforceHudiDependencies(newestMetadata, snapshot)
     enforceIcebergInvariantsAndDependencies(
-      snapshot, newestProtocol, newestMetadata, isCreatingOrReorgTable, actions)
+      snapshot, newestProtocol, newestMetadata, operation, actions)
+  }
+
+  /**
+   * If you are enabling Hudi, this method ensures that Deletion Vectors are not enabled. New
+   * conditions may be added here in the future to make sure the source is compatible with Hudi.
+   * @param newestMetadata the newest metadata
+   * @param snapshot current snapshot
+   * @return N/A, throws exception if condition is not met
+   */
+  def enforceHudiDependencies(newestMetadata: Metadata, snapshot: Snapshot): Any = {
+    if (hudiEnabled(newestMetadata)) {
+      if (DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(newestMetadata)) {
+        throw DeltaErrors.uniFormHudiDeleteVectorCompat()
+      }
+      SchemaUtils.findAnyTypeRecursively(newestMetadata.schema) { f =>
+        f.isInstanceOf[NullType] | f.isInstanceOf[ByteType] | f.isInstanceOf[ShortType] |
+        f.isInstanceOf[TimestampNTZType]
+      } match {
+        case Some(unsupportedType) =>
+          throw DeltaErrors.uniFormHudiSchemaCompat(unsupportedType)
+        case _ =>
+      }
+    }
   }
 
   /**
@@ -86,7 +154,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
-      isCreatingOrReorg: Boolean,
+      operation: Option[DeltaOperations.Operation],
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
 
     val prevMetadata = snapshot.metadata
@@ -118,8 +186,8 @@ object UniversalFormat extends DeltaLogging {
                   remainingSupportedFormats.mkString(","))
             }
 
-            logInfo(s"[tableId=$tableId] IcebergCompat is being disabled. Auto-disabling " +
-              "Universal Format (Iceberg), too.")
+            logInfo(log"[${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " +
+              log"IcebergCompat is being disabled. Auto-disabling Universal Format (Iceberg), too.")
 
             (None, Some(newestMetadata.copy(configuration = newConfiguration)))
           } else {
@@ -135,7 +203,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot,
       newestProtocol = protocolToCheck,
       newestMetadata = metadataToCheck,
-      isCreatingOrReorg,
+      operation,
       actions
     )
     protocolToCheck = v1protocolUpdate.getOrElse(protocolToCheck)
@@ -146,7 +214,7 @@ object UniversalFormat extends DeltaLogging {
       snapshot,
       newestProtocol = protocolToCheck,
       newestMetadata = metadataToCheck,
-      isCreatingOrReorg,
+      operation,
       actions
     )
     changed ||= v2protocolUpdate.nonEmpty || v2metadataUpdate.nonEmpty
@@ -172,14 +240,14 @@ object UniversalFormat extends DeltaLogging {
   def enforceDependenciesInConfiguration(
       configuration: Map[String, String],
       snapshot: Snapshot): Map[String, String] = {
-    var metadata = Metadata(configuration = configuration)
+    var metadata = snapshot.metadata.copy(configuration = configuration)
 
     // Check UniversalFormat related property dependencies
     val (_, universalMetadata) = UniversalFormat.enforceInvariantsAndDependencies(
       snapshot,
       newestProtocol = snapshot.protocol,
       newestMetadata = metadata,
-      isCreatingOrReorgTable = true,
+      operation = None,
       actions = Seq()
     )
 
@@ -218,6 +286,7 @@ object UniversalFormat extends DeltaLogging {
     }
   }
 }
+
 /** Class to facilitate the conversion of Delta into other table formats. */
 abstract class UniversalFormatConverter(spark: SparkSession) {
   /**
@@ -261,4 +330,14 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    * @return None if no previous conversion found
    */
   def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long]
+}
+
+object IcebergConstants {
+  val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
+  val ICEBERG_PROVIDER = "iceberg"
+  val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+}
+
+object HudiConstants {
+  val HUDI_PROVIDER = "hudi"
 }

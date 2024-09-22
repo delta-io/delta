@@ -23,6 +23,8 @@ import java.util.regex.Pattern
 import scala.annotation.tailrec
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.RowCommitVersion
+import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -41,7 +43,6 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
@@ -70,29 +71,26 @@ class SchemaUtilsSuite extends QueryTest
       s"Error message '${e.getMessage}' didn't contain the patterns: $shouldContainPatterns")
   }
 
-  private def expectErrorClassAndCause(errorClass: String)(shouldContain: String*)
+  private def expectAnalysisErrorClass(errorClass: String, params: Map[String, String])
                                       (f: => Unit): Unit = {
     val e = intercept[AnalysisException] {
       f
     }
-    val msg = Utils.exceptionString(e).toLowerCase(Locale.ROOT)
-    assert(e.getErrorClass == errorClass)
-    assert(
-      shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
-      s"Error cause didn't contain: $shouldContain"
-    )
-  }
 
-  private def expectErrorClassAndCausePattern(errorClass: String)
-                                             (shouldContainPatterns: String*)(f: => Unit): Unit = {
-    val e = intercept[AnalysisException] {
-      f
+    @tailrec
+    def getError(ex: Throwable): Option[DeltaAnalysisException] = ex match {
+      case e: DeltaAnalysisException if e.getErrorClass() == errorClass => Some(e)
+      case e: AnalysisException => getError(e.getCause)
+      case _ => None
     }
-    assert(e.getErrorClass == errorClass)
-    val patterns =
-      shouldContainPatterns.map(regex => Pattern.compile(regex, Pattern.CASE_INSENSITIVE))
-    assert(patterns.forall(_.matcher(Utils.exceptionString(e)).find()),
-      s"Error cause didn't contain the patterns: $shouldContainPatterns")
+
+    val err = getError(e)
+    assert(err.isDefined, "exception with the error class not found")
+    checkError(
+      err.get,
+      errorClass,
+      parameters = params,
+      matchPVals = true)
   }
 
   /////////////////////////////
@@ -1548,7 +1546,7 @@ class SchemaUtilsSuite extends QueryTest
       .add("b", StringType)
     val table = new StructType()
       .add("B", StringType)
-      .add("A", LongType) // LongType != IntType
+      .add("A", StringType) // StringType != IntegerType
     val exception = intercept[AssertionError] {
       normalizeColumnNamesInDataType(
         deltaLog = null,
@@ -1558,6 +1556,19 @@ class SchemaUtilsSuite extends QueryTest
         tableSchema = new StructType())
     }
     assert(exception.getMessage.contains("Types without nesting should match"))
+  }
+
+  test("normalize column names in data type - different integral types") {
+    val source = new StructType()
+      .add("a", IntegerType)
+      .add("b", StringType)
+    val table = new StructType()
+      .add("B", StringType)
+      .add("A", LongType) // LongType != IntegerType
+    val expected = new StructType()
+      .add("A", IntegerType)
+      .add("B", StringType)
+    checkNormalizedColumnNamesInDataType(source, table, expected)
   }
 
   test("normalize column names in data type - nested structs") {
@@ -1669,8 +1680,8 @@ class SchemaUtilsSuite extends QueryTest
         Seq("x", "Y"), new StructType())
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "x.Y.bb", "schema" -> "root\n")
     )
@@ -1937,8 +1948,8 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "two", "schema" -> tableSchema.treeString)
     )
@@ -1963,8 +1974,8 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "s.two", "schema" -> tableSchema.treeString)
     )
@@ -2004,6 +2015,52 @@ class SchemaUtilsSuite extends QueryTest
     )
     verifyColumnsWithCasts(normalized, Seq("s"))
     assert(normalized.schema === tableSchema)
+  }
+
+  test("normalize column names - can normalize row id column") {
+    withTable("src") {
+      spark.range(3).toDF("id").write
+        .format("delta")
+        .mode("overwrite")
+        .option("delta.enableRowTracking", "true")
+        .saveAsTable("src")
+
+      val df = spark.read.format("delta").table("src")
+        .select(
+          col("*"),
+          col("_metadata.row_id").as("row_id")
+        )
+        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+
+      val tableSchema = new StructType().add("id", LongType)
+      val normalized =
+        normalizeColumnNames(deltaLog = null, tableSchema, df)
+        assert(normalized.schema.fieldNames === Seq("id", "row_id"))
+    }
+  }
+
+  test("normalize column names - can normalize both row id and commit version columns") {
+    withTable("src") {
+      spark.range(3).toDF("id").write
+        .format("delta")
+        .mode("overwrite")
+        .option("delta.enableRowTracking", "true")
+        .saveAsTable("src")
+
+      val df = spark.read.format("delta").table("src")
+        .select(
+          col("*"),
+          col("_metadata.row_id").as("row_id"),
+          col("_metadata.row_commit_version").as("row_commit_version")
+        )
+        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+        .withMetadata("row_commit_version", RowCommitVersion.MetadataStructField.metadata("name"))
+
+      val tableSchema = new StructType().add("id", LongType)
+        val normalized =
+        normalizeColumnNames(deltaLog = null, tableSchema, df)
+        assert(normalized.schema.fieldNames === Seq("id", "row_id", "row_commit_version"))
+    }
   }
 
   test("normalize column names - can normalize CDC type column") {
@@ -2172,10 +2229,12 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", DecimalType(18, 10))))
       .add("map", MapType(StringType, StringType))
 
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")("StringType", "IntegerType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "StringType", "updateDataType" -> "IntegerType")) {
       mergeSchemas(base, new StructType().add("top", IntegerType))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")("IntegerType", "DateType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "IntegerType", "updateDataType" -> "DateType")) {
       mergeSchemas(base, new StructType()
         .add("struct", new StructType().add("a", DateType)))
     }
@@ -2184,37 +2243,39 @@ class SchemaUtilsSuite extends QueryTest
     //   `StructType(StructField(a,IntegerType,true))`.
     // - In Scala 2.13, it extends `scala.collection.immutable.Seq` which returns
     //   `Seq(StructField(a,IntegerType,true))`.
-    expectErrorClassAndCausePattern("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'struct'", "StructType|Seq\\(", "MapType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "(StructType|Seq)\\(.*", "updateDataType" -> "MapType\\(.*")) {
       mergeSchemas(base, new StructType()
         .add("struct", MapType(StringType, IntegerType)))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'array'", "DecimalType", "DoubleType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "DecimalType\\(.*", "updateDataType" -> "DoubleType")) {
       mergeSchemas(base, new StructType()
         .add("array", ArrayType(new StructType().add("b", DoubleType))))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")("'array'", "scale") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+      Map("decimalRanges" -> "scale.*")) {
       mergeSchemas(base, new StructType()
         .add("array", ArrayType(new StructType().add("b", DecimalType(18, 12)))))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")("'array'", "precision") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+      Map("decimalRanges" -> "precision.*")) {
       mergeSchemas(base, new StructType()
         .add("array", ArrayType(new StructType().add("b", DecimalType(16, 10)))))
     }
     // See the above comment about `StructType`
-    expectErrorClassAndCausePattern("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'map'", "MapType", "StructType|Seq\\(") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "MapType\\(.*", "updateDataType" -> "(StructType|Seq)\\(.*")) {
       mergeSchemas(base, new StructType()
         .add("map", new StructType().add("b", StringType)))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'map'", "StringType", "IntegerType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "StringType", "updateDataType" -> "IntegerType")) {
       mergeSchemas(base, new StructType()
         .add("map", MapType(StringType, IntegerType)))
     }
-    expectErrorClassAndCause("DELTA_FAILED_TO_MERGE_FIELDS")(
-      "'map'", "StringType", "IntegerType") {
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "StringType", "updateDataType" -> "IntegerType")) {
       mergeSchemas(base, new StructType()
         .add("map", MapType(IntegerType, StringType)))
     }
@@ -2286,9 +2347,11 @@ class SchemaUtilsSuite extends QueryTest
       val e = intercept[DeltaAnalysisException] {
           mergeSchemas(longType, sourceType)
         }
-      assert(e.getErrorClass == "DELTA_FAILED_TO_MERGE_FIELDS")
-      assert(Utils.exceptionString(e).contains(
-        s"Failed to merge incompatible data types LongType and ${sourceType.head.dataType}"))
+      checkError(
+        e.getCause.asInstanceOf[AnalysisException],
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        parameters = Map("currentDataType" -> "LongType",
+          "updateDataType" -> sourceType.head.dataType.toString))
     }
   }
 
@@ -2522,6 +2585,48 @@ class SchemaUtilsSuite extends QueryTest
   }
 
   ////////////////////////////
+  // pruneEmptyStructs
+  ////////////////////////////
+  test("prune empty structs") {
+    val emptySchema = new StructType()
+    var schema = emptySchema
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    val elementType = new StructType()
+      .add("a", emptySchema)
+      .add("b", new StructType().add("1", emptySchema).add("2", StringType))
+    val filteredElementType = new StructType().add("b", new StructType().add("2", StringType))
+
+    assert(SchemaMergingUtils.pruneEmptyStructs(elementType).get == filteredElementType)
+
+    // filter out array element type with empty schema
+    schema = new StructType().add("a", new ArrayType(emptySchema, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    // nested empty schema
+    schema = new StructType().add("a", new ArrayType(new StructType().add("a", emptySchema), false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new ArrayType(elementType, false))
+    assert(
+      SchemaMergingUtils.pruneEmptyStructs(schema).get ==
+        new StructType().add("a", new ArrayType(filteredElementType, false))
+    )
+
+    schema = new StructType().add("a", new MapType(emptySchema, StringType, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new MapType(StringType, emptySchema, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new MapType(StringType, elementType, false))
+    assert(
+      SchemaMergingUtils.pruneEmptyStructs(schema).get ==
+        new StructType().add("a", new MapType(StringType, filteredElementType, false))
+    )
+  }
+
+  ////////////////////////////
   // checkFieldNames
   ////////////////////////////
 
@@ -2532,10 +2637,10 @@ class SchemaUtilsSuite extends QueryTest
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
         checkError(
-          exception = intercept[AnalysisException] {
+          intercept[AnalysisException] {
             SchemaUtils.checkFieldNames(Seq(name))
           },
-          errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
+          "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
           parameters = Map("columnName" -> s"$name")
         )
       }

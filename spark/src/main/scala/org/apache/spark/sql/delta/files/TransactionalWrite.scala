@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.stats.{
   DeltaJobStatisticsTracker,
   StatisticsCollection
 }
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
@@ -106,6 +107,11 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val normalizedData = SchemaUtils.normalizeColumnNames(
       deltaLog, metadata.schema, data
     )
+
+    // Validate that write columns for Row IDs have the correct name.
+    RowId.throwIfMaterializedRowIdColumnNameIsInvalid(
+      normalizedData, metadata, protocol, deltaLog.tableId)
+
     val nullAsDefault = options.isDefined &&
       options.get.options.contains(ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION)
     val enforcesDefaultExprs = ColumnWithDefaultExprUtils.tableHasDefaultExpr(
@@ -374,11 +380,17 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val (data, partitionSchema) = performCDCPartition(inputData)
     val outputPath = deltaLog.dataPath
 
-    val (queryExecution, output, generatedColumnConstraints, _) =
+    val (queryExecution, output, generatedColumnConstraints, trackFromData) =
       normalizeData(deltaLog, writeOptions, data)
+    // Use the track set from the transaction if set,
+    // otherwise use the track set from `normalizeData()`.
+    val trackIdentityHighWaterMarks = trackHighWaterMarks.getOrElse(trackFromData)
+
     val partitioningColumns = getPartitioningColumns(partitionSchema, output)
 
     val committer = getCommitter(outputPath)
+
+    val (statsDataSchema, _) = getStatsSchema(output, partitionSchema)
 
     // If Statistics Collection is enabled, then create a stats tracker that will be injected during
     // the FileFormatWriter.write call below and will collect per-file stats using
@@ -389,6 +401,15 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     val constraints =
       Constraints.getAll(metadata, spark) ++ generatedColumnConstraints ++ additionalConstraints
+
+    val identityTrackerOpt = IdentityColumn.createIdentityColumnStatsTracker(
+      spark,
+      deltaLog.newDeltaHadoopConf(),
+      outputPath,
+      metadata.schema,
+      statsDataSchema,
+      trackIdentityHighWaterMarks
+    )
 
     SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
       val outputSpec = FileFormatWriter.OutputSpec(
@@ -445,12 +466,19 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
           partitionColumns = partitioningColumns,
           bucketSpec = None,
           statsTrackers = optionalStatsTracker.toSeq
-            ++ statsTrackers,
+            ++ statsTrackers
+            ++ identityTrackerOpt.toSeq,
           options = options)
       } catch {
         case InnerInvariantViolationException(violationException) =>
           // Pull an InvariantViolationException up to the top level if it was the root cause.
           throw violationException
+      }
+      statsTrackers.foreach {
+        case tracker: BasicWriteJobStatsTracker =>
+          val numOutputRowsOpt = tracker.driverSideMetrics.get("numOutputRows").map(_.value)
+          IdentityColumn.logTableWrite(snapshot, trackIdentityHighWaterMarks, numOutputRowsOpt)
+        case _ => ()
       }
     }
 
@@ -485,6 +513,10 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
 
     if (resultFiles.nonEmpty && !isOptimize) registerPostCommitHook(AutoCompact)
+    // Record the updated high water marks to be used during transaction commit.
+    identityTrackerOpt.ifDefined { tracker =>
+      updatedIdentityHighWaterMarks.appendAll(tracker.highWaterMarks.toSeq)
+    }
 
     resultFiles.toSeq ++ committer.changeFiles
   }

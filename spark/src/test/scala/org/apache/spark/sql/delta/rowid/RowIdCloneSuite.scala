@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.rowid
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId}
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -67,6 +68,64 @@ class RowIdCloneSuite
         assert(RowId.isSupported(targetLog.update().protocol))
         assert(RowId.isEnabled(snapshot.protocol, snapshot.metadata))
       }
+    }
+  }
+
+  for (enableRowIdsForSource <- BOOLEAN_DOMAIN)
+  test("self-clone an empty table does not change the table's Row Tracking " +
+    s"enablement and does not set Row IDs, enableRowIdsForSource=$enableRowIdsForSource") {
+    withTables(
+      TableSetupInfo(tableName = "source",
+        rowIdsEnabled = enableRowIdsForSource, tableState = TableState.EMPTY)) {
+      cloneTable(targetTableName = "source", sourceTableName = "source")
+
+      val (targetLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("source"))
+      assertRowIdsAreNotSet(targetLog)
+      assert(RowId.isSupported(targetLog.update().protocol) === enableRowIdsForSource)
+      assert(RowId.isEnabled(snapshot.protocol, snapshot.metadata) === enableRowIdsForSource)
+    }
+  }
+
+  for {
+    rowIdsEnabledOnSource <- BOOLEAN_DOMAIN
+    targetTableState <- Seq(TableState.EMPTY, TableState.NON_EXISTING)
+  } {
+    test("clone from empty source into an empty or non-existing target " +
+      s"does not assign row IDs, rowIdsEnabledOnSource=$rowIdsEnabledOnSource, " +
+      s"targetTableState=$targetTableState") {
+      withTables(
+        TableSetupInfo(tableName = "source",
+          rowIdsEnabled = rowIdsEnabledOnSource, tableState = TableState.EMPTY),
+        TableSetupInfo(tableName = "target",
+          rowIdsEnabled = false, tableState = targetTableState)) {
+        cloneTable(targetTableName = "target", sourceTableName = "source")
+
+        val (targetLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("target"))
+        assertRowIdsAreNotSet(targetLog)
+        assert(RowId.isSupported(snapshot.protocol) === rowIdsEnabledOnSource)
+        assert(RowId.isEnabled(snapshot.protocol, snapshot.metadata) === rowIdsEnabledOnSource)
+      }
+    }
+  }
+
+  for (targetTableState <- Seq(TableState.EMPTY, TableState.NON_EXISTING))
+  test("clone from empty source into an empty or non-existing target " +
+    s"using property override does not assign row IDs, targetTableState=$targetTableState") {
+    withTables(
+      TableSetupInfo(tableName = "source",
+        rowIdsEnabled = false, tableState = TableState.EMPTY),
+      TableSetupInfo(tableName = "target",
+        rowIdsEnabled = false, tableState = targetTableState)) {
+
+      cloneTable(
+        targetTableName = "target",
+        sourceTableName = "source",
+        tblProperties = s"'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = true" :: Nil)
+
+      val (targetLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("target"))
+      assertRowIdsAreNotSet(targetLog)
+      assert(RowId.isSupported(snapshot.protocol))
+      assert(RowId.isEnabled(snapshot.protocol, snapshot.metadata))
     }
   }
 

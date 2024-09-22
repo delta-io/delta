@@ -18,16 +18,20 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.util.{Failure, Success, Try}
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
-import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.metering.{DeltaLogging, LogThrottler}
+import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.hadoop.fs.{FileSystem, Path}
 
-import org.apache.spark.sql.{Column, DataFrame}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedAttribute, UnresolvedLeafNode, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.{NoSuchTableException, UnresolvedLeafNode, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, SessionCatalog}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
@@ -196,6 +200,30 @@ object DeltaTableUtils extends PredicateHelper
 
   /** Finds the root of a Delta table given a path if it exists. */
   def findDeltaTableRoot(fs: FileSystem, path: Path): Option[Path] = {
+    findDeltaTableRoot(
+      fs,
+      path,
+      throwOnError = SparkSession.active.conf.get(DeltaSQLConf.DELTA_IS_DELTA_TABLE_THROW_ON_ERROR))
+  }
+
+  /** Finds the root of a Delta table given a path if it exists. */
+  private[delta] def findDeltaTableRoot(
+      fs: FileSystem,
+      path: Path,
+      throwOnError: Boolean): Option[Path] = {
+    if (throwOnError) {
+      findDeltaTableRootThrowOnError(fs, path)
+    } else {
+      findDeltaTableRootNoExceptions(fs, path)
+    }
+  }
+
+  /**
+   * Finds the root of a Delta table given a path if it exists.
+   *
+   * Does not throw any exceptions, but returns `None` when uncertain (old behaviour).
+   */
+  private def findDeltaTableRootNoExceptions(fs: FileSystem, path: Path): Option[Path] = {
     var currentPath = path
     while (currentPath != null && currentPath.getName != "_delta_log" &&
         currentPath.getName != "_samples") {
@@ -208,13 +236,66 @@ object DeltaTableUtils extends PredicateHelper
     None
   }
 
+  /**
+   * Finds the root of a Delta table given a path if it exists.
+   *
+   * If there are errors and no root could be found, throw the first error (new behaviour)
+   */
+  private def findDeltaTableRootThrowOnError(fs: FileSystem, path: Path): Option[Path] = {
+    var firstError: Option[Throwable] = None
+    // Return `None` if `firstError` is empty, throw `firstError` otherwise.
+    def noneOrError(): Option[Path] = {
+      firstError match {
+        case Some(ex) =>
+          throw ex
+        case None =>
+          None
+      }
+    }
+    var currentPath = path
+    while (currentPath != null && currentPath.getName != "_delta_log" &&
+        currentPath.getName != "_samples") {
+      val deltaLogPath = safeConcatPaths(currentPath, "_delta_log")
+      try {
+        if (fs.exists(deltaLogPath)) {
+          return Option(currentPath)
+        }
+      } catch {
+        case NonFatal(ex) if currentPath == path =>
+          // Store errors for the first path, but keep going up the hierarchy,
+          // in case the error at this level does not matter and the delta log is found at a parent.
+          firstError = Some(ex)
+        case NonFatal(ex) =>
+          // If we find errors higher up the path we either treat it as a non-Delta table or
+          // return the error we found at the original path, if any.
+          // This gives us best-effort detection of delta logs in the hierarchy, but with more
+          // useful error messages when access was actually missing.
+          logThrottler.throttledWithSkippedLogMessage { skippedStr =>
+            logWarning(log"Access error while exploring path hierarchy for a delta log."
+                + log"original path=${MDC(DeltaLogKeys.PATH, path)}, "
+                + log"path with error=${MDC(DeltaLogKeys.PATH2, currentPath)}."
+                + skippedStr,
+              ex)
+          }
+          return noneOrError()
+      }
+      currentPath = currentPath.getParent
+    }
+    noneOrError()
+  }
+
+  private val logThrottler = new LogThrottler()
+
   /** Whether a path should be hidden for delta-related file operations, such as Vacuum and Fsck. */
-  def isHiddenDirectory(partitionColumnNames: Seq[String], pathName: String): Boolean = {
+  def isHiddenDirectory(
+      partitionColumnNames: Seq[String],
+      pathName: String,
+      shouldIcebergMetadataDirBeHidden: Boolean = true): Boolean = {
     // Names of the form partitionCol=[value] are partition directories, and should be
     // GCed even if they'd normally be hidden. The _db_index directory contains (bloom filter)
     // indexes and these must be GCed when the data they are tied to is GCed.
     // metadata name is reserved for converted iceberg metadata with delta universal format
-    pathName.equals("metadata") ||
+    (shouldIcebergMetadataDirBeHidden && pathName.equals("metadata")) ||
     (pathName.startsWith(".") || pathName.startsWith("_")) &&
       !pathName.startsWith("_delta_index") && !pathName.startsWith("_change_data") &&
       !partitionColumnNames.exists(c => pathName.startsWith(c ++ "="))
@@ -341,86 +422,60 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
-   * Replace the file index in a logical plan and return the updated plan.
-   * It's a common pattern that, in Delta commands, we use data skipping to determine a subset of
-   * files that can be affected by the command, so we replace the whole-table file index in the
-   * original logical plan with a new index of potentially affected files, while everything else in
-   * the original plan, e.g., resolved references, remain unchanged.
-   *
    * Many Delta meta-queries involve nondeterminstic functions, which interfere with automatic
-   * column pruning, so columns can be manually pruned from the new scan. Note that partition
-   * columns can never be dropped even if they're not referenced in the rest of the query.
+   * column pruning, so columns can be manually pruned from the scan. Note that partition columns
+   * can never be dropped even if they're not referenced in the rest of the query.
    *
    * @param spark the spark session to use
-   * @param target the logical plan in which we replace the file index
-   * @param fileIndex the new file index
+   * @param target the logical plan in which drop columns
    * @param columnsToDrop columns to drop from the scan
-   * @param newOutput If specified, new logical output to replace the current LogicalRelation.
-   *                  Used for schema evolution to produce the new schema-evolved types from
-   *                  old files, because `target` will have the old types.
    */
-  def replaceFileIndex(
+  def dropColumns(
       spark: SparkSession,
       target: LogicalPlan,
-      fileIndex: FileIndex,
-      columnsToDrop: Seq[String],
-      newOutput: Option[Seq[AttributeReference]]): LogicalPlan = {
+      columnsToDrop: Seq[String]): LogicalPlan = {
     val resolver = spark.sessionState.analyzer.resolver
 
-    var actualNewOutput = newOutput
-    var hasChar = false
-    var newTarget = target transformDown {
-      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
-        // Prune columns from the scan.
-        val finalOutput = actualNewOutput.getOrElse(l.output).filterNot { col =>
-          columnsToDrop.exists(resolver(_, col.name))
-        }
-
-        // If the output columns were changed e.g. by schema evolution, we need to update
-        // the relation to expose all the columns that are expected after schema evolution.
-        val newDataSchema = StructType(finalOutput.map(attr =>
-          StructField(attr.name, attr.dataType, attr.nullable, attr.metadata)))
-        val newBaseRelation = hfsr.copy(
-          location = fileIndex, dataSchema = newDataSchema)(
-          hfsr.sparkSession)
-        l.copy(relation = newBaseRelation, output = finalOutput)
-
-      case p @ Project(projectList, _) =>
-        // Spark does char type read-side padding via an additional Project over the scan node.
-        // `newOutput` references the Project attributes, we need to translate their expression IDs
-        // so that `newOutput` references attributes from the LogicalRelation instead.
+    // Spark does char type read-side padding via an additional Project over the scan node.
+    // When char type read-side padding is applied, we need to apply column pruning for the
+    // Project as well, otherwise the Project will contain missing attributes.
+    val hasChar = target.exists {
+      case Project(projectList, _) =>
         def hasCharPadding(e: Expression): Boolean = e.exists {
           case s: StaticInvoke => s.staticObject == classOf[CharVarcharCodegenUtils] &&
             s.functionName == "readSidePadding"
           case _ => false
         }
-        val charColMapping = AttributeMap(projectList.collect {
-          case a: Alias if hasCharPadding(a.child) && a.references.size == 1 =>
-            hasChar = true
-            val tableCol = a.references.head.asInstanceOf[AttributeReference]
-            a.toAttribute -> tableCol
-        })
-        actualNewOutput = newOutput.map(_.map { attr =>
-          charColMapping.get(attr).map { tableCol =>
-            attr.withExprId(tableCol.exprId)
-          }.getOrElse(attr)
-        })
-        p
+        projectList.exists {
+          case a: Alias => hasCharPadding(a.child) && a.references.size == 1
+          case _ => false
+        }
+      case _ => false
     }
 
-    if (hasChar) {
-      // When char type read-side padding is applied, we need to apply column pruning for the
-      // Project as well, otherwise the Project will contain missing attributes.
-      newTarget = newTarget.transformUp {
-        case p @ Project(projectList, child) =>
-          val newProjectList = projectList.filter { e =>
-            e.references.subsetOf(child.outputSet)
-          }
-          p.copy(projectList = newProjectList)
-      }
+    target transformUp {
+      case l@LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+        // Prune columns from the scan.
+        val prunedOutput = l.output.filterNot { col =>
+          columnsToDrop.exists(resolver(_, col.name))
+        }
+
+        val prunedSchema = StructType(prunedOutput.map(attr =>
+          StructField(attr.name, attr.dataType, attr.nullable, attr.metadata)))
+        val newBaseRelation = hfsr.copy(dataSchema = prunedSchema)(hfsr.sparkSession)
+        l.copy(relation = newBaseRelation, output = prunedOutput)
+
+      case p @ Project(projectList, child) if hasChar =>
+        val newProjectList = projectList.filter { e =>
+          e.references.subsetOf(child.outputSet)
+        }
+        p.copy(projectList = newProjectList)
     }
-    newTarget
   }
+
+  /** Finds and returns the file source metadata column from a dataframe */
+  def getFileMetadataColumn(df: DataFrame): Column =
+    df.metadataColumn(FileFormat.METADATA_NAME)
 
   /**
    * Update FileFormat for a plan and return the updated plan
@@ -487,27 +542,48 @@ object DeltaTableUtils extends PredicateHelper
     IdentityTransform(FieldReference(Seq(col)))
   }
 
+  def parseColsToClusterByTransform(cols: Seq[String]): TempClusterByTransform = {
+    TempClusterByTransform(cols.map(FieldReference(_)))
+  }
+
   // Workaround for withActive not being visible in io/delta.
   def withActiveSession[T](spark: SparkSession)(body: => T): T = spark.withActive(body)
 
   /**
-   * Uses org.apache.hadoop.fs.Path(Path, String) to concatenate a base path
-   * and a relative child path and safely handles the case where the base path represents
-   * a Uri with an empty path component (e.g. s3://my-bucket, where my-bucket would be
-   * interpreted as the Uri authority).
+   * Uses org.apache.hadoop.fs.Path.mergePaths to concatenate a base path and a relative child path.
    *
-   * In that case, the child path is converted to an absolute path at the root, i.e. /childPath.
-   * This prevents a "URISyntaxException: Relative path in absolute URI", which would be thrown
-   * by org.apache.hadoop.fs.Path(Path, String) because it tries to convert the base path to a Uri
-   * and then resolve the child on top of it. This is invalid for an empty base path and a
-   * relative child path according to the Uri specification, which states that if an authority
-   * is defined, the path component needs to be either empty or start with a '/'.
+   * This method is designed to address two specific issues in Hadoop Path:
+   *
+   * Issue 1:
+   * When the base path represents a Uri with an empty path component, such as concatenating
+   * "s3://my-bucket" and "childPath". In this case, the child path is converted to an absolute
+   * path at the root, i.e. /childPath. This prevents a "URISyntaxException: Relative path in
+   * absolute URI", which would be thrown by org.apache.hadoop.fs.Path(Path, String) because it
+   * tries to convert the base path to a Uri and then resolve the child on top of it. This is
+   * invalid for an empty base path and a relative child path according to the Uri specification,
+   * which states that if an authority is defined, the path component needs to be either empty or
+   * start with a '/'.
+   *
+   * Issue 2 (only when [[DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS]] is `true`):
+   * When the child path contains a special character ':', such as "aaaa:bbbb.csv".
+   * This is valid in many file systems such as S3, but is actually ambiguous because it can be
+   * parsed either as an absolute path with a scheme ("aaaa") and authority ("bbbb.csv"), or as
+   * a relative path with a colon in the name ("aaaa:bbbb.csv"). Hadoop Path will always interpret
+   * it as the former, which is not what we want in this case. Therefore, we prepend a '/' to the
+   * child path to ensure that it is always interpreted as a relative path.
+   * See [[https://issues.apache.org/jira/browse/HDFS-14762]] for more details.
    */
   def safeConcatPaths(basePath: Path, relativeChildPath: String): Path = {
-    if (basePath.toUri.getPath.isEmpty) {
-      new Path(basePath, s"/$relativeChildPath")
+    val useWorkaround = SparkSession.getActiveSession.map(_.sessionState.conf)
+      .exists(_.getConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS))
+    if (useWorkaround) {
+      Path.mergePaths(basePath, new Path(s"/$relativeChildPath"))
     } else {
-      new Path(basePath, relativeChildPath)
+      if (basePath.toUri.getPath.isEmpty) {
+        new Path(basePath, s"/$relativeChildPath")
+      } else {
+        new Path(basePath, relativeChildPath)
+      }
     }
   }
 
@@ -616,8 +692,7 @@ object UnresolvedDeltaPathOrIdentifier {
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
       case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
-      case (None, Some(t)) =>
-        UnresolvedTable(t.nameParts, cmd, None)
+      case (None, Some(t)) => UnresolvedTable(t.nameParts, cmd)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
     }
@@ -638,8 +713,7 @@ object UnresolvedPathOrIdentifier {
       tableIdentifier: Option[TableIdentifier],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (_, Some(t)) =>
-        UnresolvedTable(t.nameParts, cmd, None)
+      case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd)
       case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")

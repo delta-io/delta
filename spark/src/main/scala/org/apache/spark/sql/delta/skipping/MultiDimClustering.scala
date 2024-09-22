@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.SparkException
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
+import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
@@ -50,6 +51,7 @@ object MultiDimClustering {
       curve: String): DataFrame = {
     assert(colNames.nonEmpty, "Cannot cluster by zero columns!")
     val clusteringImpl = curve match {
+      case "hilbert" if colNames.size == 1 => ZOrderClustering
       case "hilbert" => HilbertClustering
       case "zorder" => ZOrderClustering
       case unknownCurve =>

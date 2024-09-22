@@ -1,7 +1,7 @@
 # Managed Commits
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2598**
 
-This RFC proposes a new table feature `managedCommits` which changes the way Delta Lake performs commits.
+This RFC proposes a new table feature `managedCommit` which changes the way Delta Lake performs commits.
 
 Today’s Delta commit protocol relies on the filesystem to provide commit atomicity. This feature request is to allow Delta tables which gets commit atomicity using an external commit-owner and not
 the filesystem (s3, abfs etc). This allows us to deal with various limitations of Delta:
@@ -143,7 +143,7 @@ are responsible to define the commit atomicity and backfill protocols which the 
 
 At a high level, the `commit-owner` needs to provide:
 - API to atomically commit a version `x` with given set of `actions`. This is explained in detail in the [commit protocol](#commit-protocol) section.
-- API to retrieve information about the recent commits on the table. This is explained in detail in the [getting un-backfilled commits from commit-owner](#getting-un-backfilled-commits-from-commit-owner) section.
+- API to retrieve information about the recent commits and the latest ratified version on the table. This is explained in detail in the [getting un-backfilled commits from commit-owner](#getting-un-backfilled-commits-from-commit-owner) section.
 
 ### Commit Protocol
 
@@ -161,7 +161,14 @@ Even after a commit succeeds, Delta clients can only discover the commit through
 have no way to determine which file in `_delta_log/_commits` directory corresponds to the actual commit `v`.
 
 The commit-owner is responsible to implement an API (defined by the Delta client) that Delta clients can use to retrieve information about un-backfilled commits maintained
-by the commit-owner. Delta clients who are unaware of the commit-owner (or unwilling to talk to it), may not see recent un-backfilled commits and thus may encounter stale reads.
+by the commit-owner. The API must also return the latest version of the table ratified by the commit-owner (if any).
+Providing the latest ratified table version helps address potential race conditions between listing commits and contacting the commit-owner.
+For example, if a client performs a listing before a recently ratified commit is backfilled, and then contacts the commit-owner after the backfill completes,
+the commit-owner may return an empty list of un-backfilled commits. Without knowing the latest ratified version, the client might incorrectly assume their listing was complete
+and read a stale snapshot.
+
+Delta clients who are unaware of the commit-owner (or unwilling to talk to it), may not see recent un-backfilled commits and thus may encounter stale reads.
+
 
 ## Sample Commit Owner API
 
@@ -176,7 +183,7 @@ interface CommitStore {
      * @param version The version we want to commit.
      * @param actions Actions that need to be committed.
      *
-     * returns CommitResponse which has details around the new committed delta file.
+     * @return CommitResponse which has details around the new committed delta file.
      */
     def commit(
         version: Long,
@@ -191,13 +198,16 @@ interface CommitStore {
      * Note that the first version returned by this API may not be equal to the `startVersion`. This
      * happens when few versions starting from `startVersion` are already backfilled and so
      * CommitStore may have stopped tracking them.
+     * The returned latestTableVersion is the maximum commit version ratified by the Commit-Owner.
+     * Note that returning latestTableVersion as -1 is acceptable only if the commit-owner never
+     * ratified any version i.e. it never accepted any un-backfilled commit.
      *
-     * @return a list of `Commit` which are tracked by commit-owner.
-     *
+     * @return GetCommitsResponse which contains a list of `Commit`s and the latestTableVersion
+     *         tracked by the commit-owner.
      */
     def getCommits(
         startVersion: Long,
-        endVersion: Long): Seq[Commit]
+        endVersion: Long): GetCommitsResponse
 
     /**
      * API to ask the commit-owner to backfill all commits <= given `version`.
@@ -314,13 +324,13 @@ the seemingly-extra files might think the table metadata was corrupted.
 
 The managed-commit feature is supported and active when:
 - The table must be on Writer Version 7.
-- The table has a `protocol` action with `writerFeatures` containing the feature `managedCommits`.
-- The table has a metadata property `delta.managedCommits.commitOwner` in the [change-metadata](#change-metadata)'s configuration.
-- The table may have a metadata property `delta.managedCommits.commitOwnerConf` in the [change-metadata](#change-metadata)'s configuration. The value of this property is a json-coded string-to-string map.
+- The table has a `protocol` action with `writerFeatures` containing the feature `managedCommit`.
+- The table has a metadata property `delta.managedCommit.commitOwner` in the [change-metadata](#change-metadata)'s configuration.
+- The table may have a metadata property `delta.managedCommit.commitOwnerConf` in the [change-metadata](#change-metadata)'s configuration. The value of this property is a json-coded string-to-string map.
     - A commit-owner can store additional information (e.g. configuration information such as service endpoints) in this field, for use by the commit-owner client (it is opaque to the Delta client).
     - This field should never include secrets such as auth tokens or credentials, because any reader with access to the table's storage location can see them.
 
-Note that a table is in invalid state if the change-metadata contains the `delta.managedCommits.commitOwner` property but the table does not have the `managedCommits` feature in the `protocol` action (or vice versa).
+Note that a table is in invalid state if the change-metadata contains the `delta.managedCommit.commitOwner` property but the table does not have the `managedCommit` feature in the `protocol` action (or vice versa).
 
 E.g.
 ```json
@@ -332,8 +342,8 @@ E.g.
       "partitionColumns":[],
       "configuration":{
          "appendOnly": "true",
-         "delta.managedCommits.commitOwner": "commit-owner-1",
-         "delta.managedCommits.commitOwnerConf":
+         "delta.managedCommit.commitOwner": "commit-owner-1",
+         "delta.managedCommit.commitOwnerConf":
              "{\"endpoint\":\"http://sample-url.com/commit\", \"authenticationMode\":\"oauth2\"}"
       }
    }

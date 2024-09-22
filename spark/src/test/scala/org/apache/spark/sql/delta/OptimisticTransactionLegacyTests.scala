@@ -35,9 +35,9 @@ trait OptimisticTransactionLegacyTests
   with SharedSparkSession
   with DeltaSQLCommandTest {
 
-  private val addA = createTestAddFile(path = "a")
-  private val addB = createTestAddFile(path = "b")
-  private val addC = createTestAddFile(path = "c")
+  private val addA = createTestAddFile(encodedPath = "a")
+  private val addB = createTestAddFile(encodedPath = "b")
+  private val addC = createTestAddFile(encodedPath = "c")
 
   import testImplicits._
 

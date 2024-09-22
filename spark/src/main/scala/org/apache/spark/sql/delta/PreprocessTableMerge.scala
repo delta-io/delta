@@ -42,9 +42,8 @@ import org.apache.spark.sql.types.{DataType, DateType, StringType, StructField, 
 case class PreprocessTableMerge(override val conf: SQLConf)
   extends Rule[LogicalPlan] with UpdateExpressionsSupport {
 
-  private var trackHighWaterMarks = Set[String]()
+  override protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = true
 
-  def getTrackHighWaterMarks: Set[String] = trackHighWaterMarks
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case m: DeltaMergeInto if m.resolved => apply(m, true)
@@ -58,14 +57,14 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       matched,
       notMatched,
       notMatchedBySource,
-      migrateSchema,
+      withSchemaEvolution,
       finalSchemaOpt) = mergeInto
 
     if (finalSchemaOpt.isEmpty) {
       throw DeltaErrors.targetTableFinalSchemaEmptyException()
     }
 
-    val finalSchema = finalSchemaOpt.get
+    val postEvolutionTargetSchema = finalSchemaOpt.get
 
     def checkCondition(cond: Expression, conditionName: String): Unit = {
       if (!cond.deterministic) {
@@ -97,8 +96,14 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
       throw DeltaErrors.operationOnTempViewWithGenerateColsNotSupported("MERGE INTO")
     }
-    // Additional columns with default expressions.
-    var additionalColumns = Seq[StructField]()
+
+    val identityColumns = IdentityColumn.getIdentityColumns(
+      tahoeFileIndex.snapshotAtAnalysis.metadata.schema)
+    // A mapping from the identity column struct field to the GenerateIdentityColumnValues
+    // expression for the target table in the MERGE clause.
+    val identityColumnExpressionMap = mutable.Map[StructField, Expression]()
+    // Column names for which we need to track IDENTITY high water marks.
+    var trackHighWaterMarks = Set[String]()
 
     val processedMatched = matched.map {
       case m: DeltaMergeIntoMatchedUpdateClause =>
@@ -106,10 +111,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           target,
           m.resolvedActions,
           whenClauses = matched ++ notMatched ++ notMatchedBySource,
-          identityColumns = additionalColumns,
+          identityColumns = identityColumns,
           generatedColumns = generatedColumns,
-          allowStructEvolution = migrateSchema,
-          finalSchema = finalSchema)
+          allowSchemaEvolution = withSchemaEvolution,
+          postEvolutionTargetSchema = postEvolutionTargetSchema)
         m.copy(m.condition, alignedActions)
       case m: DeltaMergeIntoMatchedDeleteClause => m // Delete does not need reordering
     }
@@ -119,10 +124,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           target,
           m.resolvedActions,
           whenClauses = matched ++ notMatched ++ notMatchedBySource,
-          identityColumns = additionalColumns,
-          generatedColumns,
-          migrateSchema,
-          finalSchema)
+          identityColumns = identityColumns,
+          generatedColumns = generatedColumns,
+          allowSchemaEvolution = withSchemaEvolution,
+          postEvolutionTargetSchema = postEvolutionTargetSchema)
         m.copy(m.condition, alignedActions)
       case m: DeltaMergeIntoNotMatchedBySourceDeleteClause => m // Delete does not need reordering
     }
@@ -138,6 +143,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         }
       }
 
+      IdentityColumn.blockExplicitIdentityColumnInsert(
+        identityColumns,
+        m.resolvedActions.map(_.targetColNameParts))
 
       val targetColNames = m.resolvedActions.map(_.targetColNameParts.head)
       if (targetColNames.distinct.size < targetColNames.size) {
@@ -147,7 +155,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       // Generate actions for columns that are not explicitly inserted. They might come from
       // the original schema of target table or the schema evolved columns. In either case they are
       // covered by `finalSchema`.
-      val implicitActions = finalSchema.filterNot { col =>
+      val implicitActions = postEvolutionTargetSchema.filterNot { col =>
         m.resolvedActions.exists { insertAct =>
           conf.resolver(insertAct.targetColNameParts.head, col.name)
         }
@@ -164,12 +172,13 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         m.resolvedActions,
         actions,
         source,
-        generatedColumns.map(f => (f, true)) ++ additionalColumns.map(f => (f, false)),
-        finalSchema)
+        generatedColumns.map(f => (f, true)) ++ identityColumns.map(f => (f, false)),
+        postEvolutionTargetSchema,
+        identityColumnExpressionMap)
 
       trackHighWaterMarks ++= trackFromInsert
 
-      val alignedActions: Seq[DeltaMergeAction] = finalSchema.map { targetAttrib =>
+      val alignedActions: Seq[DeltaMergeAction] = postEvolutionTargetSchema.map { targetAttrib =>
         actionsWithGeneratedColumns.find { a =>
           conf.resolver(targetAttrib.name, a.targetColNameParts.head)
         }.map { a =>
@@ -178,7 +187,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             castIfNeeded(
               a.expr,
               targetAttrib.dataType,
-              allowStructEvolution = migrateSchema,
+              allowStructEvolution = withSchemaEvolution,
               targetAttrib.name),
             targetColNameResolved = true)
         }.getOrElse {
@@ -215,7 +224,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
           processedMatched,
           processedNotMatched,
           processedNotMatchedBySource,
-          finalSchemaOpt),
+          migratedSchema = finalSchemaOpt,
+          trackHighWaterMarks = trackHighWaterMarks,
+          schemaEvolutionEnabled = withSchemaEvolution),
         now)
     } else {
       DeltaMergeInto(
@@ -225,7 +236,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         processedMatched,
         processedNotMatched,
         processedNotMatchedBySource,
-        migrateSchema,
+        withSchemaEvolution,
         finalSchemaOpt)
     }
   }
@@ -263,10 +274,10 @@ case class PreprocessTableMerge(override val conf: SQLConf)
    * @param identityColumns Additional identity columns present in the table.
    * @param generatedColumns List of the generated columns in the table. See
    *                         [[UpdateExpressionsSupport]].
-   * @param allowStructEvolution Whether to allow structs to evolve. See
+   * @param allowSchemaEvolution Whether to allow schema to evolve. See
    *                             [[UpdateExpressionsSupport]].
-   * @param finalSchema The schema of the target table after the merge operation.
-   * @return Update actions aligned on the target output schema `finalSchema`.
+   * @param postEvolutionTargetSchema The schema of the target table after the merge operation.
+   * @return Update actions aligned on the target output schema `postEvolutionTargetSchema`.
    */
   private def alignUpdateActions(
       target: LogicalPlan,
@@ -274,35 +285,29 @@ case class PreprocessTableMerge(override val conf: SQLConf)
       whenClauses: Seq[DeltaMergeIntoClause],
       identityColumns: Seq[StructField],
       generatedColumns: Seq[StructField],
-      allowStructEvolution: Boolean,
-      finalSchema: StructType)
+      allowSchemaEvolution: Boolean,
+      postEvolutionTargetSchema: StructType)
     : Seq[DeltaMergeAction] = {
+    IdentityColumn.blockIdentityColumnUpdate(
+      identityColumns,
+      resolvedActions.map(_.targetColNameParts))
     // Get the operations for columns that already exist...
     val existingUpdateOps = resolvedActions.map { a =>
       UpdateOperation(a.targetColNameParts, a.expr)
     }
 
     // And construct operations for columns that the insert/update clauses will add.
-    val newUpdateOps = generateUpdateOpsForNewTargetFields(target, finalSchema, resolvedActions)
+    val newUpdateOps =
+      generateUpdateOpsForNewTargetFields(target, postEvolutionTargetSchema, resolvedActions)
 
-    // Get expressions for the final schema for alignment. Note that attributes which already
-    // exist in the target need to use the same expression ID, even if the schema will evolve.
-    val finalSchemaExprs =
-    finalSchema.map { field =>
-      target.resolve(Seq(field.name), conf.resolver).map { r =>
-        AttributeReference(field.name, field.dataType)(r.exprId)
-      }.getOrElse {
-        AttributeReference(field.name, field.dataType)()
-      }
-    }
-
-    // Use the helper methods for in UpdateExpressionsSupport to generate expressions such
-    // that nested fields can be updated (only for existing columns).
+    // Use the helper methods in UpdateExpressionsSupport to generate expressions such that nested
+    // fields can be updated (only for existing columns).
     val alignedExprs = generateUpdateExpressions(
-      finalSchemaExprs,
-      existingUpdateOps ++ newUpdateOps,
-      conf.resolver,
-      allowStructEvolution = allowStructEvolution,
+      targetSchema = postEvolutionTargetSchema,
+      updateOps = existingUpdateOps ++ newUpdateOps,
+      defaultExprs = target.output,
+      resolver = conf.resolver,
+      allowSchemaEvolution = allowSchemaEvolution,
       generatedColumns = generatedColumns)
 
     val alignedExprsWithGenerationExprs =
@@ -310,13 +315,13 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         alignedExprs.map(_.get)
       } else {
         generateUpdateExprsForGeneratedColumns(target, generatedColumns, alignedExprs,
-          Some(finalSchemaExprs))
+          Some(postEvolutionTargetSchema))
       }
 
     alignedExprsWithGenerationExprs
-      .zip(finalSchemaExprs)
-      .map { case (expr, attrib) =>
-        DeltaMergeAction(Seq(attrib.name), expr, targetColNameResolved = true)
+      .zip(postEvolutionTargetSchema)
+      .map { case (expr, field) =>
+        DeltaMergeAction(Seq(field.name), expr, targetColNameResolved = true)
       }
   }
 
@@ -326,13 +331,13 @@ case class PreprocessTableMerge(override val conf: SQLConf)
    * the merge clause.
    *
    * @param target Logical plan node of the target table of merge.
-   * @param finalSchema The schema of the target table after the merge operation.
+   * @param postEvolutionTargetSchema The schema of the target table after the merge operation.
    * @param resolvedActions Merge actions of the update clause being processed.
    * @return List of update operations
    */
   private def generateUpdateOpsForNewTargetFields(
       target: LogicalPlan,
-      finalSchema: StructType,
+      postEvolutionTargetSchema: StructType,
       resolvedActions: Seq[DeltaMergeAction])
     : Seq[UpdateOperation] = {
     // Collect all fields in the final schema that were added by schema evolution.
@@ -341,7 +346,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     val targetSchemaBeforeEvolution =
       target.schema.map(SchemaPruning.RootField(_, derivedFromAtt = false))
     val newTargetFields =
-      StructType(SchemaPruning.pruneSchema(finalSchema, targetSchemaBeforeEvolution)
+      StructType(SchemaPruning.pruneSchema(postEvolutionTargetSchema, targetSchemaBeforeEvolution)
       .filterNot { topLevelField => target.schema.exists(_.name == topLevelField.name) })
 
     /**
@@ -395,15 +400,18 @@ case class PreprocessTableMerge(override val conf: SQLConf)
    * @param allActions Actions with non explicitly specified columns added with nulls.
    * @param sourcePlan Logical plan node of the source table of merge.
    * @param columnWithDefaultExpr All the generated columns in the target table.
+   * @param identityColumnExpressionMap A mapping from identity column struct fields to expressions
    * @return `allActions` with expression for non explicitly inserted generated columns expression
-   *        resolved.
+   *        resolved, and columns names for which we will track high water marks.
    */
   private def resolveImplicitColumns(
-    explicitActions: Seq[DeltaMergeAction],
-    allActions: Seq[DeltaMergeAction],
-    sourcePlan: LogicalPlan,
-    columnWithDefaultExpr: Seq[(StructField, Boolean)],
-    finalSchema: StructType): (Seq[DeltaMergeAction], Set[String]) = {
+      explicitActions: Seq[DeltaMergeAction],
+      allActions: Seq[DeltaMergeAction],
+      sourcePlan: LogicalPlan,
+      columnWithDefaultExpr: Seq[(StructField, Boolean)],
+      postEvolutionTargetSchema: StructType,
+      identityColumnExpressionMap: mutable.Map[StructField, Expression])
+    : (Seq[DeltaMergeAction], Set[String]) = {
     val implicitColumns = columnWithDefaultExpr.filter {
       case (field, _) =>
         !explicitActions.exists { insertAct =>
@@ -413,9 +421,9 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     if (implicitColumns.isEmpty) {
       return (allActions, Set[String]())
     }
-    assert(finalSchema.size == allActions.size,
+    assert(postEvolutionTargetSchema.size == allActions.size,
       "Invalid number of columns in INSERT clause with generated columns. Expected schema: " +
-      s"$finalSchema, INSERT actions: $allActions")
+      s"$postEvolutionTargetSchema, INSERT actions: $allActions")
 
     val track = mutable.Set[String]()
 
@@ -443,6 +451,17 @@ case class PreprocessTableMerge(override val conf: SQLConf)
               fakeProjectMap(a.exprId).child
           }
           action.copy(expr = transformedExpr)
+        case Some((field, false)) =>
+          // This is the IDENTITY column case. Track the high water marks collection and produce
+          // IDENTITY value generation function.
+          track += field.name
+          // Reuse the existing identityExp which we might have already generated. This is to make
+          // sure that we use the same identity column generation expression across different
+          // WHEN NOT MATCHED branches for a given identity column - so that we can generate
+          // identity values from the same generator and prevent duplicate identity values.
+          val identityExp = identityColumnExpressionMap.getOrElseUpdate(
+            field, IdentityColumn.createIdentityColumnGenerationExpr(field))
+          action.copy(expr = identityExp)
         case _ => action
       }
     }

@@ -18,31 +18,24 @@ package io.delta.sharing.spark
 
 import java.io.{ByteArrayInputStream, FileNotFoundException}
 import java.net.{URI, URLDecoder, URLEncoder}
+import java.nio.charset.StandardCharsets
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.{ArrayBuffer, Builder}
 import scala.reflect.ClassTag
+import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.actions.{
-  AddCDCFile,
-  AddFile,
-  DeletionVectorDescriptor,
-  RemoveFile,
-  SingleAction
-}
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, DeletionVectorDescriptor, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.sharing.client.util.JsonUtils
-import io.delta.sharing.spark.DeltaSharingUtils.{
-  DeltaSharingTableMetadata,
-  FAKE_CHECKPOINT_BYTE_ARRAY
-}
+import io.delta.sharing.spark.DeltaSharingUtils.{DeltaSharingTableMetadata, FAKE_CHECKPOINT_BYTE_ARRAY}
 import org.apache.hadoop.fs._
 import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.util.Progressable
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
-import org.apache.spark.storage.{BlockId}
+import org.apache.spark.storage.BlockId
 
 /** Read-only file system for delta sharing log.
  * This is a faked file system to serve data under path delta-sharing-log:/. The delta log will be
@@ -73,14 +66,16 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
       val arrayBuilder = Array.newBuilder[Byte]
       while (iterator.hasNext) {
         val actionJsonStr = iterator.next()
-        arrayBuilder ++= actionJsonStr.getBytes()
+        arrayBuilder ++= actionJsonStr.getBytes(StandardCharsets.UTF_8)
       }
       // We still have to load the full content of a delta log file in memory to serve them.
       // This still exposes the risk of OOM.
       new FSDataInputStream(new SeekableByteArrayInputStream(arrayBuilder.result()))
     } else {
       val content = getBlockAndReleaseLockHelper[String](f, None)
-      new FSDataInputStream(new SeekableByteArrayInputStream(content.getBytes()))
+      new FSDataInputStream(new SeekableByteArrayInputStream(
+        content.getBytes(StandardCharsets.UTF_8)
+      ))
     }
   }
 
@@ -398,6 +393,61 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     }
   }
 
+  private def prepareCheckpointFile(
+    deltaLogPath: String,
+    checkpointVersion: Long,
+    fileSizeTsSeq: Builder[DeltaSharingLogFileStatus, Seq[DeltaSharingLogFileStatus]]): Unit = {
+    // 1) store the checkpoint byte array in BlockManager for future read.
+    val checkpointParquetFileName =
+      FileNames.checkpointFileSingular(new Path(deltaLogPath), checkpointVersion).toString
+    fileSizeTsSeq += DeltaSharingLogFileStatus(
+      path = checkpointParquetFileName,
+      size = FAKE_CHECKPOINT_BYTE_ARRAY.size,
+      modificationTime = 0L
+    )
+
+    // 2) Prepare the content for _last_checkpoint
+    val lastCheckpointContent =
+      s"""{"version":${checkpointVersion},"size":${FAKE_CHECKPOINT_BYTE_ARRAY.size}}"""
+    val lastCheckpointPath = new Path(deltaLogPath, "_last_checkpoint").toString
+    fileSizeTsSeq += DeltaSharingLogFileStatus(
+      path = lastCheckpointPath,
+      size = lastCheckpointContent.length,
+      modificationTime = 0L
+    )
+    DeltaSharingUtils.overrideSingleBlock[String](
+      blockId = getDeltaSharingLogBlockId(lastCheckpointPath),
+      value = lastCheckpointContent
+    )
+  }
+
+  private def updateListingDeltaLog(deltaLogPath: String, checkpointVersion: Long): Unit = {
+    val fileSizeTsSeq = Seq.newBuilder[DeltaSharingLogFileStatus]
+    prepareCheckpointFile(deltaLogPath, checkpointVersion, fileSizeTsSeq)
+
+    val iterator = SparkEnv.get.blockManager
+      .get[DeltaSharingLogFileStatus](getDeltaSharingLogBlockId(deltaLogPath)) match {
+      case Some(block) => block.data.asInstanceOf[Iterator[DeltaSharingLogFileStatus]]
+      case _ => throw new FileNotFoundException(s"Failed to list files for path: $deltaLogPath.")
+    }
+    // Explicitly materialize iterator to allow the reader lock on the block to be released.
+    val files = iterator.flatMap { deltaSharingLogFileStatus =>
+      val filePath = new Path(deltaSharingLogFileStatus.path)
+      filePath match {
+        case FileNames.CheckpointFile(_, version) if version > checkpointVersion =>
+          Some(deltaSharingLogFileStatus)
+        case FileNames.DeltaFile(_, version) if version > checkpointVersion =>
+          Some(deltaSharingLogFileStatus)
+        case _ => None
+      }
+    }.toIndexedSeq
+
+    DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
+      getDeltaSharingLogBlockId(deltaLogPath),
+      (fileSizeTsSeq.result() ++ files).toIterator
+    )
+  }
+
   /**
    * @param deltaLogPath The delta log directory to clean up. It is constructed per query with
    *                     credential scope id as prefix and a uuid as suffix, which is very unique
@@ -424,6 +474,22 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     }
 
     val blockManager = SparkEnv.get.blockManager
+    // 1) try to update the listing of the delta log files:
+    //   - add a new checkpoint at maxVersion.
+    //   - update the _last_checkpoint file.
+    //   - update the result of listStatus for deltaLogPath.
+    try {
+      updateListingDeltaLog(deltaLogPath, maxVersion)
+    } catch {
+      case NonFatal(e) =>
+        logWarning(
+          s"Stopped cleaning up the delta log for [$deltaLogPath], because updating the " +
+            s"listStatus of deltaLog() failed due to [${e.toString}]."
+        )
+        return
+    }
+
+    // 2) try to clean up the delta log (.json) file for each version that has been read.
     val matchingBlockIds = blockManager.getMatchingBlockIds(shouldCleanUp(_))
     logInfo(
       s"Trying to clean up ${matchingBlockIds.size} previous blocks for $deltaLogPath " +
@@ -559,7 +625,9 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       minVersion,
       ArrayBuffer[String]()
     ) += protocolAndMetadataStr
-    versionToJsonLogSize(minVersion) += protocolAndMetadataStr.length
+    versionToJsonLogSize(minVersion) += protocolAndMetadataStr.getBytes(
+      StandardCharsets.UTF_8
+    ).length
     numFileActionsInMinVersion = versionToDeltaSharingFileActions
       .getOrElseUpdate(minVersion, ArrayBuffer[model.DeltaSharingFileAction]())
       .size
@@ -573,7 +641,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
             version,
             ArrayBuffer[String]()
           ) += metadataStr
-          versionToJsonLogSize(version) += metadataStr.length
+          versionToJsonLogSize(version) += metadataStr.getBytes(StandardCharsets.UTF_8).length
         }
     }
     // Write file actions to the delta log json file.
@@ -606,7 +674,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
             version,
             ArrayBuffer[String]()
           ) += actionJsonStr
-          versionToJsonLogSize(version) += actionJsonStr.length
+          versionToJsonLogSize(version) += actionJsonStr.getBytes(StandardCharsets.UTF_8).length
 
           // 3. process expiration timestamp
           if (fileAction.expirationTimestamp != null) {
@@ -624,34 +692,12 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     if (minVersion > 0) {
       // If the minVersion is not 0 in the response, then prepare checkpoint at minVersion - 1:
       // need to prepare two files: 1) (minVersion-1).checkpoint.parquet 2) _last_checkpoint
-      val checkpointVersion = minVersion - 1
-
-      // 1) store the checkpoint byte array in BlockManager for future read.
-      val checkpointParquetFileName =
-        FileNames.checkpointFileSingular(new Path(deltaLogPath), checkpointVersion).toString
-      fileSizeTsSeq += DeltaSharingLogFileStatus(
-        path = checkpointParquetFileName,
-        size = FAKE_CHECKPOINT_BYTE_ARRAY.size,
-        modificationTime = 0L
-      )
-
-      // 2) Prepare the content for _last_checkpoint
-      val lastCheckpointContent =
-        s"""{"version":${checkpointVersion},"size":${FAKE_CHECKPOINT_BYTE_ARRAY.size}}"""
-      val lastCheckpointPath = new Path(deltaLogPath, "_last_checkpoint").toString
-      fileSizeTsSeq += DeltaSharingLogFileStatus(
-        path = lastCheckpointPath,
-        size = lastCheckpointContent.length,
-        modificationTime = 0L
-      )
-      DeltaSharingUtils.overrideSingleBlock[String](
-        blockId = getDeltaSharingLogBlockId(lastCheckpointPath),
-        value = lastCheckpointContent
-      )
+      prepareCheckpointFile(
+        deltaLogPath, checkpointVersion = minVersion - 1, fileSizeTsSeq = fileSizeTsSeq)
     }
 
     for (version <- minVersion to maxVersion) {
-      val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), version).toString
+      val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), version).toString
       DeltaSharingUtils.overrideIteratorBlock[String](
         getDeltaSharingLogBlockId(jsonFilePath),
         versionToJsonLogBuilderMap.getOrElse(version, Seq.empty).toIterator
@@ -725,11 +771,11 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
           )
         case protocol: model.DeltaSharingProtocol =>
           val protocolJsonStr = protocol.deltaProtocol.json + "\n"
-          jsonLogSize += protocolJsonStr.length
+          jsonLogSize += protocolJsonStr.getBytes(StandardCharsets.UTF_8).length
           jsonLogSeq += protocolJsonStr
         case metadata: model.DeltaSharingMetadata =>
           val metadataJsonStr = metadata.deltaMetadata.json + "\n"
-          jsonLogSize += metadataJsonStr.length
+          jsonLogSize += metadataJsonStr.getBytes(StandardCharsets.UTF_8).length
           jsonLogSeq += metadataJsonStr
         case _ =>
           throw new IllegalStateException(
@@ -759,7 +805,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
       // 2. prepare json log content.
       val actionJsonStr = getActionWithDeltaSharingPath(fileAction, customTablePath) + "\n"
-      jsonLogSize += actionJsonStr.length
+      jsonLogSize += actionJsonStr.getBytes(StandardCharsets.UTF_8).length
       jsonLogSeq += actionJsonStr
 
       // 3. process expiration timestamp
@@ -778,7 +824,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
     // Always use 0.json for snapshot queries.
     val deltaLogPath = s"${encodedTablePath.toString}/_delta_log"
-    val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), 0).toString
+    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
     DeltaSharingUtils.overrideIteratorBlock[String](
       getDeltaSharingLogBlockId(jsonFilePath),
       jsonLogSeq.result().toIterator
@@ -819,7 +865,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     val jsonLogStr = deltaSharingTableMetadata.protocol.deltaProtocol.json + "\n" +
       deltaSharingTableMetadata.metadata.deltaMetadata.json + "\n"
 
-    val jsonFilePath = FileNames.deltaFile(new Path(deltaLogPath), 0).toString
+    val jsonFilePath = FileNames.unsafeDeltaFile(new Path(deltaLogPath), 0).toString
     DeltaSharingUtils.overrideIteratorBlock[String](
       getDeltaSharingLogBlockId(jsonFilePath),
       Seq(jsonLogStr).toIterator
@@ -828,7 +874,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     val fileStatusSeq = Seq(
       DeltaSharingLogFileStatus(
         path = jsonFilePath,
-        size = jsonLogStr.length,
+        size = jsonLogStr.getBytes(StandardCharsets.UTF_8).length,
         modificationTime = 0L
       )
     )

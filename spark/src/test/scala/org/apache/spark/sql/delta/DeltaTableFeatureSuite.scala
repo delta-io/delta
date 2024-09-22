@@ -22,10 +22,11 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, InMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames.deltaFile
+import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -47,9 +48,9 @@ class DeltaTableFeatureSuite
       path: File,
       schema: StructType = testTableSchema): DeltaLog = {
     val log = DeltaLog.forTable(spark, path)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
-      deltaFile(log.logPath, 0),
+      unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = schema.json).json, protocol.json),
       overwrite = false,
       log.newDeltaHadoopConf())
@@ -132,6 +133,8 @@ class DeltaTableFeatureSuite
           Some(metadata))
         .readerAndWriterFeatureNames ===
         Set(
+          AppendOnlyTableFeature.name,
+          InvariantsTableFeature.name,
           TestWriterFeatureWithTransitiveDependency.name,
           TestFeatureWithDependency.name,
           TestReaderWriterFeature.name))
@@ -146,6 +149,7 @@ class DeltaTableFeatureSuite
         CheckConstraintsTableFeature,
         ChangeDataFeedTableFeature,
         GeneratedColumnsTableFeature,
+        IdentityColumnsTableFeature,
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature,
         TestRemovableLegacyWriterFeature,
@@ -193,9 +197,8 @@ class DeltaTableFeatureSuite
 
     val protocol =
       Protocol(2, TABLE_FEATURES_MIN_WRITER_VERSION).withFeature(TestLegacyReaderWriterFeature)
-    assert(!protocol.readerFeatures.isDefined)
-    assert(
-      protocol.writerFeatures.get === Set(TestLegacyReaderWriterFeature.name))
+    assert(protocol.readerFeatures.get === Set.empty)
+    assert(protocol.writerFeatures.get === Set(TestLegacyReaderWriterFeature.name))
   }
 
   test("merge protocols") {
@@ -203,29 +206,13 @@ class DeltaTableFeatureSuite
     val tfProtocol2 =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
 
-    assert(
-      tfProtocol1.merge(Protocol(1, 2)) ===
-        tfProtocol1.withFeatures(Seq(AppendOnlyTableFeature, InvariantsTableFeature)))
-    assert(
-      tfProtocol2.merge(Protocol(2, 6)) ===
-        tfProtocol2.withFeatures(Set(
-          AppendOnlyTableFeature,
-          InvariantsTableFeature,
-          ColumnMappingTableFeature,
-          ChangeDataFeedTableFeature,
-          CheckConstraintsTableFeature,
-          GeneratedColumnsTableFeature,
-          TestLegacyWriterFeature,
-          TestLegacyReaderWriterFeature,
-          TestRemovableLegacyWriterFeature,
-          TestRemovableLegacyReaderWriterFeature)))
+    assert(tfProtocol1.merge(Protocol(1, 2)) === Protocol(1, 2))
+    assert(tfProtocol2.merge(Protocol(2, 6)) === Protocol(2, 6))
   }
 
   test("protocol upgrade compatibility") {
     assert(Protocol(1, 1).canUpgradeTo(Protocol(1, 1)))
     assert(Protocol(1, 1).canUpgradeTo(Protocol(2, 1)))
-    assert(!Protocol(1, 2).canUpgradeTo(Protocol(1, 1)))
-    assert(!Protocol(2, 2).canUpgradeTo(Protocol(2, 1)))
     assert(
       Protocol(1, 1).canUpgradeTo(
         Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)))
@@ -243,6 +230,7 @@ class DeltaTableFeatureSuite
               CheckConstraintsTableFeature,
               ChangeDataFeedTableFeature,
               GeneratedColumnsTableFeature,
+              IdentityColumnsTableFeature,
               ColumnMappingTableFeature,
               TestLegacyWriterFeature,
               TestLegacyReaderWriterFeature,
@@ -257,26 +245,22 @@ class DeltaTableFeatureSuite
             CheckConstraintsTableFeature,
             ChangeDataFeedTableFeature,
             GeneratedColumnsTableFeature,
+            IdentityColumnsTableFeature,
             ColumnMappingTableFeature,
             TestLegacyWriterFeature,
             TestLegacyReaderWriterFeature,
             TestRemovableLegacyWriterFeature,
             TestRemovableLegacyReaderWriterFeature))))
-    // Features are identical but protocol versions are lower, thus `canUpgradeTo` is `false`.
-    assert(
-      !Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-        .canUpgradeTo(Protocol(1, 1)))
   }
 
   test("protocol downgrade compatibility") {
     val tableFeatureProtocol =
       Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-    // Cannot downgrade when the original protocol does not support at a minimum writer features.
-    assert(!Protocol(1, 6).canDowngradeTo(Protocol(1, 6), droppedFeatureName = ""))
-    assert(tableFeatureProtocol.withFeature(TestWriterFeature)
-      .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
     assert(Protocol(1, 7).withFeature(TestWriterFeature)
-      .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestWriterFeature.name))
+      .canDowngradeTo(Protocol(1, 7), droppedFeatureName = TestWriterFeature.name))
+    // When there are no explicit features the protocol versions need to be downgraded
+    // below table features. The new protocol versions need to match exactly the supported
+    // legacy features.
     for (n <- 1 to 3) {
       assert(
         !Protocol(n, 7)
@@ -287,31 +271,13 @@ class DeltaTableFeatureSuite
           .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, InvariantsTableFeature))
           .canDowngradeTo(Protocol(1, 2), droppedFeatureName = TestWriterFeature.name))
     }
-    // When there are no explicit features the protocol versions need to be downgraded
-    // below table features.
-    assert(!tableFeatureProtocol.withFeature(TestWriterFeature)
-      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
-    assert(!tableFeatureProtocol.withFeature(TestWriterFeature)
-      .canDowngradeTo(Protocol(2, 7), droppedFeatureName = TestWriterFeature.name))
-    // Only one non-legacy writer feature per time.
-    assert(!tableFeatureProtocol.withFeatures(Seq(TestWriterFeature, TestRemovableWriterFeature))
-      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
-    // Remove reader+writer feature.
     assert(tableFeatureProtocol.withFeatures(Seq(TestReaderWriterFeature))
       .canDowngradeTo(Protocol(1, 1), droppedFeatureName = TestReaderWriterFeature.name))
-    // Only one non-legacy feature at a time - multiple reader+writer features.
-    assert(
-      !tableFeatureProtocol
-        .withFeatures(Seq(TestReaderWriterFeature, TestReaderWriterMetadataAutoUpdateFeature))
-        .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = ""))
     assert(
       tableFeatureProtocol
-        .merge(Protocol(2, 5))
         .withFeatures(Seq(TestReaderWriterFeature, TestRemovableLegacyReaderWriterFeature))
+        .merge(Protocol(2, 5))
         .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestReaderWriterFeature.name))
-    // Only one feature at a time - mix of reader+writer and writer features.
-    assert(!tableFeatureProtocol.withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature))
-      .canDowngradeTo(tableFeatureProtocol, droppedFeatureName = TestWriterFeature.name))
     // Downgraded protocol must be able to support all legacy table features.
     assert(
       !tableFeatureProtocol
@@ -319,8 +285,8 @@ class DeltaTableFeatureSuite
         .canDowngradeTo(Protocol(2, 4), droppedFeatureName = TestWriterFeature.name))
     assert(
       tableFeatureProtocol
-        .merge(Protocol(2, 5))
         .withFeatures(Seq(TestWriterFeature, AppendOnlyTableFeature, ColumnMappingTableFeature))
+        .merge(Protocol(2, 5))
         .canDowngradeTo(Protocol(2, 5), droppedFeatureName = TestWriterFeature.name))
   }
 
@@ -343,11 +309,12 @@ class DeltaTableFeatureSuite
   test("Table features are not automatically enabled by default table property settings") {
     withTable("tbl") {
       spark.range(10).write.format("delta").saveAsTable("tbl")
-      val metadata = DeltaLog.forTable(spark, TableIdentifier("tbl")).update().metadata
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("tbl")).update()
       TableFeature.allSupportedFeaturesMap.values.foreach {
         case feature: FeatureAutomaticallyEnabledByMetadata =>
           assert(
-            !feature.metadataRequiresFeatureToBeEnabled(metadata, spark),
+            !feature.metadataRequiresFeatureToBeEnabled(
+              snapshot.protocol, snapshot.metadata, spark),
             s"""
                |${feature.name} is automatically enabled by the default metadata. This will lead to
                |the inability of reading existing tables that do not have the feature enabled and
@@ -367,6 +334,8 @@ class DeltaTableFeatureSuite
         val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
         val protocol = log.update().protocol
         assert(protocol.readerAndWriterFeatureNames === Set(
+          AppendOnlyTableFeature.name,
+          InvariantsTableFeature.name,
           ColumnMappingTableFeature.name,
           TestWriterFeature.name))
       }
@@ -420,6 +389,8 @@ class DeltaTableFeatureSuite
             commandName, targetTableName = "tbl", sourceTableName = "tbl", tblProperties))
           val protocol = log.update().protocol
           assert(protocol.readerAndWriterFeatureNames === Set(
+            AppendOnlyTableFeature.name,
+            InvariantsTableFeature.name,
             ChangeDataFeedTableFeature.name,
             TestWriterFeature.name))
         }
@@ -434,9 +405,10 @@ class DeltaTableFeatureSuite
         withTable("tbl") {
           spark.range(0).write.format("delta").saveAsTable("tbl")
           val log = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-          val protocol = log.update().protocol
-          assert(protocol.minReaderVersion === 2)
-          assert(protocol.minWriterVersion === 5)
+          assert(log.update().protocol === Protocol(2, 7).withFeatures(Seq(
+            AppendOnlyTableFeature,
+            InvariantsTableFeature,
+            ColumnMappingTableFeature)))
           val tblProperties = Seq(s"'$FEATURE_PROP_PREFIX${TestWriterFeature.name}' = 'enabled'",
             s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION")
           sql(buildTablePropertyModifyingCommand(
@@ -444,16 +416,9 @@ class DeltaTableFeatureSuite
           val newProtocol = log.update().protocol
           assert(newProtocol.readerAndWriterFeatureNames === Set(
             AppendOnlyTableFeature.name,
-            ColumnMappingTableFeature.name,
             InvariantsTableFeature.name,
-            CheckConstraintsTableFeature.name,
-            ChangeDataFeedTableFeature.name,
-            GeneratedColumnsTableFeature.name,
-            TestWriterFeature.name,
-            TestLegacyWriterFeature.name,
-            TestLegacyReaderWriterFeature.name,
-            TestRemovableLegacyWriterFeature.name,
-            TestRemovableLegacyReaderWriterFeature.name))
+            ColumnMappingTableFeature.name,
+            TestWriterFeature.name))
         }
       }
     }
@@ -483,6 +448,54 @@ class DeltaTableFeatureSuite
         assert(newProtocol2.readerAndWriterFeatureNames.contains(
           VacuumProtocolCheckTableFeature.name))
       }
+    }
+  }
+
+  test("drop table feature works with coordinated commits") {
+    val table = "tbl"
+    withTable(table) {
+      spark.range(0).write.format("delta").saveAsTable(table)
+      val log = DeltaLog.forTable(spark, TableIdentifier(table))
+      val featureName = TestRemovableReaderWriterFeature.name
+      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
+
+      // Add coordinated commits table feature to the table
+      CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(batchSize = 100))
+      val tblProperties1 =
+        Seq(s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory'",
+          s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}'")
+      sql(buildTablePropertyModifyingCommand(
+        "ALTER", targetTableName = table, sourceTableName = table, tblProperties1))
+
+      // Add TestRemovableReaderWriterFeature to the table in unbackfilled delta files
+      val tblProperties2 = Seq(s"'$FEATURE_PROP_PREFIX$featureName' = 'supported', " +
+        s"'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION, " +
+        s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'true'")
+      sql(buildTablePropertyModifyingCommand(
+        "ALTER", targetTableName = table, sourceTableName = table, tblProperties2))
+      assert(log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
+
+      // Disable feature on the latest snapshot
+      val tblProperties3 = Seq(s"'${TestRemovableReaderWriterFeature.TABLE_PROP_KEY}' = 'false'")
+      sql(buildTablePropertyModifyingCommand(
+        "ALTER", targetTableName = table, sourceTableName = table, tblProperties3))
+
+      val tableFeature =
+        TableFeature.featureNameToFeature(featureName).get.asInstanceOf[RemovableFeature]
+      assert(tableFeature.historyContainsFeature(spark, log.update()))
+
+      // Dropping feature should fail because the feature still has traces in deltas.
+      val e = intercept[DeltaTableFeatureException] {
+        sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+      }
+      assert(e.getMessage.contains("DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST"), e)
+
+      // Add in a checkpoint and cleanUp up older logs containing feature traces
+      log.startTransaction().commitManually()
+      log.checkpoint()
+      log.cleanUpExpiredLogs(log.update(), deltaRetentionMillisOpt = Some(-1000000000000L))
+      sql(s"ALTER TABLE $table DROP FEATURE $featureName")
+      assert(!log.update().protocol.readerAndWriterFeatureNames.contains(featureName))
     }
   }
 

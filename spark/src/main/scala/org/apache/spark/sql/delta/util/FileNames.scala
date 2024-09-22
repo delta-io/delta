@@ -25,7 +25,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 object FileNames {
 
   val deltaFileRegex = raw"(\d+)\.json".r
-  val uuidDeltaFileRegex = raw"(\d+)\.[^.]+\.json".r
+  val uuidDeltaFileRegex = raw"(\d+)\.([^.]+)\.json".r
   val compactedDeltaFileRegex = raw"(\d+).(\d+).compacted.json".r
   val checksumFileRegex = raw"(\d+)\.crc".r
   val checkpointFileRegex = raw"(\d+)\.checkpoint((\.\d+\.\d+)?\.parquet|\.[^.]+\.(json|parquet))".r
@@ -34,8 +34,13 @@ object FileNames {
   private val checksumFilePattern = checksumFileRegex.pattern
   private val checkpointFilePattern = checkpointFileRegex.pattern
 
-  /** Returns the delta (json format) path for a given delta file. */
-  def deltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
+  /**
+   * Returns the delta (json format) path for a given delta file.
+   * WARNING: This API is unsafe and can resolve to incorrect paths if the table has
+   * Coordinated Commits.
+   * Use DeltaCommitFileProvider(snapshot).deltaFile instead to guarantee accurate paths.
+   */
+  def unsafeDeltaFile(path: Path, version: Long): Path = new Path(path, f"$version%020d.json")
 
   /**
    * Returns the un-backfilled uuid formatted delta (json format) path for a given version.
@@ -44,7 +49,10 @@ object FileNames {
    * @param version The version of the delta file.
    * @return The path to the un-backfilled delta file: <logPath>/_commits/<version>.<uuid>.json
    */
-  def uuidDeltaFile(logPath: Path, version: Long, uuidString: Option[String] = None): Path = {
+  def unbackfilledDeltaFile(
+      logPath: Path,
+      version: Long,
+      uuidString: Option[String] = None): Path = {
     val basePath = commitDirPath(logPath)
     val uuid = uuidString.getOrElse(UUID.randomUUID.toString)
     new Path(basePath, f"$version%020d.$uuid.json")
@@ -120,6 +128,12 @@ object FileNames {
   def isDeltaFile(path: Path): Boolean = DeltaFile.unapply(path).isDefined
   def isDeltaFile(file: FileStatus): Boolean = isDeltaFile(file.getPath)
 
+  def isUnbackfilledDeltaFile(path: Path): Boolean = UnbackfilledDeltaFile.unapply(path).isDefined
+  def isUnbackfilledDeltaFile(file: FileStatus): Boolean = isUnbackfilledDeltaFile(file.getPath)
+
+  def isBackfilledDeltaFile(path: Path): Boolean = BackfilledDeltaFile.unapply(path).isDefined
+  def isBackfilledDeltaFile(file: FileStatus): Boolean = isBackfilledDeltaFile(file.getPath)
+
   def isChecksumFile(path: Path): Boolean = checksumFilePattern.matcher(path.getName).matches()
   def isChecksumFile(file: FileStatus): Boolean = isChecksumFile(file.getPath)
 
@@ -173,7 +187,7 @@ object FileNames {
       unapply(f.getPath).map { case (_, version) => (f, version) }
     def unapply(path: Path): Option[(Path, Long)] = {
       val parentDirName = path.getParent.getName
-      // If parent is _commits dir, then match against uuid commit file.
+      // If parent is _commits dir, then match against unbackfilled commit file.
       val regex = if (parentDirName == COMMIT_SUBDIR) uuidDeltaFileRegex else deltaFileRegex
       regex.unapplySeq(path.getName).map(path -> _.head.toLong)
     }
@@ -189,6 +203,34 @@ object FileNames {
       unapply(f.getPath).map { case (_, version) => (f, version) }
     def unapply(path: Path): Option[(Path, Long)] = {
       checkpointFileRegex.unapplySeq(path.getName).map(path -> _.head.toLong)
+    }
+  }
+  object BackfilledDeltaFile {
+    def unapply(f: FileStatus): Option[(FileStatus, Long)] =
+      unapply(f.getPath).map { case (_, version) => (f, version) }
+    def unapply(path: Path): Option[(Path, Long)] = {
+      // Don't match files in the _commits sub-directory.
+      if (path.getParent.getName == COMMIT_SUBDIR) {
+        None
+      } else {
+        deltaFileRegex
+          .unapplySeq(path.getName)
+          .map(path -> _.head.toLong)
+      }
+    }
+  }
+  object UnbackfilledDeltaFile {
+    def unapply(f: FileStatus): Option[(FileStatus, Long, String)] =
+      unapply(f.getPath).map { case (_, version, uuidString) => (f, version, uuidString) }
+    def unapply(path: Path): Option[(Path, Long, String)] = {
+      // If parent is _commits dir, then match against uuid commit file.
+      if (path.getParent.getName == COMMIT_SUBDIR) {
+        uuidDeltaFileRegex
+          .unapplySeq(path.getName)
+          .collect { case Seq(version, uuidString) => (path, version.toLong, uuidString) }
+      } else {
+        None
+      }
     }
   }
 

@@ -22,7 +22,7 @@ import java.util.Locale
 import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, TestReaderWriterFeature, TestWriterFeature}
+import org.apache.spark.sql.delta.{AppendOnlyTableFeature, DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, InvariantsTableFeature, TestReaderWriterFeature, TestWriterFeature}
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -188,7 +188,7 @@ class DeltaTableSuite extends QueryTest
     }
 
     // DeltaTable can be passed to executor but method call causes exception.
-    val e = intercept[SparkException] {
+    val e = intercept[Exception] {
       withTempDir { dir =>
         testData.write.format("delta").mode("append").save(dir.getAbsolutePath)
         val dt: DeltaTable = DeltaTable.forPath(dir.getAbsolutePath)
@@ -242,6 +242,9 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     "addFeatureSupport",
     "as",
     "alias",
+    "clone",
+    "cloneAtTimestamp",
+    "cloneAtVersion",
     "delete",
     "detail",
     "generate",
@@ -422,6 +425,80 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     }
   }
 
+  test("clone - with filesystem options") {
+    withTempDir { dir =>
+      val baseDir = fakeFileSystemPath(dir)
+
+      val srcDir = new File(baseDir, "source").getCanonicalPath
+      val dstDir = new File(baseDir, "destination").getCanonicalPath
+
+      spark.range(10).write.options(fakeFileSystemOptions).format("delta").save(srcDir)
+
+      val srcTable =
+        io.delta.tables.DeltaTable.forPath(spark, srcDir, fakeFileSystemOptions)
+      srcTable.clone(dstDir)
+
+      val srcLog = DeltaLog.forTable(spark, new Path(srcDir), fakeFileSystemOptions)
+      val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
+
+      checkAnswer(
+        spark.baseRelationToDataFrame(srcLog.createRelation()),
+        spark.baseRelationToDataFrame(dstLog.createRelation())
+      )
+    }
+  }
+
+  test("cloneAtVersion/timestamp - with filesystem options") {
+    Seq(true, false).foreach { cloneWithVersion =>
+      withTempDir { dir =>
+        val baseDir = fakeFileSystemPath(dir)
+        val fsOptions = fakeFileSystemOptions
+
+        val srcDir = new File(baseDir, "source").getCanonicalPath
+        val dstDir = new File(baseDir, "destination").getCanonicalPath
+
+        val df1 = Seq(1, 2, 3).toDF("id")
+        val df2 = Seq(4, 5).toDF("id")
+        val df3 = Seq(6, 7).toDF("id")
+
+        // version 0.
+        df1.write.format("delta").options(fsOptions).save(srcDir)
+
+        // version 1.
+        df2.write.format("delta").options(fsOptions).mode("append").save(srcDir)
+
+        // version 2.
+        df3.write.format("delta").options(fsOptions).mode("append").save(srcDir)
+
+        val srcTable =
+          io.delta.tables.DeltaTable.forPath(spark, srcDir, fakeFileSystemOptions)
+
+        if (cloneWithVersion) {
+          srcTable.cloneAtVersion(0, dstDir)
+        } else {
+          // clone with timestamp.
+          //
+          // set the time to first file with a early time and verify the delta table can be
+          // restored to it.
+          val desiredTime = "1983-01-01"
+          val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+          val time = format.parse(desiredTime).getTime
+
+          val logPath = new Path(srcDir, "_delta_log")
+          val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
+          assert(file.setLastModified(time))
+          srcTable.cloneAtTimestamp(desiredTime, dstDir)
+        }
+
+        val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
+
+        checkAnswer(
+          df1,
+          spark.baseRelationToDataFrame(dstLog.createRelation())
+        )
+      }
+    }
+  }
 
   test("optimize - with filesystem options") {
     withTempDir { dir =>
@@ -515,7 +592,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
         val time = format.parse(desiredTime).getTime
 
         val logPath = new Path(dir.getCanonicalPath, "_delta_log")
-        val file = new File(FileNames.deltaFile(logPath, 0).toString)
+        val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
         assert(file.setLastModified(time))
 
         val deltaTable2 = io.delta.tables.DeltaTable.forPath(spark, path, fsOptions)
@@ -537,9 +614,9 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // create a table with a default Protocol.
       val testSchema = spark.range(1).schema
       val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata(schemaString = testSchema.json).json, Protocol(0, 0).json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -563,9 +640,9 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // create a table with a default Protocol.
       val testSchema = spark.range(1).schema
       val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(Metadata(schemaString = testSchema.json).json, Protocol(1, 2).json),
         overwrite = false,
         log.newDeltaHadoopConf())
@@ -574,13 +651,17 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // update the protocol to support a writer feature.
       val table = DeltaTable.forPath(spark, path, fsOptions)
       table.addFeatureSupport(TestWriterFeature.name)
-      assert(log.update().protocol === Protocol(1, 7)
-        .merge(Protocol(1, 2)).withFeature(TestWriterFeature))
+      assert(log.update().protocol === Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        TestWriterFeature)))
       table.addFeatureSupport(TestReaderWriterFeature.name)
       assert(
-        log.update().protocol === Protocol(3, 7)
-          .merge(Protocol(1, 2))
-          .withFeatures(Seq(TestWriterFeature, TestReaderWriterFeature)))
+        log.update().protocol === Protocol(3, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          TestWriterFeature,
+          TestReaderWriterFeature)))
 
       // update the protocol again with invalid feature name.
       assert(intercept[DeltaTableFeatureException] {

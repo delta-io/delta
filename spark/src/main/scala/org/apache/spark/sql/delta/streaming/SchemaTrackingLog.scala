@@ -22,9 +22,11 @@ import java.nio.charset.StandardCharsets._
 import scala.io.{Source => IOSource}
 import scala.reflect.ClassTag
 
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.JsonIgnore
 
+import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.{HDFSMetadataLog, MetadataVersionUtil}
 import org.apache.spark.sql.types.{DataType, StructType}
@@ -101,7 +103,7 @@ class SchemaTrackingLog[T <: PartitionAndDataSchema: ClassTag: Manifest](
     sparkSession: SparkSession,
     path: String,
     schemaSerializer: SchemaSerializer[T])
-  extends HDFSMetadataLog[T](sparkSession, path) {
+  extends HDFSMetadataLog[T](sparkSession, path) with LoggingShims {
 
   import SchemaTrackingExceptions._
 
@@ -153,11 +155,12 @@ class SchemaTrackingLog[T <: PartitionAndDataSchema: ClassTag: Manifest](
    */
   def addSchemaToLog(newSchema: T): T = {
     // Write to schema log
-    logInfo(s"Writing a new metadata version $nextSeqNumToWrite in the metadata log")
+    logInfo(log"Writing a new metadata version " +
+      log"${MDC(DeltaLogKeys.VERSION, nextSeqNumToWrite)} in the metadata log")
     if (currentTrackedSchema.contains(newSchema)) {
       // Record a warning if schema has not changed
-      logWarning(s"Schema didn't change after schema evolution. " +
-        s"currentSchema = ${currentTrackedSchema}.")
+      logWarning(log"Schema didn't change after schema evolution. " +
+        log"currentSchema = ${MDC(DeltaLogKeys.SCHEMA, currentTrackedSchema)}.")
       return newSchema
     }
     // Similar to how MicrobatchExecution detects concurrent checkpoint updates

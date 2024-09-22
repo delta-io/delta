@@ -16,9 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 
-import org.apache.spark.sql.catalyst.expressions.Cast
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types._
 
 object TypeWidening {
@@ -27,7 +27,8 @@ object TypeWidening {
    * Returns whether the protocol version supports the Type Widening table feature.
    */
   def isSupported(protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(TypeWideningTableFeature)
+    Seq(TypeWideningPreviewTableFeature, TypeWideningTableFeature)
+      .exists(protocol.isFeatureSupported)
 
   /**
    * Returns whether Type Widening is enabled on this table version. Checks that Type Widening is
@@ -47,17 +48,53 @@ object TypeWidening {
   }
 
   /**
+   * Checks that the type widening table property wasn't disabled or enabled between the two given
+   * states, throws an errors if it was.
+   */
+  def ensureFeatureConsistentlyEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      otherProtocol: Protocol,
+      otherMetadata: Metadata): Unit = {
+    if (isEnabled(protocol, metadata) != isEnabled(otherProtocol, otherMetadata)) {
+      throw DeltaErrors.metadataChangedException(None)
+    }
+  }
+
+  /**
    * Returns whether the given type change is eligible for widening. This only checks atomic types.
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
-    (fromType, toType) match {
-      case (from, to) if from == to => true
-      // All supported type changes below are supposed to be widening, but to be safe, reject any
-      // non-widening change upfront.
-      case (from, to) if !Cast.canUpCast(from, to) => false
-      case (ByteType, ShortType) => true
-      case (ByteType | ShortType, IntegerType) => true
-      case _ => false
+    TypeWideningShims.isTypeChangeSupported(fromType, toType)
+
+  /**
+   * Returns whether the given type change can be applied during schema evolution. Only a
+   * subset of supported type changes are considered for schema evolution.
+   */
+  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
+    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType)
+
+  /**
+   * Asserts that the given table doesn't contain any unsupported type changes. This should never
+   * happen unless a non-compliant writer applied a type change that is not part of the feature
+   * specification.
+   */
+  def assertTableReadable(protocol: Protocol, metadata: Metadata): Unit = {
+    if (!isSupported(protocol) ||
+      !TypeWideningMetadata.containsTypeWideningMetadata(metadata.schema)) {
+      return
     }
+
+    TypeWideningMetadata.getAllTypeChanges(metadata.schema).foreach {
+      case (_, TypeChange(_, from: AtomicType, to: AtomicType, _))
+        if isTypeChangeSupported(from, to) =>
+      case (fieldPath, invalidChange) =>
+        throw DeltaErrors.unsupportedTypeChangeInSchema(
+          fieldPath ++ invalidChange.fieldPath,
+          invalidChange.fromType,
+          invalidChange.toType
+        )
+    }
+  }
 }

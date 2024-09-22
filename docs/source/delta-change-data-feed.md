@@ -247,5 +247,5 @@ VACUUM if they are outside the specified retention period.
 Change data is committed along with the <Delta> transaction, and will become available at the same time as
 the new data is available in the table.
 
-.. include:: /shared/replacements.md
-
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

@@ -23,8 +23,10 @@ import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Writ
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import io.delta.storage.commit.{CommitResponse, GetCommitsResponse, UpdatedActions}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
@@ -88,6 +90,40 @@ object DeltaTestImplicits {
 
     def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
       DeltaLog.forTable(spark, new Path(dataPath.getCanonicalPath), clock)
+    }
+  }
+
+  /** Helper class for working with [[TableCommitCoordinatorClient]] */
+  implicit class TableCommitCoordinatorClientTestHelper(
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient) {
+
+    def commit(
+        commitVersion: Long,
+        actions: Iterator[String],
+        updatedActions: UpdatedActions): CommitResponse = {
+      tableCommitCoordinatorClient.commit(
+        commitVersion, actions, updatedActions, tableIdentifierOpt = None)
+    }
+
+    def getCommits(
+        startVersion: Option[Long] = None,
+        endVersion: Option[Long] = None): GetCommitsResponse = {
+      tableCommitCoordinatorClient.getCommits(tableIdentifierOpt = None, startVersion, endVersion)
+    }
+
+    def backfillToVersion(
+        version: Long,
+        lastKnownBackfilledVersion: Option[Long] = None): Unit = {
+      tableCommitCoordinatorClient.backfillToVersion(
+        tableIdentifierOpt = None, version, lastKnownBackfilledVersion)
+    }
+  }
+
+
+  /** Helper class for working with [[Snapshot]] */
+  implicit class SnapshotTestHelper(snapshot: Snapshot) {
+    def ensureCommitFilesBackfilled(): Unit = {
+      snapshot.ensureCommitFilesBackfilled(tableIdentifierOpt = None)
     }
   }
 

@@ -16,6 +16,8 @@
 
 package io.delta.exceptions
 
+import org.apache.spark.sql.delta.{DeltaThrowable, DeltaThrowableHelper}
+
 import org.apache.spark.annotation.Evolving
 
 /**
@@ -40,6 +42,13 @@ abstract class DeltaConcurrentModificationException(message: String)
 @Evolving
 class ConcurrentWriteException(message: String)
   extends org.apache.spark.sql.delta.ConcurrentWriteException(message)
+    with DeltaThrowable {
+  def this(messageParameters: Array[String]) = {
+    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_WRITE", messageParameters))
+  }
+  override def getErrorClass: String = "DELTA_CONCURRENT_WRITE"
+  override def getMessage: String = message
+}
 
 /**
  * :: Evolving ::
@@ -52,6 +61,13 @@ class ConcurrentWriteException(message: String)
 @Evolving
 class MetadataChangedException(message: String)
   extends org.apache.spark.sql.delta.MetadataChangedException(message)
+    with DeltaThrowable {
+  def this(messageParameters: Array[String]) = {
+    this(DeltaThrowableHelper.getMessage("DELTA_METADATA_CHANGED", messageParameters))
+  }
+  override def getErrorClass: String = "DELTA_METADATA_CHANGED"
+  override def getMessage: String = message
+}
 
 /**
  * :: Evolving ::
@@ -64,6 +80,13 @@ class MetadataChangedException(message: String)
 @Evolving
 class ProtocolChangedException(message: String)
   extends org.apache.spark.sql.delta.ProtocolChangedException(message)
+    with DeltaThrowable {
+  def this(messageParameters: Array[String]) = {
+    this(DeltaThrowableHelper.getMessage("DELTA_PROTOCOL_CHANGED", messageParameters))
+  }
+  override def getErrorClass: String = "DELTA_PROTOCOL_CHANGED"
+  override def getMessage: String = message
+}
 
 /**
  * :: Evolving ::
@@ -75,6 +98,13 @@ class ProtocolChangedException(message: String)
 @Evolving
 class ConcurrentAppendException(message: String)
   extends org.apache.spark.sql.delta.ConcurrentAppendException(message)
+    with DeltaThrowable {
+  def this(messageParameters: Array[String]) = {
+    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_APPEND", messageParameters))
+  }
+  override def getErrorClass: String = "DELTA_CONCURRENT_APPEND"
+  override def getMessage: String = message
+}
 
 /**
  * :: Evolving ::
@@ -86,6 +116,13 @@ class ConcurrentAppendException(message: String)
 @Evolving
 class ConcurrentDeleteReadException(message: String)
   extends org.apache.spark.sql.delta.ConcurrentDeleteReadException(message)
+    with DeltaThrowable {
+  def this(messageParameters: Array[String]) = {
+    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_DELETE_READ", messageParameters))
+  }
+  override def getErrorClass: String = "DELTA_CONCURRENT_DELETE_READ"
+  override def getMessage: String = message
+}
 
 /**
  * :: Evolving ::
@@ -97,6 +134,13 @@ class ConcurrentDeleteReadException(message: String)
 @Evolving
 class ConcurrentDeleteDeleteException(message: String)
   extends org.apache.spark.sql.delta.ConcurrentDeleteDeleteException(message)
+    with DeltaThrowable {
+  def this(messageParameters: Array[String]) = {
+    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_DELETE_DELETE", messageParameters))
+  }
+  override def getErrorClass: String = "DELTA_CONCURRENT_DELETE_DELETE"
+  override def getMessage: String = message
+}
 
 /**
  * :: Evolving ::
@@ -108,3 +152,10 @@ class ConcurrentDeleteDeleteException(message: String)
 @Evolving
 class ConcurrentTransactionException(message: String)
   extends org.apache.spark.sql.delta.ConcurrentTransactionException(message)
+    with DeltaThrowable {
+  def this(messageParameters: Array[String]) = {
+    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_TRANSACTION", messageParameters))
+  }
+  override def getErrorClass: String = "DELTA_CONCURRENT_TRANSACTION"
+  override def getMessage: String = message
+}

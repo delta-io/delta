@@ -600,4 +600,5 @@ spark.range(5).write.format("delta").save("cos://<your-cos-bucket>.service/<path
 spark.read.format("delta").load("cos://<your-cos-bucket>.service/<path-to-delta-table>").show()
 ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.metering
 
+import scala.concurrent.duration._
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -29,6 +30,7 @@ import com.databricks.spark.util.TagDefinitions.{
 }
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.util.ScalaExtensions._
@@ -36,6 +38,8 @@ import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkThrowable
+import org.apache.spark.internal.{LoggingShims, MDC, MessageWithContext}
+import org.apache.spark.util.Utils
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -137,6 +141,31 @@ trait DeltaLogging
     }
   }
 
+  /**
+   * Helper method to check invariants in Delta code. Fails when running in tests, records a delta
+   * assertion event and logs a warning otherwise.
+   */
+  protected def deltaAssert(
+      check: => Boolean,
+      name: String,
+      msg: String,
+      deltaLog: DeltaLog = null,
+      data: AnyRef = null,
+      path: Option[Path] = None)
+    : Unit = {
+    if (Utils.isTesting) {
+      assert(check, msg)
+    } else if (!check) {
+      recordDeltaEvent(
+        deltaLog = deltaLog,
+        opType = s"delta.assertions.$name",
+        data = data,
+        path = path
+      )
+      logWarning(msg)
+    }
+  }
+
   protected def recordFrameProfile[T](group: String, name: String)(thunk: => T): T = {
     // future work to capture runtime information ...
     thunk
@@ -181,4 +210,147 @@ object DeltaLogging {
 
   // The opType for delta commit stats.
   final val DELTA_COMMIT_STATS_OPTYPE = "delta.commit.stats"
+}
+
+/**
+ * A thread-safe token bucket-based throttler implementation with nanosecond accuracy.
+ *
+ * Each instance must be shared across all scopes it should throttle.
+ * For global throttling that means either by extending this class in an `object` or
+ * by creating the instance as a field of an `object`.
+ *
+ * @param bucketSize This corresponds to the largest possible burst without throttling,
+ *                   in number of executions.
+ * @param tokenRecoveryInterval Time between two tokens being added back to the bucket.
+ *                              This is reciprocal of the long-term average unthrottled rate.
+ *
+ * Example: With a bucket size of 100 and a recovery interval of 1s, we could log up to 100 events
+ * in under a second without throttling, but at that point the bucket is exhausted and we only
+ * regain the ability to log more events at 1 event per second. If we log less than 1 event/s
+ * the bucket will slowly refill until it's back at 100.
+ * Either way, we can always log at least 1 event/s.
+ */
+class LogThrottler(
+    val bucketSize: Int = 100,
+    val tokenRecoveryInterval: FiniteDuration = 1.second,
+    val timeSource: NanoTimeTimeSource = SystemNanoTimeSource) extends LoggingShims {
+
+  private var remainingTokens = bucketSize
+  private var nextRecovery: DeadlineWithTimeSource =
+    DeadlineWithTimeSource.now(timeSource) + tokenRecoveryInterval
+  private var numSkipped: Long = 0
+
+  /**
+   * Run `thunk` as long as there are tokens remaining in the bucket,
+   * otherwise skip and remember number of skips.
+   *
+   * The argument to `thunk` is how many previous invocations have been skipped since the last time
+   * an invocation actually ran.
+   *
+   * Note: This method is `synchronized`, so it is concurrency safe.
+   * However, that also means no heavy-lifting should be done as part of this
+   * if the throttler is shared between concurrent threads.
+   * This also means that the synchronized block of the `thunk` that *does* execute will still
+   * hold up concurrent `thunk`s that will actually get rejected once they hold the lock.
+   * This is fine at low concurrency/low recovery rates. But if we need this to be more efficient at
+   * some point, we will need to decouple the check from the `thunk` execution.
+   */
+  def throttled(thunk: Long => Unit): Unit = this.synchronized {
+    tryRecoverTokens()
+    if (remainingTokens > 0) {
+      thunk(numSkipped)
+      numSkipped = 0
+      remainingTokens -= 1
+    } else {
+      numSkipped += 1L
+    }
+  }
+
+  /**
+   * Same as [[throttled]] but turns the number of skipped invocations into a logging message
+   * that can be appended to item being logged in `thunk`.
+   */
+  def throttledWithSkippedLogMessage(thunk: MessageWithContext => Unit): Unit = {
+    this.throttled { numSkipped =>
+      val skippedStr = if (numSkipped != 0L) {
+        log" [${MDC(DeltaLogKeys.NUM_SKIPPED, numSkipped)} similar messages were skipped.]"
+      } else {
+        log""
+      }
+      thunk(skippedStr)
+    }
+  }
+
+  /**
+   * Try to recover tokens, if the rate allows.
+   *
+   * Only call from within a `this.synchronized` block!
+   */
+  private def tryRecoverTokens(): Unit = {
+    try {
+      // Doing it one-by-one is a bit inefficient for long periods, but it's easy to avoid jumps
+      // and rounding errors this way. The inefficiency shouldn't matter as long as the bucketSize
+      // isn't huge.
+      while (remainingTokens < bucketSize && nextRecovery.isOverdue()) {
+        remainingTokens += 1
+        nextRecovery += tokenRecoveryInterval
+      }
+      if (remainingTokens == bucketSize &&
+        (DeadlineWithTimeSource.now(timeSource) - nextRecovery) > tokenRecoveryInterval) {
+        // Reset the recovery time, so we don't accumulate infinite recovery while nothing is
+        // going on.
+        nextRecovery = DeadlineWithTimeSource.now(timeSource) + tokenRecoveryInterval
+      }
+    } catch {
+      case _: IllegalArgumentException =>
+        // Adding FiniteDuration throws IllegalArgumentException instead of wrapping on overflow.
+        // Given that this happens every ~300 years, we can afford some non-linearity here,
+        // rather than taking the effort to properly work around that.
+        nextRecovery = DeadlineWithTimeSource(Duration(-Long.MaxValue, NANOSECONDS), timeSource)
+    }
+  }
+}
+
+/**
+ * This is essentially the same as Scala's [[Deadline]],
+ * just with a custom source of nanoTime so it can actually be tested properly.
+ */
+case class DeadlineWithTimeSource(
+    time: FiniteDuration,
+    timeSource: NanoTimeTimeSource = SystemNanoTimeSource) {
+  // Only implemented the methods LogThrottler actually needs for now.
+
+  /**
+   * Return a deadline advanced (i.e., moved into the future) by the given duration.
+   */
+  def +(other: FiniteDuration): DeadlineWithTimeSource = copy(time = time + other)
+
+  /**
+   * Calculate time difference between this and the other deadline, where the result is directed
+   * (i.e., may be negative).
+   */
+  def -(other: DeadlineWithTimeSource): FiniteDuration = time - other.time
+
+  /**
+   * Determine whether the deadline lies in the past at the point where this method is called.
+   */
+  def isOverdue(): Boolean = (time.toNanos - timeSource.nanoTime()) <= 0
+}
+
+object DeadlineWithTimeSource {
+  /**
+   * Construct a deadline due exactly at the point where this method is called. Useful for then
+   * advancing it to obtain a future deadline, or for sampling the current time exactly once and
+   * then comparing it to multiple deadlines (using subtraction).
+   */
+  def now(timeSource: NanoTimeTimeSource = SystemNanoTimeSource): DeadlineWithTimeSource =
+    DeadlineWithTimeSource(Duration(timeSource.nanoTime(), NANOSECONDS), timeSource)
+}
+
+/** Generalisation of [[System.nanoTime()]]. */
+private[delta] trait NanoTimeTimeSource {
+  def nanoTime(): Long
+}
+private[delta] object SystemNanoTimeSource extends NanoTimeTimeSource {
+  override def nanoTime(): Long = System.nanoTime()
 }

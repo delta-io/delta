@@ -18,7 +18,10 @@ package org.apache.spark.sql.delta.metric
 
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Column, DataFrame, QueryTest}
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.ColumnImplicitsShim._
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Expression, GreaterThan, If, Literal}
 import org.apache.spark.sql.execution.SparkPlan
@@ -51,10 +54,10 @@ abstract class IncrementMetricSuiteBase extends QueryTest with SharedSparkSessio
     val havingIncrement = IncrementMetric(
       GreaterThan(UnresolvedAttribute("s"), Literal(10)), metric)
     val df = testDf
-      .filter(new Column(increment))
-      .groupBy(new Column(groupByKey).as("gby"))
+      .filter(Column(increment))
+      .groupBy(Column(groupByKey).as("gby"))
       .agg(sum("a").as("s"))
-      .filter(new Column(havingIncrement))
+      .filter(Column(havingIncrement))
     val numGroups = df.collect().size
     validatePlan(df.queryExecution.executedPlan)
 
@@ -70,13 +73,19 @@ abstract class IncrementMetricSuiteBase extends QueryTest with SharedSparkSessio
     val increment = IncrementMetric(Literal(true), incrementMetric)
     val incrementPreFilterMetric = createMetric(sparkContext, "incrementPreFilter")
     val incrementPreFilter = IncrementMetric(Literal(true), incrementPreFilterMetric)
-    val ifCondition: Expression = ('a < Literal(20)).expr
+    // Implicit `Column.expr` doesn't work due to ambiguity
+    // both method ColumnExprExt in object ColumnImplicitsShim of type
+    //   (column: org.apache.spark.sql.Column):
+    //   org.apache.spark.sql.ColumnImplicitsShim.ColumnExprExt
+    // and method toRichColumn in object testImplicits of type
+    //   (c: org.apache.spark.sql.Column): org.apache.spark.sql.SparkSession#RichColumn
+    val ifCondition: Expression = expression('a < Literal(20))
     val conditional = If(ifCondition, incrementTrueBranch, incrementFalseBranch)
     val df = testDf
-      .filter(new Column(incrementPreFilter))
+      .filter(Column(incrementPreFilter))
       .filter('a < 25)
-      .filter(new Column(increment))
-      .filter(new Column(conditional))
+      .filter(Column(increment))
+      .filter(Column(conditional))
     val numRows = df.collect().size
     validatePlan(df.queryExecution.executedPlan)
 

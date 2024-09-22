@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
+import java.util.TimeZone
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaInsertIntoTableSuiteShims._
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -43,7 +45,8 @@ class DeltaInsertIntoSQLSuite
   extends DeltaInsertIntoTestsWithTempViews(
     supportsDynamicOverwrite = true,
     includeSQLOnlyTests = true)
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
 
@@ -53,6 +56,19 @@ class DeltaInsertIntoSQLSuite
       insert.createOrReplaceTempView(tmpView)
       val overwrite = if (mode == SaveMode.Overwrite) "OVERWRITE" else "INTO"
       sql(s"INSERT $overwrite TABLE $tableName SELECT * FROM $tmpView")
+    }
+  }
+
+  testSparkMasterOnly("Variant type") {
+    withTable("t") {
+      sql("CREATE TABLE t (id LONG, v VARIANT) USING delta")
+      sql("INSERT INTO t (id, v) VALUES (1, parse_json('{\"a\": 1}'))")
+      sql("INSERT INTO t (id, v) VALUES (2, parse_json('{\"b\": 2}'))")
+      sql(
+        "INSERT INTO t SELECT id, parse_json(cast(id as string)) v FROM range(2)")
+
+      checkAnswer(sql("select * from t").selectExpr("id", "to_json(v)"),
+        Seq(Row(1, "{\"a\":1}"), Row(2, "{\"b\":2}"), Row(0, "0"), Row(1, "1")))
     }
   }
 
@@ -197,10 +213,10 @@ class DeltaInsertIntoSQLSuite
     withTable("t") {
       sql(s"CREATE TABLE t(i STRING, c string) USING $v2Format PARTITIONED BY (c)")
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql("INSERT OVERWRITE t PARTITION (c='1') (c) VALUES ('2')")
         },
-        errorClass = "STATIC_PARTITION_COLUMN_IN_INSERT_COLUMN_LIST",
+        "STATIC_PARTITION_COLUMN_IN_INSERT_COLUMN_LIST",
         parameters = Map("staticName" -> "c"))
     }
   }
@@ -435,7 +451,8 @@ abstract class DeltaInsertIntoTestsWithTempViews(
           checkAnswer(spark.table("v"), expectedResult)
         } catch {
           case e: AnalysisException =>
-            assert(e.getMessage.contains("Inserting into a view is not allowed") ||
+            assert(
+              e.getMessage.contains(INSERT_INTO_TMP_VIEW_ERROR_MSG) ||
               e.getMessage.contains("Inserting into an RDD-based table is not allowed") ||
               e.getMessage.contains("Table default.v not found") ||
               e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
@@ -579,22 +596,22 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The table feature is not enabled via TBLPROPERTIES.
       withTable("createTableWithDefaultFeatureNotEnabled") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql(s"create table createTableWithDefaultFeatureNotEnabled(" +
               s"i boolean, s bigint, q int default 42) using $v2Format " +
               "partitioned by (i)")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           parameters = Map("commandType" -> "CREATE TABLE")
         )
       }
       withTable("alterTableSetDefaultFeatureNotEnabled") {
         sql(s"create table alterTableSetDefaultFeatureNotEnabled(a int) using $v2Format")
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("alter table alterTableSetDefaultFeatureNotEnabled alter column a set default 42")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           parameters = Map("commandType" -> "ALTER TABLE")
         )
       }
@@ -603,19 +620,19 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
         sql(s"create table alterTableTest(i boolean, s bigint, q int default 42) using $v2Format " +
           s"partitioned by (i) $tblPropertiesAllowDefaults")
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("alter table alterTableTest add column z int default 42")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
         )
       }
       // The default value fails to analyze.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        errorClass = "INVALID_DEFAULT_VALUE.UNRESOLVED_EXPRESSION",
+        INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -625,11 +642,11 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The error message reports that we failed to execute the command because subquery
       // expressions are not allowed in DEFAULT values.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default (select min(x) from badtable)) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        errorClass = "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
+        "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -639,22 +656,22 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The error message reports that we failed to execute the command because subquery
       // expressions are not allowed in DEFAULT values.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default (select 42 as alias)) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        errorClass = "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
+        "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
           "defaultValue" -> "(select 42 as alias)"))
       // The default value parses but the type is not coercible.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s bigint default false) " +
             s"using $v2Format $tblPropertiesAllowDefaults")
         },
-        errorClass = "INVALID_DEFAULT_VALUE.DATA_TYPE",
+        "INVALID_DEFAULT_VALUE.DATA_TYPE",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -685,11 +702,11 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
     // Column default values are disabled per configuration in general.
     withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "false") {
       checkError(
-        exception = intercept[ParseException] {
+        intercept[ParseException] {
           sql(s"create table t4 (s int default 41 + 1) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        errorClass = "UNSUPPORTED_DEFAULT_VALUE.WITH_SUGGESTION",
+        "UNSUPPORTED_DEFAULT_VALUE.WITH_SUGGESTION",
         parameters = Map.empty,
         context = ExpectedContext(fragment = "s int default 41 + 1", start = 17, stop = 36))
     }
@@ -1012,6 +1029,211 @@ abstract class DeltaInsertIntoTests(
         doInsert(t1, df)
       }
       verifyTable(t1, Seq((1L, "a", "mango")).toDF("id", "data", "fruit"))
+    }
+  }
+
+  test("insertInto: UTC timestamp partition values round trip across different session TZ") {
+    val t1 = "utc_timestamp_partitioned_values"
+    withTable(t1) {
+      withTimeZone("UTC")
+      {
+        sql(s"CREATE TABLE $t1 (data int, ts timestamp) USING delta PARTITIONED BY (ts)")
+        sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15T04:00:00UTC')")
+        sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-15T4:00:00UTC+8')")
+        sql(s"INSERT INTO $t1 VALUES (3, timestamp'2024-06-15T5:00:00 UTC+01:00')")
+        sql(s"INSERT INTO $t1 VALUES (4, timestamp'2024-06-16T5:00:00.123456UTC')")
+        sql(s"INSERT INTO $t1 VALUES (5, timestamp'1903-12-28T5:00:00')")
+      }
+
+      withTimeZone("GMT-8") {
+        val deltaLog = DeltaLog.forTable(
+          spark, TableIdentifier(t1))
+        val allFiles = deltaLog.unsafeVolatileSnapshot.allFiles
+        val partitionColName = deltaLog.unsafeVolatileMetadata.physicalPartitionColumns.head
+        checkAnswer(
+          allFiles.select("partitionValues").orderBy("modificationTime"),
+          Seq(
+            Row(Map(partitionColName -> "2024-06-15T04:00:00.000000Z")),
+            Row(Map(partitionColName -> "2024-06-14T20:00:00.000000Z")),
+            Row(Map(partitionColName -> "2024-06-15T04:00:00.000000Z")),
+            Row(Map(partitionColName -> "2024-06-16T05:00:00.123456Z")),
+            Row(Map(partitionColName -> "1903-12-28T05:00:00.000000Z"))
+          ))
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T4:00:00UTC+8'"),
+          Seq(Row(2)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-14T20:00:00UTC-08'"),
+          Seq(Row(1), Row(3)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'1903-12-27T21:00:00UTC-08'"),
+          Seq(Row(5)))
+
+        checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(4)))
+      }
+    }
+  }
+
+  test("insertInto: Non-UTC and UTC partition values round trip same session TZ") {
+    val t1 = "utc_timestamp_partitioned_values"
+    withTable(t1) {
+      withTimeZone("GMT-8") {
+        sql(s"CREATE TABLE $t1 (data int, ts timestamp) USING delta PARTITIONED BY (ts)")
+        sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15T4:00:00UTC')")
+        sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-15T4:00:00UTC+8')")
+      }
+
+      withTimeZone("GMT-8") {
+        withSQLConf(DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key -> "false") {
+          sql(s"INSERT INTO $t1 VALUES (3, timestamp'2024-06-15T5:00:00 UTC+01:00')")
+          sql(s"INSERT INTO $t1 VALUES (4, timestamp'1903-12-28T5:00:00')")
+        }
+
+        val deltaLog = DeltaLog.forTable(
+          spark, TableIdentifier(t1))
+        val allFiles = deltaLog.unsafeVolatileSnapshot.allFiles
+        val partitionColName = deltaLog.unsafeVolatileMetadata.physicalPartitionColumns.head
+        checkAnswer(
+          allFiles.select("partitionValues").orderBy("modificationTime"),
+          Seq(
+            Row(Map(partitionColName -> "2024-06-15T04:00:00.000000Z")),
+            Row(Map(partitionColName -> "2024-06-14T20:00:00.000000Z")),
+            Row(Map(partitionColName -> "2024-06-14 20:00:00")),
+            Row(Map(partitionColName -> "1903-12-28 05:00:00"))
+          ))
+      }
+
+      withTimeZone("GMT-8") {
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T4:00:00UTC+8'"),
+          Seq(Row(2)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-14T20:00:00'"),
+          Seq(Row(1), Row(3)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'1903-12-28T05:00:00'"),
+          Seq(Row(4)))
+
+        checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(3)))
+      }
+    }
+  }
+
+  test("insertInto: Timestamp No Timezone round trips across timezones") {
+    val t1 = "timestamp_ntz"
+    withTable(t1) {
+      withTimeZone("GMT-8") {
+        sql(s"CREATE TABLE $t1 (data int, ts timestamp_ntz) USING delta PARTITIONED BY (ts)")
+        sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15T4:00:00')")
+        sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-16T5:00:00')")
+        sql(s"INSERT INTO $t1 VALUES (3, timestamp'1903-12-28T5:00:00')")
+
+        val deltaLog = DeltaLog.forTable(
+          spark, TableIdentifier(t1))
+        val allFiles = deltaLog.unsafeVolatileSnapshot.allFiles
+        val partitionColName = deltaLog.unsafeVolatileMetadata.physicalPartitionColumns.head
+        checkAnswer(
+          allFiles.select("partitionValues").orderBy("modificationTime"),
+          Seq(
+            Row(Map(partitionColName -> "2024-06-15 04:00:00")),
+            Row(Map(partitionColName -> "2024-06-16 05:00:00")),
+            Row(Map(partitionColName -> "1903-12-28 05:00:00"))
+          ))
+      }
+
+      withSQLConf("spark.sql.session.timeZone" -> "UTC-03:00") {
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T4:00:00'"),
+          Seq(Row(1)))
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-16T05:00:00'"),
+          Seq(Row(2)))
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'1903-12-28T05:00:00'"),
+          Seq(Row(3)))
+        checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(3)))
+      }
+    }
+  }
+
+  test("insertInto: Timestamp round trips across same session time zone: UTC normalized") {
+    val t1 = "utc_timestamp_partitioned_values"
+
+    withTimeZone("GMT-8") {
+      sql(s"CREATE TABLE $t1 (data int, ts timestamp) USING delta PARTITIONED BY (ts)")
+      sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15 04:00:00UTC')")
+      sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-15T4:00:00UTC+8')")
+      sql(s"INSERT INTO $t1 VALUES (3, timestamp'2024-06-15T5:00:00 UTC+01:00')")
+      val deltaLog = DeltaLog.forTable(
+        spark, TableIdentifier(t1))
+      val allFiles = deltaLog.unsafeVolatileSnapshot.allFiles
+      val partitionColName = deltaLog.unsafeVolatileMetadata.physicalPartitionColumns.head
+      checkAnswer(
+        allFiles.select("partitionValues").orderBy("modificationTime"),
+        Seq(
+          Row(Map(partitionColName -> "2024-06-15T04:00:00.000000Z")),
+          Row(Map(partitionColName -> "2024-06-14T20:00:00.000000Z")),
+          Row(Map(partitionColName -> "2024-06-15T04:00:00.000000Z"))
+        ))
+
+      checkAnswer(
+        sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T04:00:00UTC'"),
+        Seq(Row(1), Row(3)))
+
+      checkAnswer(
+        sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-14T20:00:00UTC'"),
+        Seq(Row(2)))
+
+      checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(2)))
+    }
+  }
+
+  test("insertInto: Timestamp round trips across same session time zone: session time normalized") {
+    val t1 = "utc_timestamp_partitioned_values"
+
+    withTimeZone("UTC") {
+      withSQLConf(DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key -> "false") {
+        sql(s"CREATE TABLE $t1 (data int, ts timestamp) USING delta PARTITIONED BY (ts)")
+        sql(s"INSERT INTO $t1 VALUES (1, timestamp'2024-06-15 04:00:00UTC+08:00')")
+        sql(s"INSERT INTO $t1 VALUES (2, timestamp'2024-06-15T4:00:00UTC-08:00')")
+        sql(s"INSERT INTO $t1 VALUES (3, timestamp'2024-06-15T5:00:00UTC+09:00')")
+        val deltaLog = DeltaLog.forTable(
+          spark, TableIdentifier(t1))
+        val allFiles = deltaLog.unsafeVolatileSnapshot.allFiles
+        val partitionColName = deltaLog.unsafeVolatileMetadata.physicalPartitionColumns.head
+
+        checkAnswer(
+          allFiles.select("partitionValues").orderBy("modificationTime"),
+          Seq(
+            Row(Map(partitionColName -> "2024-06-14 20:00:00")),
+            Row(Map(partitionColName -> "2024-06-15 12:00:00")),
+            Row(Map(partitionColName -> "2024-06-14 20:00:00"))
+          ))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-14T20:00:00'"),
+          Seq(Row(1), Row(3)))
+
+        checkAnswer(
+          sql(s"SELECT data FROM $t1 where ts = timestamp'2024-06-15T12:00:00'"),
+          Seq(Row(2)))
+
+        checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(2)))
+      }
+    }
+  }
+
+  private def withTimeZone(zone: String)(f: => Unit): Unit = {
+    val currentDefault = TimeZone.getDefault
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone(zone))
+      f
+    } finally {
+      TimeZone.setDefault(currentDefault)
     }
   }
 

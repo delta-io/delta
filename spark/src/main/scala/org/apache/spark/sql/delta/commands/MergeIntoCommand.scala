@@ -56,6 +56,8 @@ import org.apache.spark.sql.types.{LongType, StructType}
  * @param notMatchedBySourceClauses  All info related to not matched by source clauses.
  * @param migratedSchema             The final schema of the target - may be changed by schema
  *                                   evolution.
+ * @param trackHighWaterMarks        The column names for which we will track IDENTITY high water
+ *                                   marks.
  */
 case class MergeIntoCommand(
     @transient source: LogicalPlan,
@@ -66,7 +68,9 @@ case class MergeIntoCommand(
     matchedClauses: Seq[DeltaMergeIntoMatchedClause],
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-    migratedSchema: Option[StructType])
+    migratedSchema: Option[StructType],
+    trackHighWaterMarks: Set[String] = Set.empty,
+    schemaEvolutionEnabled: Boolean = false)
   extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
   with ClassicMergeExecutor {
@@ -90,12 +94,24 @@ case class MergeIntoCommand(
             atAnalysis = target.schema, latestSchema = deltaTxn.metadata.schema)
         }
 
+        // Check that type widening wasn't enabled/disabled between analysis and the start of the
+        // transaction.
+        TypeWidening.ensureFeatureConsistentlyEnabled(
+          protocol = targetFileIndex.protocol,
+          metadata = targetFileIndex.metadata,
+          otherProtocol = deltaTxn.protocol,
+          otherMetadata = deltaTxn.metadata
+        )
+
         if (canMergeSchema) {
           updateMetadata(
             spark, deltaTxn, migratedSchema.getOrElse(target.schema),
             deltaTxn.metadata.partitionColumns, deltaTxn.metadata.configuration,
             isOverwriteMode = false, rearrangeOnly = false)
         }
+
+        checkIdentityColumnHighWaterMarks(deltaTxn)
+        deltaTxn.setTrackHighWaterMarks(trackHighWaterMarks)
 
         // Materialize the source if needed.
         prepareMergeSource(
@@ -187,8 +203,8 @@ case class MergeIntoCommand(
       deltaTxn: OptimisticTransaction,
       mergeActions: Seq[FileAction],
       startTime: Long,
-      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
-    : Unit = {
+      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason
+  ): Unit = {
     checkNonDeterministicSource(spark)
 
     // Metrics should be recorded before commit (where they are written to delta logs).
@@ -196,15 +212,17 @@ case class MergeIntoCommand(
     deltaTxn.registerSQLMetrics(spark, metrics)
 
     val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ mergeActions
-    deltaTxn.commitIfNeeded(
+    val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val commitVersion = deltaTxn.commitIfNeeded(
       actions = finalActions,
-      DeltaOperations.Merge(
+      op = DeltaOperations.Merge(
         predicate = Option(condition),
         matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
         notMatchedBySourcePredicates =
-          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))))
-    val stats = collectMergeStats(deltaTxn, materializeSourceReason)
+          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))),
+      tags = RowTracking.addPreservedRowTrackingTagIfNotSet(deltaTxn.snapshot))
+    val stats = collectMergeStats(deltaTxn, materializeSourceReason, commitVersion, numRecordsStats)
     recordDeltaEvent(targetDeltaLog, "delta.dml.merge.stats", data = stats)
   }
 }

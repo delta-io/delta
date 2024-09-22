@@ -15,101 +15,98 @@
  */
 package io.delta.kernel.internal.data;
 
-import java.math.BigDecimal;
-
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
+import java.math.BigDecimal;
 
-/**
- * A {@link Row} implementation that wraps a set of child vectors for a specific {@code rowId}.
- */
+/** A {@link Row} implementation that wraps a set of child vectors for a specific {@code rowId}. */
 public abstract class ChildVectorBasedRow implements Row {
 
-    private final int rowId;
-    private final StructType schema;
+  private final int rowId;
+  private final StructType schema;
 
-    public ChildVectorBasedRow(int rowId, StructType schema) {
-        this.rowId = rowId;
-        this.schema = schema;
-    }
+  public ChildVectorBasedRow(int rowId, StructType schema) {
+    this.rowId = rowId;
+    this.schema = schema;
+  }
 
-    @Override
-    public StructType getSchema() {
-        return schema;
-    }
+  @Override
+  public StructType getSchema() {
+    return schema;
+  }
 
-    @Override
-    public boolean isNullAt(int ordinal) {
-        return getChild(ordinal).isNullAt(rowId);
-    }
+  @Override
+  public boolean isNullAt(int ordinal) {
+    return getChild(ordinal).isNullAt(rowId);
+  }
 
-    @Override
-    public boolean getBoolean(int ordinal) {
-        return getChild(ordinal).getBoolean(rowId);
-    }
+  @Override
+  public boolean getBoolean(int ordinal) {
+    return getChild(ordinal).getBoolean(rowId);
+  }
 
-    @Override
-    public byte getByte(int ordinal) {
-        return getChild(ordinal).getByte(rowId);
-    }
+  @Override
+  public byte getByte(int ordinal) {
+    return getChild(ordinal).getByte(rowId);
+  }
 
-    @Override
-    public short getShort(int ordinal) {
-        return getChild(ordinal).getShort(rowId);
-    }
+  @Override
+  public short getShort(int ordinal) {
+    return getChild(ordinal).getShort(rowId);
+  }
 
-    @Override
-    public int getInt(int ordinal) {
-        return getChild(ordinal).getInt(rowId);
-    }
+  @Override
+  public int getInt(int ordinal) {
+    return getChild(ordinal).getInt(rowId);
+  }
 
-    @Override
-    public long getLong(int ordinal) {
-        return getChild(ordinal).getLong(rowId);
-    }
+  @Override
+  public long getLong(int ordinal) {
+    return getChild(ordinal).getLong(rowId);
+  }
 
-    @Override
-    public float getFloat(int ordinal) {
-        return getChild(ordinal).getFloat(rowId);
-    }
+  @Override
+  public float getFloat(int ordinal) {
+    return getChild(ordinal).getFloat(rowId);
+  }
 
-    @Override
-    public double getDouble(int ordinal) {
-        return getChild(ordinal).getDouble(rowId);
-    }
+  @Override
+  public double getDouble(int ordinal) {
+    return getChild(ordinal).getDouble(rowId);
+  }
 
-    @Override
-    public String getString(int ordinal) {
-        return getChild(ordinal).getString(rowId);
-    }
+  @Override
+  public String getString(int ordinal) {
+    return getChild(ordinal).getString(rowId);
+  }
 
-    @Override
-    public BigDecimal getDecimal(int ordinal) {
-        return getChild(ordinal).getDecimal(rowId);
-    }
+  @Override
+  public BigDecimal getDecimal(int ordinal) {
+    return getChild(ordinal).getDecimal(rowId);
+  }
 
-    @Override
-    public byte[] getBinary(int ordinal) {
-        return getChild(ordinal).getBinary(rowId);
-    }
+  @Override
+  public byte[] getBinary(int ordinal) {
+    return getChild(ordinal).getBinary(rowId);
+  }
 
-    @Override
-    public Row getStruct(int ordinal) {
-        return StructRow.fromStructVector(getChild(ordinal), rowId);
-    }
+  @Override
+  public Row getStruct(int ordinal) {
+    return StructRow.fromStructVector(getChild(ordinal), rowId);
+  }
 
-    @Override
-    public ArrayValue getArray(int ordinal) {
-        return getChild(ordinal).getArray(rowId);
-    }
+  @Override
+  public ArrayValue getArray(int ordinal) {
+    return getChild(ordinal).getArray(rowId);
+  }
 
-    @Override
-    public MapValue getMap(int ordinal) {
-        return getChild(ordinal).getMap(rowId);
-    }
+  @Override
+  public MapValue getMap(int ordinal) {
+    return getChild(ordinal).getMap(rowId);
+  }
 
-    protected abstract ColumnVector getChild(int ordinal);
+  protected abstract ColumnVector getChild(int ordinal);
 }

@@ -150,44 +150,44 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     auxiliaryTestName = Option(" from cast(timestamp)"),
     filterTestCases = Seq(
       "eventTime < '2021-01-01 18:00:00'" ->
-        Seq("((date <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date <= DATE '2021-01-01') " +
+          "OR ((date <= DATE '2021-01-01') IS NULL))"),
       "eventTime <= '2021-01-01 18:00:00'" ->
-        Seq("((date <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date <= DATE '2021-01-01') " +
+          "OR ((date <= DATE '2021-01-01') IS NULL))"),
       "eventTime = '2021-01-01 18:00:00'" ->
-        Seq("((date = CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date = CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date = DATE '2021-01-01') " +
+          "OR ((date = DATE '2021-01-01') IS NULL))"),
       "eventTime > '2021-01-01 18:00:00'" ->
-        Seq("((date >= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date >= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date >= DATE '2021-01-01') " +
+          "OR ((date >= DATE '2021-01-01') IS NULL))"),
       "eventTime >= '2021-01-01 18:00:00'" ->
-        Seq("((date >= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date >= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date >= DATE '2021-01-01') " +
+          "OR ((date >= DATE '2021-01-01') IS NULL))"),
       "eventTime is null" -> Seq("(date IS NULL)"),
       // Verify we can reverse the order
       "'2021-01-01 18:00:00' > eventTime" ->
-        Seq("((date <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date <= DATE '2021-01-01') " +
+          "OR ((date <= DATE '2021-01-01') IS NULL))"),
       "'2021-01-01 18:00:00' >= eventTime" ->
-        Seq("((date <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date <= DATE '2021-01-01') " +
+          "OR ((date <= DATE '2021-01-01') IS NULL))"),
       "'2021-01-01 18:00:00' = eventTime" ->
-        Seq("((date = CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date = CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date = DATE '2021-01-01') " +
+          "OR ((date = DATE '2021-01-01') IS NULL))"),
       "'2021-01-01 18:00:00' < eventTime" ->
-        Seq("((date >= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date >= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date >= DATE '2021-01-01') " +
+          "OR ((date >= DATE '2021-01-01') IS NULL))"),
       "'2021-01-01 18:00:00' <= eventTime" ->
-        Seq("((date >= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-          "OR ((date >= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"),
+        Seq("((date >= DATE '2021-01-01') " +
+          "OR ((date >= DATE '2021-01-01') IS NULL))"),
       // Verify date type literal. In theory, the best filter should be date < DATE '2021-01-01'.
       // But Spark's analyzer converts eventTime < '2021-01-01' to
       // `eventTime` < TIMESTAMP '2021-01-01 00:00:00'. So it's the same as
       // eventTime < '2021-01-01 18:00:00' for `OptimizeGeneratedColumn`.
       "eventTime < '2021-01-01'" ->
-        Seq("((date <= CAST(TIMESTAMP '2021-01-01 00:00:00' AS DATE)) " +
-          "OR ((date <= CAST(TIMESTAMP '2021-01-01 00:00:00' AS DATE)) IS NULL))")
+        Seq("((date <= DATE '2021-01-01') " +
+          "OR ((date <= DATE '2021-01-01') IS NULL))")
     )
   )
 
@@ -256,38 +256,38 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
           """(
             |  (
             |    (
-            |      (year < year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year < 2021)
             |      OR
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month < month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month < 1)
             |      )
             |    )
             |    OR
             |    (
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month = 1)
             |      )
             |      AND
-            |      (day < dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (day < 1)
             |    )
             |  )
             |  OR
             |  (
             |    (
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month = 1)
             |      )
             |      AND
-            |      (day = dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (day = 1)
             |    )
             |    AND
-            |    (hour <= hour(TIMESTAMP '2021-01-01 18:00:00'))
+            |    (hour <= 18)
             |  )
             |)
             |""".stripMargin)),
@@ -296,84 +296,84 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
           """(
             |  (
             |    (
-            |      (year < year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year < 2021)
             |      OR
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month < month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month < 1)
             |      )
             |    )
             |    OR
             |    (
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month = 1)
             |      )
             |      AND
-            |      (day < dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (day < 1)
             |    )
             |  )
             |  OR
             |  (
             |    (
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month = 1)
             |      )
             |      AND
-            |      (day = dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (day = 1)
             |    )
             |    AND
-            |    (hour <= hour(TIMESTAMP '2021-01-01 18:00:00'))
+            |    (hour <= 18)
             |  )
             |)
             |""".stripMargin)),
       "eventTime = '2021-01-01 18:00:00'" -> Seq(
-        "(year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))",
-        "(month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))",
-        "(day = dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))",
-        "(hour = hour(TIMESTAMP '2021-01-01 18:00:00'))"
+        "(year = 2021)",
+        "(month = 1)",
+        "(day = 1)",
+        "(hour = 18)"
       ),
       "eventTime > '2021-01-01 18:00:00'" -> Seq(
         compactFilter(
           """(
             |  (
             |    (
-            |      (year > year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year > 2021)
             |      OR
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month > month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month > 1)
             |      )
             |    )
             |    OR
             |    (
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month = 1)
             |      )
             |      AND
-            |      (day > dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (day > 1)
             |    )
             |  )
             |  OR
             |  (
             |    (
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month = 1)
             |      )
             |      AND
-            |      (day = dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (day = 1)
             |    )
             |    AND
-            |    (hour >= hour(TIMESTAMP '2021-01-01 18:00:00'))
+            |    (hour >= 18)
             |  )
             |)
             |""".stripMargin)),
@@ -382,38 +382,38 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
           """(
             |  (
             |    (
-            |      (year > year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year > 2021)
             |      OR
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month > month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month > 1)
             |      )
             |    )
             |    OR
             |    (
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month = 1)
             |      )
             |      AND
-            |      (day > dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (day > 1)
             |    )
             |  )
             |  OR
             |  (
             |    (
             |      (
-            |        (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (year = 2021)
             |        AND
-            |        (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |        (month = 1)
             |      )
             |      AND
-            |      (day = dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (day = 1)
             |    )
             |    AND
-            |    (hour >= hour(TIMESTAMP '2021-01-01 18:00:00'))
+            |    (hour >= 18)
             |  )
             |)
             |""".stripMargin)),
@@ -440,23 +440,23 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
         compactFilter(
           """(
             |  (
-            |    (year < year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (year < 2021)
             |    OR
             |    (
-            |      (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year = 2021)
             |      AND
-            |      (month < month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (month < 1)
             |    )
             |  )
             |  OR
             |  (
             |    (
-            |      (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year = 2021)
             |      AND
-            |      (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (month = 1)
             |    )
             |    AND
-            |    (day <= dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (day <= 1)
             |  )
             |)
             |""".stripMargin)),
@@ -464,52 +464,52 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
         compactFilter(
           """(
             |  (
-            |    (year < year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (year < 2021)
             |    OR
             |    (
-            |      (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year = 2021)
             |      AND
-            |      (month < month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (month < 1)
             |    )
             |  )
             |  OR
             |  (
             |    (
-            |      (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year = 2021)
             |      AND
-            |      (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (month = 1)
             |    )
             |    AND
-            |    (day <= dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (day <= 1)
             |  )
             |)
             |""".stripMargin)),
       "eventTime = '2021-01-01 18:00:00'" -> Seq(
-        "(year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))",
-        "(month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))",
-        "(day = dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))"
+        "(year = 2021)",
+        "(month = 1)",
+        "(day = 1)"
       ),
       "eventTime > '2021-01-01 18:00:00'" -> Seq(
         compactFilter(
           """(
             |  (
-            |    (year > year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (year > 2021)
             |    OR
             |    (
-            |      (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year = 2021)
             |      AND
-            |      (month > month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (month > 1)
             |    )
             |  )
             |  OR
             |  (
             |    (
-            |      (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year = 2021)
             |      AND
-            |      (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (month = 1)
             |    )
             |    AND
-            |    (day >= dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (day >= 1)
             |  )
             |)
             |""".stripMargin)),
@@ -517,23 +517,23 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
         compactFilter(
           """(
             |  (
-            |    (year > year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (year > 2021)
             |    OR
             |    (
-            |      (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year = 2021)
             |      AND
-            |      (month > month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (month > 1)
             |    )
             |  )
             |  OR
             |  (
             |    (
-            |      (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (year = 2021)
             |      AND
-            |      (month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |      (month = 1)
             |    )
             |    AND
-            |    (day >= dayofmonth(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (day >= 1)
             |  )
             |)
             |""".stripMargin)),
@@ -559,52 +559,52 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
       "eventTime < '2021-01-01 18:00:00'" -> Seq(
         compactFilter(
           """(
-            |  (year < year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |  (year < 2021)
             |  OR
             |  (
-            |    (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (year = 2021)
             |    AND
-            |    (month <= month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (month <= 1)
             |  )
             |)
             |""".stripMargin)),
       "eventTime <= '2021-01-01 18:00:00'" -> Seq(
         compactFilter(
           """(
-            |  (year < year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |  (year < 2021)
             |  OR
             |  (
-            |    (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (year = 2021)
             |    AND
-            |    (month <= month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (month <= 1)
             |  )
             |)
             |""".stripMargin)),
       "eventTime = '2021-01-01 18:00:00'" -> Seq(
-        "(year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))",
-        "(month = month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))"
+        "(year = 2021)",
+        "(month = 1)"
       ),
       "eventTime > '2021-01-01 18:00:00'" -> Seq(
         compactFilter(
           """(
-            |  (year > year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |  (year > 2021)
             |  OR
             |  (
-            |    (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (year = 2021)
             |    AND
-            |    (month >= month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (month >= 1)
             |  )
             |)
             |""".stripMargin)),
       "eventTime >= '2021-01-01 18:00:00'" -> Seq(
         compactFilter(
           """(
-            |  (year > year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |  (year > 2021)
             |  OR
             |  (
-            |    (year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (year = 2021)
             |    AND
-            |    (month >= month(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)))
+            |    (month >= 1)
             |  )
             |)
             |""".stripMargin)),
@@ -619,20 +619,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     expectedPartitionExpr = YearPartitionExpr("year"),
     filterTestCases = Seq(
       "eventTime < '2021-01-01 18:00:00'" ->
-        Seq("((year <= year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) " +
-          "OR ((year <= year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) IS NULL))"),
+        Seq("((year <= 2021) " +
+          "OR ((year <= 2021) IS NULL))"),
       "eventTime <= '2021-01-01 18:00:00'" ->
-        Seq("((year <= year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) " +
-          "OR ((year <= year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) IS NULL))"),
+        Seq("((year <= 2021) " +
+          "OR ((year <= 2021) IS NULL))"),
       "eventTime = '2021-01-01 18:00:00'" ->
-        Seq("((year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) " +
-          "OR ((year = year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) IS NULL))"),
+        Seq("((year = 2021) " +
+          "OR ((year = 2021) IS NULL))"),
       "eventTime > '2021-01-01 18:00:00'" ->
-        Seq("((year >= year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) " +
-          "OR ((year >= year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) IS NULL))"),
+        Seq("((year >= 2021) " +
+          "OR ((year >= 2021) IS NULL))"),
       "eventTime >= '2021-01-01 18:00:00'" ->
-        Seq("((year >= year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) " +
-          "OR ((year >= year(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE))) IS NULL))"),
+        Seq("((year >= 2021) " +
+          "OR ((year >= 2021) IS NULL))"),
       "eventTime is null" -> Seq("(year IS NULL)")
     )
   )
@@ -648,20 +648,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
         auxiliaryTestName = Option(auxTestName),
         filterTestCases = Seq(
           "eventDate < '2021-01-01'" ->
-            Seq("((year <= year(DATE '2021-01-01')) " +
-              "OR ((year <= year(DATE '2021-01-01')) IS NULL))"),
+            Seq("((year <= 2021) " +
+              "OR ((year <= 2021) IS NULL))"),
           "eventDate <= '2021-01-01'" ->
-            Seq("((year <= year(DATE '2021-01-01')) " +
-              "OR ((year <= year(DATE '2021-01-01')) IS NULL))"),
+            Seq("((year <= 2021) " +
+              "OR ((year <= 2021) IS NULL))"),
           "eventDate = '2021-01-01'" ->
-            Seq("((year = year(DATE '2021-01-01')) " +
-              "OR ((year = year(DATE '2021-01-01')) IS NULL))"),
+            Seq("((year = 2021) " +
+              "OR ((year = 2021) IS NULL))"),
           "eventDate > '2021-01-01'" ->
-            Seq("((year >= year(DATE '2021-01-01')) " +
-              "OR ((year >= year(DATE '2021-01-01')) IS NULL))"),
+            Seq("((year >= 2021) " +
+              "OR ((year >= 2021) IS NULL))"),
           "eventDate >= '2021-01-01'" ->
-            Seq("((year >= year(DATE '2021-01-01')) " +
-              "OR ((year >= year(DATE '2021-01-01')) IS NULL))"),
+            Seq("((year >= 2021) " +
+              "OR ((year >= 2021) IS NULL))"),
           "eventDate is null" -> Seq("(year IS NULL)")
         )
       )
@@ -675,7 +675,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     filterTestCases = Seq(
       "value < 'foo'" -> Nil,
       "value <= 'foo'" -> Nil,
-      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 2, 3)))"),
+      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = 'oo'))"),
       "value > 'foo'" -> Nil,
       "value >= 'foo'" -> Nil,
       "value is null" -> Seq("(substr IS NULL)")
@@ -688,11 +688,11 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     Map("substr" -> "SUBSTRING(value, 0, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("substr", 0, 3),
     filterTestCases = Seq(
-      "value < 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 0, 3)))"),
-      "value <= 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 0, 3)))"),
-      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 0, 3)))"),
-      "value > 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 0, 3)))"),
-      "value >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 0, 3)))"),
+      "value < 'foo'" -> Seq("((substr IS NULL) OR (substr <= 'foo'))"),
+      "value <= 'foo'" -> Seq("((substr IS NULL) OR (substr <= 'foo'))"),
+      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = 'foo'))"),
+      "value > 'foo'" -> Seq("((substr IS NULL) OR (substr >= 'foo'))"),
+      "value >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= 'foo'))"),
       "value is null" -> Seq("(substr IS NULL)")
     )
   )
@@ -703,11 +703,11 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     Map("substr" -> "SUBSTRING(value, 1, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("substr", 1, 3),
     filterTestCases = Seq(
-      "value < 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
-      "value <= 'foo'" -> Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
-      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = substring('foo', 1, 3)))"),
-      "value > 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
-      "value >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+      "value < 'foo'" -> Seq("((substr IS NULL) OR (substr <= 'foo'))"),
+      "value <= 'foo'" -> Seq("((substr IS NULL) OR (substr <= 'foo'))"),
+      "value = 'foo'" -> Seq("((substr IS NULL) OR (substr = 'foo'))"),
+      "value > 'foo'" -> Seq("((substr IS NULL) OR (substr >= 'foo'))"),
+      "value >= 'foo'" -> Seq("((substr IS NULL) OR (substr >= 'foo'))"),
       "value is null" -> Seq("(substr IS NULL)")
     )
   )
@@ -718,11 +718,11 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     Map("my.substr" -> "SUBSTRING(value, 1, 3)"),
     expectedPartitionExpr = SubstringPartitionExpr("my.substr", 1, 3),
     filterTestCases = Seq(
-      "value < 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` <= substring('foo', 1, 3)))"),
-      "value <= 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` <= substring('foo', 1, 3)))"),
-      "value = 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` = substring('foo', 1, 3)))"),
-      "value > 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` >= substring('foo', 1, 3)))"),
-      "value >= 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` >= substring('foo', 1, 3)))"),
+      "value < 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` <= 'foo'))"),
+      "value <= 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` <= 'foo'))"),
+      "value = 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` = 'foo'))"),
+      "value > 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` >= 'foo'))"),
+      "value >= 'foo'" -> Seq("((`my.substr` IS NULL) OR (`my.substr` >= 'foo'))"),
       "value is null" -> Seq("(`my.substr` IS NULL)")
     )
   )
@@ -737,15 +737,15 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     skipNested = true,
     filterTestCases = Seq(
       "outer.inner.nested.value < 'foo'" ->
-        Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
+        Seq("((substr IS NULL) OR (substr <= 'foo'))"),
       "outer.inner.nested.value <= 'foo'" ->
-        Seq("((substr IS NULL) OR (substr <= substring('foo', 1, 3)))"),
+        Seq("((substr IS NULL) OR (substr <= 'foo'))"),
       "outer.inner.nested.value = 'foo'" ->
-        Seq("((substr IS NULL) OR (substr = substring('foo', 1, 3)))"),
+        Seq("((substr IS NULL) OR (substr = 'foo'))"),
       "outer.inner.nested.value > 'foo'" ->
-        Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+        Seq("((substr IS NULL) OR (substr >= 'foo'))"),
       "outer.inner.nested.value >= 'foo'" ->
-        Seq("((substr IS NULL) OR (substr >= substring('foo', 1, 3)))"),
+        Seq("((substr IS NULL) OR (substr >= 'foo'))"),
       "outer.inner.nested.value is null" -> Seq("(substr IS NULL)")
     )
   )
@@ -758,37 +758,37 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     auxiliaryTestName = Option(" from date_trunc(timestamp)"),
     filterTestCases = Seq(
       "eventTime < '2021-01-01 18:00:00'" ->
-        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventTime <= '2021-01-01 18:00:00'" ->
-        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventTime = '2021-01-01 18:00:00'" ->
-        Seq("((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc = TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc = TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventTime > '2021-01-01 18:00:00'" ->
-        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventTime >= '2021-01-01 18:00:00'" ->
-        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventTime is null" -> Seq("(eventTimeTrunc IS NULL)"),
       // Verify we can reverse the order
       "'2021-01-01 18:00:00' > eventTime" ->
-        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "'2021-01-01 18:00:00' >= eventTime" ->
-        Seq("((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc <= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "'2021-01-01 18:00:00' = eventTime" ->
-        Seq("((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc = date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc = TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc = TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "'2021-01-01 18:00:00' < eventTime" ->
-        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))"),
+        Seq("((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "'2021-01-01 18:00:00' <= eventTime" ->
-        Seq("((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) " +
-          "OR ((eventTimeTrunc >= date_trunc('YEAR', TIMESTAMP '2021-01-01 18:00:00')) IS NULL))")
+        Seq("((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') " +
+          "OR ((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') IS NULL))")
     )
   )
 
@@ -800,37 +800,37 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     auxiliaryTestName = Option(" from date_trunc(cast(date))"),
     filterTestCases = Seq(
       "eventDate < '2021-01-01'" ->
-        Seq("((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventDate <= '2021-01-01'" ->
-        Seq("((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventDate = '2021-01-01'" ->
-        Seq("((eventTimeTrunc = date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc = date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc = TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc = TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventDate > '2021-01-01'" ->
-        Seq("((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventDate >= '2021-01-01'" ->
-        Seq("((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "eventDate is null" -> Seq("(eventTimeTrunc IS NULL)"),
       // Verify we can reverse the order
       "'2021-01-01' > eventDate" ->
-        Seq("((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "'2021-01-01' >= eventDate" ->
-        Seq("((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc <= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc <= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "'2021-01-01' = eventDate" ->
-        Seq("((eventTimeTrunc = date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc = date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc = TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc = TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "'2021-01-01' < eventDate" ->
-        Seq("((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))"),
+        Seq("((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') IS NULL))"),
       "'2021-01-01' <= eventDate" ->
-        Seq("((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) " +
-      "OR ((eventTimeTrunc >= date_trunc('DD', CAST(DATE '2021-01-01' AS TIMESTAMP))) IS NULL))")
+        Seq("((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') " +
+      "OR ((eventTimeTrunc >= TIMESTAMP '2021-01-01 00:00:00') IS NULL))")
     )
   )
 
@@ -931,10 +931,8 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
              |where c2 >= '2021-01-01 12:00:00' AND c2 <= '2021-01-01 18:00:00'
              |limit 10""".stripMargin)
         val expectedPartitionFilters = Seq(
-          "((c3 >= CAST(TIMESTAMP '2021-01-01 12:00:00' AS DATE)) " +
-            "OR ((c3 >= CAST(TIMESTAMP '2021-01-01 12:00:00' AS DATE)) IS NULL))",
-          "((c3 <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) " +
-            "OR ((c3 <= CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE)) IS NULL))"
+          "((c3 >= DATE '2021-01-01') OR ((c3 >= DATE '2021-01-01') IS NULL))",
+          "((c3 <= DATE '2021-01-01') OR ((c3 <= DATE '2021-01-01') IS NULL))"
         )
         assert(expectedPartitionFilters ==
           getPushedPartitionFilters(limitQuery.queryExecution).map(_.sql))
@@ -987,7 +985,7 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
           Seq(Tuple1("一二三四")).toDF("c1")
         )
         val testQuery = s"select * from $table where c1 > 'abcd'"
-        assert("((c2 IS NULL) OR (c2 >= substring('abcd', 1, 2)))" :: Nil ==
+        assert("((c2 IS NULL) OR (c2 >= 'ab'))" :: Nil ==
           getPushedPartitionFilters(sql(testQuery).queryExecution).map(_.sql))
         checkAnswer(
           sql(testQuery),
@@ -1005,35 +1003,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     auxiliaryTestName = Option(" from timestamp"),
     filterTestCases = Seq(
       "eventTime < '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') <= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') <= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), " +
-          "'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') <= 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') <= 1622530800L) IS NULL))"),
       "eventTime <= '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') <= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') <= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), " +
-          "'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') <= 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') <= 1622530800L) IS NULL))"),
       "eventTime = '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') = " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') = " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), " +
-          "'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') = 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') = 1622530800L) IS NULL))"),
       "eventTime > '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') >= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') >= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), " +
-          "'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') >= 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') >= 1622530800L) IS NULL))"),
       "eventTime >= '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') >= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') >= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM'), " +
-          "'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') >= 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') >= 1622530800L) IS NULL))"),
       "eventTime is null" -> Seq("(month IS NULL)")
     )
   )
@@ -1046,35 +1029,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     auxiliaryTestName = Option(" from cast(date)"),
     filterTestCases = Seq(
       "eventDate < '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') <= unix_timestamp(date_format(CAST(" +
-          "DATE '2021-06-28' AS TIMESTAMP), 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') <= " +
-          "unix_timestamp(date_format(CAST(DATE '2021-06-28' AS TIMESTAMP), " +
-          "'yyyy-MM'), 'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') <= 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') <= 1622530800L) IS NULL))"),
       "eventDate <= '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') <= unix_timestamp(date_format(CAST(" +
-          "DATE '2021-06-28' AS TIMESTAMP), 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') <= " +
-          "unix_timestamp(date_format(CAST(DATE '2021-06-28' AS TIMESTAMP), " +
-          "'yyyy-MM'), 'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') <= 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') <= 1622530800L) IS NULL))"),
       "eventDate = '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') = unix_timestamp(date_format(CAST(" +
-          "DATE '2021-06-28' AS TIMESTAMP), 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') = " +
-          "unix_timestamp(date_format(CAST(DATE '2021-06-28' AS TIMESTAMP), " +
-          "'yyyy-MM'), 'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') = 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') = 1622530800L) IS NULL))"),
       "eventDate > '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') >= unix_timestamp(date_format(CAST(" +
-          "DATE '2021-06-28' AS TIMESTAMP), 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') >= " +
-          "unix_timestamp(date_format(CAST(DATE '2021-06-28' AS TIMESTAMP), " +
-          "'yyyy-MM'), 'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') >= 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') >= 1622530800L) IS NULL))"),
       "eventDate >= '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(month, 'yyyy-MM') >= unix_timestamp(date_format(CAST(" +
-          "DATE '2021-06-28' AS TIMESTAMP), 'yyyy-MM'), 'yyyy-MM')) " +
-          "OR ((unix_timestamp(month, 'yyyy-MM') >= " +
-          "unix_timestamp(date_format(CAST(DATE '2021-06-28' AS TIMESTAMP), " +
-          "'yyyy-MM'), 'yyyy-MM')) IS NULL))"),
+        Seq("((unix_timestamp(month, 'yyyy-MM') >= 1622530800L) " +
+          "OR ((unix_timestamp(month, 'yyyy-MM') >= 1622530800L) IS NULL))"),
       "eventDate is null" -> Seq("(month IS NULL)")
     )
   )
@@ -1087,30 +1055,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     auxiliaryTestName = Option(" from timestamp"),
     filterTestCases = Seq(
       "eventTime < '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(day, 'yyyy-MM-dd') <= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
-          "OR ((unix_timestamp(day, 'yyyy-MM-dd') <= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') <= 1624863600L) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') <= 1624863600L) IS NULL))"),
       "eventTime <= '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(day, 'yyyy-MM-dd') <= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
-          "OR ((unix_timestamp(day, 'yyyy-MM-dd') <= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') <= 1624863600L) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') <= 1624863600L) IS NULL))"),
       "eventTime = '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(day, 'yyyy-MM-dd') = unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
-          "OR ((unix_timestamp(day, 'yyyy-MM-dd') = unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') = 1624863600L) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') = 1624863600L) IS NULL))"),
       "eventTime > '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(day, 'yyyy-MM-dd') >= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
-          "OR ((unix_timestamp(day, 'yyyy-MM-dd') >= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') >= 1624863600L) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') >= 1624863600L) IS NULL))"),
       "eventTime >= '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(day, 'yyyy-MM-dd') >= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) " +
-          "OR ((unix_timestamp(day, 'yyyy-MM-dd') >= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd'), 'yyyy-MM-dd')) IS NULL))"),
+        Seq("((unix_timestamp(day, 'yyyy-MM-dd') >= 1624863600L) " +
+          "OR ((unix_timestamp(day, 'yyyy-MM-dd') >= 1624863600L) IS NULL))"),
       "eventTime is null" -> Seq("(day IS NULL)")
     )
   )
@@ -1122,35 +1080,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     expectedPartitionExpr = DateFormatPartitionExpr("hour", "yyyy-MM-dd-HH"),
     filterTestCases = Seq(
       "eventTime < '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') <= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) " +
-          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') <= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', " +
-          "'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) IS NULL))"),
+        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') <= 1624928400L) " +
+          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') <= 1624928400L) IS NULL))"),
       "eventTime <= '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') <= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) " +
-          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') <= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', " +
-          "'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) IS NULL))"),
+        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') <= 1624928400L) " +
+          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') <= 1624928400L) IS NULL))"),
       "eventTime = '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') = unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) " +
-          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') = " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', " +
-          "'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) IS NULL))"),
+        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') = 1624928400L) " +
+          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') = 1624928400L) IS NULL))"),
       "eventTime > '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') >= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) " +
-          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') >= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', " +
-          "'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) IS NULL))"),
+        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') >= 1624928400L) " +
+          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') >= 1624928400L) IS NULL))"),
       "eventTime >= '2021-06-28 18:00:00'" ->
-        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') >= unix_timestamp(" +
-          "date_format(TIMESTAMP '2021-06-28 18:00:00', 'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) " +
-          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') >= " +
-          "unix_timestamp(date_format(TIMESTAMP '2021-06-28 18:00:00', " +
-          "'yyyy-MM-dd-HH'), 'yyyy-MM-dd-HH')) IS NULL))"),
+        Seq("((unix_timestamp(hour, 'yyyy-MM-dd-HH') >= 1624928400L) " +
+          "OR ((unix_timestamp(hour, 'yyyy-MM-dd-HH') >= 1624928400L) IS NULL))"),
       "eventTime is null" -> Seq("(hour IS NULL)")
     )
   )
@@ -1162,20 +1105,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     expectedPartitionExpr = TruncDatePartitionExpr("date", "year"),
     filterTestCases = Seq(
       "eventTime < '2021-01-01 18:00:00'" ->
-        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
-        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+        Seq("((date <= DATE '2021-01-01') " +
+        "OR ((date <= DATE '2021-01-01') IS NULL))"),
       "eventTime <= '2021-01-01 18:00:00'" ->
-        Seq("((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
-        "OR ((date <= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+        Seq("((date <= DATE '2021-01-01') " +
+        "OR ((date <= DATE '2021-01-01') IS NULL))"),
       "eventTime = '2021-01-01 18:00:00'" ->
-        Seq("((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
-          "OR ((date = trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+        Seq("((date = DATE '2021-01-01') " +
+          "OR ((date = DATE '2021-01-01') IS NULL))"),
       "eventTime > '2021-01-01 18:00:00'" ->
-        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
-          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+        Seq("((date >= DATE '2021-01-01') " +
+          "OR ((date >= DATE '2021-01-01') IS NULL))"),
       "eventTime >= '2021-01-01 18:00:00'" ->
-        Seq("((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) " +
-          "OR ((date >= trunc(CAST(TIMESTAMP '2021-01-01 18:00:00' AS DATE), 'year')) IS NULL))"),
+        Seq("((date >= DATE '2021-01-01') " +
+          "OR ((date >= DATE '2021-01-01') IS NULL))"),
       "eventTime is null" ->
         Seq("(date IS NULL)")
     )
@@ -1188,20 +1131,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     expectedPartitionExpr = TruncDatePartitionExpr("date", "month"),
     filterTestCases = Seq(
       "eventDate < '2021-12-01'" ->
-        Seq("((date <= trunc(DATE '2021-12-01', 'month')) " +
-          "OR ((date <= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+        Seq("((date <= DATE '2021-12-01') " +
+          "OR ((date <= DATE '2021-12-01') IS NULL))"),
       "eventDate <= '2021-12-01'" ->
-        Seq("((date <= trunc(DATE '2021-12-01', 'month')) " +
-          "OR ((date <= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+        Seq("((date <= DATE '2021-12-01') " +
+          "OR ((date <= DATE '2021-12-01') IS NULL))"),
       "eventDate = '2021-12-01'" ->
-        Seq("((date = trunc(DATE '2021-12-01', 'month')) " +
-          "OR ((date = trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+        Seq("((date = DATE '2021-12-01') " +
+          "OR ((date = DATE '2021-12-01') IS NULL))"),
       "eventDate > '2021-12-01'" ->
-        Seq("((date >= trunc(DATE '2021-12-01', 'month')) " +
-          "OR ((date >= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+        Seq("((date >= DATE '2021-12-01') " +
+          "OR ((date >= DATE '2021-12-01') IS NULL))"),
       "eventDate >= '2021-12-01'" ->
-        Seq("((date >= trunc(DATE '2021-12-01', 'month')) " +
-          "OR ((date >= trunc(DATE '2021-12-01', 'month')) IS NULL))"),
+        Seq("((date >= DATE '2021-12-01') " +
+          "OR ((date >= DATE '2021-12-01') IS NULL))"),
       "eventDate is null" ->
         Seq("(date IS NULL)")
     )
@@ -1214,20 +1157,20 @@ class OptimizeGeneratedColumnSuite extends GeneratedColumnTest {
     expectedPartitionExpr = TruncDatePartitionExpr("date", "quarter"),
     filterTestCases = Seq(
       "eventDateStr < '2022-04-01'" ->
-        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
-          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+        Seq("((date <= DATE '2022-04-01') " +
+          "OR ((date <= DATE '2022-04-01') IS NULL))"),
       "eventDateStr <= '2022-04-01'" ->
-        Seq("((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
-          "OR ((date <= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+        Seq("((date <= DATE '2022-04-01') " +
+          "OR ((date <= DATE '2022-04-01') IS NULL))"),
       "eventDateStr = '2022-04-01'" ->
-        Seq("((date = trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
-          "OR ((date = trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+        Seq("((date = DATE '2022-04-01') " +
+          "OR ((date = DATE '2022-04-01') IS NULL))"),
       "eventDateStr > '2022-04-01'" ->
-        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
-          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+        Seq("((date >= DATE '2022-04-01') " +
+          "OR ((date >= DATE '2022-04-01') IS NULL))"),
       "eventDateStr >= '2022-04-01'" ->
-        Seq("((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) " +
-          "OR ((date >= trunc(CAST('2022-04-01' AS DATE), 'quarter')) IS NULL))"),
+        Seq("((date >= DATE '2022-04-01') " +
+          "OR ((date >= DATE '2022-04-01') IS NULL))"),
       "eventDateStr is null" ->
         Seq("(date IS NULL)")
     )

@@ -184,9 +184,9 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
 
   test("gcs write should happen in a new thread") {
     withTempDir { tempDir =>
-      // Use `FakeGCSFileSystem` to verify we write in the correct thread.
+      // Use `FakeGCSFileSystemValidatingCommits` to verify we write in the correct thread.
       withSQLConf(
-        "fs.gs.impl" -> classOf[FakeGCSFileSystem].getName,
+        "fs.gs.impl" -> classOf[FakeGCSFileSystemValidatingCommits].getName,
         "fs.gs.impl.disable.cache" -> "true") {
         val store = createLogStore(spark)
         store.write(

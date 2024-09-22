@@ -99,12 +99,12 @@ trait MergeCDCTests extends QueryTest
 
           if (expectErrorContains != null) {
             val ex = intercept[Exception] {
-              executeMerge(s"delta.`$tempPath` t", s"source s", mergeCondition,
+              executeMerge(s"delta.`$tempPath` t", "source s", mergeCondition,
                 clauses.toSeq: _*)
             }
             assert(ex.getMessage.contains(expectErrorContains))
           } else {
-            executeMerge(s"delta.`$tempPath` t", s"source s", mergeCondition,
+            executeMerge(s"delta.`$tempPath` t", "source s", mergeCondition,
               clauses.toSeq: _*)
             checkAnswer(
               spark.read.format("delta").load(tempPath),

@@ -24,7 +24,8 @@ import java.time.LocalDateTime
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
+import org.apache.spark.sql.delta.stats.StatisticsCollection.{ASCII_MAX_CHARACTER, UTF8_MAX_CHARACTER}
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
@@ -45,7 +46,8 @@ class StatsCollectionSuite
     with TestsStatistics
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils
-    with DeletionVectorsTestUtils {
+    with DeletionVectorsTestUtils
+    with DeltaExceptionTestUtils {
 
   import testImplicits._
 
@@ -144,6 +146,35 @@ class StatsCollectionSuite
         assert(statsDf.where('numRecords.isNotNull).count() > 0)
         // Make sure stats indicate 2 rows, min [0], max [1]
         checkAnswer(statsDf, Row(2, Row(0), Row(1)))
+      }
+    }
+  }
+
+  statsTestSparkMasterOnly("recompute variant stats") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+        val df = spark.range(2)
+          .selectExpr(
+            "case when id % 2 = 0 then parse_json(cast(id as string)) else null end as v"
+          )
+          .coalesce(1)
+          .toDF()
+        df.write.format("delta").save(tempDir.toString())
+        val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+
+        assert(getStatsDf(deltaLog, Seq($"numRecords")).where('numRecords.isNotNull).count() == 0)
+
+        {
+          StatisticsCollection.recompute(spark, deltaLog)
+        }
+        checkAnswer(
+          spark.read.format("delta").load(tempDir.getCanonicalPath),
+          df
+        )
+        val statsDf = getStatsDf(deltaLog, Seq($"numRecords", $"nullCount"))
+        assert(statsDf.where('numRecords.isNotNull).count() > 0)
+        // Make sure stats indicate 2 rows, nullCount [1]
+        checkAnswer(statsDf, Row(2, Row(1)))
       }
     }
   }
@@ -329,26 +360,67 @@ class StatsCollectionSuite
     }
   }
 
+  test("Truncate min string") {
+    // scalastyle:off nonascii
+    val inputToExpected = Seq(
+      (s"abcd", s"abc", 3),
+      (s"abcdef", s"abcdef", 6),
+      (s"abcde�", s"abcde�", 6),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        s"$UTF8_MAX_CHARACTER",
+        1),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER", s"$UTF8_MAX_CHARACTER", 1),
+      (s"abcd", null, 0)
+    )
+
+    inputToExpected.foreach {
+      case (input, expected, prefixLen) =>
+        val actual = StatisticsCollection.truncateMinStringAgg(prefixLen)(input)
+        val debugMsg = s"input:$input, actual:$actual, expected:$expected"
+        assert(actual == expected, debugMsg)
+        if (actual != null) {
+          assert(input.startsWith(actual), debugMsg)
+        }
+    }
+    // scalastyle:on nonascii
+  }
+
   test("Truncate max string") {
     // scalastyle:off nonascii
-    val prefixLen = 6
-    // � is the max unicode character with value \ufffd
     val inputToExpected = Seq(
-      (s"abcd", s"abcd"),
-      (s"abcdef", s"abcdef"),
-      (s"abcde�", s"abcde�"),
-      (s"abcd�abcd", s"abcd�a�"),
-      (s"�abcd", s"�abcd"),
-      (s"abcdef�", s"abcdef��"),
-      (s"abcdef-abcdef�", s"abcdef�"),
-      (s"abcdef�abcdef", s"abcdef��"),
-      (s"abcdef��abcdef", s"abcdef���"),
-      (s"abcdef�abcdef�abcdef�abcdef", s"abcdef��")
+      (s"abcd", null, 0),
+      (s"a${UTF8_MAX_CHARACTER}d", s"a$UTF8_MAX_CHARACTER$ASCII_MAX_CHARACTER", 2),
+      (s"abcd", s"abcd", 6),
+      (s"abcdef", s"abcdef", 6),
+      (s"abcde�", s"abcde�", 6),
+      (s"abcd�abcd", s"abcd�a$ASCII_MAX_CHARACTER", 6),
+      (s"�abcd", s"�abcd", 6),
+      (s"abcdef�", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcdef��", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcdef-abcdef�", s"abcdef$ASCII_MAX_CHARACTER", 6),
+      (s"abcdef�abcdef", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcde�abcdef�abcdef�abcdef", s"abcde�$ASCII_MAX_CHARACTER", 6),
+      (s"漢字仮名한글தமி", s"漢字仮名한글$UTF8_MAX_CHARACTER", 6),
+      (s"漢字仮名한글��", s"漢字仮名한글$UTF8_MAX_CHARACTER", 6),
+      (s"漢字仮名한글", s"漢字仮名한글", 6),
+      (s"abcdef🚀", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER", null, 1),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        4),
+      (s"����", s"��$UTF8_MAX_CHARACTER", 2),
+      (s"���", s"�$UTF8_MAX_CHARACTER", 1),
+      ("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀",
+        s"abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼$UTF8_MAX_CHARACTER",
+        32)
     )
+
     inputToExpected.foreach {
-      case (input, expected) =>
+      case (input, expected, prefixLen) =>
         val actual = StatisticsCollection.truncateMaxStringAgg(prefixLen)(input)
-        assert(actual == expected, s"input:$input, actual:$actual, expected:$expected")
+        // `Actual` should be higher or equal than `input` in UTF-8 encoded binary order.
+        val debugMsg = s"input:$input, actual:$actual, expected:$expected"
+        assert(actual == expected, debugMsg)
     }
     // scalastyle:off nonascii
   }
@@ -446,9 +518,9 @@ class StatsCollectionSuite
           exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         sql(s"create table $tableName2 (c1 long, c2 $invalidType) using delta")
-        val exceptTwo = intercept[Throwable] {
+        val exceptTwo = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2')")
-        }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        }
         assert(
           exceptTwo.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
@@ -480,18 +552,18 @@ class StatsCollectionSuite
           exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         sql(s"create table $tableName2 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) using delta")
-        val exceptThree = intercept[Throwable] {
+        val exceptThree = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(
             s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2.c21')"
           )
-        }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        }
         assert(
           exceptThree.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptThree.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
-        val exceptFour = intercept[Throwable] {
+        val exceptFour = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2')")
-        }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+        }
         assert(
           exceptFour.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptFour.getMessageParametersArray.toSeq == Seq(columnName, typename)
@@ -504,17 +576,18 @@ class StatsCollectionSuite
     val tableName = "delta_table_1"
     withTable(tableName) {
       sql(
-        s"create table $tableName (col1 LONG, col2 struct<col20 INT, coL21 LONG>, col3 LONG) " +
-        s"using delta TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'coL1, COL2.Col20, cOl3');"
+        s"create table $tableName (cOl1 LONG, COL2 struct<COL20 INT, CoL21 LONG>, CoL3 LONG) " +
+        s"using delta TBLPROPERTIES" +
+        s"('delta.dataSkippingStatsColumns' = 'coL1, COL2.col20, COL2.col21, cOl3');"
       )
       (1 to 10).foreach { _ =>
         sql(
           s"""insert into $tableName values
-             |(1, struct(1, 1), 1), (2, struct(2, 2), 2), (3, struct(3, 3), 3),
-             |(4, struct(4, 4), 4), (5, struct(5, 5), 5), (6, struct(6, 6), 6),
-             |(7, struct(7, 7), 7), (8, struct(8, 8), 8), (9, struct(9, 9), 9),
-             |(10, struct(10, 10), 10), (null, struct(null, null), null), (-1, struct(-1, -1), -1),
-             |(null, struct(null, null), null);""".stripMargin
+             |(1, struct(1, 10), 1), (2, struct(2, 20), 2), (3, struct(3, 30), 3),
+             |(4, struct(4, 40), 4), (5, struct(5, 50), 5), (6, struct(6, 60), 6),
+             |(7, struct(7, 70), 7), (8, struct(8, 80), 8), (9, struct(9, 90), 9),
+             |(10, struct(10, 100), 10), (null, struct(null, null), null),
+             |(-1, struct(-1, -100), -1), (null, struct(null, null), null);""".stripMargin
         )
       }
       sql(s"optimize $tableName")
@@ -526,9 +599,9 @@ class StatsCollectionSuite
         .collect()
         .foreach { row =>
           assert(row(0) == 130)
-          assert(row(1).asInstanceOf[GenericRow] == Row(20, Row(20), 20))
-          assert(row(2) == Row(-1, Row(-1), -1))
-          assert(row(3) == Row(10, Row(10), 10))
+          assert(row(1).asInstanceOf[GenericRow] == Row(20, Row(20, 20), 20))
+          assert(row(2) == Row(-1, Row(-1, -100), -1))
+          assert(row(3) == Row(10, Row(10, 100), 10))
         }
     }
   }
@@ -588,11 +661,11 @@ class StatsCollectionSuite
           )
         } else {
           sql("create table delta_table(c0 int, c1 int) using delta partitioned by(c1)")
-          val except = intercept[Throwable] {
+          val except = interceptWithUnwrapping[DeltaIllegalArgumentException] {
             sql(
               "ALTER TABLE delta_table SET TBLPROPERTIES ('delta.dataSkippingStatsColumns' = 'c1')"
             )
-          }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+          }
           assert(
             except.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" &&
             except.getMessageParametersArray.toSeq == Seq("c1")
@@ -789,12 +862,12 @@ class StatsCollectionSuite
       ("'c1.c11,c1.c11'", "c1.c11"),
       ("'c1,c1'", "c1.c11,c1.c12")
     ).foreach { case (statsColumns, duplicatedColumns) =>
-      val exception = intercept[SparkException] {
+      val exception = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         sql(
           s"ALTER TABLE delta_table_t1 " +
           s"SET TBLPROPERTIES('delta.dataSkippingStatsColumns'=$statsColumns)"
         )
-      }.getCause.asInstanceOf[DeltaIllegalArgumentException]
+      }
       assert(
         exception.getErrorClass == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
         exception.getMessageParametersArray.toSeq == Seq(duplicatedColumns)

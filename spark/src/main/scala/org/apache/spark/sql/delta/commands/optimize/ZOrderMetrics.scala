@@ -16,7 +16,27 @@
 
 package org.apache.spark.sql.delta.commands.optimize
 
-// scalastyle:off import.ordering.noEmptyLine
+/**
+ * A class to create blob structure for zorder metrics and events.
+ */
+class ZOrderMetrics(zOrderBy: Seq[String]) {
+
+  var strategyName: String = _
+  val inputStats = new ZCubeFileStatsCollector(zOrderBy)
+  val outputStats = new ZCubeFileStatsCollector(zOrderBy)
+  var numOutputCubes = 0
+
+  def getZOrderStats(): ZOrderStats = {
+    ZOrderStats(
+      strategyName,
+      inputNumCubes = inputStats.numZCubes,
+      inputCubeFiles = ZOrderFileStats(inputStats.fileStats.get("matchingCube")),
+      inputOtherFiles = ZOrderFileStats(inputStats.fileStats.get("otherFiles")),
+      mergedFiles = ZOrderFileStats(outputStats.fileStats.values),
+      numOutputCubes = numOutputCubes
+    )
+  }
+}
 
 /**
  * Aggregated file stats for a category of ZCube files.

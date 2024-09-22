@@ -17,19 +17,18 @@ package io.delta.kernel.defaults.internal.parquet
 
 import java.nio.file.{Files, Paths}
 import java.util.Optional
-
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
-
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.expressions.Column
+import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.types.{ArrayType, DataType, MapType, StructType}
+import io.delta.kernel.types.{ArrayType, DataType, MapType, StructField, StructType}
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.apache.parquet.hadoop.metadata.ParquetMetadata
+import org.apache.parquet.hadoop.metadata.{ColumnPath, ParquetMetadata}
 
 trait ParquetSuiteBase extends TestUtils {
 
@@ -128,22 +127,46 @@ trait ParquetSuiteBase extends TestUtils {
     checkAnswer(actualTestRows, expectedTestRows)
   }
 
-  /** Verify the field ids in Parquet files match the corresponding field ids in the Delta schema */
-  def verifyFieldIds(targetDir: String, deltaSchema: StructType): Unit = {
+  /**
+   * Verify the field ids in Parquet files match the corresponding field ids in the Delta schema.
+   * If [[expectListMapEntryIds]] is true, verifies the array and map elements also have field ids
+   * the match the fields in nearest ancestor struct field (i.e array or map)
+   */
+  def verifyFieldIds(
+      targetDir: String,
+      deltaSchema: StructType,
+      expectNestedFiledIds: Boolean): Unit = {
     parquetFiles(targetDir).map(footer(_)).foreach {
       footer =>
         val parquetSchema = footer.getFileMetaData.getSchema
 
-        def verifyFieldId(deltaFieldId: Long, columnPath: Array[String]): Unit = {
+        def verifyFieldId(deltaFieldId: Long, parquetColumnPath: Array[String]): Unit = {
+          val parquetFieldId = parquetSchema.getType(parquetColumnPath: _*).getId
+          assert(parquetFieldId != null)
+          assert(deltaFieldId === parquetFieldId.intValue())
+        }
+
+        def verifyNestedFieldId(
+            nearestAncestorStructField: StructField,
+            relativeNestedFieldPath: Array[String], // relative to the nearest ancestor struct field
+            columnPath: Array[String]): Unit = {
+          val deltaFieldId = nearestAncestorStructField.getMetadata
+            .getMetadata(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
+            .getLong(relativeNestedFieldPath.mkString("."))
+            .toInt
           val parquetFieldId = parquetSchema.getType(columnPath: _*).getId
           assert(parquetFieldId != null)
           assert(deltaFieldId === parquetFieldId.intValue())
         }
 
-        def visitDeltaType(basePath: Array[String], deltaType: DataType): Unit = {
+        def visitDeltaType(
+            basePathInParquet: Array[String],
+            nearestAncestorStructField: StructField,
+            baseRelativePathToAncestor: Array[String],
+            deltaType: DataType): Unit = {
           deltaType match {
             case struct: StructType =>
-              visitStructType(basePath, struct)
+              visitStructType(basePathInParquet, struct)
             case array: ArrayType =>
               // Arrays are stored as three-level structure in Parquet. There are two elements
               // between the array element and array itself. So in order to
@@ -156,24 +179,68 @@ trait ParquetSuiteBase extends TestUtils {
               //   }
               //  }
               // }
-              visitDeltaType(basePath :+ "list" :+ "element", array.getElementType)
+              val elemPathInParquet = basePathInParquet :+ "list" :+ "element"
+              val relativePathToNearestAncestor = baseRelativePathToAncestor :+ "element"
+              if (expectNestedFiledIds) {
+                verifyNestedFieldId(
+                  nearestAncestorStructField,
+                  relativePathToNearestAncestor,
+                  elemPathInParquet
+                )
+              }
+              visitDeltaType(
+                elemPathInParquet,
+                nearestAncestorStructField,
+                relativePathToNearestAncestor,
+                array.getElementType)
             case map: MapType =>
               // reason for appending the "key_value" is same as the array type (see above)
-              visitDeltaType(basePath :+ "key_value" :+ "key", map.getKeyType)
-              visitDeltaType(basePath :+ "key_value" :+ "value", map.getValueType)
+              val keyPathInParquet = basePathInParquet :+ "key_value" :+ "key"
+              val valuePathInParquet = basePathInParquet :+ "key_value" :+ "value"
+              val keyRelativePathToNearestAncestor = baseRelativePathToAncestor :+ "key"
+              val valueRelativePathToNearestAncestor = baseRelativePathToAncestor :+ "value"
+
+              if (expectNestedFiledIds) {
+                verifyNestedFieldId(
+                  nearestAncestorStructField,
+                  keyRelativePathToNearestAncestor,
+                  keyPathInParquet
+                )
+                verifyNestedFieldId(
+                  nearestAncestorStructField,
+                  valueRelativePathToNearestAncestor,
+                  valuePathInParquet
+                )
+              }
+
+              visitDeltaType(
+                keyPathInParquet,
+                nearestAncestorStructField,
+                keyRelativePathToNearestAncestor,
+                map.getKeyType)
+
+              visitDeltaType(
+                valuePathInParquet,
+                nearestAncestorStructField,
+                valueRelativePathToNearestAncestor,
+                map.getValueType)
             case _ => // Primitive type - continue
           }
         }
 
-        def visitStructType(basePath: Array[String], structType: StructType): Unit = {
+        def visitStructType(basePathInParquet: Array[String], structType: StructType): Unit = {
           structType.fields.forEach { field =>
             val deltaFieldId = field.getMetadata
-              .get(ColumnMapping.COLUMN_MAPPING_ID_KEY).asInstanceOf[Long]
+              .getLong(ColumnMapping.COLUMN_MAPPING_ID_KEY)
             val physicalName = field.getMetadata
-              .get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY).asInstanceOf[String]
+              .getString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
 
-            verifyFieldId(deltaFieldId, basePath :+ physicalName)
-            visitDeltaType(basePath :+ physicalName, field.getDataType)
+            verifyFieldId(deltaFieldId, basePathInParquet :+ physicalName)
+            visitDeltaType(
+              basePathInParquet :+ physicalName,
+              nearestAncestorStructField = field,
+              baseRelativePathToAncestor = Array(physicalName),
+              field.getDataType)
           }
         }
 
@@ -190,38 +257,42 @@ trait ParquetSuiteBase extends TestUtils {
     location: String,
     targetFileSize: Long = 1024 * 1024,
     statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
+    val conf = new Configuration(configuration);
+    conf.setLong(ParquetFileWriter.TARGET_FILE_SIZE_CONF, targetFileSize)
     val parquetWriter = new ParquetFileWriter(
-      configuration, new Path(location), targetFileSize, statsColumns.asJava)
+      conf, new Path(location), statsColumns.asJava)
 
     parquetWriter.write(toCloseableIterator(filteredData.asJava.iterator())).toSeq
   }
 
   def readParquetFilesUsingKernel(
-    actualFileDir: String, readSchema: StructType): Seq[TestRow] = {
-    val columnarBatches = readParquetUsingKernelAsColumnarBatches(actualFileDir, readSchema)
+      actualFileDir: String,
+      readSchema: StructType,
+      predicate: Optional[Predicate] = Optional.empty()): Seq[TestRow] = {
+    val columnarBatches =
+      readParquetUsingKernelAsColumnarBatches(actualFileDir, readSchema, predicate)
     columnarBatches.map(_.getRows).flatMap(_.toSeq).map(TestRow(_))
   }
 
   def readParquetUsingKernelAsColumnarBatches(
-    actualFileDir: String, readSchema: StructType): Seq[ColumnarBatch] = {
-    val parquetFiles = Files.list(Paths.get(actualFileDir))
-      .iterator().asScala
-      .map(_.toString)
-      .filter(path => path.endsWith(".parquet"))
-      .map(path => FileStatus.of(path, 0L, 0L))
+      inputFileOrDir: String,
+      readSchema: StructType,
+      predicate: Optional[Predicate] = Optional.empty()): Seq[ColumnarBatch] = {
+    val parquetFileList = parquetFiles(inputFileOrDir)
+      .map(FileStatus.of(_, 0, 0))
 
-    val data = defaultTableClient.getParquetHandler.readParquetFiles(
-      toCloseableIterator(parquetFiles.asJava),
+    val data = defaultEngine.getParquetHandler.readParquetFiles(
+      toCloseableIterator(parquetFileList.asJava.iterator()),
       readSchema,
-      Optional.empty())
+      predicate)
 
     data.asScala.toSeq
   }
 
-  def parquetFileCount(path: String): Long = parquetFiles(path).size
+  def parquetFileCount(fileOrDir: String): Long = parquetFiles(fileOrDir).size
 
-  def parquetFileRowCount(path: String): Long = {
-    val files = parquetFiles(path)
+  def parquetFileRowCount(fileOrDir: String): Long = {
+    val files = parquetFiles(fileOrDir)
 
     var rowCount = 0L
     files.foreach { file =>
@@ -232,12 +303,17 @@ trait ParquetSuiteBase extends TestUtils {
     rowCount
   }
 
-  def parquetFiles(path: String): Seq[String] = {
-    Files.list(Paths.get(path))
-      .iterator().asScala
-      .map(_.toString)
-      .filter(path => path.endsWith(".parquet"))
-      .toSeq
+  def parquetFiles(fileOrDir: String): Seq[String] = {
+    val fileOrDirPath = Paths.get(fileOrDir)
+    if (Files.isDirectory(fileOrDirPath)) {
+      Files.list(fileOrDirPath)
+        .iterator().asScala
+        .map(_.toString)
+        .filter(path => path.endsWith(".parquet"))
+        .toSeq
+    } else {
+      Seq(fileOrDir)
+    }
   }
 
   def footer(path: String): ParquetMetadata = {

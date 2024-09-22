@@ -18,15 +18,15 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
-import org.apache.spark.TaskFailedReason
-import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructField, StructType}
@@ -76,11 +76,31 @@ class CheckConstraintsSuite extends QueryTest
 
   test("constraint must be boolean") {
     withTestTable { table =>
-      val e = intercept[AnalysisException] {
-        sql(s"ALTER TABLE $table ADD CONSTRAINT integerVal CHECK (3)")
-      }
-      errorContains(e.getMessage,
-        "CHECK constraint 'integerVal' (3) should be a boolean expression.")
+      checkError(
+        exception = intercept[AnalysisException] {
+          sql(s"ALTER TABLE $table ADD CONSTRAINT integerVal CHECK (3)")
+        },
+        "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
+        parameters = Map(
+          "name" -> "integerVal",
+          "expr" -> "3"
+        )
+      )
+    }
+  }
+
+  test("can't add constraint referencing non-existent columns") {
+    withTestTable { table =>
+      checkError(
+        intercept[AnalysisException] {
+          sql(s"ALTER TABLE $table ADD CONSTRAINT c CHECK (does_not_exist)")
+        },
+        "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        parameters = Map(
+          "objectName" -> "`does_not_exist`",
+          "proposal" -> "`text`, `num`"
+        )
+      )
     }
   }
 
@@ -277,18 +297,20 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
-  testQuietly("constraint with analyzer-evaluated expressions") {
+  for (expression <- Seq("year(current_date())", "unix_timestamp()"))
+  testQuietly(s"constraint with analyzer-evaluated expressions. Expression: $expression") {
     withTestTable { table =>
-      // We use current_timestamp() as the most convenient analyzer-evaluated expression - of course
-      // in a realistic use case it'd probably not be right to add a constraint on a
+      // We use current_timestamp()/current_date() as the most convenient
+      // analyzer-evaluated expressions - of course in a realistic use case
+      // it'd probably not be right to add a constraint on a
       // nondeterministic expression.
       sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithAnalyzerEval " +
-        s"CHECK (num < unix_timestamp())")
+        s"CHECK (num < $expression)")
       val e = intercept[InvariantViolationException] {
         sql(s"INSERT INTO $table VALUES (${Int.MaxValue}, 'data')")
       }
       errorContains(e.getMessage,
-        "maxwithanalyzereval (num < unix_timestamp()) violated by row")
+        s"maxwithanalyzereval (num < $expression) violated by row")
     }
   }
 
@@ -420,4 +442,65 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  test("constraint induced by varchar") {
+    withTable("table") {
+      sql("CREATE TABLE table (id INT, value VARCHAR(12)) USING DELTA")
+      sql("INSERT INTO table VALUES (1, 'short string')")
+      val exception = intercept[DeltaInvariantViolationException] {
+        sql("INSERT INTO table VALUES (2, 'a very long string')")
+      }
+      checkError(
+        exception,
+        "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
+        parameters = Map(
+          "value" -> "a very long string",
+          "expr" -> "((value IS NULL) OR (length(value) <= 12))"
+        )
+      )
+    }
+  }
+
+  test("drop table feature") {
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> false.toString) {
+      withTable("table") {
+        sql("CREATE TABLE table (a INT, b INT) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql("ALTER TABLE table ADD CONSTRAINT c1 CHECK (a > 0)")
+        sql("ALTER TABLE table ADD CONSTRAINT c2 CHECK (b > 0)")
+
+        val error1 = intercept[AnalysisException] {
+          sql("ALTER TABLE table DROP FEATURE checkConstraints")
+        }
+        checkError(
+          error1,
+          "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+          parameters = Map("constraints" -> "`c1`, `c2`")
+        )
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier("table"))
+        val featureNames1 =
+          deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+        assert(featureNames1.contains("checkConstraints"))
+
+        sql("ALTER TABLE table DROP CONSTRAINT c1")
+        val error2 = intercept[AnalysisException] {
+          sql("ALTER TABLE table DROP FEATURE checkConstraints")
+        }
+        checkError(
+          error2,
+          "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+          parameters = Map("constraints" -> "`c2`")
+        )
+        val featureNames2 =
+          deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+        assert(featureNames2.contains("checkConstraints"))
+
+        sql("ALTER TABLE table DROP CONSTRAINT c2")
+        sql("ALTER TABLE table DROP FEATURE checkConstraints")
+        val featureNames3 =
+          deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+        assert(!featureNames3.contains("checkConstraints"))
+      }
+    }
+  }
 }

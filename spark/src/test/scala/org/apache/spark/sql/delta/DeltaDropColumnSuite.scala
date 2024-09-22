@@ -148,7 +148,7 @@ class DeltaDropColumnSuite extends QueryTest
       val e = intercept[AnalysisException] {
         drop("t1", "b.d" :: Nil)
       }
-      assert(e.getMessage.contains("Cannot drop column from a struct type with a single field"))
+      assert(e.getMessage.contains("Cannot drop column from a schema with a single column"))
 
       // can drop the parent column
       drop("t1", "b" :: Nil)
@@ -157,7 +157,7 @@ class DeltaDropColumnSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         drop("t1", "map" :: Nil)
       }
-      assert(e2.getMessage.contains("Cannot drop column from a struct type with a single field"))
+      assert(e2.getMessage.contains("Cannot drop column from a schema with a single column"))
 
       spark.sql("alter table t1 add column (e struct<e1 string, e2 string>)")
 
@@ -196,17 +196,17 @@ class DeltaDropColumnSuite extends QueryTest
 
       spark.sql("alter table t1 add constraint arrValue check (arr[0] > 0)")
 
-      assertException("Cannot drop column a because this column is referenced by") {
+      assertException("Cannot alter column a because this column is referenced by") {
         drop("t1", "a" :: Nil)
       }
 
-      assertException("Cannot drop column arr because this column is referenced by") {
+      assertException("Cannot alter column arr because this column is referenced by") {
         drop("t1", "arr" :: Nil)
       }
 
 
       // cannot drop b because its child is referenced
-      assertException("Cannot drop column b because this column is referenced by") {
+      assertException("Cannot alter column b because this column is referenced by") {
         drop("t1", "b" :: Nil)
       }
 
@@ -241,7 +241,7 @@ class DeltaDropColumnSuite extends QueryTest
       spark.sql("alter table t1 add constraint" +
         " mapValue check (not array_contains(map_keys(map), 'k1') or map['k1'] = 'v1')")
 
-      assertException("Cannot drop column map because this column is referenced by") {
+      assertException("Cannot alter column map because this column is referenced by") {
         drop("t1", "map" :: Nil)
       }
     }
@@ -279,19 +279,19 @@ class DeltaDropColumnSuite extends QueryTest
 
         simpleNestedData.write.format("delta").mode("append").saveAsTable("t1")
 
-        assertException("Cannot drop column a because this column is referenced by") {
+        assertException("Cannot alter column a because this column is referenced by") {
           drop("t1", "a" :: Nil)
         }
 
-        assertException("Cannot drop column b because this column is referenced by") {
+        assertException("Cannot alter column b because this column is referenced by") {
           drop("t1", "b" :: Nil)
         }
 
-        assertException("Cannot drop column b.d because this column is referenced by") {
+        assertException("Cannot alter column b.d because this column is referenced by") {
           drop("t1", "b.d" :: Nil)
         }
 
-        assertException("Cannot drop column arr because this column is referenced by") {
+        assertException("Cannot alter column arr because this column is referenced by") {
           drop("t1", "arr" :: Nil)
         }
 
@@ -450,10 +450,10 @@ class DeltaDropColumnSuite extends QueryTest
         field <- Seq("m.key", "m.value", "a.element")
       }
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"ALTER TABLE delta_test DROP COLUMN $field")
         },
-        errorClass = "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
+        "DELTA_UNSUPPORTED_DROP_NESTED_COLUMN_FROM_NON_STRUCT_TYPE",
         parameters = Map(
           "struct" -> "IntegerType"
         )

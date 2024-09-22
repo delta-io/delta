@@ -22,7 +22,7 @@ import java.sql.Timestamp
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot, UnresolvedPathOrIdentifier}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Row, SparkSession}
@@ -158,7 +158,7 @@ case class DescribeDeltaDetailCommand(
       deltaLog: DeltaLog,
       snapshot: Snapshot,
       tableMetadata: Option[CatalogTable]): Seq[Row] = {
-    val currentVersionPath = FileNames.deltaFile(deltaLog.logPath, snapshot.version)
+    val currentVersionPath = DeltaCommitFileProvider(snapshot).deltaFile(snapshot.version)
     val fs = currentVersionPath.getFileSystem(deltaLog.newDeltaHadoopConf())
     val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
     val featureNames = (

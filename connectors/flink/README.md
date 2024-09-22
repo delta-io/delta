@@ -46,7 +46,7 @@ Depending on the version of the connector you can use it with following Apache F
 
 ### APIs
 
-See the [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink/api/java/index.html) here.
+See the [Java API docs](https://docs.delta.io/latest/api/java/flink/overview-summary.html) here.
 
 ### Known limitations
 
@@ -475,7 +475,7 @@ USE custom_DB;
 ```
 
 #### CREATE TABLE
-To create non-partitioned table use `CREARTE TABLE` statement:
+To create non-partitioned table use `CREATE TABLE` statement:
 ```sql
 CREATE TABLE testTable (
     id BIGINT,

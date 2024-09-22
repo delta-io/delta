@@ -22,7 +22,6 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
-import org.apache.spark.sql.delta.hooks.UpdateCatalog.MAX_CATALOG_TYPE_DDL_LENGTH
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaHiveTest
 import com.fasterxml.jackson.core.JsonParseException
@@ -186,6 +185,9 @@ class DeltaUpdateCatalogSuite
     }
   }
 
+  val MAX_CATALOG_TYPE_DDL_LENGTH: Long =
+    DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD.defaultValue.get
+
 
   test("convert to delta with partitioning change") {
     withTable(tbl) {
@@ -326,8 +328,6 @@ class DeltaUpdateCatalogSuite
   }
 
 
-  import UpdateCatalog.MAX_CATALOG_TYPE_DDL_LENGTH
-
   test("Very long schemas can be stored in the catalog") {
     withTable(tbl) {
       val schema = StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType)))
@@ -340,47 +340,108 @@ class DeltaUpdateCatalogSuite
     }
   }
 
-  test("Schemas that contain very long fields cannot be stored in the catalog") {
-    withTable(tbl) {
-      val schema = new StructType()
-        .add("i", StringType)
-        .add("struct", StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType))))
-      require(schema.toDDL.length >= MAX_CATALOG_TYPE_DDL_LENGTH,
-        s"The length of the schema should be over $MAX_CATALOG_TYPE_DDL_LENGTH " +
-          s"characters for this test")
 
-      sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
-      verifySchemaInCatalog()
+  for (truncationThreshold <- Seq(99999, MAX_CATALOG_TYPE_DDL_LENGTH, 4020))
+  test(s"Schemas that contain very long fields cannot be stored in the catalog " +
+    " when longer than the truncation threshold " +
+    s" [DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD = $truncationThreshold]") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD.key ->
+            truncationThreshold.toString) {
+      withTable(tbl) {
+        val schema = new StructType()
+          .add("i", StringType)
+          .add("struct", StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType))))
+        require(
+          schema.toDDL.length >= 4020,
+          s"The length of the schema should be over 4020 " +
+            s"characters for this test")
+
+        sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
+        if (truncationThreshold > 4020) {
+          verifyTableMetadata(expectedSchema = schema)
+        } else {
+          verifySchemaInCatalog()
+        }
+      }
     }
   }
 
-  test("Schemas that contain very long fields cannot be stored in the catalog - array") {
-    withTable(tbl) {
-      val struct = StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType)))
-      val schema = new StructType()
-        .add("i", StringType)
-        .add("array", ArrayType(struct))
-      require(schema.toDDL.length >= MAX_CATALOG_TYPE_DDL_LENGTH,
-        s"The length of the schema should be over $MAX_CATALOG_TYPE_DDL_LENGTH " +
-          s"characters for this test")
+  for (truncationThreshold <- Seq(99999, MAX_CATALOG_TYPE_DDL_LENGTH))
+  test(s"Schemas that contain very long fields cannot be stored in the catalog - array" +
+      " when longer than the truncation threshold " +
+      s" [DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD = $truncationThreshold]") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD.key ->
+            truncationThreshold.toString) {
+      withTable(tbl) {
+        val struct = StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType)))
+        val schema = new StructType()
+          .add("i", StringType)
+          .add("array", ArrayType(struct))
+        require(schema.toDDL.length >= MAX_CATALOG_TYPE_DDL_LENGTH,
+          s"The length of the schema should be over $MAX_CATALOG_TYPE_DDL_LENGTH " +
+            s"characters for this test")
 
-      sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
-      verifySchemaInCatalog()
+        sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
+        if (truncationThreshold == 99999) {
+          verifyTableMetadata(expectedSchema = schema)
+        } else {
+          verifySchemaInCatalog()
+        }
+      }
     }
   }
 
-  test("Schemas that contain very long fields cannot be stored in the catalog - map") {
-    withTable(tbl) {
-      val struct = StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType)))
-      val schema = new StructType()
-        .add("i", StringType)
-        .add("map", MapType(StringType, struct))
-      require(schema.toDDL.length >= MAX_CATALOG_TYPE_DDL_LENGTH,
-        s"The length of the schema should be over $MAX_CATALOG_TYPE_DDL_LENGTH " +
-          s"characters for this test")
+  for (truncationThreshold <- Seq(99999, MAX_CATALOG_TYPE_DDL_LENGTH))
+  test(s"Schemas that contain very long fields cannot be stored in the catalog - map" +
+      " when longer than the truncation threshold " +
+      s" [DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD = $truncationThreshold]") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD.key ->
+            truncationThreshold.toString) {
+      withTable(tbl) {
+        val struct = StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType)))
+        val schema = new StructType()
+          .add("i", StringType)
+          .add("map", MapType(StringType, struct))
+        require(schema.toDDL.length >= MAX_CATALOG_TYPE_DDL_LENGTH,
+          s"The length of the schema should be over $MAX_CATALOG_TYPE_DDL_LENGTH " +
+            s"characters for this test")
 
-      sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
-      verifySchemaInCatalog()
+        sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
+        if (truncationThreshold == 99999) {
+          verifyTableMetadata(expectedSchema = schema)
+        } else {
+          verifySchemaInCatalog()
+        }
+      }
+    }
+  }
+
+  for (truncationThreshold <- Seq(99999, MAX_CATALOG_TYPE_DDL_LENGTH))
+  test(s"Very long nested fields cannot be stored in the catalog - partitioned" +
+      " when longer than the truncation threshold " +
+      s" [DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD = $truncationThreshold]") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD.key ->
+            truncationThreshold.toString) {
+      withTable(tbl) {
+        val schema = new StructType()
+          .add("i", StringType)
+          .add("part", StringType)
+          .add("struct", StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType))))
+        require(
+          schema.toDDL.length >= MAX_CATALOG_TYPE_DDL_LENGTH,
+          "The length of the schema should be over 4000 characters for this test")
+
+        sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta PARTITIONED BY (part)")
+        if (truncationThreshold == 99999) {
+          verifyTableMetadata(expectedSchema = schema)
+        } else {
+          verifySchemaInCatalog()
+        }
+      }
     }
   }
 
@@ -396,26 +457,13 @@ class DeltaUpdateCatalogSuite
     }
   }
 
-  test("Very long nested fields cannot be stored in the catalog - partitioned") {
-    withTable(tbl) {
-      val schema = new StructType()
-        .add("i", StringType)
-        .add("part", StringType)
-        .add("struct", StructType(Seq.tabulate(1000)(i => StructField(s"col$i", StringType))))
-      require(schema.toDDL.length >= MAX_CATALOG_TYPE_DDL_LENGTH,
-        "The length of the schema should be over 4000 characters for this test")
-
-      sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta PARTITIONED BY (part)")
-      verifySchemaInCatalog()
-    }
-  }
 
   // scalastyle:off nonascii
   test("Schema containing non-latin characters cannot be stored - top-level") {
     withTable(tbl) {
       val schema = new StructType().add("今天", "string")
       sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
-      verifySchemaInCatalog()
+      verifySchemaInCatalog(expectedErrorMessage = UpdateCatalog.NON_LATIN_CHARS_ERROR)
     }
   }
 
@@ -423,7 +471,7 @@ class DeltaUpdateCatalogSuite
     withTable(tbl) {
       val schema = new StructType().add("struct", new StructType().add("今天", "string"))
       sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
-      verifySchemaInCatalog()
+      verifySchemaInCatalog(expectedErrorMessage = UpdateCatalog.NON_LATIN_CHARS_ERROR)
     }
   }
 
@@ -434,7 +482,7 @@ class DeltaUpdateCatalogSuite
         .add("array", ArrayType(new StructType().add("今天", "string")))
 
       sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
-      verifySchemaInCatalog()
+      verifySchemaInCatalog(expectedErrorMessage = UpdateCatalog.NON_LATIN_CHARS_ERROR)
     }
   }
 
@@ -445,7 +493,7 @@ class DeltaUpdateCatalogSuite
         .add("map", MapType(StringType, new StructType().add("今天", "string")))
 
       sql(s"CREATE TABLE $tbl (${schema.toDDL}) USING delta")
-      verifySchemaInCatalog()
+      verifySchemaInCatalog(expectedErrorMessage = UpdateCatalog.NON_LATIN_CHARS_ERROR)
     }
   }
   // scalastyle:on nonascii
@@ -456,7 +504,8 @@ class DeltaUpdateCatalogSuite
    */
   private def verifySchemaInCatalog(
       table: String = tbl,
-      catalogPartitionCols: Seq[String] = Nil): Unit = {
+      catalogPartitionCols: Seq[String] = Nil,
+      expectedErrorMessage: String = UpdateCatalog.LONG_SCHEMA_ERROR): Unit = {
     val cat = spark.sessionState.catalog.externalCatalog.getTable("default", table)
     assert(cat.schema.isEmpty, s"Schema wasn't empty")
     assert(cat.partitionColumnNames === catalogPartitionCols)
@@ -465,7 +514,7 @@ class DeltaUpdateCatalogSuite
         s"Properties didn't match for table: $table. Expected: ${getBaseProperties(snapshot)}, " +
         s"Got: ${cat.properties}")
     }
-    assert(cat.properties(UpdateCatalog.ERROR_KEY) === UpdateCatalog.LONG_SCHEMA_ERROR)
+    assert(cat.properties(UpdateCatalog.ERROR_KEY) === expectedErrorMessage)
 
     // Make sure table is readable
     checkAnswer(spark.table(table), Nil)
