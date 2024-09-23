@@ -145,15 +145,15 @@ object TestParallelization {
       val highDurationTestGroupIndex =
         highDurationTestAssignment.indexWhere(_.contains(testSuiteName))
 
-      println(s"Trying to assign test suite: $testSuiteName. This is shardId: $shardId.")
-      println(s"isHighDurationTest: $isHighDurationTest")
-      println(s"highDurationTestGroupIndex: $highDurationTestGroupIndex")
+      // println(s"Trying to assign test suite: $testSuiteName. This is shardId: $shardId.")
+      // println(s"isHighDurationTest: $isHighDurationTest")
+      // println(s"highDurationTestGroupIndex: $highDurationTestGroupIndex")
 
       if (isHighDurationTest) {
         if (highDurationTestGroupIndex >= 0) {
           // Case 1: this is a high duration test that belongs to this shard. Assign it.
           val duration = HIGH_DURATION_TEST_SUITES.find(_._1 == testSuiteName).get._2
-          println(s"[High] Assigning suite $testSuiteName ($duration mins) to shard $shardId")
+          // println(s"[High] Assigning suite $testSuiteName ($duration mins) to shard $shardId")
 
           val currentGroup = groups(highDurationTestGroupIndex)
           val updatedGroup = currentGroup.withTests(currentGroup.tests :+ testDefinition)
@@ -165,17 +165,17 @@ object TestParallelization {
           this
         } else {
           // Case 2: this is a high duration test that does NOT belong to this shard. Skip it.
-          println(s"[High] NOT assigning suite $testSuiteName to shard $shardId")
+          // println(s"[High] NOT assigning suite $testSuiteName to shard $shardId")
           this
         }
       } else if (math.abs(testDefinition.name.hashCode % NUM_SHARDS) == shardId) {
         // Case 3: this is a normal test that belongs to this shard. Assign it.
-        println(s"[Low] Assigning suite $testSuiteName to shard $shardId")
+        // println(s"[Low] Assigning suite $testSuiteName to shard $shardId")
 
         val minDurationGroupIndex = groupRuntimes.zipWithIndex.minBy(_._1)._2
 
-        println(s"groupRuntimes: ${groupRuntimes.mkString("Array(", ", ", ")")}")
-        println(s"minDurationGroupIndex: $minDurationGroupIndex")
+        // println(s"groupRuntimes: ${groupRuntimes.mkString("Array(", ", ", ")")}")
+        // println(s"minDurationGroupIndex: $minDurationGroupIndex")
 
         val currentGroup = groups(minDurationGroupIndex)
         val updatedGroup = currentGroup.withTests(currentGroup.tests :+ testDefinition)
@@ -186,7 +186,7 @@ object TestParallelization {
         this
       } else {
         // Case 4: this is a normal test that does NOT belong to this shard. Skip it.
-        println(s"[Low] NOT assigning suite $testSuiteName to shard $shardId")
+        // println(s"[Low] NOT assigning suite $testSuiteName to shard $shardId")
         this
       }
     }
