@@ -68,9 +68,9 @@ public class CoordinatedCommitsUtils {
             Long commitVersion,
             UpdatedActions updatedActions) {
         boolean oldMetadataHasCoordinatedCommits =
-                !getCoordinator(updatedActions.getOldMetadata()).isEmpty();
+                getCoordinatorName(updatedActions.getOldMetadata()).isPresent();
         boolean newMetadataHasCoordinatedCommits =
-                !getCoordinator(updatedActions.getNewMetadata()).isEmpty();
+                getCoordinatorName(updatedActions.getNewMetadata()).isPresent();
         return oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits && commitVersion > 0;
     }
 
@@ -120,10 +120,17 @@ public class CoordinatedCommitsUtils {
         return new Path(logPath, COMMIT_SUBDIR);
     }
 
-    public static String getCoordinator(AbstractMetadata metadata) {
+    /**
+     * Retrieves the coordinator name from the provided abstract metadata.
+     * If no coordinator is set, an empty string is returned.
+     *
+     * @param metadata The abstract metadata from which to retrieve the coordinator name.
+     * @return The coordinator name if set, otherwise an empty string.
+     */
+    public static Optional<String> getCoordinatorName(AbstractMetadata metadata) {
         String coordinator = metadata
                 .getConfiguration()
                 .get(COORDINATED_COMMITS_COORDINATOR_NAME_KEY);
-        return coordinator != null ? coordinator : "";
+        return Optional.ofNullable(coordinator);
     }
 }
