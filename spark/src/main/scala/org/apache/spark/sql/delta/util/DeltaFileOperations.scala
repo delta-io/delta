@@ -243,7 +243,10 @@ object DeltaFileOperations extends DeltaLogging {
     import org.apache.spark.sql.delta.implicits._
     if (subDirs.isEmpty) return spark.emptyDataset[SerializableFileStatus]
     val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
-    val dirsAndFiles = spark.sparkContext.parallelize(subDirs).mapPartitions { dirs =>
+    val subDirsParallelism = subDirs.length.min(spark.sparkContext.defaultParallelism)
+    val dirsAndFiles = spark.sparkContext.parallelize(
+        subDirs,
+        subDirsParallelism).mapPartitions { dirs =>
       val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value.value)
       listUsingLogStore(
         logStore,
