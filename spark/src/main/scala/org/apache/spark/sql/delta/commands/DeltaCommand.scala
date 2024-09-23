@@ -102,8 +102,19 @@ trait DeltaCommand extends DeltaLogging {
       candidateFiles: Seq[AddFile]): Map[String, AddFile] = {
     val nameToAddFileMap = candidateFiles.map(add =>
       DeltaFileOperations.absolutePath(basePath.toString, add.path).toString -> add).toMap
-    assert(nameToAddFileMap.size == candidateFiles.length,
-      s"File name collisions found among:\n${candidateFiles.map(_.path).mkString("\n")}")
+    assert(nameToAddFileMap.size == candidateFiles.length, {
+      val pathOccurrences = candidateFiles
+          .groupBy(_.path)
+          .mapValues(_.size)
+          .filter(_._2 > 1)
+          .toSeq
+          .sortBy(-_._2)
+
+      s"""File name collisions found:\n${pathOccurrences.map {
+        case (path, count) => s"$path: $count occurrences"
+      }.mkString("\n")}"""
+    })
+
     nameToAddFileMap
   }
 
