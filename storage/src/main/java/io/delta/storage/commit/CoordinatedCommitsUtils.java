@@ -122,10 +122,10 @@ public class CoordinatedCommitsUtils {
 
     /**
      * Retrieves the coordinator name from the provided abstract metadata.
-     * If no coordinator is set, an empty string is returned.
+     * If no coordinator is set, an empty optional is returned.
      *
      * @param metadata The abstract metadata from which to retrieve the coordinator name.
-     * @return The coordinator name if set, otherwise an empty string.
+     * @return The coordinator name if set, otherwise an empty optional.
      */
     public static Optional<String> getCoordinatorName(AbstractMetadata metadata) {
         String coordinator = metadata
