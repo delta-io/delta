@@ -1,3 +1,6 @@
+import scala.util.Random
+import scala.util.hashing.MurmurHash3
+
 import sbt.Keys._
 import sbt._
 
@@ -146,13 +149,14 @@ object TestParallelization {
         }
 
         val testIsAssignedToShard =
-          math.abs(testDefinition.name.hashCode % numShards.get) == shardId.get
+          math.abs(MurmurHash3.stringHash(testDefinition.name) % numShards.get) == shardId.get
+
         if(!testIsAssignedToShard) {
           return new SimpleHashStrategy(groups, shardId)
         }
       }
 
-      val groupIdx = math.abs(testDefinition.name.hashCode % groupCount)
+      val groupIdx = math.abs(MurmurHash3.stringHash(testDefinition.name) % groupCount)
       val currentGroup = groups(groupIdx)
       val updatedGroup = currentGroup.withTests(
         currentGroup.tests :+ testDefinition
