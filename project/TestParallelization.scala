@@ -1,3 +1,5 @@
+import scala.util.hashing.MurmurHash3
+
 import sbt.Keys._
 import sbt._
 
@@ -43,7 +45,9 @@ object TestParallelization {
     )
   }
 
-  /** Sets the Test / testGroupingStrategy Task to an instance of the SimpleHashStrategy */
+  /**
+   * Sets the Test / testGroupingStrategy Task to an instance of the MinShardGroupDurationStrategy
+   */
   lazy val simpleGroupingStrategySettings = Seq(
     Test / forkTestJVMCount := {
       testParallelismOpt.getOrElse(java.lang.Runtime.getRuntime.availableProcessors)
@@ -53,7 +57,7 @@ object TestParallelization {
       val groupsCount = (Test / forkTestJVMCount).value
       val shard = (Test / shardId).value
       val baseJvmDir = baseDirectory.value
-      GreedyHashStrategy(groupsCount, baseJvmDir, shard, defaultForkOptions.value)
+      MinShardGroupDurationStrategy(groupsCount, baseJvmDir, shard, defaultForkOptions.value)
     },
     Test / parallelExecution := true,
     Global / concurrentRestrictions := {
@@ -122,13 +126,13 @@ object TestParallelization {
    *                                   specific groups within the shard.
    * @param groupRuntimes Array holding the current total runtime for each group within the shard.
    */
-  class GreedyHashStrategy private(
+  class MinShardGroupDurationStrategy private(
       groups: scala.collection.mutable.Map[Int, Tests.Group],
       shardId: Int,
       highDurationTestAssignment: Array[Set[String]],
       var groupRuntimes: Array[Double]
   ) extends GroupingStrategy {
-    import TestParallelization.GreedyHashStrategy._
+    import TestParallelization.MinShardGroupDurationStrategy._
 
     if (shardId < 0 || shardId >= NUM_SHARDS) {
       throw new IllegalArgumentException(
@@ -160,7 +164,7 @@ object TestParallelization {
           // Case 2: this is a high duration test that does NOT belong to this shard. Skip it.
           this
         }
-      } else if (math.abs(testDefinition.name.hashCode % NUM_SHARDS) == shardId) {
+      } else if (math.abs(MurmurHash3.stringHash(testDefinition.name) % NUM_SHARDS) == shardId) {
         // Case 3: this is a normal test that belongs to this shard. Assign it.
 
         val minDurationGroupIndex = groupRuntimes.zipWithIndex.minBy(_._1)._2
@@ -193,7 +197,7 @@ object TestParallelization {
     }
   }
 
-  object GreedyHashStrategy {
+  object MinShardGroupDurationStrategy {
 
     val NUM_SHARDS = numShardsOpt.get
 
@@ -336,7 +340,7 @@ object TestParallelization {
       val (allShardsTestAssignments, allShardsGroupDurations) =
         highDurationOptimalAssignment(groupCount)
 
-      new GreedyHashStrategy(
+      new MinShardGroupDurationStrategy(
         testGroups,
         shardId,
         allShardsTestAssignments(shardId),
