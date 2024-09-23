@@ -18,9 +18,8 @@ import sbt._
 import sbt.testing._
 import java.io.{FileWriter, IOException}
 import java.nio.file.{Files, Paths}
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.locks.ReentrantLock
 import java.lang.management.ManagementFactory
+
 import scala.util.Using
 
 /**
@@ -33,20 +32,19 @@ import scala.util.Using
 object TestTimeListener extends TestReportListener {
 
   /** testSuite -> Seq[(testName, duration, result)] */
-  private val testResults = new ConcurrentHashMap[String, Seq[(String, Long, String)]]()
+  private val threadLocalTestResults = new ThreadLocal[Map[String, Seq[(String, Long, String)]]] {
+    override def initialValue(): Map[String, Seq[(String, Long, String)]] = {
+      // Initialize per thread by clearing the thread-specific CSV file
+      clearCsvFile(fileNamePerJvmAndThread())
+      Map.empty
+    }
+  }
 
-  /** Generate a unique file name per JVM using process ID and timestamp */
-  private val jvmId = ManagementFactory.getRuntimeMXBean().getName.split("@")(0)
-  private val individualTestCsvPath = s"test_results_${jvmId}_${System.currentTimeMillis()}.csv"
-
-  /** Lock to ensure only one thread writes to a file at a time within this JVM */
-  private val writeLock = new ReentrantLock()
-
-  initialize()
-
-  /** Clears the CSV file at the start of the test run. */
-  private def initialize(): Unit = {
-    clearCsvFile(individualTestCsvPath)
+  /** Generate a unique file name per JVM & thread */
+  private def fileNamePerJvmAndThread(): String = {
+    val jvmId = ManagementFactory.getRuntimeMXBean().getName.split("@")(0)
+    val threadId = Thread.currentThread().getId
+    s"test_results_jvm_${jvmId}_thread_$threadId.csv"
   }
 
   /////////////////
@@ -66,23 +64,18 @@ object TestTimeListener extends TestReportListener {
 
       println(s"Test suite: $suiteName, Test: $testName, Duration: $testDuration ms, Result: $testStatus")
 
-      testResults.merge(suiteName, Seq((testName, testDuration, testStatus)), _ ++ _)
+      val currentResults = threadLocalTestResults.get()
+      val suiteResults = currentResults.getOrElse(suiteName, Seq.empty)
+      val updatedSuiteResults = suiteResults :+ (testName, testDuration, testStatus)
+      val updatedResults = currentResults + (suiteName -> updatedSuiteResults)
+      threadLocalTestResults.set(updatedResults)
     }
   }
 
-  /**
-   * Called when a test suite ends. Writes the results to the JVM-specific CSV file and clears the
-   * suite's data from the concurrent hash map.
-   */
+  /** Called when a test suite ends. Writes the results to the JVM-specific CSV file. */
   override def endGroup(suiteName: String, result: TestResult): Unit = {
     println(s"Test suite $suiteName ended with result: $result")
-
-    if (testResults.containsKey(suiteName)) {
-      writeTestResultsToCsv(suiteName)
-      testResults.remove(suiteName)
-    } else {
-      println(s"No test result data for test suite: $suiteName")
-    }
+    writeTestResultsToCsv(suiteName)
   }
 
   override def startGroup(suiteName: String): Unit = {
@@ -116,14 +109,17 @@ object TestTimeListener extends TestReportListener {
   }
 
   /**
-   * Writes the test results for a specific suite to the JVM-specific CSV file. Expects that
-   * [[testResults]] contains [[suiteName]].
+   * Writes the test results for a specific suite to the JVM-specific CSV file
    */
   private def writeTestResultsToCsv(suiteName: String): Unit = {
-    writeLock.lock()
+    if (!threadLocalTestResults.get().contains(suiteName)) {
+      println(s"No test result data for test suite: $suiteName")
+      return
+    }
+
     try {
-      Using.resource(new FileWriter(individualTestCsvPath, true)) { writer =>
-        testResults.get(suiteName).foreach { case (testName, duration, result) =>
+      Using.resource(new FileWriter(fileNamePerJvmAndThread(), true)) { writer =>
+        threadLocalTestResults.get()(suiteName).foreach { case (testName, duration, result) =>
           val escapedSuiteName = escapeCsvField(suiteName)
           val escapedTestName = escapeCsvField(testName)
           val escapedResult = escapeCsvField(result)
@@ -133,8 +129,6 @@ object TestTimeListener extends TestReportListener {
       }
     } catch {
       case e: IOException => println(s"Failed to write test results to file: ${e.getMessage}")
-    } finally {
-      writeLock.unlock()
     }
   }
 }
