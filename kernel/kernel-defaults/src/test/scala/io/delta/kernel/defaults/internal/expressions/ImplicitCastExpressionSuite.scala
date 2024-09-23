@@ -46,7 +46,9 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
 
     (StringType.STRING, StringType.STRING),
     (StringType.STRING, new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE"))),
-    (new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")), StringType.STRING))
+    (new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")), StringType.STRING),
+    (new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
+      new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE"))))
 
   test("can cast to") {
     Seq.range(0, ALL_TYPES.length).foreach { fromTypeIdx =>
