@@ -17,8 +17,8 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**
@@ -31,6 +31,12 @@ import org.apache.spark.sql.types._
  * [[DeltaInsertIntoTest]] for a list of these INSERT operations covered.
  */
 class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
+    spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
+  }
 
   for (schemaEvolution <- BOOLEAN_DOMAIN) {
     testInserts("insert with implicit up and down cast on top-level fields, " +
