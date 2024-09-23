@@ -267,6 +267,12 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       projectName = "delta-connect-common",
       emptyValue = ()
     ).value,
+    publishM2 := runTaskOnlyOnSparkMaster(
+      task = publishM2,
+      taskName = "publishM2",
+      projectName = "delta-connect-common",
+      emptyValue = ()
+    ).value,
     assembly := runTaskOnlyOnSparkMaster(
       task = assembly,
       taskName = "assembly",
@@ -323,6 +329,12 @@ lazy val connectClient = (project in file("spark-connect/client"))
     publish := runTaskOnlyOnSparkMaster(
       task = publish,
       taskName = "publish",
+      projectName = "delta-connect-client",
+      emptyValue = ()
+    ).value,
+    publishM2 := runTaskOnlyOnSparkMaster(
+      task = publishM2,
+      taskName = "publishM2",
       projectName = "delta-connect-client",
       emptyValue = ()
     ).value,
@@ -431,6 +443,12 @@ lazy val connectServer = (project in file("spark-connect/server"))
     publish := runTaskOnlyOnSparkMaster(
       task = publish,
       taskName = "publish",
+      projectName = "delta-connect-server",
+      emptyValue = ()
+    ).value,
+    publishM2 := runTaskOnlyOnSparkMaster(
+      task = publishM2,
+      taskName = "publishM2",
       projectName = "delta-connect-server",
       emptyValue = ()
     ).value,
