@@ -364,6 +364,88 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           )
         ),
         AlwaysTrue.ALWAYS_TRUE
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("IS_NULL",
+            new And(
+              new Predicate("<",
+                new Column("c1"),
+                Literal.ofString("a")
+              ),
+              new Predicate(">",
+                new Column("c2"),
+                Literal.ofString("b")
+              )
+            )
+          )
+        ),
+        new Predicate("IS_NOT_NULL",
+          new And(
+            new Predicate("<",
+              new Column("c1"),
+              Literal.ofString("a")
+            ),
+            new Predicate(">",
+              new Column("c2"),
+              Literal.ofString("b")
+            )
+          )
+        )
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("IS_NOT_NULL",
+            new And(
+              new Predicate("<",
+                new Column("c1"),
+                Literal.ofString("a")
+              ),
+              new Predicate(">",
+                new Column("c2"),
+                Literal.ofString("b")
+              )
+            )
+          )
+        ),
+        new Predicate("IS_NULL",
+          new And(
+            new Predicate("<",
+              new Column("c1"),
+              Literal.ofString("a")
+            ),
+            new Predicate(">",
+              new Column("c2"),
+              Literal.ofString("b")
+            )
+          )
+        )
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("IS_NULL",
+            new CollatedPredicate("<",
+              new Column("c1"),
+              Literal.ofString("a"),
+              defaultCollationIdentifier
+            )
+          )
+        ),
+        new Predicate("IS_NOT_NULL",
+          AlwaysTrue.ALWAYS_TRUE
+        )
+      ),
+      (
+        new Predicate("NOT",
+          new Predicate("IS_NOT_NULL",
+            new CollatedPredicate("<",
+              new Column("c1"),
+              Literal.ofString("a"),
+              defaultCollationIdentifier
+            )
+          )
+        ),
+        AlwaysTrue.ALWAYS_TRUE
       )
     ).foreach {
       case(startingPredicate, resultingPredicate) =>
@@ -430,6 +512,92 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
                 === resultingPredicate.toString)
           }
       }
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - IS_NULL") {
+    Seq(
+      // (starting predicate, resulting predicate)
+      (
+        new Predicate("IS_NULL",
+          Literal.ofString("a")
+        ),
+        new Predicate("IS_NULL",
+          Literal.ofString("a")
+        )
+      ),
+      (
+        new Predicate("IS_NULL",
+          new Predicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+          )
+        ),
+        new Predicate("IS_NULL",
+          new Predicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+          )
+        )
+      ),
+      (
+        new Predicate("IS_NULL",
+          new CollatedPredicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+            defaultCollationIdentifier
+          )
+        ),
+        AlwaysTrue.ALWAYS_TRUE
+      )
+    ).foreach {
+      case(startingPredicate, resultingPredicate) =>
+        assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+          === resultingPredicate.toString)
+    }
+  }
+
+  test("omitCollatedPredicateFromDataSkippingFilter - IS_NOT_NULL") {
+    Seq(
+      // (starting predicate, resulting predicate)
+      (
+        new Predicate("IS_NOT_NULL",
+          Literal.ofString("a")
+        ),
+        new Predicate("IS_NOT_NULL",
+          Literal.ofString("a")
+        )
+      ),
+      (
+        new Predicate("IS_NOT_NULL",
+          new Predicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+          )
+        ),
+        new Predicate("IS_NOT_NULL",
+          new Predicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+          )
+        )
+      ),
+      (
+        new Predicate("IS_NOT_NULL",
+          new CollatedPredicate("<",
+            new Column("c1"),
+            Literal.ofString("a"),
+            defaultCollationIdentifier
+          )
+        ),
+        new Predicate("IS_NOT_NULL",
+          AlwaysTrue.ALWAYS_TRUE
+        )
+      )
+    ).foreach {
+      case(startingPredicate, resultingPredicate) =>
+        assert(omitCollatedPredicateFromDataSkippingFilter(startingPredicate).toString
+          === resultingPredicate.toString)
+    }
   }
 
   test("pruneStatsSchema - multiple basic cases one level of nesting") {

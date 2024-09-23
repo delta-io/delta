@@ -103,6 +103,7 @@ public class DataSkippingUtils {
     String predicateName = dataFilters.getName().toUpperCase(Locale.ROOT);
     if (isNotPropagated && NEGATED_PREDICATE.containsKey(predicateName)) {
       predicateName = NEGATED_PREDICATE.get(predicateName);
+      dataFilters = new Predicate(predicateName, dataFilters.getChildren());
     }
 
     switch (predicateName) {
