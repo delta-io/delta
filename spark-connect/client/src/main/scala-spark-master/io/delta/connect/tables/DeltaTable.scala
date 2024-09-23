@@ -25,7 +25,6 @@ import org.apache.spark.annotation.Evolving
 import org.apache.spark.sql.{functions, Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.AgnosticEncoders.PrimitiveBooleanEncoder
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
-import org.apache.spark.sql.internal.ColumnNodeToProtoConverter.toExpr
 
 /**
  * Main class for programmatically interacting with Delta tables.
@@ -138,7 +137,7 @@ class DeltaTable private[tables](
     val delete = proto.DeleteFromTable
       .newBuilder()
       .setTarget(df.plan.getRoot)
-    condition.foreach(c => delete.setCondition(toExpr(c)))
+    condition.foreach(c => delete.setCondition(c.expr))
     val relation = proto.DeltaRelation.newBuilder().setDeleteFromTable(delete).build()
     val extension = com.google.protobuf.Any.pack(relation)
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
@@ -189,15 +188,15 @@ class DeltaTable private[tables](
     val assignments = set.toSeq.map { case (field, value) =>
       proto.Assignment
         .newBuilder()
-        .setField(toExpr(functions.expr(field)))
-        .setValue(toExpr(value))
+        .setField(functions.expr(field).expr)
+        .setValue(value.expr)
         .build()
     }
     val update = proto.UpdateTable
       .newBuilder()
       .setTarget(df.plan.getRoot)
       .addAllAssignments(assignments.asJava)
-    condition.foreach(c => update.setCondition(toExpr(c)))
+    condition.foreach(c => update.setCondition(c.expr))
     val relation = proto.DeltaRelation.newBuilder().setUpdateTable(update).build()
     val extension = com.google.protobuf.Any.pack(relation)
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()

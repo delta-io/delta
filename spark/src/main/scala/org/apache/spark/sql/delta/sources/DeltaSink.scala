@@ -29,8 +29,6 @@ import org.apache.hadoop.fs.Path
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
-import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.catalyst.analysis.TableOutputResolver
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
@@ -207,7 +205,7 @@ case class DeltaSink(
         allowStructEvolution = canMergeSchema,
         columnName = columnName
       )
-      Column(Alias(castExpr, columnName)())
+      new Column(Alias(castExpr, columnName)())
     }
 
     data.queryExecution match {
