@@ -29,14 +29,7 @@ import io.delta.tables.{DeltaTable => OSSDeltaTable}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.DataFrameWriter
-import org.apache.spark.sql.Dataset
-import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Column, DataFrame, DataFrameWriter, Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
@@ -380,13 +373,7 @@ trait DeltaColumnMappingTestUtilsBase extends SharedSparkSession {
       deltaLog: DeltaLog): Seq[Column] = {
     val schema = deltaLog.update().schema
     columns.map { col =>
-      // Implicit `Column.expr` doesn't work due to ambiguity
-      // both method ColumnExprExt in object ColumnImplicitsShim of type
-      //   (column: org.apache.spark.sql.Column):
-      //   org.apache.spark.sql.ColumnImplicitsShim.ColumnExprExt
-      // and method toRichColumn in object testImplicits of type
-      //   (c: org.apache.spark.sql.Column): org.apache.spark.sql.SparkSession#RichColumn
-      val newExpr = expression(col).transform {
+      val newExpr = col.expr.transform {
         case a: Attribute =>
           convertColumnNameToAttributeWithPhysicalName(a.name, schema)
       }

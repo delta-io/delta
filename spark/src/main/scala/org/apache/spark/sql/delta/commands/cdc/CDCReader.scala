@@ -34,13 +34,7 @@ import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.Dataset
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, AttributeReference, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
