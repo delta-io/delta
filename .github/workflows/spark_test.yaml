@@ -9,11 +9,11 @@ jobs:
         # These Scala versions must match those in the build.sbt
         scala: [2.12.18, 2.13.13]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       # Important: This must be the same as the length of shards in matrix
-      NUM_SHARDS: 3
+      NUM_SHARDS: 4
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4
