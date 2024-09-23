@@ -208,7 +208,7 @@ public class DataSkippingUtils {
         if (!(child instanceof Predicate)) {
           return new Tuple2<>(dataFilters, false);
         }
-        Tuple2<Predicate, Boolean> childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, isNotPropagated);
+        Tuple2<Predicate, Boolean> childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, false);
         if (childResult._2) {
           return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
         } else {
@@ -219,7 +219,7 @@ public class DataSkippingUtils {
         if (!(child instanceof Predicate)) {
           return new Tuple2<>(dataFilters, false);
         }
-        childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, isNotPropagated);
+        childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, false);
         return new Tuple2<>(new Predicate(predicateName, childResult._1), childResult._2);
       case "NOT":
         Predicate childPredicate = asPredicate(getUnaryChild(dataFilters));
