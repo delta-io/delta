@@ -1143,7 +1143,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
   test("data skipping by data values with collated predicate") {
     def checkResults(predicate: Predicate, expNumFiles: Long): Unit = {
-      val snapshot = latestSnapshot(goldenTablePath("data_skipping_basic_stats_collated_data"))
+      val snapshot = latestSnapshot(goldenTablePath("data-skipping-basic-stats-collated-data"))
       val scanFiles = collectScanFileRows(
         snapshot.getScanBuilder(defaultEngine)
           .withFilter(defaultEngine, predicate)
@@ -1161,7 +1161,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         Literal.ofString("b"),
         defaultCollationIdentifier
       ),
-      2
+      3
     )
 
     checkResults(
@@ -1180,7 +1180,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         Literal.ofString("B"),
         defaultCollationIdentifier
       ),
-      2
+      3
     )
 
     checkResults(
@@ -1214,7 +1214,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           defaultCollationIdentifier
         )
       ),
-      2
+      3
     )
 
     checkResults(
@@ -1232,7 +1232,23 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           defaultCollationIdentifier
         )
       ),
-      2
+      3
+    )
+
+    checkResults(
+      new And(
+        new Predicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B")
+        ),
+        new Predicate(
+          "<",
+          new Column("c2"),
+          Literal.ofString("1")
+        )
+      ),
+      0
     )
 
     checkResults(
@@ -1244,12 +1260,25 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         ),
         new CollatedPredicate(
           "<",
+          new Column("c2"),
+          Literal.ofString("1"),
+          defaultCollationIdentifier
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new CollatedPredicate(
+          "<",
           new Column("c1"),
           Literal.ofString("B"),
           defaultCollationIdentifier
         )
       ),
-      2
+      3
     )
 
     checkResults(
@@ -1288,7 +1317,52 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           )
         )
       ),
-      2
+      3
+    )
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new Predicate("IS_NOT_NULL",
+          new And(
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            ),
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            )
+          )
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new Predicate("IS_NULL",
+          new And(
+            new Predicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B")
+            ),
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            )
+          )
+        )
+      ),
+      3
     )
 
     checkResults(
@@ -1300,7 +1374,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           defaultCollationIdentifier
         )
       ),
-      2
+      3
     )
 
     checkResults(
@@ -1320,7 +1394,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           )
         )
       ),
-      2
+      3
     )
 
     checkResults(
@@ -1332,7 +1406,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           defaultCollationIdentifier
         )
       ),
-      2
+      3
     )
 
     checkResults(
@@ -1351,7 +1425,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           )
         )
       ),
-      2
+      3
     )
   }
 
