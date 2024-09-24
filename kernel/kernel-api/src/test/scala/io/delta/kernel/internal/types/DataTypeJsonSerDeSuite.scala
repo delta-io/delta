@@ -31,7 +31,9 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
   private val objectMapper = new ObjectMapper()
 
   private def parse(json: String): DataType = {
-    DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json), "", new HashMap())
+    DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json),
+      "",
+      new FieldMetadata.Builder().build())
   }
 
   private def serialize(dataType: DataType): String = {
