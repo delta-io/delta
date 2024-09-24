@@ -15,17 +15,16 @@
  */
 package io.delta.kernel.types;
 
-import io.delta.kernel.annotation.Evolving;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.annotation.Evolving;
 import java.util.Objects;
 import java.util.Optional;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-
 /**
- * Identifies collation for string type.
- * <a href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md#collation-identifiers">
- *   Collation identifiers</a>
+ * Identifies collation for string type. <a
+ * href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md#collation-identifiers">
+ * Collation identifiers</a>
  *
  * @since 3.3.0
  */
@@ -50,33 +49,24 @@ public class CollationIdentifier {
     this.version = version.map(String::toUpperCase);
   }
 
-  /**
-   *
-   * @return collation provider.
-   */
+  /** @return collation provider. */
   public String getProvider() {
     return provider;
   }
 
-  /**
-   *
-   * @return collation name.
-   */
+  /** @return collation name. */
   public String getName() {
     return name;
   }
 
-  /**
-   *
-   * @return provider version.
-   */
+  /** @return provider version. */
   public Optional<String> getVersion() {
     return version;
   }
 
   /**
-   *
-   * @param identifier collation identifier in string form of <br>{@code PROVIDER.COLLATION_NAME[.PROVIDER_VERSION]}.
+   * @param identifier collation identifier in string form of <br>
+   *     {@code PROVIDER.COLLATION_NAME[.PROVIDER_VERSION]}.
    * @return appropriate collation identifier object
    */
   public static CollationIdentifier fromString(String identifier) {
@@ -91,9 +81,7 @@ public class CollationIdentifier {
     }
   }
 
-  /**
-   * Collation identifiers are identical when the provider, name, and version are the same.
-   */
+  /** Collation identifiers are identical when the provider, name, and version are the same. */
   @Override
   public boolean equals(Object o) {
     if (!(o instanceof CollationIdentifier)) {
@@ -102,22 +90,16 @@ public class CollationIdentifier {
 
     CollationIdentifier other = (CollationIdentifier) o;
     return this.provider.equals(other.provider)
-            && this.name.equals(other.name)
-            && this.version.equals(other.version);
+        && this.name.equals(other.name)
+        && this.version.equals(other.version);
   }
 
-  /**
-   *
-   * @return collation identifier in form of {@code PROVIDER.COLLATION_NAME}.
-   */
+  /** @return collation identifier in form of {@code PROVIDER.COLLATION_NAME}. */
   public String toStringWithoutVersion() {
     return String.format("%s.%s", provider, name);
   }
 
-  /**
-   *
-   * @return collation identifier in form of {@code PROVIDER.COLLATION_NAME[.PROVIDER_VERSION]}
-   */
+  /** @return collation identifier in form of {@code PROVIDER.COLLATION_NAME[.PROVIDER_VERSION]} */
   @Override
   public String toString() {
     if (version.isPresent()) {
