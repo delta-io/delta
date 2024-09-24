@@ -59,7 +59,7 @@ object SchemaUtils extends DeltaLogging {
    *                          defines whether we should recurse into ArrayType and MapType.
    */
   def filterRecursively(
-      schema: StructType,
+      schema: DataType,
       checkComplexTypes: Boolean)(f: StructField => Boolean): Seq[(Seq[String], StructField)] = {
     def recurseIntoComplexTypes(
         complexType: DataType,
@@ -699,7 +699,7 @@ def normalizeColumnNamesInDataType(
    */
   def findColumnPosition(
       column: Seq[String],
-      schema: StructType,
+      schema: DataType,
       resolver: Resolver = DELTA_COL_RESOLVER): Seq[Int] = {
     def findRecursively(
         searchPath: Seq[String],
@@ -803,7 +803,7 @@ def normalizeColumnNamesInDataType(
    * @param position A list of ordinals (0-based) representing the path to the nested field in
    *                 `parent`.
    */
-  def getNestedTypeFromPosition(schema: StructType, position: Seq[Int]): DataType =
+  def getNestedTypeFromPosition(schema: DataType, position: Seq[Int]): DataType =
     getNestedFieldFromPosition(StructField("schema", schema), position).dataType
 
   /**
@@ -814,7 +814,34 @@ def normalizeColumnNamesInDataType(
   }
 
   /**
-   * Add `column` to the specified `position` in `schema`.
+   * Add a column to its child.
+   * @param parent The parent data type.
+   * @param column The column to add.
+   * @param position The position to add the column.
+   */
+  def addColumn[T <: DataType](parent: T, column: StructField, position: Seq[Int]): T = {
+    if (position.isEmpty) {
+      throw DeltaErrors.addColumnParentNotStructException(column, parent)
+    }
+    parent match {
+      case struct: StructType =>
+        addColumnToStruct(struct, column, position).asInstanceOf[T]
+      case map: MapType if position.head == MAP_KEY_INDEX =>
+        map.copy(keyType = addColumn(map.keyType, column, position.tail)).asInstanceOf[T]
+      case map: MapType if position.head == MAP_VALUE_INDEX =>
+        map.copy(valueType = addColumn(map.valueType, column, position.tail)).asInstanceOf[T]
+      case array: ArrayType if position.head == ARRAY_ELEMENT_INDEX =>
+        array.copy(elementType =
+          addColumn(array.elementType, column, position.tail)).asInstanceOf[T]
+      case _: ArrayType =>
+        throw DeltaErrors.incorrectArrayAccess()
+      case other =>
+        throw DeltaErrors.addColumnParentNotStructException(column, other)
+    }
+  }
+
+  /**
+   * Add `column` to the specified `position` in a struct `schema`.
    * @param position A Seq of ordinals on where this column should go. It is a Seq to denote
    *                 positions in nested columns (0-based). For example:
    *
@@ -824,26 +851,10 @@ def normalizeColumnNamesInDataType(
    *                 will return
    *                 result: <a:STRUCT<a1,a2,a3>, b,c:STRUCT<c1,**c2**,c3>>
    */
-  def addColumn(schema: StructType, column: StructField, position: Seq[Int]): StructType = {
-    def addColumnInChild(parent: DataType, column: StructField, position: Seq[Int]): DataType = {
-      if (position.isEmpty) {
-          throw DeltaErrors.addColumnParentNotStructException(column, parent)
-      }
-      parent match {
-        case struct: StructType =>
-          addColumn(struct, column, position)
-        case map: MapType if position.head == MAP_KEY_INDEX =>
-          map.copy(keyType = addColumnInChild(map.keyType, column, position.tail))
-        case map: MapType if position.head == MAP_VALUE_INDEX =>
-          map.copy(valueType = addColumnInChild(map.valueType, column, position.tail))
-        case array: ArrayType if position.head == ARRAY_ELEMENT_INDEX =>
-          array.copy(elementType = addColumnInChild(array.elementType, column, position.tail))
-        case _: ArrayType =>
-          throw DeltaErrors.incorrectArrayAccess()
-        case other =>
-          throw DeltaErrors.addColumnParentNotStructException(column, other)
-      }
-    }
+  private def addColumnToStruct(
+      schema: StructType,
+      column: StructField,
+      position: Seq[Int]): StructType = {
     // If the proposed new column includes a default value, return a specific "not supported" error.
     // The rationale is that such operations require the data source scan operator to implement
     // support for filling in the specified default value when the corresponding field is not
@@ -877,10 +888,39 @@ def normalizeColumnNamesInDataType(
       if (!column.nullable && field.nullable) {
         throw DeltaErrors.nullableParentWithNotNullNestedField
       }
-      val mid = field.copy(dataType = addColumnInChild(field.dataType, column, position.tail))
+      val mid = field.copy(dataType = addColumn(field.dataType, column, position.tail))
       StructType(pre ++ Seq(mid) ++ post.tail)
     } else {
       StructType(pre ++ Seq(column) ++ post)
+    }
+  }
+
+  /**
+   * Drop a column from its child.
+   * @param parent The parent data type.
+   * @param position The position to drop the column.
+   */
+  def dropColumn[T <: DataType](parent: T, position: Seq[Int]): (T, StructField) = {
+    if (position.isEmpty) {
+      throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(parent)
+    }
+    parent match {
+      case struct: StructType =>
+        val (t, s) = dropColumnInStruct(struct, position)
+        (t.asInstanceOf[T], s)
+      case map: MapType if position.head == MAP_KEY_INDEX =>
+        val (newKeyType, droppedColumn) = dropColumn(map.keyType, position.tail)
+        map.copy(keyType = newKeyType).asInstanceOf[T] -> droppedColumn
+      case map: MapType if position.head == MAP_VALUE_INDEX =>
+        val (newValueType, droppedColumn) = dropColumn(map.valueType, position.tail)
+        map.copy(valueType = newValueType).asInstanceOf[T] -> droppedColumn
+      case array: ArrayType if position.head == ARRAY_ELEMENT_INDEX =>
+        val (newElementType, droppedColumn) = dropColumn(array.elementType, position.tail)
+        array.copy(elementType = newElementType).asInstanceOf[T] -> droppedColumn
+      case _: ArrayType =>
+        throw DeltaErrors.incorrectArrayAccess()
+      case other =>
+        throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(other)
     }
   }
 
@@ -894,30 +934,9 @@ def normalizeColumnNamesInDataType(
    *                 will return
    *                 result: <a:STRUCT<a1,a2,a3>, b,c:STRUCT<c1,c3>>
    */
-  def dropColumn(schema: StructType, position: Seq[Int]): (StructType, StructField) = {
-    def dropColumnInChild(parent: DataType, position: Seq[Int]): (DataType, StructField) = {
-      if (position.isEmpty) {
-          throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(parent)
-      }
-      parent match {
-        case struct: StructType =>
-          dropColumn(struct, position)
-        case map: MapType if position.head == MAP_KEY_INDEX =>
-          val (newKeyType, droppedColumn) = dropColumnInChild(map.keyType, position.tail)
-          map.copy(keyType = newKeyType) -> droppedColumn
-        case map: MapType if position.head == MAP_VALUE_INDEX =>
-          val (newValueType, droppedColumn) = dropColumnInChild(map.valueType, position.tail)
-          map.copy(valueType = newValueType) -> droppedColumn
-        case array: ArrayType if position.head == ARRAY_ELEMENT_INDEX =>
-          val (newElementType, droppedColumn) = dropColumnInChild(array.elementType, position.tail)
-          array.copy(elementType = newElementType) -> droppedColumn
-        case _: ArrayType =>
-          throw DeltaErrors.incorrectArrayAccess()
-        case other =>
-          throw DeltaErrors.dropNestedColumnsFromNonStructTypeException(other)
-      }
-    }
-
+  private def dropColumnInStruct(
+      schema: StructType,
+      position: Seq[Int]): (StructType, StructField) = {
     require(position.nonEmpty, "Don't know where to drop the column")
     val slicePosition = position.head
     if (slicePosition < 0) {
@@ -930,7 +949,7 @@ def normalizeColumnNamesInDataType(
     val (pre, post) = schema.splitAt(slicePosition)
     val field = post.head
     if (position.length > 1) {
-      val (newType, droppedColumn) = dropColumnInChild(field.dataType, position.tail)
+      val (newType, droppedColumn) = dropColumn(field.dataType, position.tail)
       val mid = field.copy(dataType = newType)
 
       StructType(pre ++ Seq(mid) ++ post.tail) -> droppedColumn
