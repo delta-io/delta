@@ -1720,4 +1720,36 @@ class CoordinatedCommitsSuite
       }
     }
   }
+
+  test("CREATE LIKE does not copy Coordinated Commits configurations from the source table.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    val source = "sourcetable"
+    val target = "targettable"
+    sql(s"CREATE TABLE $source (id LONG) USING delta TBLPROPERTIES" +
+      s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+      s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+    sql(s"CREATE TABLE $target LIKE $source")
+    assert(DeltaLog.forTable(spark, target).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+  }
+
+  test("CREATE an external table in a location with an existing table works correctly.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    // When the existing table has a commit coordinator, omitting CC configurations in the command
+    // should not throw an exception, and the commit coordinator should be retained, so should ICT.
+    withTempDir { dir =>
+      val tableName = "testtable"
+      val tablePath = dir.getAbsolutePath
+      sql(s"CREATE TABLE delta.`${dir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('foo' = 'bar', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      sql(s"CREATE TABLE $tableName (id LONG) USING delta TBLPROPERTIES " +
+        s"('foo' = 'bar') LOCATION '${dir.getAbsolutePath}'")
+      assert(DeltaLog.forTable(spark, tablePath).snapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+      assert(DeltaLog.forTable(spark, tablePath).snapshot.metadata.configuration.contains(
+        IN_COMMIT_TIMESTAMPS_ENABLED.key))
+    }
+  }
 }

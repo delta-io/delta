@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.coordinatedcommits
 import java.util.Optional
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
@@ -326,6 +327,9 @@ trait CoordinatedCommitsBaseSuite
 
   final def coordinatedCommitsEnabledInTests: Boolean = coordinatedCommitsBackfillBatchSize.nonEmpty
 
+  // Keeps track of the number of table names pointing to the location.
+  protected val locRefCount: mutable.Map[String, Int] = mutable.Map.empty
+
   // In case some tests reuse the table path/name with DROP table, this method can be used to
   // clean the table data in the commit coordinator. Note that we should call this before
   // the table actually gets DROP.
@@ -338,18 +342,28 @@ trait CoordinatedCommitsBaseSuite
     val location = try {
       spark.sql(s"describe detail $tableName")
         .select("location")
-        .first
+        .first()
         .getAs[String](0)
     } catch {
       case NonFatal(_) =>
         // Ignore if the table does not exist/broken.
         return
     }
-    val logPath = location + "/_delta_log"
-    cc.asInstanceOf[TrackingCommitCoordinatorClient]
-      .delegatingCommitCoordinatorClient
-      .asInstanceOf[InMemoryCommitCoordinator]
-      .dropTable(new Path(logPath))
+    val locKey = location.stripPrefix("file:")
+    if (locRefCount.contains(locKey)) {
+      locRefCount(locKey) -= 1
+    }
+    // When we create an external table in a location where some table already existed, two table
+    // names could be pointing to the same location. We should only clean up the table data in the
+    // commit coordinator when the last table name pointing to the location is dropped.
+    if (locRefCount.getOrElse(locKey, 0) == 0) {
+      val logPath = location + "/_delta_log"
+      cc.asInstanceOf[TrackingCommitCoordinatorClient]
+        .delegatingCommitCoordinatorClient
+        .asInstanceOf[InMemoryCommitCoordinator]
+        .dropTable(new Path(logPath))
+    }
+    DeltaLog.clearCache()
   }
 
   override protected def sparkConf: SparkConf = {

@@ -221,6 +221,7 @@ trait ClusteredTableTestUtilsBase
     }
     spark.sql(s"$clause TABLE $table ($schema) USING delta CLUSTER BY ($clusterBy) " +
       s"$tablePropertiesClause $locationClause")
+    location.foreach { loc => locRefCount(loc) = locRefCount.getOrElse(loc, 0) + 1 }
   }
 
   protected def createOrReplaceAsSelectClusteredTable(
