@@ -92,8 +92,8 @@ public class DataTypeJsonSerDe {
       DataType parsedType =
           parseDataType(
               OBJECT_MAPPER.reader().readTree(structTypeJson),
-                  "" /* fieldPath */,
-                  new FieldMetadata.Builder().build() /* collationsMetadata */);
+              "" /* fieldPath */,
+              new FieldMetadata.Builder().build() /* collationsMetadata */);
       if (parsedType instanceof StructType) {
         return (StructType) parsedType;
       } else {
@@ -160,20 +160,18 @@ public class DataTypeJsonSerDe {
    * }
    * </pre>
    *
-   * @param fieldPath Path from the nearest ancestor that is of the {@link StructField} type.
-   *                  For example, "c1.key.element" represents a path starting from the {@link StructField} named "c1."
-   *                  The next element, "key," indicates that "c1" stores a {@link MapType} type. The final element, "element",
-   *                  shows that the key of the map is an {@link ArrayType} type.
+   * @param fieldPath Path from the nearest ancestor that is of the {@link StructField} type. For
+   *     example, "c1.key.element" represents a path starting from the {@link StructField} named
+   *     "c1." The next element, "key," indicates that "c1" stores a {@link MapType} type. The final
+   *     element, "element", shows that the key of the map is an {@link ArrayType} type.
    * @param collationsMetadata Metadata that maps the path of a {@link StringType} to its collation.
-   *                           Only maps non-UTF8_BINARY collated {@link StringType}.
-   *                           Collation metadata is stored in the nearest ancestor, which is the StructField.
-   *                           This is because StructField includes a metadata field, whereas Map and Array do not,
-   *                           making them unable to store this information.
-   *                           Paths are in same form as `fieldPath`.
-   *                           <a href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md#collation-identifiers">Docs</a>
+   *     Only maps non-UTF8_BINARY collated {@link StringType}. Collation metadata is stored in the
+   *     nearest ancestor, which is the StructField. This is because StructField includes a metadata
+   *     field, whereas Map and Array do not, making them unable to store this information. Paths
+   *     are in same form as `fieldPath`. <a
+   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md#collation-identifiers">Docs</a>
    */
-  static DataType parseDataType(
-      JsonNode json, String fieldPath, FieldMetadata collationsMetadata) {
+  static DataType parseDataType(JsonNode json, String fieldPath, FieldMetadata collationsMetadata) {
     switch (json.getNodeType()) {
       case STRING:
         // simple types are stored as just a string
@@ -211,7 +209,8 @@ public class DataTypeJsonSerDe {
         String.format("Expected JSON object with 3 fields for array data type but got:\n%s", json));
     boolean containsNull = getBooleanField(json, "containsNull");
     DataType dataType =
-        parseDataType(getNonNullField(json, "elementType"), fieldPath + ".element", collationsMetadata);
+        parseDataType(
+            getNonNullField(json, "elementType"), fieldPath + ".element", collationsMetadata);
     return new ArrayType(dataType, containsNull);
   }
 
@@ -262,7 +261,8 @@ public class DataTypeJsonSerDe {
     String name = getStringField(json, "name");
     FieldMetadata metadata = parseFieldMetadata(json.get("metadata"), false);
     DataType type =
-        parseDataType(getNonNullField(json, "type"), name, getCollationsMetadata(json.get("metadata")));
+        parseDataType(
+            getNonNullField(json, "type"), name, getCollationsMetadata(json.get("metadata")));
     boolean nullable = getBooleanField(json, "nullable");
     return new StructField(name, type, nullable, metadata);
   }
@@ -276,7 +276,8 @@ public class DataTypeJsonSerDe {
    * Parses a {@link FieldMetadata}, optionally including collation metadata, depending on
    * `includecollationsMetadata`.
    */
-  private static FieldMetadata parseFieldMetadata(JsonNode json, boolean includecollationsMetadata) {
+  private static FieldMetadata parseFieldMetadata(
+      JsonNode json, boolean includecollationsMetadata) {
     if (json == null || json.isNull()) {
       return FieldMetadata.empty();
     }
@@ -411,13 +412,12 @@ public class DataTypeJsonSerDe {
   private static void assertValidTypeForCollations(
       String fieldPath, String fieldType, FieldMetadata collationsMetadata) {
     if (collationsMetadata.contains(fieldPath) && !fieldType.equals("string")) {
-      throw new IllegalArgumentException(String.format("Invalid data type for collations: \"%s\"", fieldType));
+      throw new IllegalArgumentException(
+          String.format("Invalid data type for collations: \"%s\"", fieldType));
     }
   }
 
-  /**
-   * Returns a metadata with a map of field path to collation name.
-   */
+  /** Returns a metadata with a map of field path to collation name. */
   private static FieldMetadata getCollationsMetadata(JsonNode fieldMetadata) {
     if (fieldMetadata == null || !fieldMetadata.has(DataType.COLLATIONS_METADATA_KEY)) {
       return new FieldMetadata.Builder().build();
