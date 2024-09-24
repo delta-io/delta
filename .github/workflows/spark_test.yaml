@@ -65,7 +65,7 @@ jobs:
           # `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
           # the`version.sbt` file.
           pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
-          pipenv run pip install pyspark==3.5.2
+          pipenv run pip install pyspark==3.5.3
           pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
           pipenv run pip install black==23.9.1
           pipenv run pip install importlib_metadata==3.10.0

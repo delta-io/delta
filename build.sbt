@@ -52,7 +52,7 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.2"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
