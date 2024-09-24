@@ -19,6 +19,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class StringTypeSuite extends AnyFunSuite {
   test("check equals") {
+    // Testcase: (instance1, instance2, expected value for `instance1 == instance2`)
     Seq(
       (
         StringType.STRING,
