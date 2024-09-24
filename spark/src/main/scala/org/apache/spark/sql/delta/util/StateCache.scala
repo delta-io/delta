@@ -40,6 +40,7 @@ trait StateCache extends DeltaLogging {
   private var _isCached = true
   /** A list of RDDs that we need to uncache when we are done with this snapshot. */
   private val cached = ArrayBuffer[RDD[_]]()
+  private val cached_refs = ArrayBuffer[DatasetRefCache[_]]()
 
   /** Method to expose the value of _isCached for testing. */
   private[delta] def isCached: Boolean = _isCached
@@ -47,7 +48,7 @@ trait StateCache extends DeltaLogging {
   private val storageLevel = StorageLevel.fromString(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL))
 
-  class CachedDS[A](ds: Dataset[A], name: String) {
+  class CachedDS[A] private[StateCache](ds: Dataset[A], name: String) {
     // While we cache RDD to avoid re-computation in different spark sessions, `Dataset` can only be
     // reused by the session that created it to avoid session pollution. So we use `DatasetRefCache`
     // to re-create a new `Dataset` when the active session is changed. This is an optimization for
@@ -64,10 +65,10 @@ trait StateCache extends DeltaLogging {
           rdd.persist(storageLevel)
         }
         cached += rdd
-        val dsCache = new DatasetRefCache(() => {
+        val dsCache = datasetRefCache { () =>
           val logicalRdd = LogicalRDD(qe.analyzed.output, rdd)(spark)
           Dataset.ofRows(spark, logicalRdd)
-        })
+        }
         Some(dsCache)
       } else {
         None
@@ -110,11 +111,18 @@ trait StateCache extends DeltaLogging {
     new CachedDS[A](ds, name)
   }
 
+  def datasetRefCache[A](creator: () => Dataset[A]): DatasetRefCache[A] = {
+    val dsCache = new DatasetRefCache(creator)
+    cached_refs += dsCache
+    dsCache
+  }
+
   /** Drop any cached data for this [[Snapshot]]. */
   def uncache(): Unit = cached.synchronized {
     if (isCached) {
       _isCached = false
       cached.foreach(_.unpersist(blocking = false))
+      cached_refs.foreach(_.invalidate())
     }
   }
 }

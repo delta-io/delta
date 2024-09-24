@@ -152,8 +152,19 @@ class DeltaCatalog extends DelegatingCatalogExtension
       .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
     val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
       .copy(locationUri = Option(loc))
-    val tableType =
-      if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
+    // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
+    // system-generated. The table should be created as managed table in this case.
+    val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
+      .exists(_.equalsIgnoreCase("true"))
+    // Note: Spark generates the table location for managed tables in
+    // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
+    // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
+    val respectManagedLoc = isUnityCatalog || org.apache.spark.util.Utils.isTesting
+    val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
+      CatalogTableType.MANAGED
+    } else {
+      CatalogTableType.EXTERNAL
+    }
     val commentOpt = Option(allTableProperties.get("comment"))
 
 
@@ -336,12 +347,24 @@ class DeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]) : Table =
     recordFrameProfile("DeltaCatalog", "createTable") {
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+        // TODO: we should extract write options from table properties for all the cases. We
+        //       can remove the UC check when we have confidence.
+        val respectOptions = isUnityCatalog || properties.containsKey("test.simulateUC")
+        val (props, writeOptions) = if (respectOptions) {
+          val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
+          expandTableProps(props, writeOptions, spark.sessionState.conf)
+          props.remove("test.simulateUC")
+          (props, writeOptions)
+        } else {
+          (properties, Map.empty[String, String])
+        }
+
         createDeltaTable(
           ident,
           schema,
           partitions,
-          properties,
-          Map.empty,
+          props,
+          writeOptions,
           sourceQuery = None,
           TableCreationModes.Create
         )
@@ -512,6 +535,44 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
+  private def getTablePropsAndWriteOptions(properties: util.Map[String, String])
+  : (util.Map[String, String], Map[String, String]) = {
+    val props = new util.HashMap[String, String]()
+    // Options passed in through the SQL API will show up both with an "option." prefix and
+    // without in Spark 3.1, so we need to remove those from the properties
+    val optionsThroughProperties = properties.asScala.collect {
+      case (k, _) if k.startsWith(TableCatalog.OPTION_PREFIX) =>
+        k.stripPrefix(TableCatalog.OPTION_PREFIX)
+    }.toSet
+    val writeOptions = new util.HashMap[String, String]()
+    properties.asScala.foreach { case (k, v) =>
+      if (!k.startsWith(TableCatalog.OPTION_PREFIX) && !optionsThroughProperties.contains(k)) {
+        // Add to properties
+        props.put(k, v)
+      } else if (optionsThroughProperties.contains(k)) {
+        writeOptions.put(k, v)
+      }
+    }
+    (props, writeOptions.asScala.toMap)
+  }
+
+  private def expandTableProps(
+      props: util.Map[String, String],
+      options: Map[String, String],
+      conf: SQLConf): Unit = {
+    if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
+      // Legacy behavior
+      options.foreach { case (k, v) => props.put(k, v) }
+    } else {
+      options.foreach { case (k, v) =>
+        // Continue putting in Delta prefixed options to avoid breaking workloads
+        if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
+          props.put(k, v)
+        }
+      }
+    }
+  }
+
   /**
    * A staged delta table, which creates a HiveMetaStore entry and appends data if this was a
    * CTAS/RTAS command. We have a ugly way of using this API right now, but it's the best way to
@@ -533,35 +594,11 @@ class DeltaCatalog extends DelegatingCatalogExtension
     override def commitStagedChanges(): Unit = recordFrameProfile(
         "DeltaCatalog", "commitStagedChanges") {
       val conf = spark.sessionState.conf
-      val props = new util.HashMap[String, String]()
-      // Options passed in through the SQL API will show up both with an "option." prefix and
-      // without in Spark 3.1, so we need to remove those from the properties
-      val optionsThroughProperties = properties.asScala.collect {
-        case (k, _) if k.startsWith("option.") => k.stripPrefix("option.")
-      }.toSet
-      val sqlWriteOptions = new util.HashMap[String, String]()
-      properties.asScala.foreach { case (k, v) =>
-        if (!k.startsWith("option.") && !optionsThroughProperties.contains(k)) {
-          // Do not add to properties
-          props.put(k, v)
-        } else if (optionsThroughProperties.contains(k)) {
-          sqlWriteOptions.put(k, v)
-        }
+      val (props, sqlWriteOptions) = getTablePropsAndWriteOptions(properties)
+      if (writeOptions.isEmpty && sqlWriteOptions.nonEmpty) {
+        writeOptions = sqlWriteOptions
       }
-      if (writeOptions.isEmpty && !sqlWriteOptions.isEmpty) {
-        writeOptions = sqlWriteOptions.asScala.toMap
-      }
-      if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
-        // Legacy behavior
-        writeOptions.foreach { case (k, v) => props.put(k, v) }
-      } else {
-        writeOptions.foreach { case (k, v) =>
-          // Continue putting in Delta prefixed options to avoid breaking workloads
-          if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
-            props.put(k, v)
-          }
-        }
-      }
+      expandTableProps(props, writeOptions, conf)
       createDeltaTable(
         ident,
         schema,

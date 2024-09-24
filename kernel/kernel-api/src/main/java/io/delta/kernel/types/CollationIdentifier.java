@@ -35,19 +35,14 @@ public class CollationIdentifier {
   private final String name;
   private final Optional<String> version;
 
-  public CollationIdentifier(String provider, String collationName) {
-    Objects.requireNonNull(provider, "Collation provider cannot be null.");
-    Objects.requireNonNull(collationName, "Collation name cannot be null.");
-
-    this.provider = provider.toUpperCase();
-    this.name = collationName.toUpperCase();
-    this.version = Optional.empty();
+  private CollationIdentifier(String provider, String collationName) {
+    this(provider, collationName, Optional.empty());
   }
 
-  public CollationIdentifier(String provider, String collationName, Optional<String> version) {
+  private CollationIdentifier(String provider, String collationName, Optional<String> version) {
     Objects.requireNonNull(provider, "Collation provider cannot be null.");
     Objects.requireNonNull(collationName, "Collation name cannot be null.");
-    Objects.requireNonNull(version, "Provider version cannot be null.");
+    Objects.requireNonNull(version, "Collation version cannot be null.");
 
     this.provider = provider.toUpperCase();
     this.name = collationName.toUpperCase();
@@ -64,14 +59,14 @@ public class CollationIdentifier {
     return name;
   }
 
-  /** @return provider version. */
+  /** @return collation version. */
   public Optional<String> getVersion() {
     return version;
   }
 
   /**
    * @param identifier collation identifier in string form of <br>
-   *     {@code PROVIDER.COLLATION_NAME[.PROVIDER_VERSION]}.
+   *     {@code PROVIDER.COLLATION_NAME[.COLLATION_VERSION]}.
    * @return appropriate collation identifier object
    */
   public static CollationIdentifier fromString(String identifier) {
@@ -104,7 +99,7 @@ public class CollationIdentifier {
     return String.format("%s.%s", provider, name);
   }
 
-  /** @return collation identifier in form of {@code PROVIDER.COLLATION_NAME[.PROVIDER_VERSION]} */
+  /** @return collation identifier in form of {@code PROVIDER.COLLATION_NAME[.COLLATION_VERSION]} */
   @Override
   public String toString() {
     if (version.isPresent()) {

@@ -33,11 +33,23 @@ public class CoordinatedCommitsUtils {
     private CoordinatedCommitsUtils() {}
 
     /** The subdirectory in which to store the unbackfilled commit files. */
-    final static String COMMIT_SUBDIR = "_commits";
+    private static final String COMMIT_SUBDIR = "_commits";
 
-    /** The configuration key for the coordinated commits owner. */
-    private static final String COORDINATED_COMMITS_COORDINATOR_CONF_KEY =
+    /** The configuration key for the coordinated commits owner name. */
+    private static final String COORDINATED_COMMITS_COORDINATOR_NAME_KEY =
             "delta.coordinatedCommits.commitCoordinator-preview";
+
+    /**
+     * Creates a new unbackfilled delta file path for the given commit version.
+     * The path is of the form `tablePath/_delta_log/_commits/00000000000000000001.uuid.json`.
+     */
+    public static Path generateUnbackfilledDeltaFilePath(
+            Path logPath,
+            long version) {
+        String uuid = UUID.randomUUID().toString();
+        Path basePath = new Path(logPath, COMMIT_SUBDIR);
+        return new Path(basePath, String.format("%020d.%s.json", version, uuid));
+    }
 
     /**
      * Returns the path to the backfilled delta file for the given commit version.
@@ -56,9 +68,9 @@ public class CoordinatedCommitsUtils {
             Long commitVersion,
             UpdatedActions updatedActions) {
         boolean oldMetadataHasCoordinatedCommits =
-                !getCoordinator(updatedActions.getOldMetadata()).isEmpty();
+                getCoordinatorName(updatedActions.getOldMetadata()).isPresent();
         boolean newMetadataHasCoordinatedCommits =
-                !getCoordinator(updatedActions.getNewMetadata()).isEmpty();
+                getCoordinatorName(updatedActions.getNewMetadata()).isPresent();
         return oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits && commitVersion > 0;
     }
 
@@ -108,10 +120,17 @@ public class CoordinatedCommitsUtils {
         return new Path(logPath, COMMIT_SUBDIR);
     }
 
-    private static String getCoordinator(AbstractMetadata metadata) {
+    /**
+     * Retrieves the coordinator name from the provided abstract metadata.
+     * If no coordinator is set, an empty optional is returned.
+     *
+     * @param metadata The abstract metadata from which to retrieve the coordinator name.
+     * @return The coordinator name if set, otherwise an empty optional.
+     */
+    public static Optional<String> getCoordinatorName(AbstractMetadata metadata) {
         String coordinator = metadata
                 .getConfiguration()
-                .get(COORDINATED_COMMITS_COORDINATOR_CONF_KEY);
-        return coordinator != null ? coordinator : "";
+                .get(COORDINATED_COMMITS_COORDINATOR_NAME_KEY);
+        return Optional.ofNullable(coordinator);
     }
 }

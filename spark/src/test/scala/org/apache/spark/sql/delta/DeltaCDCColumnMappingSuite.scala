@@ -539,7 +539,8 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
     "add column batch cdc read not blocked",
     "data type and nullability change batch cdc read blocked",
     "drop column batch cdc read blocked",
-    "rename column batch cdc read blocked"
+    "rename column batch cdc read blocked",
+    "filters with special characters in name should be pushed down"
   )
 
   protected def assertBlocked(
@@ -618,7 +619,7 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
       }
       // upgrade to name mode
       val protocol = deltaLog.snapshot.protocol
-      val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+      val (r, w) = if (protocol.supportsTableFeatures) {
         (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
       } else {
@@ -648,6 +649,28 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
         StartingVersion("0"),
         EndingVersion(deltaLog.update().version.toString)).dropCDCFields,
       (0 until 10).map(_.toString).toDF("id").withColumn("value", col("id")))
+  }
+
+  test("filters with special characters in name should be pushed down") {
+    val tblName = "tbl"
+    withTable(tblName) {
+      spark.range(end = 10).withColumn("id with space", col("id"))
+          .write.format("delta").saveAsTable(tblName)
+
+      val plans = DeltaTestUtils.withAllPlansCaptured(spark) {
+        val res = cdcRead(new TableName(tblName), StartingVersion("0"), EndingVersion("1"))
+          .select("id with space", "_change_type")
+          .where(col("id with space") < lit(5))
+
+        assert(res.columns === Seq("id with space", "_change_type"))
+        checkAnswer(
+          res,
+          spark.range(end = 5)
+            .withColumn("_change_type", lit("insert")))
+      }
+      assert(plans.map(_.executedPlan).toString
+        .contains("PushedFilters: [*IsNotNull(id with space), *LessThan(id with space,5)]"))
+    }
   }
 }
 

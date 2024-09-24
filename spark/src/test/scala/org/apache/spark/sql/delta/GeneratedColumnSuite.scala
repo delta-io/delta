@@ -21,6 +21,7 @@ import java.io.PrintWriter
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
@@ -718,12 +719,12 @@ trait GeneratedColumnSuiteBase
       assert(tableSchema == spark.table(table).schema)
       // Insert a LONG to `c1` should fail rather than changing the `c1` type to LONG.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "c1",
           "columnType" -> "INT",
@@ -753,14 +754,14 @@ trait GeneratedColumnSuiteBase
 
       // Insert an INT to `a` should fail rather than changing the `a` type to INT
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           Seq((32767, 32767)).toDF("a", "c1a")
             .selectExpr("a", "named_struct('a', c1a) as c1")
             .write.format("delta").mode("append")
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a",
           "columnType" -> "SMALLINT",
@@ -787,25 +788,17 @@ trait GeneratedColumnSuiteBase
 
   test("changing the type of nested field not referenced by a generated col") {
     withTableName("disallow_column_type_evolution") { table =>
-      createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen SMALLINT",
-        Map("gen" -> "CAST(HASH(t.a - 10s) AS SMALLINT)"), Nil)
+      createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen INT",
+        Map("gen" -> "HASH(t.a)"), Nil)
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          Seq((32767.toShort, 32767)).toDF("a", "b")
-            .selectExpr("named_struct('a', a, 'b', b) as t")
-            .write.format("delta").mode("append")
-            .option("mergeSchema", "true")
-            .saveAsTable(table)
-        },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-        parameters = Map(
-          "columnName" -> "t",
-          "columnType" -> "STRUCT<a: SMALLINT, b: SMALLINT>",
-          "dataType" -> "STRUCT<a: SMALLINT, b: INT>",
-          "generatedColumns" -> "gen -> CAST(HASH(t.a - 10s) AS SMALLINT)"
-        )
-      )
+      // changing the type of `t.b` should succeed since it is not being
+      // referenced by any CHECK constraints or generated columns.
+      Seq((32767.toShort, 32767)).toDF("a", "b")
+        .selectExpr("named_struct('a', a, 'b', b) as t")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+      checkAnswer(spark.table(table), Row(Row(32767, 32767), 1249274084) :: Nil)
     }
   }
 
@@ -1006,28 +999,25 @@ trait GeneratedColumnSuiteBase
 
   test("using generated columns should upgrade the protocol") {
     withTableName("upgrade_protocol") { table =>
-      def protocolVersions: (Int, Int) = {
-        sql(s"DESC DETAIL $table")
-          .select("minReaderVersion", "minWriterVersion")
-          .as[(Int, Int)]
-          .head()
-      }
-
-      // Use the default protocol versions when not using computed partitions
+      // Use the default protocol versions when not using computed partitions.
       createTable(table, None, "i INT", Map.empty, Seq.empty)
-      assert(protocolVersions == (1, 2))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = table))
+      assert(deltaLog.update().protocol == Protocol(1, 2))
       assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).snapshot.version == 0)
 
-      // Protocol versions should be upgraded when using computed partitions
+      // Protocol versions should be upgraded when using computed partitions.
       replaceTable(
         table,
         None,
         defaultTestTableSchema,
         defaultTestTableGeneratedColumns,
         defaultTestTablePartitionColumns)
-      assert(protocolVersions == (1, 4))
+      assert(deltaLog.update().protocol == Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        GeneratedColumnsTableFeature)))
       // Make sure we did overwrite the table rather than deleting and re-creating.
-      assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).snapshot.version == 1)
+      assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).update().version == 1)
     }
   }
 

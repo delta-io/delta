@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata => MetadataAction, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
@@ -482,12 +483,13 @@ class DeltaColumnMappingSuite extends QueryTest
       expectedSchema: StructType,
       ignorePhysicalName: Boolean,
       mode: String,
-      createNewTable: Boolean = true)(fn: => Unit): Unit = {
+      createNewTable: Boolean = true,
+      tableFeaturesProtocolExpected: Boolean = true)(fn: => Unit): Unit = {
     withTable(tableName) {
         fn
       checkProperties(tableName,
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = if (tableFeaturesProtocolExpected) 7 else 5,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(expectedSchema)
       )
@@ -826,7 +828,7 @@ class DeltaColumnMappingSuite extends QueryTest
       checkSchema("t1", schemaWithId)
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(schemaWithId)
       )
@@ -849,7 +851,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(schemaWithIdNested))
       checkSchema(
@@ -871,7 +873,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
 
@@ -886,7 +888,7 @@ class DeltaColumnMappingSuite extends QueryTest
       )
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1",
@@ -938,7 +940,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
       checkSchema("t1",
@@ -960,7 +962,7 @@ class DeltaColumnMappingSuite extends QueryTest
       )
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1",
@@ -998,7 +1000,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
       checkSchema("t1", schemaWithId)
@@ -1013,7 +1015,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
 
@@ -1037,7 +1039,7 @@ class DeltaColumnMappingSuite extends QueryTest
       val curMaxId2 = DeltaColumnMapping.findMaxColumnId(schemaWithId) + 1
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1", schemaWithId.add("c", StringType, true, withId(3)))
@@ -1627,7 +1629,8 @@ class DeltaColumnMappingSuite extends QueryTest
       schemaWithDottedColumnNames,
       false,
       "name",
-      createNewTable = false
+      createNewTable = false,
+      tableFeaturesProtocolExpected = false
     ) {
       sql(s"CREATE TABLE t1 (${schemaWithDottedColumnNames.toDDL}) USING DELTA")
       alterTableWithProps("t1", props = Map(
@@ -1942,12 +1945,12 @@ class DeltaColumnMappingSuite extends QueryTest
                |TBLPROPERTIES('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='none')
                |""".stripMargin)
         }
-        val errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
+        val condition = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
         checkError(
-          exception = e,
-          errorClass = errorClass,
+          e,
+          condition,
           parameters = DeltaThrowableHelper
-            .getParameterNames(errorClass, errorSubClass = null)
+            .getParameterNames(condition, errorSubClass = null)
             .zip(invalidColumns).toMap
         )
       }
@@ -2041,6 +2044,50 @@ class DeltaColumnMappingSuite extends QueryTest
 
         // Check target table data
         checkAnswer(spark.table(t2), Seq(Row(1, "a"), Row(2, "b")))
+      }
+    }
+  }
+
+  for (txnIntroducesMetadata <- BOOLEAN_DOMAIN) {
+    test("column mapping metadata are stripped when feature is disabled - " +
+      s"txnIntroducesMetadata=$txnIntroducesMetadata") {
+      withTempDir { dir =>
+        val tablePath = dir.getCanonicalPath
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        // Create the original table.
+        val schemaV0 = if (txnIntroducesMetadata) {
+          new StructType().add("id", LongType, true)
+        } else {
+          new StructType().add("id", LongType, true, withIdAndPhysicalName(0, "col-0"))
+        }
+        withSQLConf(DeltaSQLConf.DELTA_COLUMN_MAPPING_STRIP_METADATA.key -> "false") {
+          deltaLog.withNewTransaction(catalogTableOpt = None) { txn =>
+            val metadata = actions.Metadata(
+              name = "testTable",
+              schemaString = schemaV0.json,
+              configuration = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> NoMapping.name)
+            )
+            txn.updateMetadata(metadata)
+            txn.commit(Seq.empty, ManualUpdate)
+          }
+        }
+        val metadataV0 = deltaLog.update().metadata
+        assert(DeltaColumnMapping.schemaHasColumnMappingMetadata(metadataV0.schema) ===
+          !txnIntroducesMetadata)
+
+        // Update the schema of the existing table.
+        withSQLConf(DeltaSQLConf.DELTA_COLUMN_MAPPING_STRIP_METADATA.key -> "true") {
+          deltaLog.withNewTransaction(catalogTableOpt = None) { txn =>
+            val schemaV1 =
+              schemaV0.add("value", LongType, true, withIdAndPhysicalName(0, "col-0"))
+            val metadata = metadataV0.copy(schemaString = schemaV1.json)
+            txn.updateMetadata(metadata)
+            txn.commit(Seq.empty, ManualUpdate)
+          }
+          val metadataV1 = deltaLog.update().metadata
+          assert(DeltaColumnMapping.schemaHasColumnMappingMetadata(metadataV1.schema) ===
+            !txnIntroducesMetadata)
+        }
       }
     }
   }

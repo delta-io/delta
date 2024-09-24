@@ -36,13 +36,13 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, AttributeReference, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.sources.{BaseRelation, Filter, PrunedFilteredScan}
+import org.apache.spark.sql.sources.{BaseRelation, CatalystScan, Filter}
 import org.apache.spark.sql.types.{LongType, StringType, StructType, TimestampType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -113,7 +113,7 @@ object CDCReader extends CDCReaderImpl
       snapshotWithSchemaMode: SnapshotWithSchemaMode,
       sqlContext: SQLContext,
       startingVersion: Option[Long],
-      endingVersion: Option[Long]) extends BaseRelation with PrunedFilteredScan {
+      endingVersion: Option[Long]) extends BaseRelation with CatalystScan {
 
     private val deltaLog = snapshotWithSchemaMode.snapshot.deltaLog
 
@@ -152,7 +152,7 @@ object CDCReader extends CDCReaderImpl
 
     override def unhandledFilters(filters: Array[Filter]): Array[Filter] = Array.empty
 
-    override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
+    override def buildScan(requiredColumns: Seq[Attribute], filters: Seq[Expression]): RDD[Row] = {
       val df = changesToBatchDF(
         deltaLog,
         startingVersion.get,
@@ -163,8 +163,18 @@ object CDCReader extends CDCReaderImpl
         sqlContext.sparkSession,
         readSchemaSnapshot = Some(snapshotForBatchSchema))
 
-      val filter = Column(DeltaSourceUtils.translateFilters(filters))
-      val projections = requiredColumns.map(SchemaUtils.fieldNameToColumn)
+      // Rewrite the attributes in the required columns and pushed down filters to match the output
+      // of the internal DataFrame.
+      val outputMap = df.queryExecution.analyzed.output.map(a => a.name -> a).toMap
+      val projections =
+        requiredColumns.map(a => Column(a.withExprId(outputMap(a.name).exprId)))
+      val filter = Column(
+        filters
+          .map(_.transform { case a: Attribute => a.withExprId(outputMap(a.name).exprId) })
+          .reduceOption(And)
+          .getOrElse(Literal.TrueLiteral)
+      )
+
       df.filter(filter).select(projections: _*).rdd
     }
   }
@@ -406,7 +416,7 @@ trait CDCReaderImpl extends DeltaLogging {
       spark.sqlContext,
       startingVersion = None,
       endingVersion = None) {
-      override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] =
+      override def buildScan(requiredColumns: Seq[Attribute], filters: Seq[Expression]): RDD[Row] =
         sqlContext.sparkSession.sparkContext.emptyRDD[Row]
     }
   }

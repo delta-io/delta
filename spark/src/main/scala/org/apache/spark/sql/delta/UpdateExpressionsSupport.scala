@@ -36,6 +36,15 @@ import org.apache.spark.sql.types._
  * nested fields.
  */
 trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with DeltaLogging {
+
+  /**
+   * Whether casting behavior can revert to following 'spark.sql.ansi.enabled' instead of
+   * 'spark.sql.storeAssignmentPolicy' to preserve legacy behavior for UPDATE and MERGE.
+   * Legacy behavior is applied only if
+   * 'spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag' is set to true.
+   */
+  protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = false
+
   /**
    * Specifies an operation that updates a target column with the given expression.
    * The target column may or may not be a nested field and it is specified as a full quoted name
@@ -440,12 +449,14 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
   }
 
   /**
-   * Replaces 'CastSupport.cast'. Selects a cast based on 'spark.sql.storeAssignmentPolicy' if
-   * 'spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag. is false, and based on
-   * 'spark.sql.ansi.enabled' otherwise.
+   * Replaces 'CastSupport.cast'. Selects a cast based on 'spark.sql.storeAssignmentPolicy'.
+   * Legacy behavior for UPDATE and MERGE followed 'spark.sql.ansi.enabled' instead, this legacy
+   * behavior can be re-enabled by setting
+   * 'spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag' to true.
    */
   private def cast(child: Expression, dataType: DataType, columnName: String): Expression = {
-    if (conf.getConf(DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG)) {
+    if (supportMergeAndUpdateLegacyCastBehavior &&
+      conf.getConf(DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG)) {
       return Cast(child, dataType, Option(conf.sessionLocalTimeZone))
     }
 
@@ -455,7 +466,12 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       case SQLConf.StoreAssignmentPolicy.ANSI =>
         val cast = Cast(child, dataType, Some(conf.sessionLocalTimeZone), ansiEnabled = true)
         if (canCauseCastOverflow(cast)) {
-          CheckOverflowInTableWrite(cast, columnName)
+          if (supportMergeAndUpdateLegacyCastBehavior) {
+            CheckOverflowInTableWrite(cast, columnName)
+          } else {
+            cast.setTagValue(Cast.BY_TABLE_INSERTION, ())
+            CheckOverflowInTableInsert(cast, columnName)
+          }
         } else {
           cast
         }
