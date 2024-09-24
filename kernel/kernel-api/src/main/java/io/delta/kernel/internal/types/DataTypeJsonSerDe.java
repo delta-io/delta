@@ -90,7 +90,10 @@ public class DataTypeJsonSerDe {
   public static StructType deserializeStructType(String structTypeJson) {
     try {
       DataType parsedType =
-          parseDataType(OBJECT_MAPPER.reader().readTree(structTypeJson), "", new HashMap<>());
+          parseDataType(
+              OBJECT_MAPPER.reader().readTree(structTypeJson),
+                  "" /* fieldPath */,
+                  new HashMap<>() /* collationMap*/););
       if (parsedType instanceof StructType) {
         return (StructType) parsedType;
       } else {
