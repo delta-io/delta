@@ -3,8 +3,6 @@ import scala.util.hashing.MurmurHash3
 import sbt.Keys._
 import sbt._
 
-// scalastyle:off println
-
 object TestParallelization {
 
   lazy val numShardsOpt = sys.env.get("NUM_SHARDS").map(_.toInt)
@@ -144,12 +142,14 @@ object TestParallelization {
     override def add(testDefinition: TestDefinition): GroupingStrategy = {
       val testSuiteName = testDefinition.name
       val isHighDurationTest = TOP_50_HIGH_DURATION_TEST_SUITES.exists(_._1 == testSuiteName)
-      val highDurationTestGroupIndex =
-        highDurationTestAssignment.indexWhere(_.contains(testSuiteName))
 
       if (isHighDurationTest) {
+        val highDurationTestGroupIndex =
+          highDurationTestAssignment.indexWhere(_.contains(testSuiteName))
+
         if (highDurationTestGroupIndex >= 0) {
-          // Case 1: this is a high duration test that belongs to this shard. Assign it.
+          // Case 1: this is a high duration test that was pre-computed in the optimal assignment to
+          // belong to this shard. Assign it.
           val duration = TOP_50_HIGH_DURATION_TEST_SUITES.find(_._1 == testSuiteName).get._2
 
           val currentGroup = groups(highDurationTestGroupIndex)
@@ -168,7 +168,6 @@ object TestParallelization {
         // Case 3: this is a normal test that belongs to this shard. Assign it.
 
         val minDurationGroupIndex = groupRuntimes.zipWithIndex.minBy(_._1)._2
-
         val currentGroup = groups(minDurationGroupIndex)
         val updatedGroup = currentGroup.withTests(currentGroup.tests :+ testDefinition)
         groups(minDurationGroupIndex) = updatedGroup
@@ -258,7 +257,53 @@ object TestParallelization {
     )
 
     /**
-     * Generate the optimal test assignment across shards and groups for high duration test suites.
+     * Generates the optimal test assignment across shards and groups for high duration test suites.
+     *
+     * Will assign the high duration test suites in descending order, always assigning to the
+     * group with the smallest total duration. In case of ties (e.g. early on when some group
+     * durations are still 0, will assign to the shard with the smallest total duration).
+     *
+     * Here's a simple example using 3 shards and 2 groups per shard:
+     *
+     * Test 1: MergeIntoDVsWithPredicatePushdownCDCSuite (36.09 mins) --> Shard 0, Group 0
+     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 0.0 mins, Group 1 = 0.0 mins
+     * - Shard 2: Group 0 = 0.0 mins, Group 1 = 0.0 mins
+     *
+     * Test 2: MergeIntoDVsSuite (33.26 mins) --> Shard 1, Group 0
+     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 0.0 mins
+     * - Shard 2: Group 0 = 0.0 mins, Group 1 = 0.0 mins
+     *
+     * Test 3: MergeIntoDVsCDCSuite (27.39 mins) --> Shard 2, Group 0
+     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 0.0 mins
+     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 0.0 mins
+     *
+     * Test 4: MergeCDCSuite (26.24 mins) --> Shard 2, Group 1
+     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 0.0 mins
+     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
+     *
+     * Test 5: MergeIntoDVsWithPredicatePushdownSuite (23.58 mins) -> Shard 1, Group 1
+     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 23.58 mins
+     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
+     *
+     * Test 6: MergeIntoSQLSuite (23.01 mins) --> Shard 0, Group 1
+     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 23.01 mins
+     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 23.58 mins
+     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
+     *
+     * Test 7: MergeIntoScalaSuite (16.67 mins) --> Shard 0, Group 1
+     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 39.68 mins
+     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 23.58 mins
+     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
+     *
+     * Test 8: DeletionVectorsSuite (11.55 mins) --> Shard 1, Group 1
+     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 39.68 mins
+     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 35.13 mins
+     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
      */
     def highDurationOptimalAssignment(numGroups: Int):
         (Array[Array[Set[String]]], Array[Array[Double]]) = {
@@ -281,6 +326,7 @@ object TestParallelization {
 
     /**
      * Finds the best shard and group to assign the next test suite.
+     *
      * Selects the group with the smallest total duration, and in case of ties, selects the shard
      * with the smallest total duration.
      *
