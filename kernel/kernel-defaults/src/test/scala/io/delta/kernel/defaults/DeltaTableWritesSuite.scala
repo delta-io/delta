@@ -18,12 +18,15 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStringVector, DefaultSubFieldVector}
+import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Expression, Literal, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
@@ -41,6 +44,7 @@ import io.delta.kernel.utils.CloseableIterable
 
 import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
+import scala.collection.convert.ImplicitConversions.`collection AsScalaIterable`
 import scala.collection.immutable.Seq
 
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
@@ -384,6 +388,47 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("create table with collation string") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val schema = new StructType()
+        .add("c1", new StringType("UTF8_LCASE"), true)
+        .add("c2", STRING, true)
+
+      val txn = txnBuilder
+        .withSchema(engine, schema)
+        .build(engine)
+
+      val txnResult = txn.commit(engine, emptyIterable())
+
+      val dataStringC1 = List("A", "b", "a", "A", "c")
+      val dataStringC2 = List("b", "c", "d", "d", "e")
+      val columnVectorStringC1 = new DefaultStringVector(dataStringC1.length, Optional.empty(),
+        dataStringC1.asJava.toArray(Array.empty[String]), "UTF8_LCASE")
+      val columnVectorStringC2 = new DefaultStringVector(dataStringC1.length, Optional.empty(),
+        dataStringC2.asJava.toArray(Array.empty[String]), "UTF8_BINARY")
+      val columnarBatch = new DefaultColumnarBatch(dataStringC1.length, schema,
+        List(columnVectorStringC1, columnVectorStringC2).asJava.toArray(Array.empty[ColumnVector]))
+      val filteredColumnarBatch = new FilteredColumnarBatch(
+        columnarBatch, Optional.empty())
+
+      appendData(engine = engine,
+        tablePath = tablePath,
+        data = Seq(Map.empty[String, Literal] -> Seq(filteredColumnarBatch)))
+
+      //checkTable(tablePath, Seq(TestRow("a", "b"), TestRow("A", "c")))
+
+      val scalarExpression = new CollatedPredicate("=",
+        List[Expression](new Column("c1"),
+          Literal.ofString("a", "UTF8_LCASE")).asJava)
+      val output1 = engine.getExpressionHandler()
+        .getEvaluator(schema, scalarExpression, BooleanType.BOOLEAN).eval(columnarBatch)
+      println(output1)
+    }
+  }
+
   test("insert into table - already existing table") {
     withTempDirAndEngine { (tblPath, engine) =>
       val commitResult0 = appendData(
@@ -686,7 +731,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
               case dt: DecimalType =>
                 Literal.ofDecimal(vector.getDecimal(rowId), dt.getPrecision, dt.getScale)
               case _: BooleanType => Literal.ofBoolean(vector.getBoolean(rowId))
-              case _: StringType => Literal.ofString(vector.getString(rowId))
+              case st: StringType => Literal.ofString(vector.getString(rowId), st.getCollationName)
               case _: BinaryType => Literal.ofBinary(vector.getBinary(rowId))
               case _: DateType => Literal.ofDate(vector.getInt(rowId))
               case _: TimestampType => Literal.ofTimestamp(vector.getLong(rowId))
@@ -773,7 +818,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     withTempDirAndEngine { (tblPath, engine) =>
       val ex = intercept[IllegalArgumentException] {
         // part2 type should be int, be giving a string value
-        val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofString("sdsd"))
+        val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofString("sdsd", "UTF8_LCASE"))
           -> dataPartitionBatches1)
         appendData(engine,
           tblPath,

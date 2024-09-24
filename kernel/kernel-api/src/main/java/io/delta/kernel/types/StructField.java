@@ -17,7 +17,10 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
-import java.util.Objects;
+import io.delta.kernel.expressions.CollationIdentifier;
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.FieldMetadata.Builder;
+import java.util.*;
 
 /**
  * Represents a subfield of {@link StructType} with additional properties and metadata.
@@ -99,7 +102,44 @@ public class StructField {
   @Override
   public String toString() {
     return String.format(
-        "StructField(name=%s,type=%s,nullable=%s,metadata=%s)", name, dataType, nullable, metadata);
+        "StructField(name=%s,type=%s,nullable=%s,metadata=%s)",
+        name, dataType, nullable, metadataJson());
+  }
+
+  private String metadataJson() {
+    List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
+    if (nestedCollatedFields.isEmpty()) {
+      return metadata.toString();
+    }
+
+    Builder metadataBuilder = new Builder();
+    for (Tuple2<String, String> nestedField : nestedCollatedFields) {
+      metadataBuilder.putString(nestedField._1, nestedField._2);
+    }
+    return new Builder()
+        .fromMetadata(metadata)
+        .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
+        .build()
+        .toString();
+  }
+
+  private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {
+    List<Tuple2<String, String>> nestedCollatedFields = new ArrayList<>();
+    if (parent instanceof StringType) {
+      StringType stringType = (StringType) parent;
+      if (stringType.getCollationIdentifier() != CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER) {
+        nestedCollatedFields.add(new Tuple2<>(path, ((StringType) parent).getCollationIdentifier().toStringWithoutVersion()));
+      }
+    } else if (parent instanceof MapType) {
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((MapType) parent).getKeyType(), path + ".key"));
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((MapType) parent).getValueType(), path + ".value"));
+    } else if (parent instanceof ArrayType) {
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((ArrayType) parent).getElementType(), path + ".element"));
+    }
+    return nestedCollatedFields;
   }
 
   @Override

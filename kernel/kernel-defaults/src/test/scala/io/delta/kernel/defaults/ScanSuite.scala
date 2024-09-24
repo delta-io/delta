@@ -258,15 +258,15 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
        {"a": 'C'}
      """,
     hits = Seq(
-      equals(col("a"), ofString(longString("A"))),
-      greaterThan(col("a"), ofString("BA")),
-      lessThan(col("a"), ofString("AB")),
+      equals(col("a"), ofString(longString("A"), "UTF8_BINARY")),
+      greaterThan(col("a"), ofString("BA", "UTF8_BINARY")),
+      lessThan(col("a"), ofString("AB", "UTF8_BINARY")),
       // note startsWith is not supported yet but these should still be hits once supported
-      startsWith(col("a"), ofString("A")) // a like 'A%'
+      startsWith(col("a"), ofString("A", "UTF8_BINARY")) // a like 'A%'
     ),
     misses = Seq(
-      lessThan(col("a"), ofString("AA")),
-      greaterThan(col("a"), ofString("CD"))
+      lessThan(col("a"), ofString("AA", "UTF8_BINARY")),
+      greaterThan(col("a"), ofString("CD", "UTF8_BINARY"))
     )
   )
 
@@ -278,17 +278,17 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
        {"a": '${longString("C")}'}
      """,
     hits = Seq(
-      equals(col("a"), ofString(longString("C"))),
-      greaterThan(col("a"), ofString("BA")),
-      lessThan(col("a"), ofString("AB")),
-      greaterThan(col("a"), ofString("CC")),
+      equals(col("a"), ofString(longString("C"), "UTF8_BINARY")),
+      greaterThan(col("a"), ofString("BA", "UTF8_BINARY")),
+      lessThan(col("a"), ofString("AB", "UTF8_BINARY")),
+      greaterThan(col("a"), ofString("CC", "UTF8_BINARY")),
       // note startsWith is not supported yet but these should still be hits once supported
-      startsWith(col("a"), ofString("A")), // a like 'A%'
-      startsWith(col("a"), ofString("C")) // a like 'C%'
+      startsWith(col("a"), ofString("A", "UTF8_BINARY")), // a like 'A%'
+      startsWith(col("a"), ofString("C", "UTF8_BINARY")) // a like 'C%'
     ),
     misses = Seq(
-      greaterThanOrEqual(col("a"), ofString("D")),
-      greaterThan(col("a"), ofString("CD"))
+      greaterThanOrEqual(col("a"), ofString("D", "UTF8_BINARY")),
+      greaterThan(col("a"), ofString("CD", "UTF8_BINARY"))
     )
   )
 
@@ -328,21 +328,21 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     hits = Seq(
       new And(
         greaterThan(col("a"), ofInt(0)),
-        equals(col("b"), ofString("2017-09-01"))
+        equals(col("b"), ofString("2017-09-01", "UTF8_BINARY"))
       ),
       new And(
         equals(col("a"), ofInt(2)),
-        greaterThanOrEqual(col("b"), ofString("2017-08-30"))
+        greaterThanOrEqual(col("b"), ofString("2017-08-30", "UTF8_BINARY"))
       ),
       // note startsWith is not supported yet but these should still be hits once supported
       new And( //  a >= 2 AND b like '2017-08-%'
         greaterThanOrEqual(col("a"), ofInt(2)),
-        startsWith(col("b"), ofString("2017-08-"))
+        startsWith(col("b"), ofString("2017-08-", "UTF8_BINARY"))
       ),
       // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
       new And( // a > 0 AND b like '2016-%'
         greaterThan(col("a"), ofInt(0)),
-        startsWith(col("b"), ofString("2016-"))
+        startsWith(col("b"), ofString("2016-", "UTF8_BINARY"))
       )
     ),
     misses = Seq()
@@ -396,25 +396,25 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     hits = Seq(
       new Or(
         lessThan(col("a"), ofInt(0)),
-        equals(col("b"), ofString("2017-09-01"))
+        equals(col("b"), ofString("2017-09-01", "UTF8_BINARY"))
       ),
       new Or(
         equals(col("a"), ofInt(2)),
-        lessThan(col("b"), ofString("2017-08-30"))
+        lessThan(col("b"), ofString("2017-08-30", "UTF8_BINARY"))
       ),
       // note startsWith is not supported yet but these should still be hits once supported
       new Or( //  a < 2 or b like '2017-08-%'
         lessThan(col("a"), ofInt(2)),
-        startsWith(col("b"), ofString("2017-08-"))
+        startsWith(col("b"), ofString("2017-08-", "UTF8_BINARY"))
       ),
       new Or( //  a >= 2 or b like '2016-08-%'
         greaterThanOrEqual(col("a"), ofInt(2)),
-        startsWith(col("b"), ofString("2016-08-"))
+        startsWith(col("b"), ofString("2016-08-", "UTF8_BINARY"))
       ),
       // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
       new Or( // a < 0 or b like '2016-%'
         lessThan(col("a"), ofInt(0)),
-        startsWith(col("b"), ofString("2016-"))
+        startsWith(col("b"), ofString("2016-", "UTF8_BINARY"))
       )
     ),
     misses = Seq()
@@ -868,7 +868,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         tablePath,
         hits = Seq(
           equals(col("c1"), ofInt(1)),
-          equals(col("c2"), ofString("2")),
+          equals(col("c2"), ofString("2", "UTF8_BINARY")),
           lessThan(col("c3"), ofFloat(1.5f)),
           greaterThan(col("c4"), ofFloat(1.0F)),
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
@@ -882,7 +882,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         ),
         misses = Seq(
           equals(col("c1"), ofInt(10)),
-          equals(col("c2"), ofString("4")),
+          equals(col("c2"), ofString("4", "UTF8_BINARY")),
           lessThan(col("c3"), ofFloat(0.5f)),
           greaterThan(col("c4"), ofFloat(5.0f)),
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
@@ -921,7 +921,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         tablePath,
         hits = Seq(
           equals(col("cc1"), ofInt(1)),
-          equals(col("cc2"), ofString("2")),
+          equals(col("cc2"), ofString("2", "UTF8_BINARY")),
           lessThan(col("cc3"), ofFloat(1.5f)),
           greaterThan(col("cc4"), ofFloat(1.0f)),
           equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
@@ -935,7 +935,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         ),
         misses = Seq(
           equals(col("cc1"), ofInt(10)),
-          equals(col("cc2"), ofString("4")),
+          equals(col("cc2"), ofString("4", "UTF8_BINARY")),
           lessThan(col("cc3"), ofFloat(0.5f)),
           greaterThan(col("cc4"), ofFloat(5.0f)),
           equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
@@ -1038,13 +1038,13 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         expNumFiles = 2) // 2 files with key = 'a', and 1 file with key = 'b'
 
       checkResults(
-        predicate = equals(col("key"), ofString("a")),
+        predicate = equals(col("key"), ofString("a", "UTF8_BINARY")),
         expNumPartitions = 1,
         expNumFiles = 1) // 1 files with key = 'a'
 
 
       checkResults(
-        predicate = equals(col("key"), ofString("b")),
+        predicate = equals(col("key"), ofString("b", "UTF8_BINARY")),
         expNumPartitions = 1,
         expNumFiles = 1) // 1 files with key = 'b'
 
@@ -1089,27 +1089,27 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         expNumFiles = 5) // should be 3 once <=> is supported
 
       checkResults(
-        predicate = equals(col("value"), ofString("a")),
+        predicate = equals(col("value"), ofString("a", "UTF8_BINARY")),
         expNumPartitions = 3, // should be 2 if we can correctly skip "value = 'a'" for nulls
         expNumFiles = 4) // should be 2 if we can correctly skip "value = 'a'" for nulls
 
       checkResults(
-        predicate = nullSafeEquals(col("value"), ofString("a")),
+        predicate = nullSafeEquals(col("value"), ofString("a", "UTF8_BINARY")),
         expNumPartitions = 3, // should be 2 once <=> is supported
         expNumFiles = 5) // should be 2 once <=> is supported
 
       checkResults(
-        predicate = notEquals(col("value"), ofString("a")),
+        predicate = notEquals(col("value"), ofString("a", "UTF8_BINARY")),
         expNumPartitions = 3, // should be 1 once <> is supported
         expNumFiles = 5) // should be 1 once <> is supported
 
       checkResults(
-        predicate = equals(col("value"), ofString("b")),
+        predicate = equals(col("value"), ofString("b", "UTF8_BINARY")),
         expNumPartitions = 2, // should be 1 if we can correctly skip "value = 'b'" for nulls
         expNumFiles = 3) // should be 1 if we can correctly skip "value = 'a'" for nulls
 
       checkResults(
-        predicate = nullSafeEquals(col("value"), ofString("b")),
+        predicate = nullSafeEquals(col("value"), ofString("b", "UTF8_BINARY")),
         expNumPartitions = 3, // should be 1 once <=> is supported
         expNumFiles = 5) // should be 1 once <=> is supported
 
@@ -1154,7 +1154,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       "as_short" -> (ofShort(0), ofShort(-1), ofShort(1)),
       "as_float" -> (ofFloat(0), ofFloat(-1), ofFloat(1)),
       "as_double" -> (ofDouble(0), ofDouble(-1), ofDouble(1)),
-      "as_string" -> (ofString("0"), ofString("!"), ofString("1")),
+      "as_string" -> (
+        ofString("0", "UTF8_BINARY"),
+        ofString("!", "UTF8_BINARY"),
+        ofString("1", "UTF8_BINARY")),
       "as_date" -> (ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("1999-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-02")))),
@@ -1221,10 +1224,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkSkipping(
         tablePath,
         hits = Seq(
-          equals(col("value"), ofString("1"))
+          equals(col("value"), ofString("1", "UTF8_BINARY"))
         ),
         misses = Seq(
-          equals(col("value"), ofString("3"))
+          equals(col("value"), ofString("3", "UTF8_BINARY"))
         )
       )
     }

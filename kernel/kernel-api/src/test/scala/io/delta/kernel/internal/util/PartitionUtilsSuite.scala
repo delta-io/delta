@@ -57,11 +57,11 @@ class PartitionUtilsSuite extends AnyFunSuite {
     // multiple predicates on data columns joined with AND
     predicate("AND",
       predicate("=", col("data1"), ofInt(12)),
-      predicate(">=", col("data2"), ofString("sss"))) ->
+      predicate(">=", col("data2"), ofString("sss", "UTF8_BINARY"))) ->
       ("ALWAYS_TRUE()", "((column(`data1`) = 12) AND (column(`data2`) >= sss))"),
     // multiple predicates on data columns joined with OR
     predicate("OR",
-      predicate("<=", col("data2"), ofString("sss")),
+      predicate("<=", col("data2"), ofString("sss", "UTF8_BINARY")),
       predicate("=", col("data3", "data31"), ofBoolean(true))) ->
       ("ALWAYS_TRUE()", "((column(`data2`) <= sss) OR (column(`data3`.`data31`) = true))"),
     // single predicate on a partition column
@@ -70,34 +70,34 @@ class PartitionUtilsSuite extends AnyFunSuite {
     // multiple predicates on partition columns joined with AND
     predicate("AND",
       predicate("=", col("part1"), ofInt(12)),
-      predicate(">=", col("part3"), ofString("sss"))) ->
+      predicate(">=", col("part3"), ofString("sss", "UTF8_BINARY"))) ->
       ("((column(`part1`) = 12) AND (column(`part3`) >= sss))", "ALWAYS_TRUE()"),
     // multiple predicates on partition columns joined with OR
     predicate("OR",
-      predicate("<=", col("part3"), ofString("sss")),
+      predicate("<=", col("part3"), ofString("sss", "UTF8_BINARY")),
       predicate("=", col("part1"), ofInt(2781))) ->
       ("((column(`part3`) <= sss) OR (column(`part1`) = 2781))", "ALWAYS_TRUE()"),
 
     // predicates (each on data and partition column) joined with AND
     predicate("AND",
       predicate("=", col("data1"), ofInt(12)),
-      predicate(">=", col("part3"), ofString("sss"))) ->
+      predicate(">=", col("part3"), ofString("sss", "UTF8_BINARY"))) ->
       ("(column(`part3`) >= sss)", "(column(`data1`) = 12)"),
 
     // predicates (each on data and partition column) joined with OR
     predicate("OR",
       predicate("=", col("data1"), ofInt(12)),
-      predicate(">=", col("part3"), ofString("sss"))) ->
+      predicate(">=", col("part3"), ofString("sss", "UTF8_BINARY"))) ->
       ("ALWAYS_TRUE()", "((column(`data1`) = 12) OR (column(`part3`) >= sss))"),
 
     // predicates (multiple on data and partition columns) joined with AND
     predicate("AND",
       predicate("AND",
         predicate("=", col("data1"), ofInt(12)),
-        predicate(">=", col("data2"), ofString("sss"))),
+        predicate(">=", col("data2"), ofString("sss", "UTF8_BINARY"))),
       predicate("AND",
         predicate("=", col("part1"), ofInt(12)),
-        predicate(">=", col("part3"), ofString("sss")))) ->
+        predicate(">=", col("part3"), ofString("sss", "UTF8_BINARY")))) ->
       (
         "((column(`part1`) = 12) AND (column(`part3`) >= sss))",
         "((column(`data1`) = 12) AND (column(`data2`) >= sss))"
@@ -107,10 +107,10 @@ class PartitionUtilsSuite extends AnyFunSuite {
     predicate("AND",
       predicate("OR",
         predicate("=", col("data1"), ofInt(12)),
-        predicate(">=", col("data2"), ofString("sss"))),
+        predicate(">=", col("data2"), ofString("sss", "UTF8_BINARY"))),
       predicate("OR",
         predicate("=", col("part1"), ofInt(12)),
-        predicate(">=", col("part3"), ofString("sss")))) ->
+        predicate(">=", col("part3"), ofString("sss", "UTF8_BINARY")))) ->
       (
         "((column(`part1`) = 12) OR (column(`part3`) >= sss))",
         "((column(`data1`) = 12) OR (column(`data2`) >= sss))"
@@ -120,10 +120,10 @@ class PartitionUtilsSuite extends AnyFunSuite {
     predicate("OR",
       predicate("OR",
         predicate("=", col("data1"), ofInt(12)),
-        predicate(">=", col("data2"), ofString("sss"))),
+        predicate(">=", col("data2"), ofString("sss", "UTF8_BINARY"))),
       predicate("OR",
         predicate("=", col("part1"), ofInt(12)),
-        predicate(">=", col("part3"), ofString("sss")))) ->
+        predicate(">=", col("part3"), ofString("sss", "UTF8_BINARY")))) ->
       (
         "ALWAYS_TRUE()",
         "(((column(`data1`) = 12) OR (column(`data2`) >= sss)) OR " +
@@ -133,7 +133,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
     // predicates (data and partitions compared in the same expression)
     predicate("AND",
       predicate("=", col("data1"), col("part1")),
-      predicate(">=", col("part3"), ofString("sss"))) ->
+      predicate(">=", col("part3"), ofString("sss", "UTF8_BINARY"))) ->
       (
         "(column(`part3`) >= sss)",
         "(column(`data1`) = column(`part1`))"
@@ -168,7 +168,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
     // multiple predicates on partition columns joined with AND
     predicate("AND",
       predicate("=", col("part1"), ofInt(12)),
-      predicate(">=", col("part3"), ofString("sss"))) ->
+      predicate(">=", col("part3"), ofString("sss", "UTF8_BINARY"))) ->
       (
         // exp predicate for partition pruning
         """((partition_value(ELEMENT_AT(column(`add`.`partitionValues`), part1), integer) = 12) AND
@@ -182,7 +182,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
       ),
     // multiple predicates on partition columns joined with OR
     predicate("OR",
-      predicate("<=", col("part3"), ofString("sss")),
+      predicate("<=", col("part3"), ofString("sss", "UTF8_BINARY")),
       predicate("=", col("part1"), ofInt(2781))) ->
       (
         // exp predicate for partition pruning
@@ -227,9 +227,9 @@ class PartitionUtilsSuite extends AnyFunSuite {
     ofNull(FloatType.FLOAT) -> (null, nullFileName),
     ofDouble(23423.422233d) -> ("23423.422233", "23423.422233"),
     ofNull(DoubleType.DOUBLE) -> (null, nullFileName),
-    ofString("string_val") -> ("string_val", "string_val"),
-    ofString("string_\nval") -> ("string_\nval", "string_%0Aval"),
-    ofString("str=ing_\u0001val") -> ("str=ing_\u0001val", "str%3Ding_%01val"),
+    ofString("string_val", "UTF8_BINARY") -> ("string_val", "string_val"),
+    ofString("string_\nval", "UTF8_BINARY") -> ("string_\nval", "string_%0Aval"),
+    ofString("str=ing_\u0001val", "UTF8_BINARY") -> ("str=ing_\u0001val", "str%3Ding_%01val"),
     ofNull(StringType.STRING) -> (null, nullFileName),
     ofDecimal(new java.math.BigDecimal("23423.234234"), 15, 7) ->
       ("23423.2342340", "23423.2342340"),
@@ -265,7 +265,7 @@ class PartitionUtilsSuite extends AnyFunSuite {
       Seq("part1", "part2", "part3").asJava,
       Map("part1" -> ofInt(12),
         "part3" -> ofTimestamp(234234234L),
-        "part2" -> ofString("sss")).asJava)
+        "part2" -> ofString("sss", "UTF8_BINARY")).asJava)
     assert(result === "/tmp/root/part1=12/part2=sss/part3=1970-01-01 00%3A03%3A54.234234")
   }
 

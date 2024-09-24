@@ -51,7 +51,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       Literal.ofNull(FloatType.FLOAT),
       Literal.ofDouble(23423.422233d),
       Literal.ofNull(DoubleType.DOUBLE),
-      Literal.ofString("string_val"),
+      Literal.ofString("string_val", "UTF8_BINARY"),
       Literal.ofNull(StringType.STRING),
       Literal.ofBinary("binary_val".getBytes),
       Literal.ofNull(BinaryType.BINARY),
@@ -411,19 +411,19 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // check column expression against literal
     checkLike(
       input,
-      like(new Column("col1"), Literal.ofString("t%")),
+      like(new Column("col1"), Literal.ofString("t%", "UTF8_BINARY")),
       Seq[BooleanJ](null, false, true, true, false, null, null, false, false))
 
     // ends with checks
     checkLike(
       input,
-      like(new Column("col1"), Literal.ofString("%t")),
+      like(new Column("col1"), Literal.ofString("%t", "UTF8_BINARY")),
       Seq[BooleanJ](null, false, false, false, false, null, null, false, true))
 
     // contains checks
     checkLike(
       input,
-      like(new Column("col1"), Literal.ofString("%t%")),
+      like(new Column("col1"), Literal.ofString("%t%", "UTF8_BINARY")),
       Seq[BooleanJ](null, false, true, true, false, null, null, false, true))
 
     val dummyInput = new DefaultColumnarBatch(1,
@@ -432,7 +432,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     def checkLikeLiteral(left: String, right: String,
         escape: Character = null, expOutput: BooleanJ): Unit = {
-      val expression = like(Literal.ofString(left), Literal.ofString(right), Option(escape))
+      val expression = like(Literal.ofString(left, "UTF8_BINARY"),
+        Literal.ofString(right, "UTF8_BINARY"), Option(escape))
       checkLike(dummyInput, expression, Seq[BooleanJ](expOutput))
     }
 
@@ -539,14 +540,17 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val inputCountCheckUserMessage =
       "Invalid number of inputs to LIKE expression. Example usage:"
     val inputCountError1 = intercept[UnsupportedOperationException] {
-      val expression = like(List(Literal.ofString("a")))
+      val expression = like(List(Literal.ofString("a", "UTF8_BINARY")))
       checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(inputCountError1.getMessage.contains(inputCountCheckUserMessage))
 
     val inputCountError2 = intercept[UnsupportedOperationException] {
-      val expression = like(List(Literal.ofString("a"), Literal.ofString("b"),
-        Literal.ofString("c"), Literal.ofString("d")))
+      val expression = like(List(
+        Literal.ofString("a", "UTF8_BINARY"),
+        Literal.ofString("b", "UTF8_BINARY"),
+        Literal.ofString("c", "UTF8_BINARY"),
+        Literal.ofString("d", "UTF8_BINARY")))
       checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(inputCountError2.getMessage.contains(inputCountCheckUserMessage))
@@ -554,14 +558,20 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // additional escape token checks
     val escapeCharError1 = intercept[UnsupportedOperationException] {
       val expression =
-        like(List(Literal.ofString("a"), Literal.ofString("b"), Literal.ofString("~~")))
+        like(List(
+          Literal.ofString("a", "UTF8_BINARY"),
+          Literal.ofString("b", "UTF8_BINARY"),
+          Literal.ofString("~~", "UTF8_BINARY")))
       checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(escapeCharError1.getMessage.contains(
       "LIKE expects escape token to be a single character"))
 
     val escapeCharError2 = intercept[UnsupportedOperationException] {
-      val expression = like(List(Literal.ofString("a"), Literal.ofString("b"), Literal.ofInt(1)))
+      val expression = like(List(
+        Literal.ofString("a", "UTF8_BINARY"),
+        Literal.ofString("b", "UTF8_BINARY"),
+        Literal.ofInt(1)))
       checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(escapeCharError2.getMessage.contains(
@@ -572,7 +582,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           new StructType().add("dummy", StringType.STRING),
           Array(stringVector(Seq[String](""))))
     checkLike(emptyInput,
-      like(Literal.ofString("abc"), Literal.ofString("abc"), Some('_')), Seq[BooleanJ]())
+      like(
+        Literal.ofString("abc", "UTF8_BINARY"),
+        Literal.ofString("abc", "UTF8_BINARY"),
+        Some('_')), Seq[BooleanJ]())
 
     // invalid pattern check
     val invalidPatternError = intercept[IllegalArgumentException] {
@@ -905,7 +918,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       val lookupKeyExpr = if (lookupKey == null) {
         Literal.ofNull(StringType.STRING)
       } else {
-        Literal.ofString(lookupKey)
+        Literal.ofString(lookupKey, "UTF8_BINARY")
       }
       val elementAtExpr = new ScalarExpression(
         "element_at",
@@ -930,7 +943,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       .add("as_map", new MapType(IntegerType.INTEGER, BooleanType.BOOLEAN, true))
     val elementAtExpr = new ScalarExpression(
       "element_at",
-      util.Arrays.asList(new Column("as_map"), Literal.ofString("empty")))
+      util.Arrays.asList(new Column("as_map"), Literal.ofString("empty", "UTF8_BINARY")))
 
     val ex = intercept[UnsupportedOperationException] {
       evaluator(inputSchema, elementAtExpr, StringType.STRING)
@@ -992,7 +1005,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       val literalSerializedPartVal = if (serializedPartVal == "null") {
         Literal.ofNull(StringType.STRING)
       } else {
-        Literal.ofString(serializedPartVal)
+        Literal.ofString(serializedPartVal, "UTF8_BINARY")
       }
       val expr = new PartitionValueExpression(literalSerializedPartVal, partType)
       val outputVector = evaluator(inputBatch.getSchema, expr, partType).eval(inputBatch)
@@ -1008,7 +1021,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   test("evaluate expression: partition_value - invalid serialize value") {
     val inputBatch = zeroColumnBatch(rowCount = 1)
     val (serializedPartVal, partType) = ("23423sdfsdf", IntegerType.INTEGER)
-    val expr = new PartitionValueExpression(Literal.ofString(serializedPartVal), partType)
+    val expr = new PartitionValueExpression(
+      Literal.ofString(serializedPartVal, "UTF8_BINARY"), partType)
     val ex = intercept[IllegalArgumentException] {
       val outputVector = evaluator(inputBatch.getSchema, expr, partType).eval(inputBatch)
       outputVector.getInt(0)

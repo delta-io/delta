@@ -116,8 +116,12 @@ public final class Literal implements Expression {
    * @param value literal value
    * @return a {@link Literal} of type {@link StringType}
    */
-  public static Literal ofString(String value) {
-    return new Literal(value, StringType.STRING);
+  public static Literal ofString(String value, String collationName) {
+    return new Literal(value, new StringType(CollationIdentifier.fromString(collationName)));
+  }
+
+  public static Literal ofString(String value, CollationIdentifier identifier) {
+    return new Literal(value, new StringType(identifier));
   }
 
   /**

@@ -89,7 +89,8 @@ public class DataTypeJsonSerDe {
    */
   public static StructType deserializeStructType(String structTypeJson) {
     try {
-      DataType parsedType = parseDataType(OBJECT_MAPPER.reader().readTree(structTypeJson));
+      DataType parsedType =
+          parseDataType(OBJECT_MAPPER.reader().readTree(structTypeJson), "", new HashMap<>());
       if (parsedType instanceof StructType) {
         return (StructType) parsedType;
       } else {
@@ -132,21 +133,25 @@ public class DataTypeJsonSerDe {
    * }
    * </pre>
    */
-  static DataType parseDataType(JsonNode json) {
+  static DataType parseDataType(
+      JsonNode json, String fieldPath, HashMap<String, String> collationMap) {
     switch (json.getNodeType()) {
       case STRING:
         // simple types are stored as just a string
-        return nameToType(json.textValue());
+        return nameToType(json.textValue(), fieldPath, collationMap);
       case OBJECT:
         // complex types (array, map, or struct are stored as JSON objects)
         String type = getStringField(json, "type");
         switch (type) {
           case "struct":
+            assertValidTypeForCollations(fieldPath, "struct", collationMap);
             return parseStructType(json);
           case "array":
-            return parseArrayType(json);
+            assertValidTypeForCollations(fieldPath, "array", collationMap);
+            return parseArrayType(json, fieldPath, collationMap);
           case "map":
-            return parseMapType(json);
+            assertValidTypeForCollations(fieldPath, "map", collationMap);
+            return parseMapType(json, fieldPath, collationMap);
             // No default case here; fall through to the following error when no match
         }
       default:
@@ -160,12 +165,14 @@ public class DataTypeJsonSerDe {
    * Parses an <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#array-type">array
    * type </a>
    */
-  private static ArrayType parseArrayType(JsonNode json) {
+  private static ArrayType parseArrayType(
+      JsonNode json, String fieldPath, HashMap<String, String> collationMap) {
     checkArgument(
         json.isObject() && json.size() == 3,
         String.format("Expected JSON object with 3 fields for array data type but got:\n%s", json));
     boolean containsNull = getBooleanField(json, "containsNull");
-    DataType dataType = parseDataType(getNonNullField(json, "elementType"));
+    DataType dataType =
+        parseDataType(getNonNullField(json, "elementType"), fieldPath + "element", collationMap);
     return new ArrayType(dataType, containsNull);
   }
 
@@ -173,13 +180,16 @@ public class DataTypeJsonSerDe {
    * Parses an <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#map-type">map type
    * </a>
    */
-  private static MapType parseMapType(JsonNode json) {
+  private static MapType parseMapType(
+      JsonNode json, String fieldPath, HashMap<String, String> collationMap) {
     checkArgument(
         json.isObject() && json.size() == 4,
         String.format("Expected JSON object with 4 fields for map data type but got:\n%s", json));
     boolean valueContainsNull = getBooleanField(json, "valueContainsNull");
-    DataType keyType = parseDataType(getNonNullField(json, "keyType"));
-    DataType valueType = parseDataType(getNonNullField(json, "valueType"));
+    DataType keyType =
+        parseDataType(getNonNullField(json, "keyType"), fieldPath + "key", collationMap);
+    DataType valueType =
+        parseDataType(getNonNullField(json, "valueType"), fieldPath + "value", collationMap);
     return new MapType(keyType, valueType, valueContainsNull);
   }
 
@@ -211,14 +221,23 @@ public class DataTypeJsonSerDe {
   private static StructField parseStructField(JsonNode json) {
     Preconditions.checkArgument(json.isObject(), "Expected JSON object for struct field");
     String name = getStringField(json, "name");
-    DataType type = parseDataType(getNonNullField(json, "type"));
+    FieldMetadata metadata = parseFieldMetadata(json.get("metadata"), false);
+    DataType type =
+        parseDataType(getNonNullField(json, "type"), name, getCollationsMap(json.get("metadata")));
     boolean nullable = getBooleanField(json, "nullable");
-    FieldMetadata metadata = parseFieldMetadata(json.get("metadata"));
     return new StructField(name, type, nullable, metadata);
   }
 
   /** Parses an {@link FieldMetadata}. */
   private static FieldMetadata parseFieldMetadata(JsonNode json) {
+    return parseFieldMetadata(json, true);
+  }
+
+  /**
+   * Parses a {@link FieldMetadata}, optionally including collation metadata, depending on
+   * `includeCollationMetadata`.
+   */
+  private static FieldMetadata parseFieldMetadata(JsonNode json, boolean includeCollationMetadata) {
     if (json == null || json.isNull()) {
       return FieldMetadata.empty();
     }
@@ -230,6 +249,10 @@ public class DataTypeJsonSerDe {
       Map.Entry<String, JsonNode> entry = iterator.next();
       JsonNode value = entry.getValue();
       String key = entry.getKey();
+
+      if (!includeCollationMetadata && key.equals(DataType.COLLATIONS_METADATA_KEY)) {
+        continue;
+      }
 
       if (value.isNull()) {
         builder.putNull(key);
@@ -298,8 +321,13 @@ public class DataTypeJsonSerDe {
   private static Pattern FIXED_DECIMAL_PATTERN = Pattern.compile(FIXED_DECIMAL_REGEX);
 
   /** Parses primitive string type names to a {@link DataType} */
-  private static DataType nameToType(String name) {
+  private static DataType nameToType(
+      String name, String fieldPath, HashMap<String, String> collationMap) {
     if (BasePrimitiveType.isPrimitiveType(name)) {
+      if (collationMap.containsKey(fieldPath)) {
+        assertValidTypeForCollations(fieldPath, name, collationMap);
+        return stringTypeWithCollation(collationMap.get(fieldPath));
+      }
       return BasePrimitiveType.createPrimitive(name);
     } else if (name.equals("decimal")) {
       return DecimalType.USER_DEFAULT;
@@ -339,6 +367,37 @@ public class DataTypeJsonSerDe {
         node.isTextual(),
         String.format("Expected string for fieldName=%s in:\n%s", fieldName, rootNode));
     return node.textValue(); // double check this only works for string values! and isTextual()!
+  }
+
+  private static StringType stringTypeWithCollation(String collationName) {
+    return new StringType(collationName);
+  }
+
+  private static void assertValidTypeForCollations(
+      String fieldPath, String fieldType, Map<String, String> collationMap) {
+    if (collationMap.containsKey(fieldPath) && !fieldType.equals("string")) {
+      throw new IllegalArgumentException(String.format("Invalid collation path \"%s\"", fieldPath));
+    }
+  }
+
+  private static HashMap<String, String> getCollationsMap(JsonNode fieldMetadata) {
+    if (fieldMetadata == null || !fieldMetadata.has(DataType.COLLATIONS_METADATA_KEY)) {
+      return new HashMap<>();
+    }
+    HashMap<String, String> collationsMap = new HashMap<>();
+    FieldMetadata collationFieldMetadata =
+        parseFieldMetadata(fieldMetadata.get(DataType.COLLATIONS_METADATA_KEY));
+    for (Map.Entry<String, Object> collationField :
+        collationFieldMetadata.getEntries().entrySet()) {
+      String fieldPath = collationField.getKey();
+      Object collationName = collationField.getValue();
+      if (!(collationName instanceof String)) {
+        throw new IllegalArgumentException(
+            String.format("Invalid collation name: %s.", collationName));
+      }
+      collationsMap.put(fieldPath, (String) collationName);
+    }
+    return collationsMap;
   }
 
   private static boolean getBooleanField(JsonNode rootNode, String fieldName) {

@@ -20,6 +20,11 @@ import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
 import scala.reflect.ClassTag
+import com.fasterxml.jackson.databind.ObjectMapper
+import org.scalatest.funsuite.AnyFunSuite
+import io.delta.kernel.types._
+
+import java.util
 
 class DataTypeJsonSerDeSuite extends AnyFunSuite {
 
@@ -28,7 +33,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
   private val objectMapper = new ObjectMapper()
 
   private def parse(json: String): DataType = {
-    DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json))
+    DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json), "", new util.HashMap())
   }
 
   private def serialize(dataType: DataType): String = {
@@ -128,6 +133,14 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
         testRoundTrip(json, expectedType)
       }
     }
+  }
+
+  test("parseDataType: types with collated strings") {
+    SAMPLE_JSON_TO_TYPES_WITH_COLLATION
+      .foreach {
+        case(json, structType) =>
+          assert(parse(json) == structType)
+      }
   }
 
   test("serialize/deserialize: special characters for column name") {
@@ -242,6 +255,94 @@ object DataTypeJsonSerDeSuite {
         .add("col1", StringType.STRING, true)
         .add("col2", StringType.STRING, false, FieldMetadata.builder().putLong("int", 0).build())
         .add("col3", VariantType.VARIANT, false)
+    )
+  )
+
+  val SAMPLE_JSON_TO_TYPES_WITH_COLLATION = Seq(
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", "\"string\"", true,
+          metadataJson = Some("{\"__COLLATIONS\" : {\"a1\" : \"UNICODE\"}}")),
+        structFieldJson("a2", "\"integer\"", false),
+        structFieldJson("a3", "\"string\"", false,
+          metadataJson = Some("{\"__COLLATIONS\" : {\"a3\" : \"UTF8_LCASE\"}}")),
+        structFieldJson("a4", "\"string\"", true))),
+      new StructType()
+        .add("a1", new StringType("UNICODE"), true)
+        .add("a2", IntegerType.INTEGER, false)
+        .add("a3", new StringType("UTF8_LCASE"), false)
+        .add("a4", StringType.STRING, true)
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", structTypeJson(Seq(
+          structFieldJson("b1", "\"string\"", true,
+            metadataJson = Some("{\"__COLLATIONS\" : {\"b1\" : \"UNICODE\"}}")))), true),
+        structFieldJson("a2", structTypeJson(Seq(
+          structFieldJson("b1", arrayTypeJson("\"string\"", false), true,
+            metadataJson = Some("{\"__COLLATIONS\" : {\"b1.element\" : \"UTF8_LCASE\"}}")),
+          structFieldJson("b2", mapTypeJson("\"string\"", "\"string\"", true), false,
+          metadataJson = Some("{\"__COLLATIONS\" : {\"b2.key\" : \"UNICODE_CI\"," +
+                                                  " \"b2.value\" : \"UTF8_LCASE\"}}")),
+          structFieldJson("b3", arrayTypeJson("\"string\"", false), true),
+          structFieldJson("b4", mapTypeJson("\"string\"", "\"string\"", false), false))), true),
+        structFieldJson("a3", structTypeJson(Seq(
+          structFieldJson("b1", "\"string\"", false),
+          structFieldJson("b2", arrayTypeJson("\"integer\"", false), true))), false,
+          metadataJson = Some("{\"__COLLATIONS\" : {\"b1\" : \"UTF8_LCASE\"}}")))),
+      new StructType()
+        .add("a1", new StructType()
+          .add("b1", new StringType("UNICODE")), true)
+        .add("a2", new StructType()
+          .add("b1", new ArrayType(new StringType("UTF8_LCASE"), false))
+          .add("b2", new MapType(
+            new StringType("UNICODE_CI"), new StringType("UTF8_LCASE"), true), false)
+          .add("b3", new ArrayType(StringType.STRING, false))
+          .add("b4", new MapType(
+            StringType.STRING, StringType.STRING, false), false), true)
+        .add("a3", new StructType()
+          .add("b1", StringType.STRING, false)
+          .add("b2", new ArrayType(IntegerType.INTEGER, false), true), false)
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", "\"string\"", true),
+        structFieldJson("a2", structTypeJson(Seq(
+          structFieldJson("b1", mapTypeJson(
+            arrayTypeJson(arrayTypeJson("\"string\"", true), true),
+            structTypeJson(Seq(
+              structFieldJson("c1", "\"string\"", false,
+                metadataJson = Some("{\"__COLLATIONS\" : {\"c1\" : \"UTF8_LCASE\"}}")),
+              structFieldJson("c2", "\"string\"", true,
+                metadataJson = Some("{\"__COLLATIONS\" : {\"c1\" : \"UNICODE\"}}")),
+              structFieldJson("c3", "\"string\"", true))), true), true),
+          structFieldJson("b2", "\"long\"", true))), true, metadataJson =
+            Some("{\"__COLLATIONS\" : {\"b1.key.element.element\" : \"UTF8_LCASE\"}}")),
+        structFieldJson("a3", arrayTypeJson(
+          mapTypeJson(
+            "\"string\"",
+            structTypeJson(Seq(
+              structFieldJson("b1", "\"string\"", false, metadataJson =
+                  Some("{\"__COLLATIONS\" : {\"a3.element.key\" : \"UNICODE_CI\"}}")))),
+            false), false), true,
+          metadataJson = Some("{\"__COLLATIONS\" : {\"a3.element.key\" : \"UNICODE_CI\"}}")))),
+      new StructType()
+        .add("a1", StringType.STRING, true)
+        .add("a2", new StructType()
+          .add("b1", new MapType(
+            new ArrayType(
+              new ArrayType(
+                new StringType("UTF8_LCASE"), true), true),
+            new StructType()
+              .add("c1", new StringType("UTF8_LCASE"), false)
+              .add("c2", new StringType("UNICODE"), true)
+              .add("c3", StringType.STRING), true))
+          .add("b2", LongType.LONG), true)
+        .add("a3", new ArrayType(
+          new MapType(
+            new StringType("UNICODE_CI"),
+            new StructType()
+              .add("b1", new StringType("UTF8_LCASE"), false), false), false), true)
     )
   )
 
