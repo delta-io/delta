@@ -31,7 +31,8 @@ public class StringType extends BasePrimitiveType {
 
   /**
    *
-   * @param collationIdentifier identifier of collation in which this StringType will be observed
+   * @param collationIdentifier An identifier representing the collation to be used for string comparison and sorting.
+   *                            This determines how strings will be ordered and compared in query operations.
    */
   public StringType(CollationIdentifier collationIdentifier) {
     super("string");
