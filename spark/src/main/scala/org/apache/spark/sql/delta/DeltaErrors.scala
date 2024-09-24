@@ -1634,14 +1634,14 @@ trait DeltaErrorsBase
       messageParameters = Array(option, operation))
   }
 
-  def foundMapTypeColumnException(key: String, value: String, schema: StructType): Throwable = {
+  def foundMapTypeColumnException(key: String, value: String, schema: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_FOUND_MAP_TYPE_COLUMN",
-      messageParameters = Array(key, value, schema.treeString)
+      messageParameters = Array(key, value, dataTypeToString(schema))
     )
   }
-  def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
-    nonExistentColumnInSchema(column, schema.treeString)
+  def columnNotInSchemaException(column: String, schema: DataType): Throwable = {
+    nonExistentColumnInSchema(column, dataTypeToString(schema))
   }
 
   def metadataAbsentException(): Throwable = {
@@ -2690,10 +2690,14 @@ trait DeltaErrorsBase
   def incorrectArrayAccessByName(
       rightName: String,
       wrongName: String,
-      schema: StructType): Throwable = {
+      schema: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME",
-      messageParameters = Array(rightName, wrongName, schema.treeString)
+      messageParameters = Array(
+        rightName,
+        wrongName,
+        dataTypeToString(schema)
+      )
     )
   }
 
@@ -2701,14 +2705,14 @@ trait DeltaErrorsBase
       columnPath: String,
       other: DataType,
       column: Seq[String],
-      schema: StructType): Throwable = {
+      schema: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_PATH_NOT_NESTED",
       messageParameters = Array(
         s"$columnPath",
         s"$other",
         s"${SchemaUtils.prettyFieldName(column)}",
-        schema.treeString
+        dataTypeToString(schema)
       )
     )
   }
@@ -3445,11 +3449,11 @@ trait DeltaErrorsBase
   }
 
   def errorFindingColumnPosition(
-      columnPath: Seq[String], schema: StructType, extraErrMsg: String): Throwable = {
+      columnPath: Seq[String], schema: DataType, extraErrMsg: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0008",
       messageParameters = Array(
-        UnresolvedAttribute(columnPath).name, schema.treeString, extraErrMsg))
+        UnresolvedAttribute(columnPath).name, dataTypeToString(schema), extraErrMsg))
   }
 
   def alterTableClusterByOnPartitionedTableException(): Throwable = {
@@ -3480,6 +3484,11 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
       messageParameters = Array(coordinatorName))
+  }
+
+  private def dataTypeToString(dt: DataType): String = dt match {
+    case s: StructType => s.treeString
+    case other => other.simpleString
   }
 }
 

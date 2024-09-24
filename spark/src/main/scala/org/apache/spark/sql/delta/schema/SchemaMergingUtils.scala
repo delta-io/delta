@@ -296,9 +296,9 @@ object SchemaMergingUtils {
    * @param tf function to apply.
    * @return the transformed schema.
    */
-  def transformColumns(
-      schema: StructType)(
-      tf: (Seq[String], StructField, Resolver) => StructField): StructType = {
+  def transformColumns[T <: DataType](
+      schema: T)(
+      tf: (Seq[String], StructField, Resolver) => StructField): T = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
         case StructType(fields) =>

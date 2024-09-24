@@ -1258,6 +1258,35 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
+  test("addColumn - top level array") {
+    val a = StructField("a", IntegerType)
+    val b = StructField("b", StringType)
+    val schema = ArrayType(new StructType().add(a).add(b))
+
+    val x = StructField("x", LongType)
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, 1)) ===
+      ArrayType(new StructType().add(a).add(x).add(b)))
+  }
+
+  test("addColumn - top level map") {
+    val k = StructField("k", IntegerType)
+    val v = StructField("v", StringType)
+    val schema = MapType(
+      keyType = new StructType().add(k),
+      valueType = new StructType().add(v))
+
+    val x = StructField("x", LongType)
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, 1)) ===
+      MapType(
+        keyType = new StructType().add(k).add(x),
+        valueType = new StructType().add(v)))
+
+    assert(SchemaUtils.addColumn(schema, x, Seq(1, 1)) ===
+      MapType(
+        keyType = new StructType().add(k),
+        valueType = new StructType().add(v).add(x)))
+  }
+
   ////////////////////////////
   // dropColumn
   ////////////////////////////
@@ -1509,6 +1538,29 @@ class SchemaUtilsSuite extends QueryTest
     expectFailure("Incorrectly accessing an ArrayType") {
       SchemaUtils.dropColumn(schema, Seq(0, ARRAY_ELEMENT_INDEX + 1, ARRAY_ELEMENT_INDEX, 0))
     }
+  }
+
+  test("dropColumn - top level array") {
+    val schema = ArrayType(new StructType().add("a", IntegerType).add("b", StringType))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, 0))._1 ===
+      ArrayType(new StructType().add("b", StringType)))
+  }
+
+  test("dropColumn - top level map") {
+    val schema = MapType(
+      keyType = new StructType().add("k", IntegerType).add("k2", StringType),
+      valueType = new StructType().add("v", StringType).add("v2", StringType))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, 0))._1 ===
+      MapType(
+        keyType = new StructType().add("k2", StringType),
+        valueType = new StructType().add("v", StringType).add("v2", StringType)))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(1, 0))._1 ===
+      MapType(
+        keyType = new StructType().add("k", IntegerType).add("k2", StringType),
+        valueType = new StructType().add("v2", StringType)))
   }
 
   /////////////////////////////////
@@ -2582,6 +2634,45 @@ class SchemaUtilsSuite extends QueryTest
     }
     assert(visitedFields === 4)
     assert(update === res3)
+  }
+
+  test("transform top level array type") {
+    val at = ArrayType(
+      new StructType()
+        .add("s1", IntegerType)
+    )
+
+    var visitedFields = 0
+    val updated = SchemaMergingUtils.transformColumns(at) {
+      case (_, field, _) =>
+        visitedFields += 1
+        field.copy(name = "s1_1", dataType = StringType)
+    }
+
+    assert(visitedFields === 1)
+    assert(updated === ArrayType(new StructType().add("s1_1", StringType)))
+  }
+
+  test("transform top level map type") {
+    val mt = MapType(
+      new StructType()
+        .add("k1", IntegerType),
+      new StructType()
+        .add("v1", IntegerType)
+    )
+
+    var visitedFields = 0
+    val updated = SchemaMergingUtils.transformColumns(mt) {
+      case (_, field, _) =>
+        visitedFields += 1
+        field.copy(name = field.name + "_1", dataType = StringType)
+    }
+
+    assert(visitedFields === 2)
+    assert(updated === MapType(
+      new StructType().add("k1_1", StringType),
+      new StructType().add("v1_1", StringType)
+    ))
   }
 
   ////////////////////////////
