@@ -17,9 +17,12 @@ package io.delta.kernel.internal.types
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.delta.kernel.types._
+import io.delta.kernel.types.DataType.COLLATIONS_METADATA_KEY
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.util.HashMap
 import scala.reflect.ClassTag
+import scala.util.control.Breaks.break
 
 class DataTypeJsonSerDeSuite extends AnyFunSuite {
 
@@ -28,7 +31,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
   private val objectMapper = new ObjectMapper()
 
   private def parse(json: String): DataType = {
-    DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json))
+    DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json), "", new HashMap())
   }
 
   private def serialize(dataType: DataType): String = {
@@ -128,6 +131,30 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
         testRoundTrip(json, expectedType)
       }
     }
+  }
+
+  test("serialize/deserialize: complex types") {
+    SAMPLE_COMPLEX_JSON_TO_TYPES
+      .foreach {
+        case (json, dataType) =>
+          testRoundTrip(json, dataType)
+      }
+  }
+
+  test("serialize/deserialize: types with collated strings") {
+    SAMPLE_JSON_TO_TYPES_WITH_COLLATION
+      .foreach {
+        case(json, dataType) =>
+          testRoundTrip(json, dataType)
+      }
+  }
+
+  test("serialize/deserialize: types with collated strings differing") {
+    SAMPLE_JSON_TO_TYPES_WITH_COLLATION_DIFFERING
+      .foreach {
+        case (json, dataType) =>
+          assert(!(parse(json) === dataType))
+      }
   }
 
   test("serialize/deserialize: special characters for column name") {
@@ -242,6 +269,249 @@ object DataTypeJsonSerDeSuite {
         .add("col1", StringType.STRING, true)
         .add("col2", StringType.STRING, false, FieldMetadata.builder().putLong("int", 0).build())
         .add("col3", VariantType.VARIANT, false)
+    )
+  )
+
+  val SAMPLE_COMPLEX_JSON_TO_TYPES = Seq(
+    (
+      structTypeJson(Seq(
+        structFieldJson("c1", "\"binary\"", true),
+        structFieldJson("c2", "\"boolean\"", false),
+        structFieldJson("c3", "\"byte\"", false),
+        structFieldJson("c4", "\"date\"", true),
+        structFieldJson("c5", "\"decimal(10,0)\"", false),
+        structFieldJson("c6", "\"double\"", false),
+        structFieldJson("c7", "\"float\"", false),
+        structFieldJson("c8", "\"integer\"", true),
+        structFieldJson("c9", "\"long\"", true),
+        structFieldJson("c10", "\"short\"", true),
+        structFieldJson("c11", "\"string\"", true),
+        structFieldJson("c12", "\"timestamp_ntz\"", false),
+        structFieldJson("c13", "\"timestamp\"", false),
+        structFieldJson("c14", "\"variant\"", false)
+      )),
+      new StructType()
+        .add("c1", BinaryType.BINARY, true)
+        .add("c2", BooleanType.BOOLEAN, false)
+        .add("c3", ByteType.BYTE, false)
+        .add("c4", DateType.DATE, true)
+        .add("c5", DecimalType.USER_DEFAULT, false)
+        .add("c6", DoubleType.DOUBLE, false)
+        .add("c7", FloatType.FLOAT, false)
+        .add("c8", IntegerType.INTEGER, true)
+        .add("c9", LongType.LONG, true)
+        .add("c10", ShortType.SHORT, true)
+        .add("c11", StringType.STRING, true)
+        .add("c12", TimestampNTZType.TIMESTAMP_NTZ, false)
+        .add("c13", TimestampType.TIMESTAMP, false)
+        .add("c14", VariantType.VARIANT, false)
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", "\"string\"", true),
+        structFieldJson("a2", structTypeJson(Seq(
+          structFieldJson("b1", mapTypeJson(
+            arrayTypeJson(
+              arrayTypeJson(
+                "\"string\"", true), true),
+            structTypeJson(Seq(
+              structFieldJson("c1", "\"string\"", false),
+              structFieldJson("c2", "\"string\"", true)
+            )), true), true),
+          structFieldJson("b2", "\"long\"", true))), true),
+        structFieldJson("a3",
+          arrayTypeJson(
+            mapTypeJson(
+              "\"string\"",
+              structTypeJson(Seq(
+                structFieldJson("b1", "\"date\"", false)
+              )), false), false), true)
+      )),
+      new StructType()
+        .add("a1", StringType.STRING, true)
+        .add("a2", new StructType()
+          .add("b1", new MapType(
+            new ArrayType(
+              new ArrayType(StringType.STRING, true), true),
+            new StructType()
+              .add("c1", StringType.STRING, false)
+              .add("c2", StringType.STRING, true), true))
+          .add("b2", LongType.LONG), true)
+        .add("a3", new ArrayType(
+          new MapType(
+            StringType.STRING,
+            new StructType()
+              .add("b1", DateType.DATE, false), false), false), true)
+    )
+  )
+
+  val SAMPLE_JSON_TO_TYPES_WITH_COLLATION = Seq(
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", "\"string\"", true,
+          metadataJson = Some(s"""{"$COLLATIONS_METADATA_KEY" : {"a1" : "ICU.UNICODE"}}""")),
+        structFieldJson("a2", "\"integer\"", false),
+        structFieldJson("a3", "\"string\"", false,
+          metadataJson = Some(s"""{"$COLLATIONS_METADATA_KEY" : {"a3" : "SPARK.UTF8_LCASE"}}""")),
+        structFieldJson("a4", "\"string\"", true))),
+      new StructType()
+        .add("a1", new StringType("ICU.UNICODE"), true)
+        .add("a2", IntegerType.INTEGER, false)
+        .add("a3", new StringType("SPARK.UTF8_LCASE"), false)
+        .add("a4", StringType.STRING, true)
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", structTypeJson(Seq(
+          structFieldJson("b1", "\"string\"", true,
+            metadataJson = Some(
+              s"""{"$COLLATIONS_METADATA_KEY"
+                 | : {"b1" : "ICU.UNICODE"}}""".stripMargin)))), true),
+        structFieldJson("a2", structTypeJson(Seq(
+          structFieldJson("b1", arrayTypeJson("\"string\"", false), true,
+            metadataJson = Some(
+              s"""{"$COLLATIONS_METADATA_KEY"
+                 | : {"b1.element" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
+          structFieldJson("b2", mapTypeJson("\"string\"", "\"string\"", true), false,
+            metadataJson = Some(
+              s"""{"$COLLATIONS_METADATA_KEY"
+                 | : {"b2.key" : "ICU.UNICODE_CI",
+                 |  "b2.value" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
+          structFieldJson("b3", arrayTypeJson("\"string\"", false), true),
+          structFieldJson("b4", mapTypeJson("\"string\"", "\"string\"", false), false))), true),
+        structFieldJson("a3", structTypeJson(Seq(
+          structFieldJson("b1", "\"string\"", false),
+          structFieldJson("b2", arrayTypeJson("\"integer\"", false), true))), false,
+          metadataJson = Some(
+            s"""{"$COLLATIONS_METADATA_KEY"
+               | : {"b1" : "SPARK.UTF8_LCASE"}}""".stripMargin)))),
+      new StructType()
+        .add("a1", new StructType()
+          .add("b1", new StringType("ICU.UNICODE")), true)
+        .add("a2", new StructType()
+          .add("b1", new ArrayType(new StringType("SPARK.UTF8_LCASE"), false))
+          .add("b2", new MapType(
+            new StringType("ICU.UNICODE_CI"), new StringType("SPARK.UTF8_LCASE"), true), false)
+          .add("b3", new ArrayType(StringType.STRING, false))
+          .add("b4", new MapType(
+            StringType.STRING, StringType.STRING, false), false), true)
+        .add("a3", new StructType()
+          .add("b1", StringType.STRING, false)
+          .add("b2", new ArrayType(IntegerType.INTEGER, false), true), false)
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", "\"string\"", true),
+        structFieldJson("a2", structTypeJson(Seq(
+          structFieldJson("b1", mapTypeJson(
+            arrayTypeJson(arrayTypeJson("\"string\"", true), true),
+            structTypeJson(Seq(
+              structFieldJson("c1", "\"string\"", false,
+                metadataJson = Some(
+                  s"""{"$COLLATIONS_METADATA_KEY"
+                     | : {"c1" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
+              structFieldJson("c2", "\"string\"", true,
+                metadataJson = Some(
+                  s"""{"$COLLATIONS_METADATA_KEY"
+                     | : {\"c2\" : \"ICU.UNICODE\"}}""".stripMargin)),
+              structFieldJson("c3", "\"string\"", true))), true), true,
+            metadataJson = Some(
+              s"""{"$COLLATIONS_METADATA_KEY"
+               | : {"b1.key.element.element" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
+          structFieldJson("b2", "\"long\"", true))), true),
+        structFieldJson("a3", arrayTypeJson(
+          mapTypeJson(
+            "\"string\"",
+            structTypeJson(Seq(
+              structFieldJson("b1", "\"string\"", false,
+                metadataJson = Some(
+                  s"""{"$COLLATIONS_METADATA_KEY"
+                     | : {"b1" : "SPARK.UTF8_LCASE"}}""".stripMargin)))),
+            false), false), true,
+          metadataJson = Some(
+            s"""{"$COLLATIONS_METADATA_KEY"
+               | : {"a3.element.key" : "ICU.UNICODE_CI"}}""".stripMargin)))),
+      new StructType()
+        .add("a1", StringType.STRING, true)
+        .add("a2", new StructType()
+          .add("b1", new MapType(
+            new ArrayType(
+              new ArrayType(
+                new StringType("SPARK.UTF8_LCASE"), true), true),
+            new StructType()
+              .add("c1", new StringType("SPARK.UTF8_LCASE"), false)
+              .add("c2", new StringType("ICU.UNICODE"), true)
+              .add("c3", StringType.STRING), true))
+          .add("b2", LongType.LONG), true)
+        .add("a3", new ArrayType(
+          new MapType(
+            new StringType("ICU.UNICODE_CI"),
+            new StructType()
+              .add("b1", new StringType("SPARK.UTF8_LCASE"), false), false), false), true)
+    )
+  )
+
+  val SAMPLE_JSON_TO_TYPES_WITH_COLLATION_DIFFERING = Seq(
+    (
+      "\"string\"", new StringType("SPARK.UTF8_LCASE")
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", "\"string\"", true,
+          metadataJson = Some(
+            s"""{"$COLLATIONS_METADATA_KEY" :
+               | {"a1" : "SPARK.UTF8_LCASE"}}""".stripMargin)))),
+      new StructType()
+        .add("a1", StringType.STRING, true)
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", "\"string\"", true,
+          metadataJson = Some(
+            s"""{"$COLLATIONS_METADATA_KEY" :
+               | {"a1" : "SPARK.UTF8_LCASE"}}""".stripMargin)))),
+      new StructType()
+        .add("a1", new StringType("ICU.UNICODE"), true)
+    ),
+    (
+      structTypeJson(Seq(
+        structFieldJson("a1", structTypeJson(Seq(
+          structFieldJson("b1", "\"string\"", true,
+            metadataJson = Some(
+              s"""{"$COLLATIONS_METADATA_KEY"
+                 | : {"b1" : "ICU.UNICODE"}}""".stripMargin)))), true),
+        structFieldJson("a2", structTypeJson(Seq(
+          structFieldJson("b1", arrayTypeJson("\"string\"", false), true,
+            metadataJson = Some(
+              s"""{"$COLLATIONS_METADATA_KEY"
+                 | : {"b1.element" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
+          structFieldJson("b2", mapTypeJson("\"string\"", "\"string\"", true), false,
+            metadataJson = Some(
+              s"""{"$COLLATIONS_METADATA_KEY"
+                 | : {"b2.key" : "ICU.UNICODE_CI",
+                 |  "b2.value" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
+          structFieldJson("b3", arrayTypeJson("\"string\"", false), true),
+          structFieldJson("b4", mapTypeJson("\"string\"", "\"string\"", false), false))), true),
+        structFieldJson("a3", structTypeJson(Seq(
+          structFieldJson("b1", "\"string\"", false),
+          structFieldJson("b2", arrayTypeJson("\"integer\"", false), true))), false,
+          metadataJson = Some(
+            s"""{"$COLLATIONS_METADATA_KEY"
+               | : {"b1" : "SPARK.UTF8_LCASE"}}""".stripMargin)))),
+      new StructType()
+        .add("a1", new StructType()
+          .add("b1", new StringType("ICU.UNICODE")), true)
+        .add("a2", new StructType()
+          // In json, this field has "SPARK.UTF8_LCASE" collation
+          .add("b1", new ArrayType(StringType.STRING, false))
+          .add("b2", new MapType(
+            new StringType("ICU.UNICODE_CI"), new StringType("SPARK.UTF8_LCASE"), true), false)
+          .add("b3", new ArrayType(StringType.STRING, false))
+          .add("b4", new MapType(
+            StringType.STRING, StringType.STRING, false), false), true)
+        .add("a3", new StructType()
+          .add("b1", StringType.STRING, false)
+          .add("b2", new ArrayType(IntegerType.INTEGER, false), true), false)
     )
   )
 

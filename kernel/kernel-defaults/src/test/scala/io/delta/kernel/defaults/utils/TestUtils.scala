@@ -315,6 +315,7 @@ trait TestUtils extends Assertions with SQLHelper {
     TimestampType.TIMESTAMP,
     TimestampNTZType.TIMESTAMP_NTZ,
     StringType.STRING,
+    new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
     BinaryType.BINARY,
     new DecimalType(10, 5)
   )

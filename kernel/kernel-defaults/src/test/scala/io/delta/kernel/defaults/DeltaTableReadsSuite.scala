@@ -22,8 +22,9 @@ import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
-import io.delta.kernel.types.{LongType, StructType}
+import io.delta.kernel.types.{CollationIdentifier, LongType, StructType}
 import io.delta.kernel.Table
+import io.delta.kernel.expressions.{And, CollatedPredicate, Column, Literal, Or, Predicate}
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
@@ -587,6 +588,297 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       path = goldenTablePath("corrupted-last-checkpoint-kernel"),
       expectedAnswer = (0L until 100L).map(TestRow(_))
     )
+  }
+
+  test("check collated predicate") {
+    val defaultCollationIdentifier = CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+    val firstFileC1Data = Seq(
+      TestRow("A"),
+      TestRow("B"),
+      TestRow("C")
+    )
+    val secondFileC1Data = Seq(
+      TestRow("a"),
+      TestRow("b"),
+      TestRow("c")
+    )
+    val thirdFileC1Data = Seq(
+      TestRow(Seq(null): _*),
+      TestRow(Seq(null): _*),
+      TestRow("C")
+    )
+    val allFilesC1Data = firstFileC1Data ++ secondFileC1Data ++ thirdFileC1Data
+
+
+    Seq(
+      // (predicate, expected results)
+      (
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("b"),
+          defaultCollationIdentifier
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B")
+        ),
+        firstFileC1Data
+      ),
+      (
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B"),
+          defaultCollationIdentifier
+        ),
+        allFilesC1Data
+      ),
+      (
+        new And(
+          new Predicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B")
+          ),
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        ),
+        firstFileC1Data
+      ),
+      (
+        new And(
+          new Predicate(
+            "<",
+            new Column("c1"),
+            new Column("c2")
+          ),
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new And(
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          ),
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new And(
+          new Predicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B")
+          ),
+          new Predicate(
+            "<",
+            new Column("c2"),
+            Literal.ofString("1")
+          )
+        ),
+        Seq()
+      ),
+      (
+        new Or(
+          new Predicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B")
+          ),
+          new CollatedPredicate(
+            "<",
+            new Column("c2"),
+            Literal.ofString("1"),
+            defaultCollationIdentifier
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate(
+          "NOT",
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate("NOT",
+          new Or(
+            new Predicate(
+              ">",
+              new Column("c1"),
+              Literal.ofString("B")
+            ),
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            )
+          )
+        ),
+        firstFileC1Data
+      ),
+      (
+        new Predicate("NOT",
+          new And(
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            ),
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            )
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate(
+          "NOT",
+          new Predicate("IS_NOT_NULL",
+            new And(
+              new CollatedPredicate(
+                "<",
+                new Column("c1"),
+                Literal.ofString("B"),
+                defaultCollationIdentifier
+              ),
+              new CollatedPredicate(
+                "<",
+                new Column("c1"),
+                Literal.ofString("B"),
+                defaultCollationIdentifier
+              )
+            )
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate(
+          "NOT",
+          new Predicate("IS_NULL",
+            new And(
+              new Predicate(
+                "<",
+                new Column("c1"),
+                Literal.ofString("B")
+              ),
+              new CollatedPredicate(
+                "<",
+                new Column("c1"),
+                Literal.ofString("B"),
+                defaultCollationIdentifier
+              )
+            )
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate("IS_NULL",
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate("IS_NULL",
+          new And(
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            ),
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            )
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate("IS_NOT_NULL",
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        ),
+        allFilesC1Data
+      ),
+      (
+        new Predicate("IS_NOT_NULL",
+          new And(
+            new Predicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B")
+            ),
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            )
+          )
+        ),
+        allFilesC1Data
+      )
+    ).foreach {
+      case(predicate, expectedAnswer) =>
+        checkTable(
+          path = goldenTablePath("data-skipping-basic-stats-collated-data"),
+          expectedAnswer = expectedAnswer,
+          readCols = Seq("c1"),
+          filter = predicate,
+          expectedRemainingFilter = predicate
+        )
+    }
   }
 
   test("error - version not contiguous") {

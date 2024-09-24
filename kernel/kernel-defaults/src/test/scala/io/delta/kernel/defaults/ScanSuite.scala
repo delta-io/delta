@@ -1141,6 +1141,294 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  test("data skipping by data values with collated predicate") {
+    def checkResults(predicate: Predicate, expNumFiles: Long): Unit = {
+      val snapshot = latestSnapshot(goldenTablePath("data-skipping-basic-stats-collated-data"))
+      val scanFiles = collectScanFileRows(
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, predicate)
+          .build())
+      assert(scanFiles.length == expNumFiles,
+        s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
+    }
+
+    val defaultCollationIdentifier = CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+
+    checkResults(
+      new CollatedPredicate(
+        "<",
+        new Column("c1"),
+        Literal.ofString("b"),
+        defaultCollationIdentifier
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate(
+        "<",
+        new Column("c1"),
+        Literal.ofString("B")
+      ),
+      1
+    )
+
+    checkResults(
+      new CollatedPredicate(
+        "<",
+        new Column("c1"),
+        Literal.ofString("B"),
+        defaultCollationIdentifier
+      ),
+      3
+    )
+
+    checkResults(
+      new And(
+        new Predicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B")
+        ),
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B"),
+          defaultCollationIdentifier
+        )
+      ),
+      1
+    )
+
+    checkResults(
+      new And(
+        new Predicate(
+          "<",
+          new Column("c1"),
+          new Column("c2")
+        ),
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B"),
+          defaultCollationIdentifier
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new And(
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B"),
+          defaultCollationIdentifier
+        ),
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B"),
+          defaultCollationIdentifier
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new And(
+        new Predicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B")
+        ),
+        new Predicate(
+          "<",
+          new Column("c2"),
+          Literal.ofString("1")
+        )
+      ),
+      0
+    )
+
+    checkResults(
+      new Or(
+        new Predicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B")
+        ),
+        new CollatedPredicate(
+          "<",
+          new Column("c2"),
+          Literal.ofString("1"),
+          defaultCollationIdentifier
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B"),
+          defaultCollationIdentifier
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate("NOT",
+        new Or(
+          new Predicate(
+            ">",
+            new Column("c1"),
+            Literal.ofString("B")
+          ),
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        )
+      ),
+      1
+    )
+
+    checkResults(
+      new Predicate("NOT",
+        new And(
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          ),
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new Predicate("IS_NOT_NULL",
+          new And(
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            ),
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            )
+          )
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new Predicate("IS_NULL",
+          new And(
+            new Predicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B")
+            ),
+            new CollatedPredicate(
+              "<",
+              new Column("c1"),
+              Literal.ofString("B"),
+              defaultCollationIdentifier
+            )
+          )
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate("IS_NULL",
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B"),
+          defaultCollationIdentifier
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate("IS_NULL",
+        new And(
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          ),
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate("IS_NOT_NULL",
+        new CollatedPredicate(
+          "<",
+          new Column("c1"),
+          Literal.ofString("B"),
+          defaultCollationIdentifier
+        )
+      ),
+      3
+    )
+
+    checkResults(
+      new Predicate("IS_NOT_NULL",
+        new And(
+          new Predicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B")
+          ),
+          new CollatedPredicate(
+            "<",
+            new Column("c1"),
+            Literal.ofString("B"),
+            defaultCollationIdentifier
+          )
+        )
+      ),
+      3
+    )
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Kernel data skipping tests
   //////////////////////////////////////////////////////////////////////////////////

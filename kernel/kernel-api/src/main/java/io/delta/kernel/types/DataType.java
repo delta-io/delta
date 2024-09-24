@@ -25,6 +25,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public abstract class DataType {
+  public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
 
   /**
    * Are the data types same? The metadata or column names could be different.

@@ -61,6 +61,20 @@ public class DataSkippingUtils {
   }
 
   /**
+   * Removes {@link CollatedPredicate} from the data filtering predicate because files
+   * are pruned using non-collated statistics.
+   *
+   * <p>For example:</p>
+   *
+   * <p>1. {@link CollatedPredicate} -> {@link AlwaysTrue},</p>
+   * <p>2. {@link And}({@link CollatedPredicate}, {@link Predicate}) -> {@link Predicate},</p>
+   * <p>3. {@link Or}({@link CollatedPredicate}, {@link Predicate}) -> {@link AlwaysTrue}</p>
+   */
+  public static Predicate omitCollatedPredicateFromDataSkippingFilter(Predicate dataFilters) {
+    return omitCollatedPredicateFromDataSkippingFilter(dataFilters, false)._1;
+  }
+
+  /**
    * Constructs a data skipping filter to prune files using column statistics given a query data
    * filter if possible. The returned filter will evaluate to FALSE for any files that can be safely
    * skipped. If the filter evaluates to NULL or TRUE, the file should not be skipped.
@@ -78,6 +92,144 @@ public class DataSkippingUtils {
   //////////////////////////////////////////////////////////////////////////////////
   // Helper functions
   //////////////////////////////////////////////////////////////////////////////////
+
+  private static Tuple2<Predicate, Boolean> omitCollatedPredicateFromDataSkippingFilter(Predicate dataFilters,
+                                                                                        boolean isNotPropagated) {
+    // We don't have collated stats, so we can't make pruning predicate other than ALWAYS_TRUE
+    if (dataFilters instanceof CollatedPredicate) {
+      return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+    }
+
+    String predicateName = dataFilters.getName().toUpperCase(Locale.ROOT);
+    if (isNotPropagated && NEGATED_PREDICATE.containsKey(predicateName)) {
+      predicateName = NEGATED_PREDICATE.get(predicateName);
+      dataFilters = new Predicate(predicateName, dataFilters.getChildren());
+    }
+
+    switch (predicateName) {
+      case "AND":
+        Predicate leftPredicate = asPredicate(getLeft(dataFilters));
+        Predicate rightPredicate = asPredicate(getRight(dataFilters));
+        Tuple2<Predicate, Boolean> leftResult = omitCollatedPredicateFromDataSkippingFilter(leftPredicate, isNotPropagated);
+        Tuple2<Predicate, Boolean> rightResult = omitCollatedPredicateFromDataSkippingFilter(rightPredicate, isNotPropagated);
+        boolean hasCollatedPredicate = leftResult._2 || rightResult._2;
+        Predicate resultingPredicate = AlwaysTrue.ALWAYS_TRUE;
+        if (leftResult._1 != AlwaysTrue.ALWAYS_TRUE) {
+          resultingPredicate = leftResult._1;
+        }
+        if (rightResult._1 != AlwaysTrue.ALWAYS_TRUE) {
+          if (resultingPredicate == AlwaysTrue.ALWAYS_TRUE) {
+            resultingPredicate = rightResult._1;
+          } else {
+            resultingPredicate = new And(leftResult._1, rightResult._1);
+          }
+        }
+        return new Tuple2<>(resultingPredicate, hasCollatedPredicate);
+      case "OR":
+        leftPredicate = asPredicate(getLeft(dataFilters));
+        rightPredicate = asPredicate(getRight(dataFilters));
+        leftResult = omitCollatedPredicateFromDataSkippingFilter(leftPredicate, isNotPropagated);
+        rightResult = omitCollatedPredicateFromDataSkippingFilter(rightPredicate, isNotPropagated);
+        hasCollatedPredicate = leftResult._2 || rightResult._2;
+        if (leftResult._1 == AlwaysTrue.ALWAYS_TRUE || rightResult._1 == AlwaysTrue.ALWAYS_TRUE) {
+          resultingPredicate = AlwaysTrue.ALWAYS_TRUE;
+        } else {
+          resultingPredicate = new Or(leftResult._1, rightResult._1);
+        }
+        return new Tuple2<>(resultingPredicate, hasCollatedPredicate);
+      case "=":
+        Expression left = getLeft(dataFilters);
+        Expression right = getRight(dataFilters);
+        hasCollatedPredicate = false;
+        if (left instanceof Predicate) {
+          leftResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) left, false);
+          left = leftResult._1;
+          hasCollatedPredicate |= leftResult._2;
+        }
+        if (right instanceof Predicate) {
+          rightResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) right, false);
+          right = rightResult._1;
+          hasCollatedPredicate |= rightResult._2;
+        }
+        if (hasCollatedPredicate) {
+          return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+        }
+        if (isNotPropagated) {
+          return new Tuple2<>(
+                  new Or(new Predicate("<", left, right),
+                          new Predicate("<", right, left)),
+                  false);
+        } else {
+          return new Tuple2<>(new Predicate("=", left, right), false);
+        }
+      case ">":
+      case ">=":
+        left = getLeft(dataFilters);
+        right = getRight(dataFilters);
+        boolean hasCollatedPredicateOnLeft = false;
+        if (left instanceof Predicate) {
+          leftResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) left, false);
+          left = leftResult._1;
+          hasCollatedPredicateOnLeft = leftResult._2;
+        }
+        boolean hasCollatedPredicateOnRight = false;
+        if (right instanceof Predicate) {
+          rightResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) right, false);
+          right = rightResult._1;
+          hasCollatedPredicateOnRight = rightResult._2;
+        }
+        if (hasCollatedPredicateOnRight) {
+          return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+        }
+        return new Tuple2<>(new Predicate(predicateName, left, right),
+                hasCollatedPredicateOnLeft);
+      case "<":
+      case "<=":
+        left = getLeft(dataFilters);
+        right = getRight(dataFilters);
+        hasCollatedPredicateOnLeft = false;
+        if (left instanceof Predicate) {
+          leftResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) left, false);
+          left = leftResult._1;
+          hasCollatedPredicateOnLeft = leftResult._2;
+        }
+        hasCollatedPredicateOnRight = false;
+        if (right instanceof Predicate) {
+          rightResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) right, false);
+          right = rightResult._1;
+          hasCollatedPredicateOnRight = rightResult._2;
+        }
+        if (hasCollatedPredicateOnLeft) {
+          return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+        }
+        return new Tuple2<>(new Predicate(predicateName, left, right),
+                hasCollatedPredicateOnRight);
+      case "IS_NULL":
+        Expression child = getUnaryChild(dataFilters);
+        if (!(child instanceof Predicate)) {
+          return new Tuple2<>(dataFilters, false);
+        }
+        Tuple2<Predicate, Boolean> childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, false);
+        if (childResult._2) {
+          return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+        } else {
+          return new Tuple2<>(dataFilters, false);
+        }
+      case "IS_NOT_NULL":
+        child = getUnaryChild(dataFilters);
+        if (!(child instanceof Predicate)) {
+          return new Tuple2<>(dataFilters, false);
+        }
+        childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, false);
+        return new Tuple2<>(new Predicate(predicateName, childResult._1), childResult._2);
+      case "NOT":
+        Predicate childPredicate = asPredicate(getUnaryChild(dataFilters));
+        return omitCollatedPredicateFromDataSkippingFilter(childPredicate, !isNotPropagated);
+    }
+
+    throw new IllegalArgumentException(
+            String.format("Invalid predicate name: %s.", predicateName));
+  }
 
   /**
    * Returns a file skipping predicate expression, derived from the user query, which uses column
@@ -342,6 +494,22 @@ public class DataSkippingUtils {
           put("<=", ">=");
           put(">", "<");
           put(">=", "<=");
+        }
+      };
+
+  private static final Map<String, String> NEGATED_PREDICATE =
+      new HashMap<String, String>() {
+        {
+          put("AND", "OR");
+          put("OR", "AND");
+          put("IS_NULL", "IS_NOT_NULL");
+          put("IS_NOT_NULL", "IS_NULL");
+          put("NOT", "NOT");
+          put("=", "=");
+          put("<", ">=");
+          put("<=", ">");
+          put(">", "<=");
+          put(">=", "<");
         }
       };
 
