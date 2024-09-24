@@ -20,7 +20,9 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.CollatedPredicate;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -107,18 +109,40 @@ class DefaultExpressionUtils {
   }
 
   /**
+   * Matches predicate name to comparison function.
+   */
+  static IntPredicate getBooleanPredicate(Predicate predicate) {
+    switch(predicate.getName()) {
+      case "=":
+      case "IS NOT DISTINCT FROM":
+        return x -> x == 0;
+      case "<":
+        return x -> x < 0;
+      case "<=":
+        return x -> x <= 0;
+      case ">":
+        return x -> x > 0;
+      case ">=":
+        return x -> x >= 0;
+      default:
+        throw new IllegalArgumentException(String.format("Unsupported predicate '%s'", predicate.getName()));
+    }
+  }
+
+  /**
    * Utility method for getting value comparator
    *
    * @param left
    * @param right
-   * @param booleanComparator
+   * @param predicate
    * @return
    */
   static IntPredicate getComparator(
-      ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
+      ColumnVector left, ColumnVector right, Predicate predicate) {
     checkArgument(
         left.getSize() == right.getSize(), "Left and right operand have different vector sizes.");
 
+    IntPredicate booleanComparator = getBooleanPredicate(predicate);
     DataType dataType = left.getDataType();
     IntPredicate vectorValueComparator;
     if (dataType instanceof BooleanType) {
@@ -155,10 +179,18 @@ class DefaultExpressionUtils {
               booleanComparator.test(
                   BIGDECIMAL_COMPARATOR.compare(left.getDecimal(rowId), right.getDecimal(rowId)));
     } else if (dataType instanceof StringType) {
-      vectorValueComparator =
-          rowId ->
-              booleanComparator.test(
-                  STRING_COMPARATOR.compare(left.getString(rowId), right.getString(rowId)));
+      if (predicate instanceof CollatedPredicate) {
+        vectorValueComparator =
+            rowId ->
+                booleanComparator.test(
+                    CollationFactory.fetchCollation(((CollatedPredicate) predicate).getCollationIdentifier())
+                        .getComparator().compare(left.getString(rowId), right.getString(rowId)));
+      } else {
+        vectorValueComparator =
+            rowId ->
+                booleanComparator.test(
+                    STRING_COMPARATOR.compare(left.getString(rowId), right.getString(rowId)));
+      }
     } else if (dataType instanceof BinaryType) {
       vectorValueComparator =
           rowId ->
@@ -178,8 +210,8 @@ class DefaultExpressionUtils {
    * <p>Only primitive data types are supported.
    */
   static ColumnVector comparatorVector(
-      ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
-    IntPredicate vectorValueComparator = getComparator(left, right, booleanComparator);
+      ColumnVector left, ColumnVector right, Predicate predicate) {
+    IntPredicate vectorValueComparator = getComparator(left, right, predicate);
 
     return new ColumnVector() {
 
@@ -220,8 +252,8 @@ class DefaultExpressionUtils {
    * <p>Only primitive data types are supported.
    */
   static ColumnVector nullSafeComparatorVector(
-      ColumnVector left, ColumnVector right, IntPredicate booleanComparator) {
-    IntPredicate vectorValueComparator = getComparator(left, right, booleanComparator);
+      ColumnVector left, ColumnVector right, Predicate predicate) {
+    IntPredicate vectorValueComparator = getComparator(left, right, predicate);
     return new ColumnVector() {
       @Override
       public DataType getDataType() {

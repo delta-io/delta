@@ -18,10 +18,9 @@ package io.delta.kernel.defaults.internal.expressions
 import java.lang.{Boolean => BooleanJ}
 import java.util.Optional
 import java.util.Optional.empty
-
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.expressions.{Column, Literal}
+import io.delta.kernel.expressions.{CollatedPredicate, CollationIdentifier, Column, Literal}
 import io.delta.kernel.types.{BooleanType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 

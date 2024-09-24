@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.skipping;
 
+import static io.delta.kernel.internal.DeltaErrors.timestampAfterLatestCommit;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_STATS_ORDINAL;
@@ -73,6 +74,153 @@ public class DataSkippingUtils {
       Predicate dataFilters, StructType dataSchema) {
     StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
     return constructDataSkippingFilter(dataFilters, schemaHelper);
+  }
+
+  public static Predicate omitCollatedPredicateFromDataSkippingFilter(Predicate dataFilters) {
+    return omitCollatedPredicateFromDataSkippingFilter(dataFilters, false)._1;
+  }
+
+  /**
+   * TODO
+   *
+   * @param dataFilters
+   * @param isNotPropagated
+   * @return
+   */
+  private static Tuple2<Predicate, Boolean> omitCollatedPredicateFromDataSkippingFilter(Predicate dataFilters,
+                                                                      boolean isNotPropagated) {
+    if (dataFilters instanceof CollatedPredicate) {
+      return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+    }
+
+    String predicateName = dataFilters.getName().toUpperCase(Locale.ROOT);
+    if (isNotPropagated && REVERSE_PREDICATE.containsKey(predicateName)) {
+      predicateName = REVERSE_PREDICATE.get(predicateName);
+    }
+
+    switch (predicateName) {
+      case "AND":
+        Predicate leftPredicate = asPredicate(getLeft(dataFilters));
+        Predicate rightPredicate = asPredicate(getRight(dataFilters));
+        Tuple2<Predicate, Boolean> leftResult = omitCollatedPredicateFromDataSkippingFilter(leftPredicate, isNotPropagated);
+        Tuple2<Predicate, Boolean> rightResult = omitCollatedPredicateFromDataSkippingFilter(rightPredicate, isNotPropagated);
+        boolean hasCollatedPredicate = leftResult._2 || rightResult._2;
+        Predicate resultingPredicate = AlwaysTrue.ALWAYS_TRUE;
+        if (leftResult._1 != AlwaysTrue.ALWAYS_TRUE) {
+          resultingPredicate = leftResult._1;
+        }
+        if (rightResult._1 != AlwaysTrue.ALWAYS_TRUE) {
+          if (resultingPredicate == AlwaysTrue.ALWAYS_TRUE) {
+            resultingPredicate = rightResult._1;
+          } else {
+            resultingPredicate = new And(leftResult._1, rightResult._1);
+          }
+        }
+        return new Tuple2<>(resultingPredicate, hasCollatedPredicate);
+      case "OR":
+        leftPredicate = asPredicate(getLeft(dataFilters));
+        rightPredicate = asPredicate(getRight(dataFilters));
+        leftResult = omitCollatedPredicateFromDataSkippingFilter(leftPredicate, isNotPropagated);
+        rightResult = omitCollatedPredicateFromDataSkippingFilter(rightPredicate, isNotPropagated);
+        hasCollatedPredicate = leftResult._2 || rightResult._2;
+        if (leftResult._1 == AlwaysTrue.ALWAYS_TRUE || rightResult._1 == AlwaysTrue.ALWAYS_TRUE) {
+          resultingPredicate = AlwaysTrue.ALWAYS_TRUE;
+        } else {
+          resultingPredicate = new Or(leftResult._1, rightResult._1);
+        }
+        return new Tuple2<>(resultingPredicate, hasCollatedPredicate);
+      case "=":
+        Expression left = getLeft(dataFilters);
+        Expression right = getRight(dataFilters);
+        hasCollatedPredicate = false;
+        if (left instanceof Predicate) {
+          leftResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) left, isNotPropagated);
+          left = leftResult._1;
+          hasCollatedPredicate |= leftResult._2;
+        }
+        if (right instanceof Predicate) {
+          rightResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) right, isNotPropagated);
+          right = rightResult._1;
+          hasCollatedPredicate |= rightResult._2;
+        }
+        if (hasCollatedPredicate) {
+          return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+        }
+        if (isNotPropagated) {
+          return new Tuple2<>(
+                  new Or(new Predicate("<", left, right),
+                          new Predicate("<", right, left)),
+                  false);
+        } else {
+          return new Tuple2<>(new Predicate("=", left, right), false);
+        }
+      case ">":
+      case ">=":
+        left = getLeft(dataFilters);
+        right = getRight(dataFilters);
+        boolean hasCollatedPredicateOnLeft = false;
+        if (left instanceof Predicate) {
+          leftResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) left, isNotPropagated);
+          left = leftResult._1;
+          hasCollatedPredicateOnLeft = leftResult._2;
+        }
+        boolean hasCollatedPredicateOnRight = false;
+        if (right instanceof Predicate) {
+          rightResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) right, isNotPropagated);
+          right = rightResult._1;
+          hasCollatedPredicateOnRight = rightResult._2;
+        }
+        if (hasCollatedPredicateOnRight) {
+          return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+        }
+        return new Tuple2<>(new Predicate(predicateName, left, right),
+                hasCollatedPredicateOnLeft);
+      case "<":
+      case "<=":
+        left = getLeft(dataFilters);
+        right = getRight(dataFilters);
+        hasCollatedPredicateOnLeft = false;
+        if (left instanceof Predicate) {
+          leftResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) left, isNotPropagated);
+          left = leftResult._1;
+          hasCollatedPredicateOnLeft = leftResult._2;
+        }
+        hasCollatedPredicateOnRight = false;
+        if (right instanceof Predicate) {
+          rightResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) right, isNotPropagated);
+          right = rightResult._1;
+          hasCollatedPredicateOnRight = rightResult._2;
+        }
+        if (hasCollatedPredicateOnLeft) {
+          return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+        }
+        return new Tuple2<>(new Predicate(predicateName, left, right),
+                hasCollatedPredicateOnRight);
+      case "IS_NULL":
+        Expression child = getUnaryChild(dataFilters);
+        if (!(child instanceof Predicate)) {
+          return new Tuple2<>(dataFilters, false);
+        }
+        Tuple2<Predicate, Boolean> childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, isNotPropagated);
+        if (childResult._2) {
+          return new Tuple2<>(AlwaysTrue.ALWAYS_TRUE, true);
+        } else {
+          return new Tuple2<>(childResult._1, false);
+        }
+      case "IS_NOT_NULL":
+        child = getUnaryChild(dataFilters);
+        if (!(child instanceof Predicate)) {
+          return new Tuple2<>(dataFilters, false);
+        }
+        childResult = omitCollatedPredicateFromDataSkippingFilter((Predicate) child, isNotPropagated);
+        return new Tuple2<>(childResult._1, childResult._2);
+      case "NOT":
+        Predicate childPredicate = asPredicate(getUnaryChild(dataFilters));
+        return omitCollatedPredicateFromDataSkippingFilter(childPredicate, !isNotPropagated);
+    }
+
+    throw new IllegalArgumentException(
+            String.format("Invalid predicate name: %s.", predicateName));
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -334,20 +482,25 @@ public class DataSkippingUtils {
         exprName, Arrays.asList(adjColExpr, lit), Collections.singleton(column));
   }
 
-  private static final Map<String, String> REVERSE_COMPARATORS =
+  private static final Map<String, String> REVERSE_PREDICATE =
       new HashMap<String, String>() {
         {
+          put("AND", "OR");
+          put("OR", "AND");
+          put("IS_NULL", "IS_NOT_NULL");
+          put("IS_NOT_NULL", "IS_NULL");
+          put("NOT", "NOT");
           put("=", "=");
-          put("<", ">");
-          put("<=", ">=");
-          put(">", "<");
-          put(">=", "<=");
+          put("<", ">=");
+          put("<=", ">");
+          put(">", "<=");
+          put(">=", "<");
         }
       };
 
   private static Predicate reverseComparatorFilter(Predicate predicate) {
     return new Predicate(
-        REVERSE_COMPARATORS.get(predicate.getName().toUpperCase(Locale.ROOT)),
+        REVERSE_PREDICATE.get(predicate.getName().toUpperCase(Locale.ROOT)),
         getRight(predicate),
         getLeft(predicate));
   }

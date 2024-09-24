@@ -16,6 +16,7 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.expressions.CollationIdentifier;
 
 /**
  * The data type representing {@code string} type values.
@@ -24,9 +25,22 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class StringType extends BasePrimitiveType {
-  public static final StringType STRING = new StringType();
+  public static final StringType STRING =
+      new StringType(CollationIdentifier.DEFAULT_COLLATION_IDENTIFIER);
 
-  private StringType() {
+  private final CollationIdentifier collationIdentifier;
+
+  public StringType(CollationIdentifier collationIdentifier) {
     super("string");
+    this.collationIdentifier = collationIdentifier;
+  }
+
+  public StringType(String collationName) {
+    super("string");
+    this.collationIdentifier = CollationIdentifier.fromString(collationName);
+  }
+
+  public CollationIdentifier getCollationIdentifier() {
+    return collationIdentifier;
   }
 }

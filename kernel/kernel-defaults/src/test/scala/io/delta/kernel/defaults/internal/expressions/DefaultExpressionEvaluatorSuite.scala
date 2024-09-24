@@ -773,6 +773,111 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     ofNull(DoubleType.DOUBLE)
   )
 
+  test("evaluate expression: compare collated strings") {
+    // scalastyle:off nonascii
+    // TODO: add UTF8_LCASE when supported
+    Seq(
+      "UTF8_BINARY",
+      "UNICODE",
+      "UNICODE_CI"
+    ).foreach {
+      collationName =>
+        // Empty strings.
+        assertCompare("", "", collationName, 0)
+        assertCompare("a", "", collationName, 1)
+        assertCompare("", "a", collationName, -1)
+        // Basic tests.
+        assertCompare("a", "a", collationName, 0)
+        assertCompare("a", "b", collationName, -1)
+        assertCompare("b", "a", collationName, 1)
+        assertCompare("A", "A", collationName, 0)
+        assertCompare("A", "B", collationName, -1)
+        assertCompare("B", "A", collationName, 1)
+        assertCompare("aa", "a", collationName, 1)
+        assertCompare("b", "bb", collationName, -1)
+        assertCompare("abc", "a", collationName, 1)
+        assertCompare("abc", "b", collationName, -1)
+        assertCompare("abc", "ab", collationName, 1)
+        assertCompare("abc", "abc", collationName, 0)
+        assertCompare("aaaa", "aaa", collationName, 1)
+        assertCompare("hello", "world", collationName, -1)
+        assertCompare("Spark", "Spark", collationName, 0)
+        assertCompare("ü", "ü", collationName, 0)
+        assertCompare("ü", "", collationName, 1)
+        assertCompare("", "ü", collationName, -1)
+        assertCompare("äü", "äü", collationName, 0)
+        assertCompare("äxx", "äx", collationName, 1)
+        assertCompare("a", "ä", collationName, -1)
+    }
+
+    // Advanced tests.
+    assertCompare("äü", "bü", "UTF8_BINARY", 1)
+    assertCompare("bxx", "bü", "UTF8_BINARY", -1)
+    assertCompare("äü", "bü", "UNICODE", -1)
+    assertCompare("bxx", "bü", "UNICODE", 1)
+    assertCompare("äü", "bü", "UNICODE_CI", -1)
+    assertCompare("bxx", "bü", "UNICODE_CI", 1)
+    // Case variation.
+    assertCompare("AbCd", "aBcD", "UTF8_BINARY", -1)
+    assertCompare("AbcD", "aBCd", "UNICODE", 1)
+    assertCompare("abcd", "ABCD", "UNICODE_CI", 0)
+    // Accent variation.
+    assertCompare("aBćD", "ABĆD", "UTF8_BINARY", 1)
+    assertCompare("äBCd", "ÄBCD", "UNICODE", -1)
+    assertCompare("Ab́cD", "AB́CD", "UNICODE_CI", 0)
+    // One-to-many case mapping (e.g. Turkish dotted I).
+    assertCompare("i\u0307", "İ", "UTF8_BINARY", -1)
+    assertCompare("İ", "i\u0307", "UTF8_BINARY", 1)
+    assertCompare("i\u0307", "İ", "UNICODE", -1)
+    assertCompare("İ", "i\u0307", "UNICODE", 1)
+    assertCompare("i\u0307", "İ", "UNICODE_CI", 0)
+    assertCompare("İ", "i\u0307", "UNICODE_CI", 0)
+    assertCompare("i\u0307İ", "i\u0307İ", "UNICODE_CI", 0)
+    assertCompare("i\u0307İ", "İi\u0307", "UNICODE_CI", 0)
+    assertCompare("İi\u0307", "i\u0307İ", "UNICODE_CI", 0)
+    assertCompare("İi\u0307", "İi\u0307", "UNICODE_CI", 0)
+    // Conditional case mapping (e.g. Greek sigmas).
+    assertCompare("ς", "σ", "UTF8_BINARY", -1)
+    assertCompare("ς", "Σ", "UTF8_BINARY", 1)
+    assertCompare("σ", "Σ", "UTF8_BINARY", 1)
+    assertCompare("ς", "σ", "UNICODE", 1)
+    assertCompare("ς", "Σ", "UNICODE", 1)
+    assertCompare("σ", "Σ", "UNICODE", -1)
+    assertCompare("ς", "σ", "UNICODE_CI", 0)
+    assertCompare("ς", "Σ", "UNICODE_CI", 0)
+    assertCompare("σ", "Σ", "UNICODE_CI", 0)
+    // Surrogate pairs.
+    assertCompare("a🙃b🙃c", "aaaaa", "UTF8_BINARY", 1)
+    assertCompare("a🙃b🙃c", "aaaaa", "UNICODE", -1) // != UTF8_BINARY
+    assertCompare("a🙃b🙃c", "aaaaa", "UNICODE_CI", -1) // != UTF8_LCASE
+    assertCompare("a🙃b🙃c", "a🙃b🙃c", "UTF8_BINARY", 0)
+    assertCompare("a🙃b🙃c", "a🙃b🙃c", "UNICODE", 0)
+    assertCompare("a🙃b🙃c", "a🙃b🙃c", "UNICODE_CI", 0)
+    assertCompare("a🙃b🙃c", "a🙃b🙃d", "UTF8_BINARY", -1)
+    assertCompare("a🙃b🙃c", "a🙃b🙃d", "UNICODE", -1)
+    assertCompare("a🙃b🙃c", "a🙃b🙃d", "UNICODE_CI", -1)
+    // scalastyle:on nonascii
+
+    // Maximum code point.
+    val maxCodePoint = Character.MAX_CODE_POINT
+    val maxCodePointStr = new String(Character.toChars(maxCodePoint))
+    var i = 0
+    while (i < maxCodePoint && Character.isValidCodePoint(i)) {
+      assertCompare(new String(Character.toChars(i)), maxCodePointStr, "UTF8_BINARY", -1)
+
+      i += 1
+    }
+    // Minimum code point.// Minimum code point.
+    val minCodePoint = Character.MIN_CODE_POINT
+    val minCodePointStr = new String(Character.toChars(minCodePoint))
+    i = minCodePoint + 1
+    while (i <= maxCodePoint && Character.isValidCodePoint(i)) {
+      assertCompare(new String(Character.toChars(i)), minCodePointStr, "UTF8_BINARY", 1)
+
+      i += 1
+    }
+  }
+
   test("evaluate expression: comparators `byte` with other implicit types") {
     // Mapping of comparator to expected results for:
     // (byte, short), (byte, int), (byte, long), (byte, float), (byte, double)
@@ -1021,9 +1126,42 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     new DefaultExpressionEvaluator(inputSchema, expression, outputType)
   }
 
+  private def assertCompare(s1: String, s2: String, collationName: String, expResult: Int): Unit = {
+    val l1 = ofString(s1)
+    val l2 = ofString(s2)
+    if (expResult == -1) {
+      testComparator("<", l1, l2, true, Some(collationName))
+    } else if (expResult == 1) {
+      testComparator("<", l2, l1, true, Some(collationName))
+    } else if (expResult == 0) {
+      testComparator("=", l1, l2, true, Some(collationName))
+    } else {
+      throw new IllegalArgumentException(
+        String.format("Invalid expected result: %s.", expResult.toString))
+    }
+  }
+
   private def testComparator(
-    comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
-    val expression = new Predicate(comparator, left, right)
+    comparator: String,
+    left: Expression,
+    right: Expression,
+    expResult: BooleanJ,
+    collationName: Option[String] = Option.empty): Unit = {
+    val expression =
+      if (collationName.isEmpty) {
+        new Predicate(comparator, left, right)
+      } else {
+        val collationIdentifier =
+          if (collationName.get.startsWith("UTF8")) {
+            CollationIdentifier.fromString(
+              String.format("%s.%s", CollationIdentifier.PROVIDER_SPARK, collationName.get))
+          } else {
+            CollationIdentifier.fromString(
+              String.format("%s.%s", CollationIdentifier.PROVIDER_ICU, collationName.get))
+          }
+        new CollatedPredicate(
+          comparator, left, right, collationIdentifier)
+      }
     val batch = zeroColumnBatch(rowCount = 1)
     val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)
 

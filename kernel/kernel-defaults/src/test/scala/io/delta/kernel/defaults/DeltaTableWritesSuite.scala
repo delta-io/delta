@@ -18,17 +18,19 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{CollatedPredicate, CollationIdentifier, Column, Expression, Literal, ScalarExpression}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.{ColumnMapping, VectorUtils}
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.IntegerType.INTEGER

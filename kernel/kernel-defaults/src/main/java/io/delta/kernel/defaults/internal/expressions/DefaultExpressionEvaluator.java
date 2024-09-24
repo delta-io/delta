@@ -329,7 +329,11 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           throw unsupportedExpressionException(predicate, msg);
         }
       }
-      return new Predicate(predicate.getName(), left, right);
+      if (predicate instanceof CollatedPredicate) {
+        return new CollatedPredicate(predicate.getName(), left, right, ((CollatedPredicate) predicate).getCollationIdentifier());
+      } else {
+        return new Predicate(predicate.getName(), left, right);
+      }
     }
   }
 
@@ -427,35 +431,19 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       PredicateChildrenEvalResult argResults = evalBinaryExpressionChildren(predicate);
       switch (predicate.getName()) {
         case "=":
-          return comparatorVector(
-              argResults.leftResult,
-              argResults.rightResult,
-              (compareResult) -> (compareResult == 0));
         case ">":
-          return comparatorVector(
-              argResults.leftResult,
-              argResults.rightResult,
-              (compareResult) -> (compareResult > 0));
         case ">=":
-          return comparatorVector(
-              argResults.leftResult,
-              argResults.rightResult,
-              (compareResult) -> (compareResult >= 0));
         case "<":
-          return comparatorVector(
-              argResults.leftResult,
-              argResults.rightResult,
-              (compareResult) -> (compareResult < 0));
         case "<=":
           return comparatorVector(
               argResults.leftResult,
               argResults.rightResult,
-              (compareResult) -> (compareResult <= 0));
+              predicate);
         case "IS NOT DISTINCT FROM":
           return nullSafeComparatorVector(
               argResults.leftResult,
               argResults.rightResult,
-              (compareResult) -> (compareResult == 0));
+              predicate);
         default:
           // We should never reach this based on the ExpressionVisitor
           throw new IllegalStateException(
