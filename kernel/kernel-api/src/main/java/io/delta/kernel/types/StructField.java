@@ -100,7 +100,8 @@ public class StructField {
       metadataBuilder.putString(nestedField._1, nestedField._2);
     }
 
-    metadata = new FieldMetadata.Builder()
+    metadata =
+        new FieldMetadata.Builder()
             .fromMetadata(metadata)
             .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
             .build();
