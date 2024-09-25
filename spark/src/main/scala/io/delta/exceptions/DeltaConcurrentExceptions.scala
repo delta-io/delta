@@ -175,5 +175,4 @@ class ConcurrentTransactionException(message: String)
   }
   override def getErrorClass: String = "DELTA_CONCURRENT_TRANSACTION"
   override def getMessage: String = message
-
 }

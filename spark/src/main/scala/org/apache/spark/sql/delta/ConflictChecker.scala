@@ -17,24 +17,26 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.concurrent.TimeUnit
 
-import io.delta.storage.commit.UpdatedActions
-import org.apache.hadoop.fs.FileStatus
-import org.apache.spark.internal.{MDC, MessageWithContext}
-import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet}
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.DeltaOperations.ROW_TRACKING_BACKFILL_OPERATION_NAME
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
-import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import io.delta.storage.commit.UpdatedActions
+import org.apache.hadoop.fs.FileStatus
 
-import java.util.concurrent.TimeUnit
-import scala.collection.mutable
+import org.apache.spark.internal.{MDC, MessageWithContext}
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
+import org.apache.spark.sql.types.StructType
 
 /**
  * A class representing different attributes of current transaction needed for conflict detection.
