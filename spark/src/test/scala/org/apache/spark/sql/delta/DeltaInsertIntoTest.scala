@@ -256,12 +256,12 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
 
           withSQLConf(confs: _*) {
             expectedResult match {
-              case Left(expectedSchema) =>
+              case ExpectedResult.Success(expectedSchema) =>
                 runInsert()
                 val target = spark.read.table("target")
                 assert(target.schema === expectedSchema)
                 checkAnswer(target, insert.expectedResult(initialDF, insertDF))
-              case Right(checkError) =>
+              case ExpectedResult.Failure(checkError) =>
                 val ex = intercept[SparkThrowable] {
                   runInsert()
                 }

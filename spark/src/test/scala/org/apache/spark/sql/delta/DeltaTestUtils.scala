@@ -240,16 +240,16 @@ trait DeltaTestUtilsBase {
   }
 
   /**
-   * Helper type to define the expected result of a test case.
+   * Helper types to define the expected result of a test case.
    * Either:
    * - Success: include an expected value to check, e.g. expected schema or result as a DF or rows.
    * - Failure: an exception is thrown and the caller passes a function to check that it matches an
    *     expected error, typ. `checkError()` or `checkErrorMatchPVals()`.
    */
-  type ExpectedResult[T] = Either[T, SparkThrowable => Unit]
+  sealed trait ExpectedResult[T]
   object ExpectedResult {
-    def Success[T](expected: T): ExpectedResult[T] = Left(expected)
-    def Failure[T](checkError: SparkThrowable => Unit): ExpectedResult[T] = Right(checkError)
+    case class Success[T](expected: T) extends ExpectedResult[T]
+    case class Failure[T](checkError: SparkThrowable => Unit) extends ExpectedResult[T]
   }
 
   /** Utility method to check exception `e` is of type `E` or a cause of it is of type `E` */

@@ -3135,12 +3135,12 @@ abstract class MergeIntoSuiteBase
               insert = "(v.key, v.value) VALUES (src.a, src.b)")
 
           expectedResult match {
-            case Right(checkError) =>
+            case ExpectedResult.Failure(checkError) =>
               val ex = intercept[AnalysisException] {
                 runMerge()
               }
               checkError(ex)
-            case  Left(expectedRows) =>
+            case  ExpectedResult.Success(expectedRows) =>
               if (checkViewStripped) {
                 checkStripViewFromTarget(target = "v")
               }
@@ -3161,29 +3161,30 @@ abstract class MergeIntoSuiteBase
   testTempViews("basic - merge condition references subset of target cols")(
     text = "SELECT * FROM tab",
     mergeCondition = "src.a = v.key",
-    expectedResult = Left(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
   )
 
   testTempViews("subset cols")(
     text = "SELECT key FROM tab",
     mergeCondition = "src.a = v.key AND src.b = v.value",
-    expectedResult = ExpectedResult.Failure(ex =>
+    expectedResult = ExpectedResult.Failure { ex =>
       assert(ex.getErrorClass === "UNRESOLVED_COLUMN.WITH_SUGGESTION")
-    )
+    }
   )
 
   testTempViews("superset cols")(
     text = "SELECT key, value, 1 FROM tab",
     mergeCondition = "src.a = v.key AND src.b = v.value",
     // The analyzer can't tell whether the table originally had the extra column or not.
-    expectedResult = ExpectedResult.Failure(ex =>
+    expectedResult = ExpectedResult.Failure { ex =>
       checkError(
         ex,
         errorClass = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map(
           "schemaDiff" -> "Latest schema is missing field(s): 1",
           "legacyFlagMessage" -> ""
-    )))
+      ))
+    }
   )
 
   testTempViews("nontrivial projection")(

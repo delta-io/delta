@@ -66,7 +66,7 @@ object DeltaViewHelper {
         // and ensuring that the project list exactly match the output of the scan.
         CollapseProject(EliminateSubqueryAliases(plan)) match {
           case View(desc, true, // isTempView
-          Project(outerList, scan: LogicalRelation))
+              Project(outerList, scan: LogicalRelation))
             if attributesMatch(outerList, scan.output) =>
             Some(desc, outerList, scan)
           case _ => None
