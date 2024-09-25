@@ -57,7 +57,7 @@ public class StructField {
   private final String name;
   private final DataType dataType;
   private final boolean nullable;
-  private final FieldMetadata metadata;
+  private FieldMetadata metadata;
 
   public StructField(String name, DataType dataType, boolean nullable) {
     this(name, dataType, nullable, FieldMetadata.empty());
@@ -80,8 +80,30 @@ public class StructField {
     return dataType;
   }
 
+  /** Indicated whether collation metadata is fetched and added to `metadata` */
+  private boolean isCollationMetadataFetched = false;
+
   /** @return the metadata for this field */
   public FieldMetadata getMetadata() {
+    if (isCollationMetadataFetched) {
+      return metadata;
+    }
+    isCollationMetadataFetched = true;
+
+    List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
+    if (nestedCollatedFields.isEmpty()) {
+      return metadata;
+    }
+
+    FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
+    for (Tuple2<String, String> nestedField : nestedCollatedFields) {
+      metadataBuilder.putString(nestedField._1, nestedField._2);
+    }
+
+    metadata = new FieldMetadata.Builder()
+            .fromMetadata(metadata)
+            .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
+            .build();
     return metadata;
   }
 
@@ -103,22 +125,6 @@ public class StructField {
   public String toString() {
     return String.format(
         "StructField(name=%s,type=%s,nullable=%s,metadata=%s)", name, dataType, nullable, metadata);
-  }
-
-  public FieldMetadata getSerializationMetadata() {
-    List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
-    if (nestedCollatedFields.isEmpty()) {
-      return metadata;
-    }
-
-    FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
-    for (Tuple2<String, String> nestedField : nestedCollatedFields) {
-      metadataBuilder.putString(nestedField._1, nestedField._2);
-    }
-    return new FieldMetadata.Builder()
-        .fromMetadata(metadata)
-        .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
-        .build();
   }
 
   private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {
@@ -155,6 +161,9 @@ public class StructField {
       return false;
     }
     StructField that = (StructField) o;
+    // Retrieve collation metadata if they haven't been fetched yet.
+    getMetadata();
+    that.getMetadata();
     return nullable == that.nullable
         && name.equals(that.name)
         && dataType.equals(that.dataType)

@@ -498,7 +498,7 @@ public class DataTypeJsonSerDe {
     writeDataType(gen, field.getDataType());
     gen.writeBooleanField("nullable", field.isNullable());
     gen.writeFieldName("metadata");
-    writeFieldMetadata(gen, field.getSerializationMetadata());
+    writeFieldMetadata(gen, field.getMetadata());
     gen.writeEndObject();
   }
 
