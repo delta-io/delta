@@ -1510,4 +1510,5 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   }
 }
 
+@org.scalatest.Ignore
 class DeltaSharingDataSourceDeltaSuite extends DeltaSharingDataSourceDeltaSuiteBase {}

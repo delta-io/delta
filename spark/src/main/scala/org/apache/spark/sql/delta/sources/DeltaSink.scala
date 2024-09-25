@@ -205,7 +205,7 @@ case class DeltaSink(
         allowStructEvolution = canMergeSchema,
         columnName = columnName
       )
-      new Column(Alias(castExpr, columnName)())
+      Column(Alias(castExpr, columnName)())
     }
 
     data.queryExecution match {
