@@ -72,6 +72,23 @@ class MetadataChangedException(message: String)
 /**
  * :: Evolving ::
  *
+ * Thrown when a conflicting metadata domain is added.
+ *
+ */
+@Evolving
+class ConcurrentDomainMetadataException(message: String)
+  extends org.apache.spark.sql.delta.ConcurrentWriteException(message)
+    with DeltaThrowable {
+  def this(messageParameters: Array[String]) = {
+    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_DOMAIN_METADATA", messageParameters))
+  }
+  override def getErrorClass: String = "DELTA_CONCURRENT_DOMAIN_METADATA"
+  override def getMessage: String = message
+}
+
+/**
+ * :: Evolving ::
+ *
  * Thrown when the protocol version has changed between the time of read
  * and the time of commit.
  *
@@ -158,4 +175,5 @@ class ConcurrentTransactionException(message: String)
   }
   override def getErrorClass: String = "DELTA_CONCURRENT_TRANSACTION"
   override def getMessage: String = message
+
 }
