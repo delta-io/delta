@@ -3179,7 +3179,7 @@ abstract class MergeIntoSuiteBase
     expectedResult = ExpectedResult.Failure { ex =>
       checkError(
         ex,
-        errorClass = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map(
           "schemaDiff" -> "Latest schema is missing field(s): 1",
           "legacyFlagMessage" -> ""

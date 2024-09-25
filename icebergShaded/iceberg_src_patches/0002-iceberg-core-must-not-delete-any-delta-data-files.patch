@@ -1,0 +1,177 @@
+iceberg core must NOT delete any delta data files
+
+---
+ .../iceberg/IncrementalFileCleanup.java       |  8 +--
+ .../apache/iceberg/ReachableFileCleanup.java  |  5 +-
+ .../apache/iceberg/TestRemoveSnapshots.java   | 57 +++++++++++--------
+ 3 files changed, 40 insertions(+), 30 deletions(-)
+
+diff --git a/core/src/main/java/org/apache/iceberg/IncrementalFileCleanup.java b/connector/iceberg-core/core/src/main/java/org/apache/iceberg/IncrementalFileCleanup.java
+index d894dcbf36d..ead7ea6b076 100644
+--- a/core/src/main/java/org/apache/iceberg/IncrementalFileCleanup.java
++++ b/core/src/main/java/org/apache/iceberg/IncrementalFileCleanup.java
+@@ -256,10 +256,10 @@ class IncrementalFileCleanup extends FileCleanupStrategy {
+               }
+             });
+
+-    Set<String> filesToDelete =
+-        findFilesToDelete(manifestsToScan, manifestsToRevert, validIds, afterExpiration);
+-
+-    deleteFiles(filesToDelete, "data");
++    // iceberg core MUST NOT delete any data files which are managed by delta
++    // Set<String> filesToDelete =
++    //    findFilesToDelete(manifestsToScan, manifestsToRevert, validIds, afterExpiration);
++    // deleteFiles(filesToDelete, "data");
+     LOG.warn("Manifests to delete: {}", Joiner.on(", ").join(manifestsToDelete));
+     LOG.warn("Manifests Lists to delete: {}", Joiner.on(", ").join(manifestListsToDelete));
+     deleteFiles(manifestsToDelete, "manifest");
+diff --git a/core/src/main/java/org/apache/iceberg/ReachableFileCleanup.java b/connector/iceberg-core/core/src/main/java/org/apache/iceberg/ReachableFileCleanup.java
+index ccbee78e27b..da888a63b3d 100644
+--- a/core/src/main/java/org/apache/iceberg/ReachableFileCleanup.java
++++ b/core/src/main/java/org/apache/iceberg/ReachableFileCleanup.java
+@@ -72,8 +72,9 @@ class ReachableFileCleanup extends FileCleanupStrategy {
+               snapshotsAfterExpiration, deletionCandidates, currentManifests::add);
+
+       if (!manifestsToDelete.isEmpty()) {
+-        Set<String> dataFilesToDelete = findFilesToDelete(manifestsToDelete, currentManifests);
+-        deleteFiles(dataFilesToDelete, "data");
++        // iceberg core MUST NOT delete any data files which are managed by delta
++        // Set<String> dataFilesToDelete = findFilesToDelete(manifestsToDelete, currentManifests);
++        // deleteFiles(dataFilesToDelete, "data");
+         Set<String> manifestPathsToDelete =
+             manifestsToDelete.stream().map(ManifestFile::path).collect(Collectors.toSet());
+         deleteFiles(manifestPathsToDelete, "manifest");
+diff --git a/core/src/test/java/org/apache/iceberg/TestRemoveSnapshots.java b/connector/iceberg-core/core/src/test/java/org/apache/iceberg/TestRemoveSnapshots.java
+index 53e5af520d9..95fa8e41de1 100644
+--- a/core/src/test/java/org/apache/iceberg/TestRemoveSnapshots.java
++++ b/core/src/test/java/org/apache/iceberg/TestRemoveSnapshots.java
+@@ -147,8 +147,9 @@ public class TestRemoveSnapshots extends TableTestBase {
+             secondSnapshot
+                 .allManifests(table.io())
+                 .get(0)
+-                .path(), // manifest contained only deletes, was dropped
+-            FILE_A.path()), // deleted
++                .path() // manifest contained only deletes, was dropped
++            // FILE_A.path() should NOT delete data files
++        ), // deleted
+         deletedFiles);
+   }
+
+@@ -209,8 +210,9 @@ public class TestRemoveSnapshots extends TableTestBase {
+                 .allManifests(table.io())
+                 .get(0)
+                 .path(), // manifest was rewritten for delete
+-            secondSnapshot.manifestListLocation(), // snapshot expired
+-            FILE_A.path()), // deleted
++            secondSnapshot.manifestListLocation() // snapshot expired
++            // FILE_A.path() should not delete any data files
++        ),
+         deletedFiles);
+   }
+
+@@ -309,8 +311,9 @@ public class TestRemoveSnapshots extends TableTestBase {
+         Sets.newHashSet(
+             secondSnapshot.manifestListLocation(), // snapshot expired
+             Iterables.getOnlyElement(secondSnapshotManifests)
+-                .path(), // manifest is no longer referenced
+-            FILE_B.path()), // added, but rolled back
++                    .path() // manifest is no longer referenced
++            // FILE_B.path() should not delete any data files
++        ),
+         deletedFiles);
+   }
+
+@@ -686,7 +689,8 @@ public class TestRemoveSnapshots extends TableTestBase {
+
+     removeSnapshots(table).expireOlderThan(t3).deleteWith(deletedFiles::add).commit();
+
+-    Assert.assertTrue("FILE_A should be deleted", deletedFiles.contains(FILE_A.path().toString()));
++    Assert.assertTrue("FILE_A should NOT be deleted",
++        !deletedFiles.contains(FILE_A.path().toString()));
+   }
+
+   @Test
+@@ -712,7 +716,8 @@ public class TestRemoveSnapshots extends TableTestBase {
+
+     removeSnapshots(table).expireOlderThan(t3).deleteWith(deletedFiles::add).commit();
+
+-    Assert.assertTrue("FILE_A should be deleted", deletedFiles.contains(FILE_A.path().toString()));
++    Assert.assertTrue("FILE_A should NOT be deleted",
++        !deletedFiles.contains(FILE_A.path().toString()));
+   }
+
+   @Test
+@@ -749,8 +754,10 @@ public class TestRemoveSnapshots extends TableTestBase {
+
+     removeSnapshots(table).expireOlderThan(t4).deleteWith(deletedFiles::add).commit();
+
+-    Assert.assertTrue("FILE_A should be deleted", deletedFiles.contains(FILE_A.path().toString()));
+-    Assert.assertTrue("FILE_B should be deleted", deletedFiles.contains(FILE_B.path().toString()));
++    Assert.assertTrue("FILE_A should NOT be deleted",
++        !deletedFiles.contains(FILE_A.path().toString()));
++    Assert.assertTrue("FILE_B should NOT be deleted",
++        !deletedFiles.contains(FILE_B.path().toString()));
+   }
+
+   @Test
+@@ -824,9 +831,11 @@ public class TestRemoveSnapshots extends TableTestBase {
+         Sets.newHashSet(
+             "remove-snapshot-0", "remove-snapshot-1", "remove-snapshot-2", "remove-snapshot-3"));
+
+-    Assert.assertTrue("FILE_A should be deleted", deletedFiles.contains(FILE_A.path().toString()));
+-    Assert.assertTrue("FILE_B should be deleted", deletedFiles.contains(FILE_B.path().toString()));
+-    Assert.assertTrue("Thread should be created in provided pool", planThreadsIndex.get() > 0);
++    Assert.assertTrue("FILE_A should NOT be deleted",
++        !deletedFiles.contains(FILE_A.path().toString()));
++    Assert.assertTrue("FILE_B should NOT be deleted",
++        !deletedFiles.contains(FILE_B.path().toString()));
++    // Assert.assertTrue("Thread should be created in provided pool", planThreadsIndex.get() > 0);
+   }
+
+   @Test
+@@ -885,13 +894,13 @@ public class TestRemoveSnapshots extends TableTestBase {
+     Set<String> expectedDeletes = Sets.newHashSet();
+     expectedDeletes.add(snapshotA.manifestListLocation());
+
+-    // Files should be deleted of dangling staged snapshot
+-    snapshotB
+-        .addedDataFiles(table.io())
+-        .forEach(
+-            i -> {
+-              expectedDeletes.add(i.path().toString());
+-            });
++    // Files should NOT be deleted of dangling staged snapshot
++    // snapshotB
++    //    .addedDataFiles(table.io())
++    //    .forEach(
++    //        i -> {
++    //          expectedDeletes.add(i.path().toString());
++    //        });
+
+     // ManifestList should be deleted too
+     expectedDeletes.add(snapshotB.manifestListLocation());
+@@ -1144,10 +1153,10 @@ public class TestRemoveSnapshots extends TableTestBase {
+     removeSnapshots(table).expireOlderThan(fourthSnapshotTs).deleteWith(deletedFiles::add).commit();
+
+     Assert.assertEquals(
+-        "Should remove old delete files and delete file manifests",
++        "Should only delete file manifests",
+         ImmutableSet.builder()
+-            .add(FILE_A.path())
+-            .add(FILE_A_DELETES.path())
++            // .add(FILE_A.path())
++            // .add(FILE_A_DELETES.path())
+             .add(firstSnapshot.manifestListLocation())
+             .add(secondSnapshot.manifestListLocation())
+             .add(thirdSnapshot.manifestListLocation())
+@@ -1501,7 +1510,7 @@ public class TestRemoveSnapshots extends TableTestBase {
+     expectedDeletes.addAll(manifestPaths(appendA, table.io()));
+     expectedDeletes.add(branchDelete.manifestListLocation());
+     expectedDeletes.addAll(manifestPaths(branchDelete, table.io()));
+-    expectedDeletes.add(FILE_A.path().toString());
++    // expectedDeletes.add(FILE_A.path().toString());
+
+     Assert.assertEquals(2, Iterables.size(table.snapshots()));
+     Assert.assertEquals(expectedDeletes, deletedFiles);
+--
+2.39.2 (Apple Git-143)

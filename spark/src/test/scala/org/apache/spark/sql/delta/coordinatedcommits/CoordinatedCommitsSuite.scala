@@ -1322,7 +1322,7 @@ class CoordinatedCommitsSuite
                 tableMutationFn()
               }
               checkError(e,
-                errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+                "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
                 sqlState = "0AKDC",
                 parameters = Map("coordinatorName" -> "tracking-in-memory")
               )
@@ -1576,17 +1576,17 @@ class CoordinatedCommitsSuite
     CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(1))
 
     withTempDir { tempDir =>
-      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES" +
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
         s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
         s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
       val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES" +
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
           s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory', " +
           s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+        e,
+        "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
     }
@@ -1594,20 +1594,80 @@ class CoordinatedCommitsSuite
 
   test("During ALTER, unsetting Coordinated Commits configurations throws an exception.") {
     CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
     withTempDir { tempDir =>
-      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES" +
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
         s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
         s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
       val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES" +
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
           s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}', " +
           s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}')")
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
+        e,
+        "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
         sqlState = "42616",
         parameters = Map[String, String]())
+    }
+  }
+
+  test("During ALTER, overriding ICT configurations on (potential) Coordinated Commits tables " +
+      "throws an exception.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    // For a table that had Coordinated Commits enabled before the ALTER command.
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
+          s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
+      }
+      checkError(
+        e,
+        "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+        sqlState = "42616",
+        parameters = Map("Command" -> "ALTER"))
+    }
+
+    // For a table that is about to enable Coordinated Commits during the same ALTER command.
+    withoutCoordinatedCommitsDefaultTableProperties {
+      withTempDir { tempDir =>
+        sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
+        val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+          sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
+            s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+            s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}', " +
+            s"'${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
+        }
+        checkError(
+          e,
+          "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES",
+          sqlState = "42616",
+          parameters = Map("Command" -> "ALTER"))
+      }
+    }
+  }
+
+  test("During ALTER, unsetting ICT configurations on Coordinated Commits tables throws an " +
+      "exception.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
+          s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}')")
+      }
+      checkError(
+        e,
+        "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+        sqlState = "42616",
+        parameters = Map("Command" -> "ALTER"))
     }
   }
 

@@ -719,12 +719,12 @@ trait GeneratedColumnSuiteBase
       assert(tableSchema == spark.table(table).schema)
       // Insert a LONG to `c1` should fail rather than changing the `c1` type to LONG.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "c1",
           "columnType" -> "INT",
@@ -754,14 +754,14 @@ trait GeneratedColumnSuiteBase
 
       // Insert an INT to `a` should fail rather than changing the `a` type to INT
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           Seq((32767, 32767)).toDF("a", "c1a")
             .selectExpr("a", "named_struct('a', c1a) as c1")
             .write.format("delta").mode("append")
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a",
           "columnType" -> "SMALLINT",

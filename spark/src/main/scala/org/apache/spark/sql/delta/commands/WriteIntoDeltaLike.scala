@@ -153,20 +153,6 @@ trait WriteIntoDeltaLike {
     txn.registerSQLMetrics(spark, sqlMetrics)
   }
 
-  import org.apache.spark.sql.types.{ArrayType, CharType, DataType, MapType, VarcharType}
-  protected def replaceCharWithVarchar(dt: DataType): DataType = dt match {
-    case ArrayType(et, nullable) =>
-      ArrayType(replaceCharWithVarchar(et), nullable)
-    case MapType(kt, vt, nullable) =>
-      MapType(replaceCharWithVarchar(kt), replaceCharWithVarchar(vt), nullable)
-    case StructType(fields) =>
-      StructType(fields.map { field =>
-        field.copy(dataType = replaceCharWithVarchar(field.dataType))
-      })
-    case CharType(length) => VarcharType(length)
-    case _ => dt
-  }
-
   protected def extractConstraints(
       sparkSession: SparkSession,
       expr: Seq[Expression]): Seq[Constraint] = {

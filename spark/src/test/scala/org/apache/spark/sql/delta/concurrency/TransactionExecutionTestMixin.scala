@@ -124,6 +124,7 @@ trait TransactionExecutionTestMixin {
   def unblockCommit(observer: TransactionObserver): Unit = {
     observer.phases.commitPhase.entryBarrier.unblock()
     observer.phases.backfillPhase.entryBarrier.unblock()
+    observer.phases.postCommitPhase.entryBarrier.unblock()
   }
 
   /** Unblocks all phases for [[TransactionObserver]] so that corresponding query can finish. */
@@ -132,6 +133,7 @@ trait TransactionExecutionTestMixin {
     observer.phases.preparePhase.entryBarrier.unblock()
     observer.phases.commitPhase.entryBarrier.unblock()
     observer.phases.backfillPhase.entryBarrier.unblock()
+    observer.phases.postCommitPhase.entryBarrier.unblock()
   }
 
   def waitForPrecommit(observer: TransactionObserver): Unit =
@@ -140,6 +142,7 @@ trait TransactionExecutionTestMixin {
   def waitForCommit(observer: TransactionObserver): Unit = {
     busyWaitFor(observer.phases.commitPhase.hasLeft, timeout)
     busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+    busyWaitFor(observer.phases.postCommitPhase.hasLeft, timeout)
   }
 
   /**
@@ -153,7 +156,7 @@ trait TransactionExecutionTestMixin {
     waitForPrecommit(observer)
     unblockCommit(observer)
     if (hasNextObserver) {
-      observer.phases.backfillPhase.leave()
+      observer.phases.postCommitPhase.leave()
     }
     waitForCommit(observer)
   }
@@ -222,13 +225,15 @@ trait TransactionExecutionTestMixin {
 
           // B starts and commits
           unblockAllPhases(observerB)
-          busyWaitFor(observerB.phases.backfillPhase.hasLeft, timeout)
+          busyWaitFor(observerB.phases.postCommitPhase.hasLeft, timeout)
 
           // A commits
           observerA.phases.commitPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.commitPhase.hasLeft, timeout)
           observerA.phases.backfillPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.backfillPhase.hasLeft, timeout)
+          observerA.phases.postCommitPhase.entryBarrier.unblock()
+          busyWaitFor(observerA.phases.postCommitPhase.hasLeft, timeout)
       }
     (futureA, futureB)
   }
@@ -260,17 +265,19 @@ trait TransactionExecutionTestMixin {
 
           // B starts and commits
           unblockAllPhases(observerB)
-          busyWaitFor(observerB.phases.backfillPhase.hasLeft, timeout)
+          busyWaitFor(observerB.phases.postCommitPhase.hasLeft, timeout)
 
           // C starts and commits
           unblockAllPhases(observerC)
-          busyWaitFor(observerC.phases.backfillPhase.hasLeft, timeout)
+          busyWaitFor(observerC.phases.postCommitPhase.hasLeft, timeout)
 
           // A commits
           observerA.phases.commitPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.commitPhase.hasLeft, timeout)
           observerA.phases.backfillPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.backfillPhase.hasLeft, timeout)
+          observerA.phases.postCommitPhase.entryBarrier.unblock()
+          busyWaitFor(observerA.phases.postCommitPhase.hasLeft, timeout)
       }
     (futureA, futureB, futureC)
   }

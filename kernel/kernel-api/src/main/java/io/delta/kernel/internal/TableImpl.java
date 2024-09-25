@@ -18,11 +18,13 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 
 import io.delta.kernel.*;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Clock;
@@ -32,11 +34,18 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class TableImpl implements Table {
+
+  private static final Logger logger = LoggerFactory.getLogger(TableImpl.class);
+
   public static Table forPath(Engine engine, String path) {
     return forPath(engine, path, System::currentTimeMillis);
   }
@@ -99,7 +108,7 @@ public class TableImpl implements Table {
   @Override
   public void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
-    snapshotManager.checkpoint(engine, version);
+    snapshotManager.checkpoint(engine, clock, version);
   }
 
   @Override
@@ -110,6 +119,66 @@ public class TableImpl implements Table {
 
   public Clock getClock() {
     return clock;
+  }
+
+  /**
+   * Returns delta actions for each version between startVersion and endVersion. Only returns the
+   * actions requested in actionSet.
+   *
+   * <p>For the returned columnar batches:
+   *
+   * <ul>
+   *   <li>Each row within the same batch is guaranteed to have the same commit version
+   *   <li>The batch commit versions are monotonically increasing
+   *   <li>The top-level columns include "version", "timestamp", and the actions requested in
+   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
+   *       respectively. The remaining columns are based on the actions requested and each have the
+   *       schema found in {@code DeltaAction.schema}.
+   * </ul>
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @param startVersion start version (inclusive)
+   * @param endVersion end version (inclusive)
+   * @param actionSet the actions to read and return from the JSON log files
+   * @return an iterator of batches where each row in the batch has exactly one non-null action and
+   *     its commit version and timestamp
+   * @throws TableNotFoundException if the table does not exist or if it is not a delta table
+   * @throws KernelException if a commit file does not exist for any of the versions in the provided
+   *     range
+   * @throws KernelException if provided an invalid version range
+   * @throws KernelException if the version range contains a version with reader protocol that is
+   *     unsupported by Kernel
+   */
+  public CloseableIterator<ColumnarBatch> getChanges(
+      Engine engine,
+      long startVersion,
+      long endVersion,
+      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    // Create a new action set that always contains protocol
+    Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
+    copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    // If protocol is not in the original requested actions we drop the column before returning
+    boolean shouldDropProtocolColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+
+    return getRawChanges(engine, startVersion, endVersion, copySet)
+        .map(
+            batch -> {
+              int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
+              ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
+              for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
+                if (!protocolVector.isNullAt(rowId)) {
+                  Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+                  TableFeatures.validateReadSupportedTable(
+                      protocol, getDataPath().toString(), Optional.empty());
+                }
+              }
+              if (shouldDropProtocolColumn) {
+                return batch.withDeletedColumnAt(protocolIdx);
+              } else {
+                return batch;
+              }
+            });
   }
 
   protected Path getDataPath() {
@@ -226,12 +295,14 @@ public class TableImpl implements Table {
    *     range
    * @throws KernelException if provided an invalid version range
    */
-  public CloseableIterator<ColumnarBatch> getChangesByVersion(
+  private CloseableIterator<ColumnarBatch> getRawChanges(
       Engine engine,
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
 
+    logger.info(
+        "{}: Getting the commit files for versions [{}, {}]", tablePath, startVersion, endVersion);
     List<FileStatus> commitFiles =
         DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, new Path(tablePath), startVersion, endVersion);
@@ -242,6 +313,7 @@ public class TableImpl implements Table {
                 .map(action -> new StructField(action.colName, action.schema, true))
                 .collect(Collectors.toList()));
 
+    logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
     return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
   }
 }

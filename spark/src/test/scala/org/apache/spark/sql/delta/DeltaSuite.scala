@@ -1305,8 +1305,8 @@ class DeltaSuite extends QueryTest
           .save(tempDir.toString)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        e,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map("currentField" -> "value", "updateField" -> "value"))
     }
   }
@@ -3000,7 +3000,7 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
           .save(tempDir.getCanonicalPath)
 
         val protocol = DeltaLog.forTable(spark, tempDir).snapshot.protocol
-        val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+        val (r, w) = if (protocol.supportsTableFeatures) {
           (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
             TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
         } else {

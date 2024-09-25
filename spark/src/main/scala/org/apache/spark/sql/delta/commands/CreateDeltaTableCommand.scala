@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
@@ -134,7 +134,12 @@ case class CreateDeltaTableCommand(
     }
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
-    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
+    // To be safe, here we only extract file system options from table storage properties, to create
+    // the DeltaLog.
+    val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
+      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+    }
+    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
 
@@ -541,6 +546,10 @@ case class CreateDeltaTableCommand(
         // internal column mapping properties for the sake of comparison.
         var filteredTableProperties = filterColumnMappingProperties(
           tableDesc.properties)
+        // We also need to remove any protocol-related properties as we're filtering these
+        // from the metadata so they won't be present in the table properties.
+        filteredTableProperties =
+          Protocol.filterProtocolPropsFromTableProps(filteredTableProperties)
         var filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
         // Clustered table has internal table properties in Metadata configurations and they are
@@ -723,7 +732,11 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      val newMetadata = getProvidedMetadata(table, schema.json)
+      var newMetadata = getProvidedMetadata(table, schema.json)
+      val updatedConfig = UniversalFormat.enforceDependenciesInConfiguration(
+        newMetadata.configuration,
+        txn.snapshot)
+      newMetadata = newMetadata.copy(configuration = updatedConfig)
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }

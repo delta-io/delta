@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{Path, UnsupportedFileSystemException}
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -39,6 +39,35 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
+  }
+
+  test("protocol-related properties are not considered during duplicate table creation") {
+    def createTable(tableName: String, location: String): Unit = {
+      sql(s"""
+             |CREATE TABLE $tableName (id INT, val STRING)
+             |USING DELTA
+             |LOCATION '$location'
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.minReaderVersion' = '2',
+             |  'delta.minWriterVersion' = '5'
+             |)""".stripMargin
+      )
+    }
+    withTempDir { dir =>
+      val table1 = "t1"
+      val table2 = "t2"
+      withTable(table1, table2) {
+        withSQLConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
+          createTable(table1, dir.getCanonicalPath)
+          createTable(table2, dir.getCanonicalPath)
+          val catalogTable1 = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table1))
+          val catalogTable2 = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table2))
+          assert(catalogTable1.properties("delta.columnMapping.mode") == "name")
+          assert(catalogTable2.properties("delta.columnMapping.mode") == "name")
+        }
+      }
+    }
   }
 
   test("table creation with ambiguous paths only allowed with legacy flag") {
@@ -82,6 +111,26 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
       df.write.format("delta").saveAsTable("t")
       df.write.format("delta").mode("append").saveAsTable("t")
       assert(spark.table("t").collect().isEmpty)
+    }
+  }
+
+  test("CREATE TABLE with OPTIONS") {
+    withTempPath { path =>
+      spark.range(10).write.format("delta").save(path.getCanonicalPath)
+      withTable("t") {
+        def createTableWithOptions(simulateUC: Boolean): Unit = {
+          sql(
+            s"""
+               |CREATE TABLE t USING delta LOCATION 'fake://${path.getCanonicalPath}'
+               |${if (simulateUC) "TBLPROPERTIES (test.simulateUC=true)" else ""}
+               |OPTIONS (
+               |  fs.fake.impl='${classOf[FakeFileSystem].getName}',
+               |  fs.fake.impl.disable.cache=true)
+               |""".stripMargin)
+        }
+        intercept[UnsupportedFileSystemException](createTableWithOptions(false))
+        createTableWithOptions(true)
+      }
     }
   }
 }

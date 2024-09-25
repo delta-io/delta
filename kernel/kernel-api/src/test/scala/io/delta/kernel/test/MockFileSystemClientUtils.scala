@@ -161,3 +161,28 @@ class MockListFromResolvePathFileSystemClient(listFromProvider: String => Seq[Fi
 
   def getListFromCalls: Seq[String] = listFromCalls
 }
+
+/**
+ * A mock [[FileSystemClient]] that answers `listFrom` call from the given list of file statuses
+ * and tracks the delete calls.
+ * @param listContents List of file statuses to be returned by `listFrom` call.
+ */
+class MockListFromDeleteFileSystemClient(listContents: Seq[FileStatus])
+    extends BaseMockFileSystemClient {
+  private val listOfFiles: Seq[String] = listContents.map(_.getPath).toSeq
+  private var isListFromAlreadyCalled = false
+  private var deleteCalls: Seq[String] = Seq.empty
+
+  override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+    assert(!isListFromAlreadyCalled, "listFrom should be called only once")
+    isListFromAlreadyCalled = true
+    toCloseableIterator(listContents.sortBy(_.getPath).asJava.iterator())
+  }
+
+  override def delete(path: String): Boolean = {
+    deleteCalls = deleteCalls :+ path
+    listOfFiles.contains(path)
+  }
+
+  def getDeleteCalls: Seq[String] = deleteCalls
+}

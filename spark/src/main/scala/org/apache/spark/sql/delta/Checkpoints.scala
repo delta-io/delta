@@ -41,6 +41,7 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.SQLExecution
@@ -297,13 +298,15 @@ trait Checkpoints extends DeltaLogging {
    * Note that this function captures and logs all exceptions, since the checkpoint shouldn't fail
    * the overall commit operation.
    */
-  def checkpoint(snapshotToCheckpoint: Snapshot): Unit = recordDeltaOperation(
-      this, "delta.checkpoint") {
+  def checkpoint(
+      snapshotToCheckpoint: Snapshot,
+      tableIdentifierOpt: Option[TableIdentifier] = None): Unit =
+    recordDeltaOperation(this, "delta.checkpoint") {
     withCheckpointExceptionHandling(snapshotToCheckpoint.deltaLog, "delta.checkpoint.sync.error") {
       if (snapshotToCheckpoint.version < 0) {
         throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
-      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint)
+      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint, tableIdentifierOpt)
     }
   }
 
@@ -323,8 +326,9 @@ trait Checkpoints extends DeltaLogging {
     }
 
   def checkpointAndCleanUpDeltaLog(
-      snapshotToCheckpoint: Snapshot): Unit = {
-    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint)
+      snapshotToCheckpoint: Snapshot,
+      tableIdentifierOpt: Option[TableIdentifier] = None): Unit = {
+    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, tableIdentifierOpt)
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
     doLogCleanup(snapshotToCheckpoint)
@@ -346,7 +350,9 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
-  protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): LastCheckpointInfo = {
+  protected def writeCheckpointFiles(
+      snapshotToCheckpoint: Snapshot,
+      tableIdentifierOpt: Option[TableIdentifier] = None): LastCheckpointInfo = {
     // With Coordinated-Commits, commit files are not guaranteed to be backfilled immediately in the
     // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
     // writing the checkpoint file in the log directory before backfilling the relevant commits
@@ -361,9 +367,7 @@ trait Checkpoints extends DeltaLogging {
     //   00015.json
     //   00016.json
     //   00018.checkpoint.parquet
-    // TODO(table-identifier-plumbing): Plumb the right tableIdentifier from the Checkpoint Hook
-    //  and pass it to `ensureCommitFilesBackfilled`.
-    snapshotToCheckpoint.ensureCommitFilesBackfilled(tableIdentifierOpt = None)
+    snapshotToCheckpoint.ensureCommitFilesBackfilled(tableIdentifierOpt)
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 
