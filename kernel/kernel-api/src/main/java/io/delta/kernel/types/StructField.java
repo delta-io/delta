@@ -80,19 +80,25 @@ public class StructField {
     return dataType;
   }
 
+  /** @return the metadata for this field */
+  public FieldMetadata getMetadata() {
+    fetchCollationMetadata();
+    return metadata;
+  }
+
   /** Indicated whether collation metadata is fetched and added to `metadata` */
   private boolean isCollationMetadataFetched = false;
 
-  /** @return the metadata for this field */
-  public FieldMetadata getMetadata() {
+  /** Fetches collation metadata from nested collated fields. */
+  private void fetchCollationMetadata() {
     if (isCollationMetadataFetched) {
-      return metadata;
+      return;
     }
     isCollationMetadataFetched = true;
 
     List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
     if (nestedCollatedFields.isEmpty()) {
-      return metadata;
+      return;
     }
 
     FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
@@ -105,7 +111,6 @@ public class StructField {
             .fromMetadata(metadata)
             .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
             .build();
-    return metadata;
   }
 
   /** @return whether this field allows to have a {@code null} value. */
@@ -163,8 +168,8 @@ public class StructField {
     }
     StructField that = (StructField) o;
     // Retrieve collation metadata if they haven't been fetched yet.
-    getMetadata();
-    that.getMetadata();
+    fetchCollationMetadata();
+    that.fetchCollationMetadata();
     return nullable == that.nullable
         && name.equals(that.name)
         && dataType.equals(that.dataType)
