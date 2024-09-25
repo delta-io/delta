@@ -191,7 +191,7 @@ class DeltaHistoryManager(
     if (end - start > 2 * maxKeysPerList) {
       parallelSearch(time, start, end)
     } else {
-      val commits = getCommits(
+      val commits = getCommitsWithNonIctTimestamps(
         deltaLog.store,
         deltaLog.logPath,
         start,
@@ -599,9 +599,11 @@ object DeltaHistoryManager extends DeltaLogging {
    * Returns the commit version and timestamps of all commits in `[start, end)`. If `end` is not
    * specified, will return all commits that exist after `start`. Will guarantee that the commits
    * returned will have both monotonically increasing versions as well as timestamps.
-   * Exposed for tests.
+   * Note that this function will return non-ICT timestamps even for commits where
+   * InCommitTimestamps are enabled. The caller is responsible for ensuring that the appropriate
+   * timestamps are used.
    */
-  private[delta] def getCommits(
+  private[delta] def getCommitsWithNonIctTimestamps(
       logStore: LogStore,
       logPath: Path,
       start: Long,
@@ -688,7 +690,7 @@ object DeltaHistoryManager extends DeltaLogging {
       val logStore = LogStore(SparkEnv.get.conf, conf.value)
       val basePath = new Path(logPath)
       startVersions.map { startVersion =>
-        val commits = getCommits(
+        val commits = getCommitsWithNonIctTimestamps(
           logStore,
           basePath,
           startVersion,

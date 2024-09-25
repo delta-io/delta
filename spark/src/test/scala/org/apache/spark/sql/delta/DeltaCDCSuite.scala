@@ -25,11 +25,13 @@ import scala.collection.JavaConverters._
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -1102,4 +1104,26 @@ class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite
     super.beforeAll()
     enableDeletionVectorsForAllSupportedOperations(spark)
   }
+}
+
+class DeltaCDCScalaSuiteWithCoordinatedCommitsBatch10 extends DeltaCDCScalaSuite
+  with CoordinatedCommitsBaseSuite {
+
+  /** Modify timestamp for a delta commit, used to test timestamp querying */
+  override def modifyDeltaTimestamp(deltaLog: DeltaLog, version: Long, time: Long): Unit = {
+    val fileProvider = DeltaCommitFileProvider(deltaLog.snapshot)
+    val file = new File(fileProvider.deltaFile(version).toUri)
+    InCommitTimestampTestUtils.overwriteICTInDeltaFile(
+      deltaLog,
+      new Path(file.getPath),
+      Some(time))
+    file.setLastModified(time)
+    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
+    if (crc.exists()) {
+      InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(time))
+      crc.setLastModified(time)
+    }
+  }
+
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
 }

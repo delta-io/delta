@@ -469,6 +469,8 @@ trait CDCReaderImpl extends DeltaLogging {
    * @param start - startingVersion of the changes
    * @param end - endingVersion of the changes
    * @param changes - changes is an iterator of all FileActions for a particular commit version.
+   *                Note that for log files where InCommitTimestamps are enabled, the iterator
+   *                must also contain the [[CommitInfo]] action.
    * @param spark - SparkSession
    * @param isStreaming - indicates whether the DataFrame returned is a streaming DataFrame
    * @param useCoarseGrainedCDC - ignores checks related to CDC being disabled in any of the
@@ -493,9 +495,11 @@ trait CDCReaderImpl extends DeltaLogging {
       throw DeltaErrors.endBeforeStartVersionInCDC(start, end)
     }
 
-    // A map from change version to associated commit timestamp.
-    val timestampsByVersion: Map[Long, Timestamp] =
-      getTimestampsByVersion(deltaLog, start, end, spark)
+    // A map from change version to associated file modification timestamps.
+    // We only need these for non-InCommitTimestamp commits because for InCommitTimestamp commits,
+    // the timestamps are already stored in the commit info.
+    val nonICTTimestampsByVersion: Map[Long, Timestamp] =
+      getNonICTTimestampsByVersion(deltaLog, start, end)
 
     val changeFiles = ListBuffer[CDCDataSpec[AddCDCFile]]()
     val addFiles = ListBuffer[CDCDataSpec[AddFile]]()
@@ -615,7 +619,6 @@ trait CDCReaderImpl extends DeltaLogging {
 
         // Set up buffers for all action types to avoid multiple passes.
         val cdcActions = ListBuffer[AddCDCFile]()
-        val ts = timestampsByVersion.get(v).orNull
 
         // Note that the CommitInfo is *not* guaranteed to be generated in 100% of cases.
         // We are using it only for a hotfix-safe mitigation/defense-in-depth - the value
@@ -635,6 +638,18 @@ trait CDCReaderImpl extends DeltaLogging {
           case i: CommitInfo => commitInfo = Some(i)
           case _ => // do nothing
         }
+        // If the commit has an In-Commit Timestamp, we should use that as the commit timestamp.
+        // Note that it is technically possible for a commit range to begin with ICT commits
+        // followed by non-ICT commits, and end with ICT commits again. Ideally, for these commits
+        // we should use the file modification time for the first two ranges. However, this
+        // scenario is an edge case not worth optimizing for.
+        val ts = commitInfo
+          .flatMap(_.inCommitTimestamp)
+          .map(ict => new Timestamp(ict))
+          .getOrElse(nonICTTimestampsByVersion.get(v).orNull)
+        // When `isStreaming` = `true` the [CommitInfo] action is only used for passing the
+        // in-commit timestamp to this method. We should filter them out.
+        commitInfo = if (isStreaming) None else commitInfo
 
         // If there are CDC actions, we read them exclusively if we should not use the
         // Add and RemoveFiles.
@@ -887,22 +902,25 @@ trait CDCReaderImpl extends DeltaLogging {
   }
 
   /**
-   * Builds a map from commit versions to associated commit timestamps.
+   * Builds a map from commit versions to associated commit timestamps where the timestamp
+   * is the modification time of the commit file. Note that this function will not return
+   * InCommitTimestamps, it is up to the consumer of this function to decide whether the
+   * file modification time is the correct commit timestamp or whether they need to read the ICT.
+   *
    * @param start  start commit version
-   * @param end  end commit version
+   * @param end  end commit version (inclusive)
    */
-  def getTimestampsByVersion(
+  def getNonICTTimestampsByVersion(
       deltaLog: DeltaLog,
       start: Long,
-      end: Long,
-      spark: SparkSession): Map[Long, Timestamp] = {
+      end: Long): Map[Long, Timestamp] = {
     // Correct timestamp values are only available through DeltaHistoryManager.getCommits(). Commit
     // info timestamps are wrong, and file modification times are wrong because they need to be
     // monotonized first. This just performs a list (we don't read the contents of the files in
     // getCommits()) so the performance overhead is minimal.
     val monotonizationStart =
       math.max(start - DeltaHistoryManager.POTENTIALLY_UNMONOTONIZED_TIMESTAMPS, 0)
-    val commits = DeltaHistoryManager.getCommits(
+    val commits = DeltaHistoryManager.getCommitsWithNonIctTimestamps(
       deltaLog.store,
       deltaLog.logPath,
       monotonizationStart,
