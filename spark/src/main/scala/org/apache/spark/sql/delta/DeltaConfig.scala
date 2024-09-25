@@ -536,9 +536,8 @@ trait DeltaConfigsBase extends DeltaLogging {
    * number will be ignored even when they exist).
    */
   lazy val DATA_SKIPPING_NUM_INDEXED_COLS = buildConfig[Int](
-    // This is lazy because of the initialization order.
-    // DeltaConfig -> DataSkippingReader -> Column.apply -> SQLConf.get
-    // -> SparkSession -> SqlGatewayConfig -> DeltaConfig
+    // It involves loading additional context in DataSkippingReader so
+    // delay its initialization as much as possible
     "dataSkippingNumIndexedCols",
     DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
     _.toInt,
