@@ -542,7 +542,7 @@
   },
   "DELTA_CONCURRENT_DOMAIN_METADATA" : {
     "message" : [
-      "ConcurrentDomainMetadataException: This error occurs when multiple streaming queries have a conflicting domain. Please try the operation again. <conflictingCommit>\nRefer to <docLink> for more details."
+      "ConcurrentDomainMetadataException: This error occurs when multiple queries have a conflicting domain. Please try the operation again. <conflictingCommit>\nRefer to <docLink> for more details."
     ],
     "sqlState" : "2D521"
   },
