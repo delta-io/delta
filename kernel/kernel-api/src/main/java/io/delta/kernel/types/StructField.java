@@ -69,7 +69,8 @@ public class StructField {
     this.nullable = nullable;
 
     FieldMetadata collationMetadata = fetchCollationMetadata();
-    this.metadata = new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
+    this.metadata =
+        new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
   }
 
   /** @return the name of this field */
@@ -101,8 +102,8 @@ public class StructField {
     }
 
     return new FieldMetadata.Builder()
-            .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
-            .build();
+        .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
+        .build();
   }
 
   /** @return whether this field allows to have a {@code null} value. */
