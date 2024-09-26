@@ -85,7 +85,6 @@ public class StructField {
 
   /** @return the metadata for this field */
   public FieldMetadata getMetadata() {
-    fetchCollationMetadata();
     return metadata;
   }
 
