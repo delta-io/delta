@@ -57,7 +57,7 @@ public class StructField {
   private final String name;
   private final DataType dataType;
   private final boolean nullable;
-  private FieldMetadata metadata;
+  private final FieldMetadata metadata;
 
   public StructField(String name, DataType dataType, boolean nullable) {
     this(name, dataType, nullable, FieldMetadata.empty());
@@ -67,7 +67,9 @@ public class StructField {
     this.name = name;
     this.dataType = dataType;
     this.nullable = nullable;
-    this.metadata = metadata;
+
+    FieldMetadata collationMetadata = fetchCollationMetadata();
+    this.metadata = new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
   }
 
   /** @return the name of this field */
@@ -86,19 +88,11 @@ public class StructField {
     return metadata;
   }
 
-  /** Indicated whether collation metadata is fetched and added to `metadata` */
-  private boolean isCollationMetadataFetched = false;
-
   /** Fetches collation metadata from nested collated fields. */
-  private void fetchCollationMetadata() {
-    if (isCollationMetadataFetched) {
-      return;
-    }
-    isCollationMetadataFetched = true;
-
+  private FieldMetadata fetchCollationMetadata() {
     List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
     if (nestedCollatedFields.isEmpty()) {
-      return;
+      return FieldMetadata.empty();
     }
 
     FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
@@ -106,9 +100,7 @@ public class StructField {
       metadataBuilder.putString(nestedField._1, nestedField._2);
     }
 
-    metadata =
-        new FieldMetadata.Builder()
-            .fromMetadata(metadata)
+    return new FieldMetadata.Builder()
             .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
             .build();
   }
@@ -167,9 +159,6 @@ public class StructField {
       return false;
     }
     StructField that = (StructField) o;
-    // Retrieve collation metadata if they haven't been fetched yet.
-    fetchCollationMetadata();
-    that.fetchCollationMetadata();
     return nullable == that.nullable
         && name.equals(that.name)
         && dataType.equals(that.dataType)
