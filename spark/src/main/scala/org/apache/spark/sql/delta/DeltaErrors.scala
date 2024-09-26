@@ -667,6 +667,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def unsupportedTypeChangeInPreview(
+      fieldPath: Seq[String],
+      fromType: DataType,
+      toType: DataType,
+      feature: TypeWideningTableFeatureBase): Throwable =
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW",
+      messageParameters = Array(
+        SchemaUtils.prettyFieldName(fieldPath),
+        fromType.sql,
+        toType.sql,
+        feature.name
+    ))
+
   def unsupportedTypeChangeInSchema(
       fieldPath: Seq[String],
       fromType: DataType,

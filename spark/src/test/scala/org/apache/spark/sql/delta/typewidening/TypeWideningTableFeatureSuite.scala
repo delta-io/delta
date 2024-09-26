@@ -45,7 +45,10 @@ class TypeWideningTableFeatureSuite
     with TypeWideningDropFeatureTestMixin
     with TypeWideningTableFeatureTests
 
-trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideningTestCases {
+trait TypeWideningTableFeatureTests
+  extends RowTrackingTestUtils
+    with DeltaExcludedBySparkVersionTestMixinShims
+    with TypeWideningTestCases {
   self: QueryTest
     with TypeWideningTestMixin
     with TypeWideningDropFeatureTestMixin =>
@@ -450,6 +453,43 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
         "fieldName" -> "a.element",
         "fromType" -> "INT",
         "toType" -> "STRING"
+      )
+    )
+  }
+
+  testSparkLatestOnly(
+    "helpful error when reading type changes not supported yet during preview") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a int) USING DELTA")
+    val metadata = new MetadataBuilder()
+      .putMetadataArray("delta.typeChanges", Array(
+        new MetadataBuilder()
+          .putString("toType", "long")
+          .putString("fromType", "int")
+          .putLong("tableVersion", 1)
+          .build()
+      )).build()
+
+    // Delta 3.2/3.3 doesn't support changing type from int->long, we manually commit that type
+    // change to simulate what Delta 4.0 could do.
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("a", LongType, nullable = true, metadata).json
+        )),
+        ManualUpdate)
+    }
+
+    checkError(
+      exception = intercept[DeltaUnsupportedOperationException] {
+        readDeltaTable(tempPath).collect()
+      },
+      "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW",
+      parameters = Map(
+        "fieldPath" -> "a",
+        "fromType" -> "INT",
+        "toType" -> "BIGINT",
+        "typeWideningFeatureName" -> "typeWidening-preview"
       )
     )
   }
