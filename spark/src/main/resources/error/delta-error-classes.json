@@ -540,6 +540,12 @@
     ],
     "sqlState" : "2D521"
   },
+  "DELTA_CONCURRENT_DOMAIN_METADATA" : {
+    "message" : [
+      "ConcurrentDomainMetadataException: This error occurs when multiple streaming queries have a conflicting domain. Please try the operation again. <conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_CONCURRENT_WRITE" : {
     "message" : [
       "ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table. Please try the operation again.\nRefer to <docLink> for more details."
