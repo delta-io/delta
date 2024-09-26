@@ -50,6 +50,8 @@ public class StructField {
           false,
           FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build());
 
+  public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
+
   ////////////////////////////////////////////////////////////////////////////////
   // Instance Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
@@ -156,7 +158,7 @@ public class StructField {
     // collation information in the nearest ancestor StructField's metadata when serializing.
     return nestedCollatedFields;
   }
-  
+
   /** Fetches collation metadata from nested collated fields. */
   private FieldMetadata fetchCollationMetadata() {
     List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
@@ -170,7 +172,7 @@ public class StructField {
     }
 
     return new FieldMetadata.Builder()
-            .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
-            .build();
+        .putFieldMetadata(COLLATIONS_METADATA_KEY, metadataBuilder.build())
+        .build();
   }
 }

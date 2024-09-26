@@ -17,7 +17,7 @@ package io.delta.kernel.internal.types
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.delta.kernel.types._
-import io.delta.kernel.types.DataType.COLLATIONS_METADATA_KEY
+import StructField.COLLATIONS_METADATA_KEY
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.HashMap

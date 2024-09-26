@@ -290,7 +290,7 @@ public class DataTypeJsonSerDe {
       JsonNode value = entry.getValue();
       String key = entry.getKey();
 
-      if (!includecollationsMetadata && key.equals(DataType.COLLATIONS_METADATA_KEY)) {
+      if (!includecollationsMetadata && key.equals(StructField.COLLATIONS_METADATA_KEY)) {
         continue;
       }
 
@@ -419,10 +419,10 @@ public class DataTypeJsonSerDe {
 
   /** Returns a metadata with a map of field path to collation name. */
   private static FieldMetadata getCollationsMetadata(JsonNode fieldMetadata) {
-    if (fieldMetadata == null || !fieldMetadata.has(DataType.COLLATIONS_METADATA_KEY)) {
+    if (fieldMetadata == null || !fieldMetadata.has(StructField.COLLATIONS_METADATA_KEY)) {
       return new FieldMetadata.Builder().build();
     }
-    return parseFieldMetadata(fieldMetadata.get(DataType.COLLATIONS_METADATA_KEY));
+    return parseFieldMetadata(fieldMetadata.get(StructField.COLLATIONS_METADATA_KEY));
   }
 
   private static boolean getBooleanField(JsonNode rootNode, String fieldName) {
