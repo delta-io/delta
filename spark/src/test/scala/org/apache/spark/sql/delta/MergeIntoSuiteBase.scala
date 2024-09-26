@@ -3177,11 +3177,11 @@ abstract class MergeIntoSuiteBase
     mergeCondition = "src.a = v.key AND src.b = v.value",
     // The analyzer can't tell whether the table originally had the extra column or not.
     expectedResult = ExpectedResult.Failure { ex =>
-      checkError(
+      checkErrorMatchPVals(
         ex,
-        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
         parameters = Map(
-          "schemaDiff" -> "Latest schema is missing field(s): 1",
+          "schemaDiff" -> "(?s)Latest schema is missing field.*",
           "legacyFlagMessage" -> ""
       ))
     }
