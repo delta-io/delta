@@ -33,6 +33,7 @@ import org.scalatest.funsuite.AnyFunSuite
 import java.io.File
 import java.math.BigDecimal
 import java.sql.Date
+import java.time.Instant
 import scala.collection.JavaConverters._
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
@@ -436,6 +437,86 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         readCols = Seq("ByteType", "decimal", "nested_struct", "array_of_prims", "map_of_prims")
       )
     }
+  }
+
+  test("table with type widening on basic types") {
+    val path = goldenTablePath("type-widening")
+
+    def timestampToMicros(timestamp: String): Long = {
+      val instant = Instant.parse(timestamp)
+      instant.getEpochSecond() * DateTimeConstants.MICROS_PER_SECOND + instant.getNano() / 1000
+    }
+
+    val expectedAnswer = Seq(
+      TestRow(
+        1L, 2L, 3.4.toFloat.toDouble, 5.0, 6.0, 7.0, timestampToMicros("2024-09-09T00:00:00Z")
+      ),
+      TestRow(
+        Long.MaxValue, Long.MaxValue, 1.234567890123, 1.234567890123, 1.234567890123,
+        1.234567890123, timestampToMicros("2024-09-09T12:34:56.123456Z")
+      )
+    )
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer,
+      readCols = Seq(
+        "byte_long",
+        "int_long",
+        "float_double",
+        "byte_double",
+        "short_double",
+        "int_double",
+        "date_timestamp_ntz")
+    )
+  }
+
+  test("table with type widening to decimal types") {
+    val path = goldenTablePath("type-widening")
+    val expectedAnswer = Seq(
+      TestRow(
+        BigDecimal.valueOf(12345L, 2),
+        BigDecimal.valueOf(6789000L, 5),
+        BigDecimal.valueOf(10L, 1),
+        BigDecimal.valueOf(20L, 1),
+        BigDecimal.valueOf(30L, 1),
+        BigDecimal.valueOf(40L, 1)
+      ),
+      TestRow(
+        BigDecimal.valueOf(1234567890123456L, 2),
+        BigDecimal.valueOf(1234567890123456L, 5),
+        BigDecimal.valueOf(1234L, 1),
+        BigDecimal.valueOf(123456L, 1),
+        BigDecimal.valueOf(12345678901L, 1),
+        BigDecimal.valueOf(1234567890123456789L, 1)
+      )
+    )
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer,
+      readCols = Seq(
+        "decimal_decimal_same_scale",
+        "decimal_decimal_greater_scale",
+        "byte_decimal",
+        "short_decimal",
+        "int_decimal",
+        "long_decimal"
+      )
+    )
+  }
+
+  test("table with type widening to nested types") {
+    val path = goldenTablePath("type-widening-nested")
+    val expectedAnswer = Seq(
+      TestRow(TestRow(1L), Map(2L -> 3L), Seq(4L, 5L)),
+      TestRow(
+        TestRow(Long.MaxValue), Map(Long.MaxValue -> Long.MaxValue),
+        Seq(Long.MaxValue, Long.MinValue))
+    )
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer,
+      readCols = Seq("struct", "map", "array")
+    )
   }
 
   test("table with complex map types") {
