@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -149,11 +150,16 @@ class DeltaAnalysis(session: SparkSession)
           // used on the source delta table, then the corresponding fields would be set for the
           // sourceTable and needs to be removed from the targetTable's configuration. The fields
           // will then be set in the targetTable's configuration internally after.
+          // Coordinated commits configurations from the source delta table should also be left out,
+          // since CREATE LIKE is similar to CLONE, and we do not copy the commit coordinator from
+          // the source table. If users want a commit coordinator for the target table, they can
+          // specify the configurations in the CREATE LIKE command explicitly.
           val sourceMetadata = deltaLogSrc.initialSnapshot.metadata
           val config =
             sourceMetadata.configuration.-("delta.columnMapping.maxColumnId")
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
               .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
+              .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_)).toMap
 
           new CatalogTable(
             identifier = targetTableIdentifier,

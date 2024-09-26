@@ -496,6 +496,33 @@ case class CreateDeltaTableCommand(
     }
   }
 
+
+  /**
+   * When creating an external table in a location where some table already existed, we make sure
+   * that the specified table properties match the existing table properties. Since Coordinated
+   * Commits is not designed to be overridden, we should not error out if the command omits these
+   * properties. If the existing table has Coordinated Commits enabled, we also do not error out if
+   * the command omits the ICT properties, which are the dependencies for Coordinated Commits.
+   */
+  private def filterCoordinatedCommitsProperties(
+      existingProperties: Map[String, String],
+      tableProperties: Map[String, String]): Map[String, String] = {
+    var filteredExistingProperties = existingProperties
+    val overridingCoordinatedCommitsConfs =
+      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(tableProperties)
+    val existingCoordinatedCommitsConfs =
+      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(existingProperties)
+    if (existingCoordinatedCommitsConfs.nonEmpty && overridingCoordinatedCommitsConfs.isEmpty) {
+      filteredExistingProperties --= CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
+      val overridingICTConfs = CoordinatedCommitsUtils.extractICTConfigurations(tableProperties)
+      val existingICTConfs = CoordinatedCommitsUtils.extractICTConfigurations(existingProperties)
+      if (existingICTConfs.nonEmpty && overridingICTConfs.isEmpty) {
+        filteredExistingProperties --= CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
+      }
+    }
+    filteredExistingProperties
+  }
+
   /**
    * Verify against our transaction metadata that the user specified the right metadata for the
    * table.
@@ -565,6 +592,8 @@ case class CreateDeltaTableCommand(
           filteredTableProperties =
             ClusteredTableUtils.removeInternalTableProperties(filteredTableProperties)
         }
+        filteredExistingProperties =
+          filterCoordinatedCommitsProperties(filteredExistingProperties, filteredTableProperties)
         if (filteredTableProperties != filteredExistingProperties) {
           throw DeltaErrors.createTableWithDifferentPropertiesException(
             path, filteredTableProperties, filteredExistingProperties)

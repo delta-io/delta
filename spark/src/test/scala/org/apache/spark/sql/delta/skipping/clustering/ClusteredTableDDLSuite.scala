@@ -22,6 +22,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
@@ -250,10 +251,11 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                   if (clause == "CREATE") {
                     // Drop the table and delete the _delta_log directory to allow
                     // external delta table creation.
+                    deleteTableFromCommitCoordinatorIfNeeded("dstTbl")
                     sql("DROP TABLE IF EXISTS dstTbl")
                     Utils.deleteRecursively(new File(tmpDir, "_delta_log"))
                   }
-                  // Qualified data types and no exception is epxected.
+                  // Qualified data types and no exception is expected.
                   f()
                 } else {
                   val e = intercept[DeltaAnalysisException] {
@@ -994,7 +996,9 @@ trait ClusteredTableDDLSuiteBase
   }
 }
 
-trait ClusteredTableDDLSuite extends ClusteredTableDDLSuiteBase
+trait ClusteredTableDDLSuite
+  extends ClusteredTableDDLSuiteBase
+    with CoordinatedCommitsBaseSuite
 
 trait ClusteredTableDDLWithNameColumnMapping
   extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableNameMode
@@ -1259,3 +1263,8 @@ class ClusteredTableDDLDataSourceV2NameColumnMappingSuite
     with ClusteredTableDDLWithV2
     with ClusteredTableDDLWithColumnMappingV2
     with ClusteredTableDDLSuite
+
+class ClusteredTableDDLDataSourceV2WithCoordinatedCommitsBatch100Suite
+    extends ClusteredTableDDLDataSourceV2Suite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+}
