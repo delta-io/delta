@@ -88,23 +88,6 @@ public class StructField {
     return metadata;
   }
 
-  /** Fetches collation metadata from nested collated fields. */
-  private FieldMetadata fetchCollationMetadata() {
-    List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
-    if (nestedCollatedFields.isEmpty()) {
-      return FieldMetadata.empty();
-    }
-
-    FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
-    for (Tuple2<String, String> nestedField : nestedCollatedFields) {
-      metadataBuilder.putString(nestedField._1, nestedField._2);
-    }
-
-    return new FieldMetadata.Builder()
-        .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
-        .build();
-  }
-
   /** @return whether this field allows to have a {@code null} value. */
   public boolean isNullable() {
     return nullable;
@@ -172,5 +155,22 @@ public class StructField {
 
   public StructField withNewMetadata(FieldMetadata metadata) {
     return new StructField(name, dataType, nullable, metadata);
+  }
+
+  /** Fetches collation metadata from nested collated fields. */
+  private FieldMetadata fetchCollationMetadata() {
+    List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
+    if (nestedCollatedFields.isEmpty()) {
+      return FieldMetadata.empty();
+    }
+
+    FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
+    for (Tuple2<String, String> nestedField : nestedCollatedFields) {
+      metadataBuilder.putString(nestedField._1, nestedField._2);
+    }
+
+    return new FieldMetadata.Builder()
+            .putFieldMetadata(DataType.COLLATIONS_METADATA_KEY, metadataBuilder.build())
+            .build();
   }
 }
