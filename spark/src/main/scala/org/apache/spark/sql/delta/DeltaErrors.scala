@@ -3554,7 +3554,7 @@ class ConcurrentDomainMetadataException(message: String)
   def this(conflictingCommit: Option[CommitInfo], domain: String) = this(
     DeltaErrors.concurrentModificationExceptionMsg(
       SparkEnv.get.conf,
-      s"A conflicting domain '${domain}' has been added. Please try the operation again.",
+      s"A conflicting metadata domain ${domain} is added.",
       conflictingCommit))
 }
 
