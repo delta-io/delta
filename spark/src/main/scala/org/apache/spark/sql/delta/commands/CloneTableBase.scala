@@ -346,13 +346,12 @@ abstract class CloneTableBase(
       assert(validatedOverrides.isEmpty,
         "Explicit overrides on Coordinated Commits configurations for existing tables" +
           " are not supported, and should have been caught earlier.")
-      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
-        targetSnapshot.metadata.configuration)
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
     } else {
       if (validatedOverrides.nonEmpty) {
         validatedOverrides
       } else {
-        CoordinatedCommitsUtils.fetchDefaultCoordinatedCommitsConfigurations(spark)
+        CoordinatedCommitsUtils.getDefaultCCConfigurations(spark)
       }
     }
   }
@@ -369,7 +368,7 @@ abstract class CloneTableBase(
 
     // Finalize Coordinated Commits configurations for the target
     val coordinatedCommitsConfigurationOverrides =
-      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(validatedConfigurations)
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(validatedConfigurations)
     val validatedConfigurationsWithoutCoordinatedCommits =
       validatedConfigurations -- coordinatedCommitsConfigurationOverrides.keys
     val finalCoordinatedCommitsConfigurations = determineCoordinatedCommitsConfigurations(

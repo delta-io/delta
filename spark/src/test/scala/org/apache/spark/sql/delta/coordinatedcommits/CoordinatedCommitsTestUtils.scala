@@ -73,7 +73,7 @@ trait CoordinatedCommitsTestUtils
    */
   def withoutCoordinatedCommitsDefaultTableProperties[T](f: => T): T = {
     val defaultCoordinatedCommitsConfs = CoordinatedCommitsUtils
-      .fetchDefaultCoordinatedCommitsConfigurations(spark, withDefaultKey = true)
+      .getDefaultCCConfigurations(spark, withDefaultKey = true)
     defaultCoordinatedCommitsConfs.foreach { case (defaultKey, _) =>
       spark.conf.unset(defaultKey)
     }

@@ -755,15 +755,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    *   configurations is finalized.
    */
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
-    assert(CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
-        metadata.configuration).isEmpty,
+    assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
       "Command-specified Coordinated Commits configurations should have been blocked earlier.")
     // Extract the existing Coordinated Commits configurations and ICT dependency configurations
     // from the existing table metadata.
-    val existingCCConfs = CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
-      snapshot.metadata.configuration)
-    val existingICTConfs = CoordinatedCommitsUtils.extractICTConfigurations(
-      snapshot.metadata.configuration)
+    val existingCCConfs =
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(snapshot.metadata.configuration)
+    val existingICTConfs =
+      CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
     // Update the metadata.
     updateMetadataForNewTable(metadata)
     // Now the `txn.metadata` contains all the command-specified properties and all the default

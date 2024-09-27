@@ -382,7 +382,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   /**
    * Extracts the Coordinated Commits configurations from the provided properties.
    */
-  def extractCoordinatedCommitsConfigurations(
+  def getExplicitCCConfigurations(
       properties: Map[String, String]): Map[String, String] = {
     properties.filter { case (k, _) => TABLE_PROPERTY_KEYS.contains(k) }
   }
@@ -390,7 +390,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   /**
    * Extracts the ICT configurations from the provided properties.
    */
-  def extractICTConfigurations(properties: Map[String, String]): Map[String, String] = {
+  def getExplicitICTConfigurations(properties: Map[String, String]): Map[String, String] = {
     properties.filter { case (k, _) => ICT_TABLE_PROPERTY_KEYS.contains(k) }
   }
 
@@ -407,7 +407,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    *       Map("spark.databricks.delta.properties.defaults
    *            .coordinatedCommits.commitCoordinator-preview" -> "dynamodb")
    */
-  def fetchDefaultCoordinatedCommitsConfigurations(
+  def getDefaultCCConfigurations(
       spark: SparkSession, withDefaultKey: Boolean = false): Map[String, String] = {
     TABLE_PROPERTY_CONFS.flatMap { conf =>
       spark.conf.getOption(conf.defaultTablePropertyKey).map { value =>
@@ -487,8 +487,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   def validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
       existingConfs: Map[String, String],
       propertyOverrides: Map[String, String]): Unit = {
-    val existingCoordinatedCommitsConfs = extractCoordinatedCommitsConfigurations(existingConfs)
-    val coordinatedCommitsOverrides = extractCoordinatedCommitsConfigurations(propertyOverrides)
+    val existingCoordinatedCommitsConfs = getExplicitCCConfigurations(existingConfs)
+    val coordinatedCommitsOverrides = getExplicitCCConfigurations(propertyOverrides)
     if (coordinatedCommitsOverrides.nonEmpty) {
       if (existingCoordinatedCommitsConfs.nonEmpty) {
         throw new DeltaIllegalArgumentException(
@@ -521,7 +521,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     // properties to unset. This is because unsetting non-existent entries would either be caught
     // earlier (without `IF EXISTS`) or simply be a no-op (with `IF EXISTS`). Thus, we ignore them
     // instead of throwing an exception.
-    if (extractCoordinatedCommitsConfigurations(existingConfs).nonEmpty) {
+    if (getExplicitCCConfigurations(existingConfs).nonEmpty) {
       if (propKeysToUnset.exists(TABLE_PROPERTY_KEYS.contains)) {
         throw new DeltaIllegalArgumentException(
           "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
@@ -568,7 +568,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       propertyOverrides: Map[String, String],
       tableExists: Boolean,
       command: String): Unit = {
-    val coordinatedCommitsConfs = extractCoordinatedCommitsConfigurations(propertyOverrides)
+    val coordinatedCommitsConfs = getExplicitCCConfigurations(propertyOverrides)
     if (tableExists) {
       if (coordinatedCommitsConfs.nonEmpty) {
         throw new DeltaIllegalArgumentException(
@@ -580,7 +580,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         verifyContainsOnlyCoordinatorNameAndConf(
           coordinatedCommitsConfs, command, fromDefault = false)
       } else {
-        val defaultCoordinatedCommitsConfs = fetchDefaultCoordinatedCommitsConfigurations(
+        val defaultCoordinatedCommitsConfs = getDefaultCCConfigurations(
           spark, withDefaultKey = true)
         if (defaultCoordinatedCommitsConfs.nonEmpty) {
           verifyContainsOnlyCoordinatorNameAndConf(

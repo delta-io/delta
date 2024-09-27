@@ -508,14 +508,13 @@ case class CreateDeltaTableCommand(
       existingProperties: Map[String, String],
       tableProperties: Map[String, String]): Map[String, String] = {
     var filteredExistingProperties = existingProperties
-    val overridingCoordinatedCommitsConfs =
-      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(tableProperties)
-    val existingCoordinatedCommitsConfs =
-      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(existingProperties)
-    if (existingCoordinatedCommitsConfs.nonEmpty && overridingCoordinatedCommitsConfs.isEmpty) {
+    val overridingCCConfs = CoordinatedCommitsUtils.getExplicitCCConfigurations(tableProperties)
+    val existingCCConfs = CoordinatedCommitsUtils.getExplicitCCConfigurations(existingProperties)
+    if (existingCCConfs.nonEmpty && overridingCCConfs.isEmpty) {
       filteredExistingProperties --= CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
-      val overridingICTConfs = CoordinatedCommitsUtils.extractICTConfigurations(tableProperties)
-      val existingICTConfs = CoordinatedCommitsUtils.extractICTConfigurations(existingProperties)
+      val overridingICTConfs = CoordinatedCommitsUtils.getExplicitICTConfigurations(tableProperties)
+      val existingICTConfs = CoordinatedCommitsUtils.getExplicitICTConfigurations(
+        existingProperties)
       if (existingICTConfs.nonEmpty && overridingICTConfs.isEmpty) {
         filteredExistingProperties --= CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       }
