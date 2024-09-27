@@ -107,7 +107,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    * - The table writer protocol >= GeneratedColumn.MIN_WRITER_VERSION;
    * - It has a generation expression in the column metadata.
    */
-  def getGeneratedColumns(snapshot: SnapshotDescriptor): Seq[StructField] = {
+  def getGeneratedColumns(snapshot: Snapshot): Seq[StructField] = {
     if (satisfyGeneratedColumnProtocol(snapshot.protocol)) {
       snapshot.metadata.schema.partition(isGeneratedColumn)._1
     } else {
