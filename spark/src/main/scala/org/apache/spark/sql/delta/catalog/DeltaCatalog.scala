@@ -147,11 +147,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
-    val loc = locUriOpt
-      .orElse(existingTableOpt.flatMap(_.storage.locationUri))
-      .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
-    val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
-      .copy(locationUri = Option(loc))
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -165,6 +160,11 @@ class DeltaCatalog extends DelegatingCatalogExtension
     } else {
       CatalogTableType.EXTERNAL
     }
+    val loc = locUriOpt
+      .orElse(existingTableOpt.flatMap(_.storage.locationUri))
+      .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
+    val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
+      .copy(locationUri = Option(loc))
     val commentOpt = Option(allTableProperties.get("comment"))
 
 
