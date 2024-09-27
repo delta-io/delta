@@ -57,7 +57,7 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
         throw DeltaErrors.notADeltaSourceException("UPDATE", Some(o))
     }
 
-    val generatedColumns = GeneratedColumn.getGeneratedColumns(index)
+    val generatedColumns = GeneratedColumn.getGeneratedColumns(index.snapshotAtAnalysis)
     if (generatedColumns.nonEmpty && !deltaLogicalNode.isInstanceOf[LogicalRelation]) {
       // Disallow temp views referring to a Delta table that contains generated columns. When the
       // user doesn't provide expressions for generated columns, we need to create update
