@@ -183,7 +183,7 @@ private[delta] object DataSkippingReader {
     new Literal(oneMillisecond, CalendarIntervalType)
   }
 
-  val sizeCollectorInputEncoders: Seq[Option[ExpressionEncoder[_]]] = Seq(
+  lazy val sizeCollectorInputEncoders: Seq[Option[ExpressionEncoder[_]]] = Seq(
     Option(ExpressionEncoder[Boolean]()),
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()),
