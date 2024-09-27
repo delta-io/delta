@@ -17,6 +17,9 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.internal.util.Tuple2;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -47,6 +50,8 @@ public class StructField {
           false,
           FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build());
 
+  public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
+
   ////////////////////////////////////////////////////////////////////////////////
   // Instance Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
@@ -64,7 +69,10 @@ public class StructField {
     this.name = name;
     this.dataType = dataType;
     this.nullable = nullable;
-    this.metadata = metadata;
+
+    FieldMetadata collationMetadata = fetchCollationMetadata();
+    this.metadata =
+        new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
   }
 
   /** @return the name of this field */
@@ -124,5 +132,47 @@ public class StructField {
 
   public StructField withNewMetadata(FieldMetadata metadata) {
     return new StructField(name, dataType, nullable, metadata);
+  }
+
+  private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {
+    List<Tuple2<String, String>> nestedCollatedFields = new ArrayList<>();
+    if (parent instanceof StringType) {
+      StringType stringType = (StringType) parent;
+      if (!stringType
+          .getCollationIdentifier()
+          .equals(CollationIdentifier.fromString("SPARK.UTF8_BINARY"))) {
+        nestedCollatedFields.add(
+            new Tuple2<>(
+                path, ((StringType) parent).getCollationIdentifier().toStringWithoutVersion()));
+      }
+    } else if (parent instanceof MapType) {
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((MapType) parent).getKeyType(), path + ".key"));
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((MapType) parent).getValueType(), path + ".value"));
+    } else if (parent instanceof ArrayType) {
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((ArrayType) parent).getElementType(), path + ".element"));
+    }
+    // We didn't check for StructType because we store the StringType's
+    // collation information in the nearest ancestor StructField's metadata when serializing.
+    return nestedCollatedFields;
+  }
+
+  /** Fetches collation metadata from nested collated fields. */
+  private FieldMetadata fetchCollationMetadata() {
+    List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
+    if (nestedCollatedFields.isEmpty()) {
+      return FieldMetadata.empty();
+    }
+
+    FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
+    for (Tuple2<String, String> nestedField : nestedCollatedFields) {
+      metadataBuilder.putString(nestedField._1, nestedField._2);
+    }
+
+    return new FieldMetadata.Builder()
+        .putFieldMetadata(COLLATIONS_METADATA_KEY, metadataBuilder.build())
+        .build();
   }
 }
