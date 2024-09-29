@@ -28,9 +28,7 @@ import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Function;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
@@ -110,11 +108,9 @@ class DefaultExpressionUtils {
     };
   }
 
-  /**
-   * Matches predicate name to comparison function.
-   */
+  /** Matches predicate name to comparison function. */
   static IntPredicate getBooleanPredicate(Predicate predicate) {
-    switch(predicate.getName()) {
+    switch (predicate.getName()) {
       case "=":
       case "IS NOT DISTINCT FROM":
         return x -> x == 0;
@@ -127,12 +123,13 @@ class DefaultExpressionUtils {
       case ">=":
         return x -> x >= 0;
       default:
-        throw new IllegalArgumentException(String.format("Unsupported predicate '%s'", predicate.getName()));
+        throw new IllegalArgumentException(
+            String.format("Unsupported predicate '%s'", predicate.getName()));
     }
   }
 
   private static CollationIdentifier defaultCollationIdentifier =
-          CollationIdentifier.fromString("SPARK.UTF8_BINARY");
+      CollationIdentifier.fromString("SPARK.UTF8_BINARY");
 
   /**
    * Utility method for getting value comparator
@@ -142,8 +139,7 @@ class DefaultExpressionUtils {
    * @param predicate
    * @return
    */
-  static IntPredicate getComparator(
-      ColumnVector left, ColumnVector right, Predicate predicate) {
+  static IntPredicate getComparator(ColumnVector left, ColumnVector right, Predicate predicate) {
     checkArgument(
         left.getSize() == right.getSize(), "Left and right operand have different vector sizes.");
 
@@ -189,19 +185,18 @@ class DefaultExpressionUtils {
         CollationIdentifier collationIdentifier = collatedPredicate.getCollationIdentifier();
         if (collationIdentifier.equals(defaultCollationIdentifier)) {
           vectorValueComparator =
-                  rowId ->
-                          booleanComparator.test(
-                                  STRING_COMPARATOR
-                                          .compare(left.getString(rowId), right.getString(rowId)));
+              rowId ->
+                  booleanComparator.test(
+                      STRING_COMPARATOR.compare(left.getString(rowId), right.getString(rowId)));
         } else {
           throw new IllegalArgumentException(
-                  String.format("Invalid collation identifier: \"%s\"", collationIdentifier));
+              String.format("Invalid collation identifier: \"%s\"", collationIdentifier));
         }
       } else {
         vectorValueComparator =
-                rowId ->
-                        booleanComparator.test(
-                                STRING_COMPARATOR.compare(left.getString(rowId), right.getString(rowId)));
+            rowId ->
+                booleanComparator.test(
+                    STRING_COMPARATOR.compare(left.getString(rowId), right.getString(rowId)));
       }
     } else if (dataType instanceof BinaryType) {
       vectorValueComparator =
@@ -221,8 +216,7 @@ class DefaultExpressionUtils {
    *
    * <p>Only primitive data types are supported.
    */
-  static ColumnVector comparatorVector(
-      ColumnVector left, ColumnVector right, Predicate predicate) {
+  static ColumnVector comparatorVector(ColumnVector left, ColumnVector right, Predicate predicate) {
     IntPredicate vectorValueComparator = getComparator(left, right, predicate);
 
     return new ColumnVector() {
@@ -264,7 +258,7 @@ class DefaultExpressionUtils {
    * <p>Only primitive data types are supported.
    */
   static ColumnVector nullSafeComparatorVector(
-        ColumnVector left, ColumnVector right, Predicate predicate) {
+      ColumnVector left, ColumnVector right, Predicate predicate) {
     IntPredicate vectorValueComparator = getComparator(left, right, predicate);
     return new ColumnVector() {
       @Override
