@@ -280,7 +280,7 @@ public class ScanImpl implements Scan {
         new Predicate(
             "=",
             new ScalarExpression(
-                "COALESCE", Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
+                "COALESCE", Arrays.asList(dataSkippingFilter.asPredicate(), Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
     PredicateEvaluator predicateEvaluator =

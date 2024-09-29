@@ -112,6 +112,20 @@ public class StatsSchemaHelper {
                     ));
   }
 
+  public Column getCollatedMinColumn(Column column, CollationIdentifier collationIdentifier) {
+    checkArgument(
+            isCollatedSkippingEligibleMinMaxColumn(column),
+            String.format("%s is not a valid collated min column for data schema %s", column, dataSchema));
+    return getCollatedStatsColumn(column, MIN, collationIdentifier);
+  }
+
+  public Column getCollatedMaxColumn(Column column, CollationIdentifier collationIdentifier) {
+    checkArgument(
+            isCollatedSkippingEligibleMinMaxColumn(column),
+            String.format("%s is not a valid collated max column for data schema %s", column, dataSchema));
+    return getCollatedStatsColumn(column, MAX, collationIdentifier);
+  }
+
   /**
    * Given a logical column in the data schema provided when creating {@code this}, return the
    * corresponding MIN column and an optional column adjustment expression from the statistic schema
@@ -183,6 +197,10 @@ public class StatsSchemaHelper {
         && isSkippingEligibleDataType(logicalToDataType.get(column));
   }
 
+  public boolean isCollatedSkippingEligibleMinMaxColumn(Column column) {
+    return logicalToDataType.containsKey(column) && logicalToDataType.get(column) instanceof StringType;
+  }
+
   /**
    * Returns true if the given column is skipping-eligible using null count statistics. This means
    * the column exists and is a leaf column as we only collect stats for leaf columns.
@@ -200,6 +218,7 @@ public class StatsSchemaHelper {
   private static final String MIN = "minValues";
   private static final String MAX = "maxValues";
   private static final String NULL_COUNT = "nullCount";
+  private static final String STATS_WITH_COLLATION = "statsWithCollation";
 
   private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES =
       new HashSet<String>() {
@@ -281,6 +300,13 @@ public class StatsSchemaHelper {
         logicalToPhysicalColumn.containsKey(column),
         String.format("%s is not a valid leaf column for data schema", column, dataSchema));
     return getChildColumn(logicalToPhysicalColumn.get(column), statType);
+  }
+
+  private Column getCollatedStatsColumn(Column column, String statType, CollationIdentifier collatedIdentifier) {
+    checkArgument(
+            logicalToPhysicalColumn.containsKey(column),
+            String.format("%s is not a valid leaf column for data schema", column, dataSchema));
+    return getChildColumn(getChildColumn(column, statType), collatedIdentifier.toString());
   }
 
   /**
