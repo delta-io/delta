@@ -24,9 +24,9 @@ public class CollatedDataSkippingPredicate extends CollatedPredicate
     implements DataSkippingPredicate {
 
   /**
-   * Set of {@link Column}s referenced by the predicate or any of its child expressions.
-   * For a {@link CollatedDataSkippingPredicate}, set of referenced {@link Column}s is same as
-   * set of referenced collated {@link Column}s.
+   * Set of {@link Column}s referenced by the predicate or any of its child expressions. For a
+   * {@link CollatedDataSkippingPredicate}, set of referenced {@link Column}s is same as set of
+   * referenced collated {@link Column}s.
    */
   private final Set<Column> referencedCols;
 
@@ -34,7 +34,6 @@ public class CollatedDataSkippingPredicate extends CollatedPredicate
   private final Map<CollationIdentifier, Set<Column>> referencedCollatedCols;
 
   /**
-   *
    * @param name the predicate name
    * @param column the column referenced by this predicate
    * @param literal
@@ -45,7 +44,9 @@ public class CollatedDataSkippingPredicate extends CollatedPredicate
     super(name, Arrays.asList(column, literal), collationIdentifier);
     this.referencedCols = Collections.singleton(column);
     this.referencedCollatedCols =
-        new HashMap<>(Collections.singletonMap(collationIdentifier, new HashSet<>(Collections.singleton(column))));
+        new HashMap<>(
+            Collections.singletonMap(
+                collationIdentifier, new HashSet<>(Collections.singleton(column))));
   }
 
   @Override

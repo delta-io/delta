@@ -35,8 +35,8 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
    * @param children list of expressions that are input to this predicate.
    * @param referencedCols set of columns referenced by this predicate or any of its child
    *     expressions
-   * @param collatedReferencedCols set of collated columns referenced by this predicate or
-   *                               any ot its child expressions
+   * @param collatedReferencedCols set of collated columns referenced by this predicate or any ot
+   *     its child expressions
    */
   public DefaultDataSkippingPredicate(
       String name,

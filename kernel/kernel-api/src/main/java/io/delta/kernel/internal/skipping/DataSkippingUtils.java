@@ -385,8 +385,8 @@ public class DataSkippingUtils {
 
   /**
    * Constructs a {@link DataSkippingPredicate} for a binary predicate expression with a left
-   * column, a right expression of type {@link Literal}, and a collated comparison using
-   * {@link CollationIdentifier}.
+   * column, a right expression of type {@link Literal}, and a collated comparison using {@link
+   * CollationIdentifier}.
    */
   private static DataSkippingPredicate constructCollatedDataSkippingPredicate(
       String exprName, Column col, Literal lit, CollationIdentifier collationIdentifier) {
@@ -420,10 +420,10 @@ public class DataSkippingUtils {
   private static Predicate reverseComparatorFilter(Predicate predicate) {
     if (predicate instanceof CollatedPredicate) {
       return new CollatedPredicate(
-              REVERSE_COMPARATORS.get(predicate.getName().toUpperCase(Locale.ROOT)),
-              getRight(predicate),
-              getLeft(predicate),
-              ((CollatedPredicate) predicate).getCollationIdentifier());
+          REVERSE_COMPARATORS.get(predicate.getName().toUpperCase(Locale.ROOT)),
+          getRight(predicate),
+          getLeft(predicate),
+          ((CollatedPredicate) predicate).getCollationIdentifier());
     }
     return new Predicate(
         REVERSE_COMPARATORS.get(predicate.getName().toUpperCase(Locale.ROOT)),

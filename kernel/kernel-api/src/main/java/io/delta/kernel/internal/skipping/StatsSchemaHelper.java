@@ -87,18 +87,18 @@ public class StatsSchemaHelper {
   /**
    * Appends collated stats schema for referenced columns.
    *
-   * <p>Here is an example of a data schema, referenced columns, and the schema of the statistics that would be
-   * collected.
+   * <p>Here is an example of a data schema, referenced columns, and the schema of the statistics
+   * that would be collected.
    *
    * <p>Data Schema: {{{ |-- a: string (nullable = true) | |-- b: string (nullable = true) | | |--
    * c: long (nullable = true) }}}
    *
-   * <p> Referenced {@link Column} is just a {@link Column} "a" with "SPARK.UTF8_LCASE" collation.
+   * <p>Referenced {@link Column} is just a {@link Column} "a" with "SPARK.UTF8_LCASE" collation.
    *
    * <p>Collected Collated Statistics: {{{ |-- statsWithCollation: struct (nullable = true) | |--
-   * SPARK_UTF8_LCASE: struct (nullable = true) | | |-- minValues: struct (nullable = true) | | | |--
-   * a: StringType (nullable = true) | | |-- maxValues: struct (nullable = true) | | | |--
-   * a: StringType (nullable = true) }}}
+   * SPARK_UTF8_LCASE: struct (nullable = true) | | |-- minValues: struct (nullable = true) | | |
+   * |-- a: StringType (nullable = true) | | |-- maxValues: struct (nullable = true) | | | |-- a:
+   * StringType (nullable = true) }}}
    */
   public static StructType appendCollatedStatsSchema(
       StructType dataSchema, Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
@@ -247,8 +247,8 @@ public class StatsSchemaHelper {
   }
 
   /**
-   * Returns true if the given column is skipping-eligible using collated min/max statistics. This means the
-   * column exists, is a leaf column, and is of a StringType.
+   * Returns true if the given column is skipping-eligible using collated min/max statistics. This
+   * means the column exists, is a leaf column, and is of a StringType.
    */
   public boolean isSkippingEligibleCollatedMinMaxColumn(Column column) {
     return logicalToDataType.containsKey(column)
@@ -357,8 +357,8 @@ public class StatsSchemaHelper {
   }
 
   /**
-   * Given a logical column, a stats type, and a {@link CollationIdentifier}
-   * returns the corresponding column in the collated statistics schema
+   * Given a logical column, a stats type, and a {@link CollationIdentifier} returns the
+   * corresponding column in the collated statistics schema
    */
   private Column getCollatedStatsColumn(
       Column column, String statType, CollationIdentifier collatedIdentifier) {
@@ -366,11 +366,10 @@ public class StatsSchemaHelper {
         logicalToPhysicalColumn.containsKey(column),
         String.format("%s is not a valid leaf column for data schema", column, dataSchema));
     return getChildColumn(
-              getChildColumn(
-                    getChildColumn(
-                            logicalToPhysicalColumn.get(column), statType),
-                      collatedIdentifier.toString()),
-          STATS_WITH_COLLATION);
+        getChildColumn(
+            getChildColumn(logicalToPhysicalColumn.get(column), statType),
+            collatedIdentifier.toString()),
+        STATS_WITH_COLLATION);
   }
 
   /**

@@ -21,14 +21,15 @@ import io.delta.kernel.types.CollationIdentifier;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Base interface for all file pruning predicates.
- */
+/** Base interface for all file pruning predicates. */
 public interface DataSkippingPredicate {
   /** @return set of {@link Column}s referenced by the predicate or any of its child expressions */
   Set<Column> getReferencedCols();
 
-  /** @return set of collated {@link Column}s referenced by the predicate or any of its child expressions */
+  /**
+   * @return set of collated {@link Column}s referenced by the predicate or any of its child
+   *     expressions
+   */
   Map<CollationIdentifier, Set<Column>> getReferencedCollatedCols();
 
   /** @return {@link DataSkippingPredicate} as {@link Predicate} */
