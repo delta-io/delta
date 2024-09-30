@@ -16,7 +16,7 @@
 package io.delta.kernel.internal.util
 
 import scala.collection.JavaConverters._
-import io.delta.kernel.expressions.{And, CollatedPredicate, Column, Literal, Predicate}
+import io.delta.kernel.expressions.{And, CollatedPredicate, Column, Literal, Or, Predicate}
 import io.delta.kernel.internal.skipping.{CollatedDataSkippingPredicate, DataSkippingUtils, DefaultDataSkippingPredicate}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.{CollationIdentifier, DataType, StringType, StructField, StructType}
@@ -254,6 +254,57 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             new util.HashSet(),
             new util.HashMap()))
       ),
+      (
+        new Or(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            Literal.ofString("a"),
+            defaultCollationIdentifier),
+          new Predicate("<",
+            new Column("a1"),
+            Literal.ofString("a"))),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "OR",
+          new CollatedDataSkippingPredicate(
+            "<",
+            new Column(Array(STATS_WITH_COLLATION,
+              defaultCollationIdentifier.toString,
+              MIN,
+              "a1")),
+            Literal.ofString("a"),
+            defaultCollationIdentifier),
+          new DefaultDataSkippingPredicate(
+            "<",
+            List(
+              new Column(Array(
+                MIN,
+                "a1")),
+              Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()))
+      ),
+      (
+        new Predicate(
+          "NOT",
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            Literal.ofString("a"),
+            defaultCollationIdentifier)),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new CollatedDataSkippingPredicate(
+          ">=",
+          new Column(Array(STATS_WITH_COLLATION,
+            defaultCollationIdentifier.toString,
+            MAX,
+            "a1")),
+          Literal.ofString("a"),
+          defaultCollationIdentifier)
+      )
     ).foreach {
       case (predicate, schema, dataSkippingPredicate) =>
         assert(DataSkippingUtils.constructDataSkippingFilter(predicate, schema).get().toString
