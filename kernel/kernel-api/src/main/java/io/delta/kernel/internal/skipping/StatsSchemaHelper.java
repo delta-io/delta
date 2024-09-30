@@ -89,7 +89,7 @@ public class StatsSchemaHelper {
     StructType collatedStatsSchema = new StructType();
     for (Map.Entry<CollationIdentifier, Set<Column>> entry : collatedReferencedCols.entrySet()) {
       StructType statsSchema = DataSkippingUtils.pruneStatsSchema(getMinMaxStatsSchema(dataSchema), entry.getValue());
-      collatedStatsSchema
+      collatedStatsSchema = collatedStatsSchema
               .add(entry.getKey().toString(),
                       new StructType()
                       .add(MIN, statsSchema, true)

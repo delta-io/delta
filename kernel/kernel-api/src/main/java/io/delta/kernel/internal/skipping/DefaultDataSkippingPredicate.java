@@ -63,8 +63,20 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
         },
         new HashMap<CollationIdentifier, Set<Column>>() {
           {
-            putAll(left.getReferencedCollatedCols());
-            putAll(right.getReferencedCollatedCols());
+            for (Map.Entry<CollationIdentifier, Set<Column>> entry : left.getReferencedCollatedCols().entrySet()) {
+              if (!containsKey(entry.getKey())) {
+                put(entry.getKey(), entry.getValue());
+              } else {
+                get(entry.getKey()).addAll(entry.getValue());
+              }
+            }
+            for (Map.Entry<CollationIdentifier, Set<Column>> entry : right.getReferencedCollatedCols().entrySet()) {
+              if (!containsKey(entry.getKey())) {
+                put(entry.getKey(), entry.getValue());
+              } else {
+                get(entry.getKey()).addAll(entry.getValue());
+              }
+            }
           }
         });
   }
