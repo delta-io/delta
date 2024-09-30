@@ -17,7 +17,7 @@ package io.delta.kernel.internal.util
 
 import scala.collection.JavaConverters._
 import io.delta.kernel.expressions.{CollatedPredicate, Column, Literal}
-import io.delta.kernel.internal.skipping.DataSkippingUtils
+import io.delta.kernel.internal.skipping.{CollatedDataSkippingPredicate, DataSkippingUtils}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.{CollationIdentifier, DataType, StringType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
@@ -170,9 +170,12 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
   test("constructDataSkippingFilter - with collated predicates") {
     val defaultCollationIdentifier =
       CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+    val STATS_WITH_COLLATION = "statsWithCollation"
+    val MIN = "minValues"
+    val MAX = "maxValues"
 
     Seq(
-      // (predicate, schema)
+      // (predicate, schema, dataSkippingPredicate)
       (
         new CollatedPredicate(
           "<",
@@ -180,12 +183,20 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           Literal.ofString("a"),
           defaultCollationIdentifier),
         new StructType()
-          .add("a1", StringType.STRING)
+          .add("a1", StringType.STRING),
+        new CollatedDataSkippingPredicate(
+          "<",
+          new Column(Array(STATS_WITH_COLLATION,
+            defaultCollationIdentifier.toString,
+            MIN,
+            "a1")),
+          Literal.ofString("a"),
+          defaultCollationIdentifier)
       )
     ).foreach {
-      case (predicate, schema) =>
+      case (predicate, schema, dataSkippingPredicate) =>
         assert(DataSkippingUtils.constructDataSkippingFilter(predicate, schema).toString
-        .equals())
+        .equals(dataSkippingPredicate.toString))
     }
   }
 }
