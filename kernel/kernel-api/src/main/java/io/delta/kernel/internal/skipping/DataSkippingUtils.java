@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.skipping;
 
-import static io.delta.kernel.internal.DeltaErrors.protocolChangedException;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_STATS_ORDINAL;
@@ -266,7 +265,7 @@ public class DataSkippingUtils {
           Literal rightLit = (Literal) right;
 
           if (dataFilters instanceof CollatedPredicate
-          && schemaHelper.isCollatedSkippingEligibleMinMaxColumn(leftCol)
+          && schemaHelper.isSkippingEligibleCollatedMinMaxColumn(leftCol)
           && rightLit.getDataType() instanceof StringType) {
             return Optional.of(
                     constructCollatedComparatorDataSkippingFilters(dataFilters.getName(),
