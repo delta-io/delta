@@ -36,7 +36,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
    * @param referencedCols set of columns referenced by this predicate or any of its child
    *     expressions
    */
-  DefaultDataSkippingPredicate(
+  public DefaultDataSkippingPredicate(
       String name,
       List<Expression> children,
       Set<Column> referencedCols,
@@ -54,7 +54,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
    * @param left left input to this predicate
    * @param right right input to this predicate
    */
-  DefaultDataSkippingPredicate(
+  public DefaultDataSkippingPredicate(
       String name, DataSkippingPredicate left, DataSkippingPredicate right) {
     this(
         name,
