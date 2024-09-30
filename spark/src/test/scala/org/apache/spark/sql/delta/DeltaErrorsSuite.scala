@@ -2497,7 +2497,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.unsupportedDeepCloneException()
       }
       checkErrorMessage(e, Some("DELTA_UNSUPPORTED_DEEP_CLONE"), Some("0A000"),
-        Some("Deep clone is not supported for this Delta version."))
+        Some("Deep clone is not supported by this Delta version."))
     }
     {
       val e = intercept[DeltaAnalysisException] {

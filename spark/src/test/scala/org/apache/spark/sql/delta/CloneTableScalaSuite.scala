@@ -46,12 +46,12 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
 
     if (versionAsOf.isDefined) {
       table.cloneAtVersion(versionAsOf.get,
-        target, isShallow, replace = isReplace, tableProperties)
+        target, isShallow = isShallow, replace = isReplace, tableProperties)
     } else if (timestampAsOf.isDefined) {
       table.cloneAtTimestamp(timestampAsOf.get,
-        target, isShallow, replace = isReplace, tableProperties)
+        target, isShallow = isShallow, replace = isReplace, tableProperties)
     } else {
-      table.clone(target, isShallow, replace = isReplace, tableProperties)
+      table.clone(target, isShallow = isShallow, replace = isReplace, tableProperties)
     }
   }
   // scalastyle:on argcount
@@ -73,14 +73,17 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
 
   test("deep clone not supported yet") {
     withSourceTargetDir { (source, clone) =>
-      assert(intercept[DeltaIllegalArgumentException] {
-        val df1 = Seq(1, 2, 3, 4, 5).toDF("id").withColumn("part", 'id % 2)
-        val df2 = Seq(8, 9, 10).toDF("id").withColumn("part", 'id % 2)
-        df1.write.format("delta").partitionBy("part").mode("append").save(source)
-        df2.write.format("delta").mode("append").save(source)
+      checkError(
+        intercept[DeltaIllegalArgumentException] {
+          val df1 = Seq(1, 2, 3, 4, 5).toDF("id").withColumn("part", 'id % 2)
+          val df2 = Seq(8, 9, 10).toDF("id").withColumn("part", 'id % 2)
+          df1.write.format("delta").partitionBy("part").mode("append").save(source)
+          df2.write.format("delta").mode("append").save(source)
 
-        runAndValidateClone(source, clone, isShallow = false)()
-      }.getErrorClass === "DELTA_UNSUPPORTED_DEEP_CLONE")
+          runAndValidateClone(source, clone, isShallow = false)()
+        },
+        "DELTA_UNSUPPORTED_DEEP_CLONE"
+      )
     }
   }
 

@@ -2647,7 +2647,7 @@
   },
   "DELTA_UNSUPPORTED_DEEP_CLONE" : {
     "message" : [
-      "Deep clone is not supported for this Delta version."
+      "Deep clone is not supported by this Delta version."
     ],
     "sqlState" : "0A000"
   },
