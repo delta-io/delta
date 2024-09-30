@@ -84,6 +84,20 @@ public class StatsSchemaHelper {
     return statsSchema;
   }
 
+  public static StructType appendCollatedStatsSchema(StructType dataSchema,
+                                                     Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
+    StructType collatedStatsSchema = new StructType();
+    for (Map.Entry<CollationIdentifier, Set<Column>> entry : collatedReferencedCols.entrySet()) {
+      StructType statsSchema = DataSkippingUtils.pruneStatsSchema(getMinMaxStatsSchema(dataSchema), entry.getValue());
+      collatedStatsSchema
+              .add(entry.getKey().toString(),
+                      new StructType()
+                      .add(MIN, statsSchema, true)
+                      .add(MAX, statsSchema, true), true);
+    }
+    return dataSchema.add(STATS_WITH_COLLATION, collatedStatsSchema, true);
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Instance fields and public methods
   //////////////////////////////////////////////////////////////////////////////////

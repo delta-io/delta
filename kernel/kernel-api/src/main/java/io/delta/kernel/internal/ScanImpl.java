@@ -16,6 +16,7 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import static io.delta.kernel.internal.skipping.StatsSchemaHelper.appendCollatedStatsSchema;
 import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
@@ -270,6 +271,7 @@ public class ScanImpl implements Scan {
     StructType prunedStatsSchema =
         DataSkippingUtils.pruneStatsSchema(
             getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
+    StructType totalStatsSchema = appendCollatedStatsSchema(prunedStatsSchema, dataSkippingFilter.getCollatedReferencedCols());
 
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
@@ -288,7 +290,7 @@ public class ScanImpl implements Scan {
             () ->
                 engine
                     .getExpressionHandler()
-                    .getPredicateEvaluator(prunedStatsSchema, filterToEval),
+                    .getPredicateEvaluator(totalStatsSchema, filterToEval),
             "Get the predicate evaluator for data skipping with schema=%s and filter=%s",
             prunedStatsSchema,
             filterToEval);
