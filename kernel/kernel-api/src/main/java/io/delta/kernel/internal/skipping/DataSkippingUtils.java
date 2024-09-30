@@ -412,6 +412,13 @@ public class DataSkippingUtils {
       };
 
   private static Predicate reverseComparatorFilter(Predicate predicate) {
+    if (predicate instanceof CollatedPredicate) {
+      return new CollatedPredicate(
+              REVERSE_COMPARATORS.get(predicate.getName().toUpperCase(Locale.ROOT)),
+              getRight(predicate),
+              getLeft(predicate),
+              ((CollatedPredicate) predicate).getCollationIdentifier());
+    }
     return new Predicate(
         REVERSE_COMPARATORS.get(predicate.getName().toUpperCase(Locale.ROOT)),
         getRight(predicate),

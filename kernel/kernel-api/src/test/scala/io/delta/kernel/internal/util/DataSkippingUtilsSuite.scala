@@ -169,20 +169,39 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
     )
   }
 
-  test("constructDataSkippingFilter - with collated predicates") {
-    val defaultCollationIdentifier =
-      CollationIdentifier.fromString("SPARK.UTF8_BINARY")
-    val STATS_WITH_COLLATION = "statsWithCollation"
-    val MIN = "minValues"
-    val MAX = "maxValues"
+  val defaultCollationIdentifier =
+    CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+  val STATS_WITH_COLLATION = "statsWithCollation"
+  val MIN = "minValues"
+  val MAX = "maxValues"
 
+  test("constructDataSkippingFilter - with collated predicates resulting in empty predicate") {
     Seq(
-      // (predicate, schema, dataSkippingPredicate)
+      // (predicate, schema)
       (
         new CollatedPredicate(
           "<",
           new Column("a1"),
+          new Column("a2"),
+          defaultCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING)
+          .add("a2", StringType.STRING)
+      )
+    ).foreach {
+      case (predicate, schema) =>
+        assert(!DataSkippingUtils.constructDataSkippingFilter(predicate, schema).isPresent)
+    }
+  }
+
+  test("constructDataSkippingFilter - with collated predicates") {
+    Seq(
+      // (predicate, schema, dataSkippingPredicate)
+      (
+        new CollatedPredicate(
+          ">",
           Literal.ofString("a"),
+          new Column("a1"),
           defaultCollationIdentifier),
         new StructType()
           .add("a1", StringType.STRING),
@@ -304,6 +323,39 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             "a1")),
           Literal.ofString("a"),
           defaultCollationIdentifier)
+      ),
+      (
+        new Predicate(
+          "NOT",
+          new And(
+            new CollatedPredicate(
+              "<",
+              new Column("a1"),
+              Literal.ofString("a"),
+              defaultCollationIdentifier),
+            new Predicate("<",
+              new Column("a1"),
+              Literal.ofString("a")))),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new Or(
+          new CollatedDataSkippingPredicate(
+            ">=",
+            new Column(Array(STATS_WITH_COLLATION,
+              defaultCollationIdentifier.toString,
+              MAX,
+              "a1")),
+            Literal.ofString("a"),
+            defaultCollationIdentifier),
+          new DefaultDataSkippingPredicate(
+            ">=",
+            List(
+              new Column(Array(
+                MAX,
+                "a1")),
+              Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()))
       )
     ).foreach {
       case (predicate, schema, dataSkippingPredicate) =>
