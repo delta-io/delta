@@ -271,7 +271,9 @@ public class ScanImpl implements Scan {
     StructType prunedStatsSchema =
         DataSkippingUtils.pruneStatsSchema(
             getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
-    StructType totalStatsSchema = appendCollatedStatsSchema(prunedStatsSchema, dataSkippingFilter.getReferencedCollatedCols());
+    StructType totalStatsSchema =
+        appendCollatedStatsSchema(
+            prunedStatsSchema, dataSkippingFilter.getReferencedCollatedCols());
 
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
@@ -282,15 +284,14 @@ public class ScanImpl implements Scan {
         new Predicate(
             "=",
             new ScalarExpression(
-                "COALESCE", Arrays.asList(dataSkippingFilter.asPredicate(), Literal.ofBoolean(true))),
+                "COALESCE",
+                Arrays.asList(dataSkippingFilter.asPredicate(), Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
     PredicateEvaluator predicateEvaluator =
         wrapEngineException(
             () ->
-                engine
-                    .getExpressionHandler()
-                    .getPredicateEvaluator(totalStatsSchema, filterToEval),
+                engine.getExpressionHandler().getPredicateEvaluator(totalStatsSchema, filterToEval),
             "Get the predicate evaluator for data skipping with schema=%s and filter=%s",
             prunedStatsSchema,
             filterToEval);

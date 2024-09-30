@@ -19,7 +19,6 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.CollationIdentifier;
-
 import java.util.*;
 
 /** A {@link Predicate} with a set of columns referenced by the expression. */
@@ -37,7 +36,11 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
    * @param referencedCols set of columns referenced by this predicate or any of its child
    *     expressions
    */
-  DefaultDataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols, Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
+  DefaultDataSkippingPredicate(
+      String name,
+      List<Expression> children,
+      Set<Column> referencedCols,
+      Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
     this.referencedCollatedCols = Collections.unmodifiableMap(collatedReferencedCols);
@@ -51,7 +54,8 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
    * @param left left input to this predicate
    * @param right right input to this predicate
    */
-  DefaultDataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
+  DefaultDataSkippingPredicate(
+      String name, DataSkippingPredicate left, DataSkippingPredicate right) {
     this(
         name,
         Arrays.asList(left.asPredicate(), right.asPredicate()),
@@ -63,14 +67,16 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
         },
         new HashMap<CollationIdentifier, Set<Column>>() {
           {
-            for (Map.Entry<CollationIdentifier, Set<Column>> entry : left.getReferencedCollatedCols().entrySet()) {
+            for (Map.Entry<CollationIdentifier, Set<Column>> entry :
+                left.getReferencedCollatedCols().entrySet()) {
               if (!containsKey(entry.getKey())) {
                 put(entry.getKey(), entry.getValue());
               } else {
                 get(entry.getKey()).addAll(entry.getValue());
               }
             }
-            for (Map.Entry<CollationIdentifier, Set<Column>> entry : right.getReferencedCollatedCols().entrySet()) {
+            for (Map.Entry<CollationIdentifier, Set<Column>> entry :
+                right.getReferencedCollatedCols().entrySet()) {
               if (!containsKey(entry.getKey())) {
                 put(entry.getKey(), entry.getValue());
               } else {
