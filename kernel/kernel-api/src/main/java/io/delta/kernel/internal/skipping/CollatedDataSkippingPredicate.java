@@ -11,12 +11,12 @@ public class CollatedDataSkippingPredicate extends CollatedPredicate implements 
   private final Set<Column> referencedCols;
 
   /** Set of collated {@link Column}s referenced by the predicate or any of its child expressions */
-  private final Set<Tuple2<CollationIdentifier, Column>> collatedReferencedCols;
+  private final Map<CollationIdentifier, Set<Column>> collatedReferencedCols;
 
   CollatedDataSkippingPredicate(String name, Column column, Literal literal, CollationIdentifier collationIdentifier) {
     super(name, Arrays.asList(column, literal), collationIdentifier);
     this.referencedCols = Collections.singleton(column);
-    this.collatedReferencedCols = Collections.singleton(new Tuple2<>(collationIdentifier, column));
+    this.collatedReferencedCols = Collections.singletonMap(collationIdentifier, Collections.singleton(column));
   }
 
   @Override
@@ -25,7 +25,7 @@ public class CollatedDataSkippingPredicate extends CollatedPredicate implements 
   }
 
   @Override
-  public Set<Tuple2<CollationIdentifier, Column>> getCollatedReferencedCols() {
+  public Map<CollationIdentifier, Set<Column>> getCollatedReferencedCols() {
     return collatedReferencedCols;
   }
 

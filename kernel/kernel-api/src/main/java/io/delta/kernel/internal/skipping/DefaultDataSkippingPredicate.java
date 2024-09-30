@@ -30,7 +30,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   private final Set<Column> referencedCols;
 
   /** Set of collated {@link Column}s referenced by the predicate or any of its child expressions */
-  private final Set<Tuple2<CollationIdentifier, Column>> collatedReferencedCols;
+  private final Map<CollationIdentifier, Set<Column>> collatedReferencedCols;
 
   /**
    * @param name the predicate name
@@ -38,10 +38,10 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
    * @param referencedCols set of columns referenced by this predicate or any of its child
    *     expressions
    */
-  DefaultDataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols, Set<Tuple2<CollationIdentifier, Column>> collatedReferencedCols) {
+  DefaultDataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols, Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
-    this.collatedReferencedCols = Collections.unmodifiableSet(collatedReferencedCols);
+    this.collatedReferencedCols = Collections.unmodifiableMap(collatedReferencedCols);
   }
 
   /**
@@ -62,10 +62,10 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
             addAll(right.getReferencedCols());
           }
         },
-        new HashSet<Tuple2<CollationIdentifier, Column>>() {
+        new HashMap<CollationIdentifier, Set<Column>>() {
           {
-            addAll(left.getCollatedReferencedCols());
-            addAll(right.getCollatedReferencedCols());
+            putAll(left.getCollatedReferencedCols());
+            putAll(right.getCollatedReferencedCols());
           }
         });
   }
@@ -75,7 +75,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   }
 
   @Override
-  public Set<Tuple2<CollationIdentifier, Column>> getCollatedReferencedCols() {
+  public Map<CollationIdentifier, Set<Column>> getCollatedReferencedCols() {
     return collatedReferencedCols;
   }
 
