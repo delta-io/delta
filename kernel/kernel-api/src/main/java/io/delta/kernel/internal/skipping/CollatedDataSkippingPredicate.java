@@ -1,7 +1,6 @@
 package io.delta.kernel.internal.skipping;
 
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.CollationIdentifier;
 
 import java.util.*;
@@ -11,12 +10,12 @@ public class CollatedDataSkippingPredicate extends CollatedPredicate implements 
   private final Set<Column> referencedCols;
 
   /** Set of collated {@link Column}s referenced by the predicate or any of its child expressions */
-  private final Map<CollationIdentifier, Set<Column>> collatedReferencedCols;
+  private final Map<CollationIdentifier, Set<Column>> referencedCollatedCols;
 
   CollatedDataSkippingPredicate(String name, Column column, Literal literal, CollationIdentifier collationIdentifier) {
     super(name, Arrays.asList(column, literal), collationIdentifier);
     this.referencedCols = Collections.singleton(column);
-    this.collatedReferencedCols = Collections.singletonMap(collationIdentifier, Collections.singleton(column));
+    this.referencedCollatedCols = Collections.singletonMap(collationIdentifier, Collections.singleton(column));
   }
 
   @Override
@@ -25,8 +24,8 @@ public class CollatedDataSkippingPredicate extends CollatedPredicate implements 
   }
 
   @Override
-  public Map<CollationIdentifier, Set<Column>> getCollatedReferencedCols() {
-    return collatedReferencedCols;
+  public Map<CollationIdentifier, Set<Column>> getReferencedCollatedCols() {
+    return referencedCollatedCols;
   }
 
   @Override

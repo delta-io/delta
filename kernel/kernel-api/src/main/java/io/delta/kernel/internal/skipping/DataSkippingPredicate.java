@@ -10,7 +10,7 @@ import java.util.Set;
 public interface DataSkippingPredicate {
   Set<Column> getReferencedCols();
 
-  Map<CollationIdentifier, Set<Column>> getCollatedReferencedCols();
+  Map<CollationIdentifier, Set<Column>> getReferencedCollatedCols();
 
   Predicate asPredicate();
 }

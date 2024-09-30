@@ -18,7 +18,6 @@ package io.delta.kernel.internal.skipping;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.CollationIdentifier;
 
 import java.util.*;
@@ -30,7 +29,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   private final Set<Column> referencedCols;
 
   /** Set of collated {@link Column}s referenced by the predicate or any of its child expressions */
-  private final Map<CollationIdentifier, Set<Column>> collatedReferencedCols;
+  private final Map<CollationIdentifier, Set<Column>> referencedCollatedCols;
 
   /**
    * @param name the predicate name
@@ -41,7 +40,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   DefaultDataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols, Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
-    this.collatedReferencedCols = Collections.unmodifiableMap(collatedReferencedCols);
+    this.referencedCollatedCols = Collections.unmodifiableMap(collatedReferencedCols);
   }
 
   /**
@@ -64,8 +63,8 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
         },
         new HashMap<CollationIdentifier, Set<Column>>() {
           {
-            putAll(left.getCollatedReferencedCols());
-            putAll(right.getCollatedReferencedCols());
+            putAll(left.getReferencedCollatedCols());
+            putAll(right.getReferencedCollatedCols());
           }
         });
   }
@@ -75,8 +74,8 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   }
 
   @Override
-  public Map<CollationIdentifier, Set<Column>> getCollatedReferencedCols() {
-    return collatedReferencedCols;
+  public Map<CollationIdentifier, Set<Column>> getReferencedCollatedCols() {
+    return referencedCollatedCols;
   }
 
   @Override
