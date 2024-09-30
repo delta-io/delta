@@ -217,8 +217,8 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       (
         new CollatedPredicate(
           "=",
-          new Column("a1"),
           Literal.ofString("a"),
+          new Column("a1"),
           defaultCollationIdentifier),
         new StructType()
           .add("a1", StringType.STRING),
