@@ -300,6 +300,7 @@ public class DataSkippingUtils {
     return Optional.empty();
   }
 
+  /** Construct the skipping collated predicate for a given comparator */
   private static DataSkippingPredicate constructCollatedComparatorDataSkippingFilters(
       String comparator,
       Column leftCol,
@@ -382,6 +383,11 @@ public class DataSkippingUtils {
     }
   }
 
+  /**
+   * Constructs a {@link DataSkippingPredicate} for a binary predicate expression with a left
+   * column, a right expression of type {@link Literal}, and a collated comparison using
+   * {@link CollationIdentifier}.
+   */
   private static DataSkippingPredicate constructCollatedDataSkippingPredicate(
       String exprName, Column col, Literal lit, CollationIdentifier collationIdentifier) {
     return new CollatedDataSkippingPredicate(exprName, col, lit, collationIdentifier);

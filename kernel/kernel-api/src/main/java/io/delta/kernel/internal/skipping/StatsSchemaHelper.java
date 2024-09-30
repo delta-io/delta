@@ -84,6 +84,22 @@ public class StatsSchemaHelper {
     return statsSchema;
   }
 
+  /**
+   * Appends collated stats schema for referenced columns.
+   *
+   * <p>Here is an example of a data schema, referenced columns, and the schema of the statistics that would be
+   * collected.
+   *
+   * <p>Data Schema: {{{ |-- a: string (nullable = true) | |-- b: string (nullable = true) | | |--
+   * c: long (nullable = true) }}}
+   *
+   * <p> Referenced {@link Column} is just a {@link Column} "a" with "SPARK.UTF8_LCASE" collation.
+   *
+   * <p>Collected Collated Statistics: {{{ |-- statsWithCollation: struct (nullable = true) | |--
+   * SPARK_UTF8_LCASE: struct (nullable = true) | | |-- minValues: struct (nullable = true) | | | |--
+   * a: StringType (nullable = true) | | |-- maxValues: struct (nullable = true) | | | |--
+   * a: StringType (nullable = true) }}}
+   */
   public static StructType appendCollatedStatsSchema(
       StructType dataSchema, Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
     StructType collatedStatsSchema = new StructType();
@@ -127,6 +143,14 @@ public class StatsSchemaHelper {
                     ));
   }
 
+  /**
+   * Given a logical column in the data schema provided when creating {@code this}, return the
+   * corresponding collated MIN column.
+   *
+   * @param column the logical column name.
+   * @param collationIdentifier identifier collation stats to use for data skipping
+   * @return the collated MIN column
+   */
   public Column getCollatedMinColumn(Column column, CollationIdentifier collationIdentifier) {
     checkArgument(
         isSkippingEligibleCollatedMinMaxColumn(column),
@@ -135,6 +159,14 @@ public class StatsSchemaHelper {
     return getCollatedStatsColumn(column, MIN, collationIdentifier);
   }
 
+  /**
+   * Given a logical column in the data schema provided when creating {@code this}, return the
+   * corresponding collated MAX column.
+   *
+   * @param column the logical column name.
+   * @param collationIdentifier identifier collation stats to use for data skipping
+   * @return the collated MAX column
+   */
   public Column getCollatedMaxColumn(Column column, CollationIdentifier collationIdentifier) {
     checkArgument(
         isSkippingEligibleCollatedMinMaxColumn(column),
@@ -214,6 +246,10 @@ public class StatsSchemaHelper {
         && isSkippingEligibleDataType(logicalToDataType.get(column));
   }
 
+  /**
+   * Returns true if the given column is skipping-eligible using collated min/max statistics. This means the
+   * column exists, is a leaf column, and is of a StringType.
+   */
   public boolean isSkippingEligibleCollatedMinMaxColumn(Column column) {
     return logicalToDataType.containsKey(column)
         && logicalToDataType.get(column) instanceof StringType;
@@ -320,6 +356,10 @@ public class StatsSchemaHelper {
     return getChildColumn(logicalToPhysicalColumn.get(column), statType);
   }
 
+  /**
+   * Given a logical column, a stats type, and a {@link CollationIdentifier}
+   * returns the corresponding column in the collated statistics schema
+   */
   private Column getCollatedStatsColumn(
       Column column, String statType, CollationIdentifier collatedIdentifier) {
     checkArgument(
