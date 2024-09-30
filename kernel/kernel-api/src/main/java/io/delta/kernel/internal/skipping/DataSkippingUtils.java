@@ -449,6 +449,24 @@ public class DataSkippingUtils {
         if (left instanceof Column && right instanceof Literal) {
           Column leftCol = (Column) left;
           Literal rightLit = (Literal) right;
+
+          if (childPredicate instanceof CollatedPredicate
+          && schemaHelper.isSkippingEligibleCollatedMinMaxColumn(leftCol)
+          && rightLit.getDataType() instanceof StringType) {
+            // Match any file whose min/max range contains anything other than the
+            // rejected point.
+            // For example a != "a" --> minValue.a < "a" OR maxValue.a > "a"
+            CollationIdentifier collationIdentifier =
+                    ((CollatedPredicate) childPredicate).getCollationIdentifier();
+            return Optional.of(
+                    new DefaultDataSkippingPredicate(
+                            "OR",
+                            constructCollatedComparatorDataSkippingFilters(
+                                    "<", schemaHelper.getCollatedMinColumn(leftCol, collationIdentifier), rightLit, schemaHelper, collationIdentifier),
+                            constructCollatedComparatorDataSkippingFilters(
+                                    ">", schemaHelper.getCollatedMaxColumn(leftCol, collationIdentifier), rightLit, schemaHelper, collationIdentifier)));
+          }
+
           if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
               && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
             // Match any file whose min/max range contains anything other than the
@@ -468,15 +486,35 @@ public class DataSkippingUtils {
         }
         break;
       case "<":
+        if (childPredicate instanceof CollatedPredicate) {
+          return constructDataSkippingFilter(
+                  new CollatedPredicate(">=", childPredicate.getChildren(), ((CollatedPredicate) childPredicate).getCollationIdentifier()),
+                  schemaHelper);
+        }
         return constructDataSkippingFilter(
             new Predicate(">=", childPredicate.getChildren()), schemaHelper);
       case "<=":
+        if (childPredicate instanceof CollatedPredicate) {
+          return constructDataSkippingFilter(
+                  new CollatedPredicate(">", childPredicate.getChildren(), ((CollatedPredicate) childPredicate).getCollationIdentifier()),
+                  schemaHelper);
+        }
         return constructDataSkippingFilter(
             new Predicate(">", childPredicate.getChildren()), schemaHelper);
       case ">":
+        if (childPredicate instanceof CollatedPredicate) {
+          return constructDataSkippingFilter(
+                  new CollatedPredicate("<=", childPredicate.getChildren(), ((CollatedPredicate) childPredicate).getCollationIdentifier()),
+                  schemaHelper);
+        }
         return constructDataSkippingFilter(
             new Predicate("<=", childPredicate.getChildren()), schemaHelper);
       case ">=":
+        if (childPredicate instanceof CollatedPredicate) {
+          return constructDataSkippingFilter(
+                  new CollatedPredicate("<", childPredicate.getChildren(), ((CollatedPredicate) childPredicate).getCollationIdentifier()),
+                  schemaHelper);
+        }
         return constructDataSkippingFilter(
             new Predicate("<", childPredicate.getChildren()), schemaHelper);
       case "NOT":
