@@ -168,7 +168,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "a" -> 1,
     insertSchemaDDL = "a int, b int",
     insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
         metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))),
@@ -182,7 +182,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "a" -> 1,
     insertSchemaDDL = "a int, b int, c short",
     insertJsonData = Seq("""{ "a": 1, "b": 5, "c": 6 }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
         metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
@@ -197,7 +197,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "a" -> 1,
     insertSchemaDDL = "a int, b int, c int",
     insertJsonData = Seq("""{ "a": 1, "b": 4, "c": 5 }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
         metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
@@ -219,7 +219,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, s struct<x: short, y: int>, m map<string, int>, a array<int>",
     insertJsonData = Seq("""{ "key": 1, "s": { "x": 4, "y": 5 }, "m": { "p": 6 }, "a": [7] }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
@@ -251,7 +251,7 @@ trait TypeWideningInsertSchemaEvolutionTests
       "key int, s struct<x: short, y: int, z: int>, m map<string, int>, a array<int>",
     insertJsonData =
       Seq("""{ "key": 1, "s": { "x": 4, "y": 5, "z": 8 }, "m": { "p": 6 }, "a": [7] }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
@@ -281,7 +281,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, s struct<x: short, y: int>",
     insertJsonData = Seq("""{ "key": 1, "s": { "x": 4, "y": 5 } }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", IntegerType)
@@ -300,7 +300,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, a array<struct<x: short, y: int>>",
     insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       .add("a", ArrayType(new StructType()
         .add("x", IntegerType)
@@ -318,7 +318,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, m map<string, struct<x: short, y: int>>",
     insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       // Type evolution wasn't applied in the map.
       .add("m", MapType(StringType, new StructType()
@@ -343,7 +343,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     overwriteWhere = "key" -> 1,
     insertSchemaDDL = "key int, m map<string, struct<x: short, y: int>>",
     insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       // Type evolution was applied in the map.
       .add("m", MapType(StringType, new StructType()

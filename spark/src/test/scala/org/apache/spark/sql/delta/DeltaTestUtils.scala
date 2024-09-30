@@ -37,8 +37,7 @@ import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
-import org.apache.spark.SparkContext
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.{SparkContext, SparkFunSuite, SparkThrowable}
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -238,6 +237,19 @@ trait DeltaTestUtilsBase {
   @deprecated("Use checkError() instead")
   protected def errorContains(errMsg: String, str: String): Unit = {
     assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+  }
+
+  /**
+   * Helper types to define the expected result of a test case.
+   * Either:
+   * - Success: include an expected value to check, e.g. expected schema or result as a DF or rows.
+   * - Failure: an exception is thrown and the caller passes a function to check that it matches an
+   *     expected error, typ. `checkError()` or `checkErrorMatchPVals()`.
+   */
+  sealed trait ExpectedResult[T]
+  object ExpectedResult {
+    case class Success[T](expected: T) extends ExpectedResult[T]
+    case class Failure[T](checkError: SparkThrowable => Unit) extends ExpectedResult[T]
   }
 
   /** Utility method to check exception `e` is of type `E` or a cause of it is of type `E` */

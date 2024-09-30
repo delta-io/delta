@@ -48,7 +48,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       insertSchemaDDL = "a int, b long",
       insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
       expectedResult = ExpectedResult.Success(
-        expectedSchema = new StructType()
+        expected = new StructType()
           .add("a", LongType)
           .add("b", IntegerType)),
       // The following insert operations don't implicitly cast the data but fail instead - see
@@ -74,15 +74,15 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertSchemaDDL = "a int, b long",
       insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
-      expectedResult = ExpectedResult.Failure(ex => {
+      expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
-          "DELTA_FAILED_TO_MERGE_FIELDS",
+           "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "a",
             "updateField" -> "a"
-          ))
-      }),
+        ))
+      },
       includeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
@@ -104,7 +104,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       insertSchemaDDL = "key int, a array<struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
       expectedResult = ExpectedResult.Success(
-        expectedSchema = new StructType()
+        expected = new StructType()
           .add("key", IntegerType)
           .add("a", ArrayType(new StructType()
             .add("x", LongType)
@@ -132,15 +132,15 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "key" -> 1,
       insertSchemaDDL = "key int, a array<struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
-      expectedResult = ExpectedResult.Failure(ex => {
+      expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
-          "DELTA_FAILED_TO_MERGE_FIELDS",
+           "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "a",
             "updateField" -> "a"
-          ))
-      }),
+        ))
+      },
       includeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
@@ -162,7 +162,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       insertSchemaDDL = "key int, m map<string, struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
       expectedResult = ExpectedResult.Success(
-        expectedSchema = new StructType()
+        expected = new StructType()
           .add("key", IntegerType)
           .add("m", MapType(StringType, new StructType()
             .add("x", LongType)
@@ -190,15 +190,15 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       overwriteWhere = "key" -> 1,
       insertSchemaDDL = "key int, m map<string, struct<x: int, y: long>>",
       insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-      expectedResult = ExpectedResult.Failure(ex => {
+      expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
-          "DELTA_FAILED_TO_MERGE_FIELDS",
+           "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map(
             "currentField" -> "m",
             "updateField" -> "m"
-          ))
-      }),
+        ))
+      },
       includeInserts = Seq(
         DFv1SaveAsTable(SaveMode.Append),
         DFv1SaveAsTable(SaveMode.Overwrite),
