@@ -130,8 +130,8 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
       )
     ).foreach {
       case (startingDataSchema, referencedCollatedCols, finalDataSchema) =>
-        assert(finalDataSchema
-          .equals(StatsSchemaHelper.appendCollatedStatsSchema(startingDataSchema, referencedCollatedCols)))
+        assert(finalDataSchema.equals(
+            StatsSchemaHelper.appendCollatedStatsSchema(startingDataSchema, referencedCollatedCols)))
     }
   }
 }
