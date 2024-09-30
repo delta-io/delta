@@ -18,6 +18,9 @@ package io.delta.kernel.internal.skipping;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.CollationIdentifier;
+
 import java.util.*;
 
 /** A {@link Predicate} with a set of columns referenced by the expression. */
@@ -27,7 +30,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   private final Set<Column> referencedCols;
 
   /** Set of collated {@link Column}s referenced by the predicate or any of its child expressions */
-  private final Set<Column> collatedReferencedCols;
+  private final Set<Tuple2<CollationIdentifier, Column>> collatedReferencedCols;
 
   /**
    * @param name the predicate name
@@ -35,7 +38,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
    * @param referencedCols set of columns referenced by this predicate or any of its child
    *     expressions
    */
-  DefaultDataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols, Set<Column> collatedReferencedCols) {
+  DefaultDataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols, Set<Tuple2<CollationIdentifier, Column>> collatedReferencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
     this.collatedReferencedCols = Collections.unmodifiableSet(collatedReferencedCols);
@@ -59,7 +62,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
             addAll(right.getReferencedCols());
           }
         },
-        new HashSet<Column>() {
+        new HashSet<Tuple2<CollationIdentifier, Column>>() {
           {
             addAll(left.getCollatedReferencedCols());
             addAll(right.getCollatedReferencedCols());
@@ -72,7 +75,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
   }
 
   @Override
-  public Set<Column> getCollatedReferencedCols() {
+  public Set<Tuple2<CollationIdentifier, Column>> getCollatedReferencedCols() {
     return collatedReferencedCols;
   }
 

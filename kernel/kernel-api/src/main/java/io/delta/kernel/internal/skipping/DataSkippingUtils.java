@@ -361,7 +361,7 @@ public class DataSkippingUtils {
 
   private static DataSkippingPredicate constructCollatedDataSkippingPredicate(
           String exprName, Column col, Literal lit, CollationIdentifier collationIdentifier) {
-    return new CollatedDataSkippingPredicate(exprName, Arrays.asList(col, lit), Collections.singleton(col), collationIdentifier);
+    return new CollatedDataSkippingPredicate(exprName, col, lit, collationIdentifier);
   }
 
   /**
