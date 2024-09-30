@@ -1134,7 +1134,8 @@ class DeltaColumnMappingSuite extends QueryTest
       spark.range(10).toDF("id")
         .write.format("delta").save(dir.getCanonicalPath)
       // Analysis phase
-      val df = spark.read.format("delta").load(dir.getCanonicalPath)
+      val df1 = spark.read.format("delta").load(dir.getCanonicalPath)
+      val df2 = spark.read.format("delta").load(dir.getCanonicalPath)
       // Overwrite schema but with same logical schema
       withSQLConf(DeltaSQLConf.REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE.key -> "false") {
         spark.range(10).toDF("id")
@@ -1145,13 +1146,14 @@ class DeltaColumnMappingSuite extends QueryTest
       // new physical name for the underlying columns, so we should fail.
       assert {
         intercept[DeltaAnalysisException] {
-          df.collect()
+          df1.collect()
         }.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
       }
       // See we can't read back the same data any more
+      // Note: We need to use separate dataframe, because the error in df1 will be cached.
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key -> "false") {
         checkAnswer(
-          df,
+          df2,
           (0 until 10).map(_ => Row(null))
         )
       }
