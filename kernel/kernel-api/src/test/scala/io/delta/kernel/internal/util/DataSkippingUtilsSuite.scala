@@ -187,6 +187,39 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
         new StructType()
           .add("a1", StringType.STRING)
           .add("a2", StringType.STRING)
+      ),
+      (
+        new Or(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            new Column("a2"),
+            defaultCollationIdentifier),
+          new CollatedPredicate(
+            "<",
+            Literal.ofString("a"),
+            new Column("a2"),
+            defaultCollationIdentifier)),
+        new StructType()
+          .add("a1", StringType.STRING)
+          .add("a2", StringType.STRING)
+      ),
+      (
+        new And(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            new Column("a2"),
+            defaultCollationIdentifier),
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            new Column("a3"),
+            defaultCollationIdentifier)),
+        new StructType()
+          .add("a1", StringType.STRING)
+          .add("a2", StringType.STRING)
+          .add("a3", StringType.STRING)
       )
     ).foreach {
       case (predicate, schema) =>
@@ -356,6 +389,28 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
               Literal.ofString("a")).asJava,
             new util.HashSet(),
             new util.HashMap()))
+      ),
+      (
+        new And(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            Literal.ofString("a"),
+            defaultCollationIdentifier),
+          new Predicate("<",
+            new Column("a1"),
+            new Column("a2"))),
+        new StructType()
+          .add("a1", StringType.STRING)
+          .add("a2", StringType.STRING),
+        new CollatedDataSkippingPredicate(
+          "<",
+          new Column(Array(STATS_WITH_COLLATION,
+            defaultCollationIdentifier.toString,
+            MIN,
+            "a1")),
+          Literal.ofString("a"),
+          defaultCollationIdentifier)
       )
     ).foreach {
       case (predicate, schema, dataSkippingPredicate) =>
