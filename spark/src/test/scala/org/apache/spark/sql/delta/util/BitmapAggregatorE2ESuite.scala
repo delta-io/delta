@@ -199,6 +199,6 @@ object BitmapAggregatorE2ESuite {
       column: Column,
       format: RoaringBitmapArrayFormat.Value): Column = {
     val func = new BitmapAggregator(column.expr, format);
-    new Column(func.toAggregateExpression(isDistinct = false))
+    Column(func.toAggregateExpression(isDistinct = false))
   }
 }

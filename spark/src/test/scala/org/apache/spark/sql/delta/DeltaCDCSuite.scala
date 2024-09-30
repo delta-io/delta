@@ -25,16 +25,19 @@ import scala.collection.JavaConverters._
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit}
+import org.apache.spark.sql.functions.{col, current_timestamp, floor, lit, unix_timestamp}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{LongType, StringType, StructType}
@@ -62,7 +65,7 @@ abstract class DeltaCDCSuiteBase
   case class EndingVersion(value: String) extends Boundary
   case class EndingTimestamp(value: String) extends Boundary
   case object Unbounded extends Boundary // used to model situation when a boundary isn't provided
-  val dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+  val dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z")
 
   def createTblWithThreeVersions(
       tblName: Option[String] = None,
@@ -250,13 +253,11 @@ abstract class DeltaCDCSuiteBase
       // modify timestamps
       // version 0
       modifyDeltaTimestamp(deltaLog, 0, 0)
-      val tsAfterV0 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-        .format(new Date(1))
+      val tsAfterV0 = dateFormat.format(new Date(1))
 
       // version 1
       modifyDeltaTimestamp(deltaLog, 1, 1000)
-      val tsAfterV1 = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-        .format(new Date(1001))
+      val tsAfterV1 = dateFormat.format(new Date(1001))
 
       modifyDeltaTimestamp(deltaLog, 2, 2000)
 
@@ -447,8 +448,7 @@ abstract class DeltaCDCSuiteBase
 
       // Set commit time during Daylight savings time change.
       val restoreDate = "2022-11-06 01:42:44"
-      val format = new java.text.SimpleDateFormat("yyyy-MM-dd hh:mm:ss Z")
-      val timestamp = format.parse(s"$restoreDate -0800").getTime
+      val timestamp = dateFormat.parse(s"$restoreDate -0800").getTime
       modifyDeltaTimestamp(deltaLog, 0, timestamp)
 
       // Verify DST is respected.
@@ -474,6 +474,66 @@ abstract class DeltaCDCSuiteBase
         spark.range(10)
           .withColumn("_change_type", lit("insert"))
           .withColumn("_commit_version", (col("id") / 10).cast(LongType)))
+    }
+  }
+
+  test("CDC read's commit timestamps are correct under different timezones") {
+    val tblName = "tbl"
+    withTable(tblName) {
+      spark.sql(s"CREATE OR REPLACE TABLE $tblName(id INT, name STRING, age INT) " +
+        s"USING DELTA TBLPROPERTIES (delta.enableChangeDataFeed = true)")
+      spark.sql(s"INSERT INTO $tblName(id, name, age) VALUES (1,'abc',20)")
+      spark.sql(s"INSERT INTO $tblName(id, name, age) VALUES (2,'def',21)")
+      spark.sql(s"UPDATE $tblName SET age = 19 WHERE id = 1")
+      spark.sql(s"INSERT INTO $tblName(id, name, age) VALUES (3,'ghi',15)")
+      spark.sql(s"DELETE FROM $tblName WHERE id = 3")
+
+      // unix_timestamp() on a Timestamp column returns the UNIX timestamp of the specified
+      // time under the given SESSION_LOCAL_TIMEZONE, while collect() on a timestamp column
+      // always returns the Timestamp in UTC.
+      // By using unix_timestamp() on the commit timestamp column, we can accurately determine
+      // whether or not the timestamp under different timezones represent the same point in time.
+      val startingVersion = StartingVersion("0")
+      val endingVersion = EndingVersion("10")
+      spark.conf.set(SQLConf.SESSION_LOCAL_TIMEZONE.key, "America/Chicago")
+      val readDfChicago = cdcRead(new TableName(tblName), startingVersion, endingVersion)
+        .orderBy(CDC_COMMIT_VERSION, CDC_TYPE_COLUMN_NAME)
+        .select(col(CDC_COMMIT_VERSION), col(CDC_TYPE_COLUMN_NAME),
+          unix_timestamp(col(CDC_COMMIT_TIMESTAMP)))
+      val readDfChicagoRows = readDfChicago.collect()
+
+      spark.conf.set(SQLConf.SESSION_LOCAL_TIMEZONE.key, "Asia/Ho_Chi_Minh")
+      val readDfHCM = cdcRead(new TableName(tblName), startingVersion, endingVersion)
+        .orderBy(CDC_COMMIT_VERSION, CDC_TYPE_COLUMN_NAME)
+        .select(col(CDC_COMMIT_VERSION), col(CDC_TYPE_COLUMN_NAME),
+          unix_timestamp(col(CDC_COMMIT_TIMESTAMP)))
+      val readDfHCMRows = readDfHCM.collect()
+
+      spark.conf.set(SQLConf.SESSION_LOCAL_TIMEZONE.key, "UTC")
+      val readDfUTC = cdcRead(new TableName(tblName), startingVersion, endingVersion)
+        .orderBy(CDC_COMMIT_VERSION, CDC_TYPE_COLUMN_NAME)
+        .select(col(CDC_COMMIT_VERSION), col(CDC_TYPE_COLUMN_NAME),
+          unix_timestamp(col(CDC_COMMIT_TIMESTAMP)))
+      val readDfUTCRows = readDfUTC.collect()
+
+      def checkCDCTimestampEqual(firstRows: Array[Row], secondRows: Array[Row]): Boolean = {
+        assert(firstRows.length === secondRows.length,
+          "Number of rows from 2 DFs should be the same.")
+        for ((firstRow, secondRow) <- firstRows.zip(secondRows)) {
+          assert(firstRow.getLong(0) === secondRow.getLong(0),
+            "Commit version should be the same for every rows.")
+          assert(firstRow.getString(1) === secondRow.getString(1),
+            "Change type should be the same for every rows.")
+          if (firstRow.getLong(2) != secondRow.getLong(2)) {
+            return false
+          }
+        }
+        true
+      }
+
+      assert(checkCDCTimestampEqual(readDfChicagoRows, readDfHCMRows) === true)
+      assert(checkCDCTimestampEqual(readDfChicagoRows, readDfUTCRows) === true)
+      assert(checkCDCTimestampEqual(readDfHCMRows, readDfUTCRows) === true)
     }
   }
 
@@ -742,11 +802,8 @@ abstract class DeltaCDCSuiteBase
 
         // version 2
         modifyDeltaTimestamp(deltaLog, 2, 2000)
-
-        val tsStart = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-          .format(new Date(3000))
-        val tsEnd = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-          .format(new Date(4000))
+        val tsStart = dateFormat.format(new Date(3000))
+        val tsEnd = dateFormat.format(new Date(4000))
 
         val readDf = cdcRead(
           new TablePath(path),
@@ -776,10 +833,8 @@ abstract class DeltaCDCSuiteBase
         // version 2
         modifyDeltaTimestamp(deltaLog, 2, 2000)
 
-        val tsStart = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-          .format(new Date(0))
-        val tsEnd = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-          .format(new Date(4000))
+        val tsStart = dateFormat.format(new Date(0))
+        val tsEnd = dateFormat.format(new Date(4000))
 
         val readDf = cdcRead(
           new TablePath(tempDir.getAbsolutePath),
@@ -1012,6 +1067,35 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
       }
     }
   }
+
+  test("reader should accept case insensitive option") {
+    val tblName = "tbl"
+    withTable(tblName) {
+      createTblWithThreeVersions(tblName = Some(tblName))
+      val res = spark.read.format("delta")
+        .option("ReadChangeFEED", "tRuE")
+        .option("STARTINGVERSION", 0)
+        .option("endingVersion", 1)
+        .table(tblName)
+        .select("id", "_change_type")
+      assert(res.columns === Seq("id", "_change_type"))
+      checkAnswer(
+        res,
+        spark.range(20).withColumn("_change_type", lit("insert")))
+
+      val resLegacy = spark.read.format("delta")
+        .option("READCHANGEDATA", "TruE")
+        .option("startingversion", 0)
+        .option("ENDINGVERSION", 1)
+        .table(tblName)
+        .select("id", "_change_type")
+      assert(resLegacy.columns === Seq("id", "_change_type"))
+      checkAnswer(
+        resLegacy,
+        spark.range(20).withColumn("_change_type", lit("insert")))
+    }
+  }
+
 }
 
 class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite
@@ -1020,4 +1104,26 @@ class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite
     super.beforeAll()
     enableDeletionVectorsForAllSupportedOperations(spark)
   }
+}
+
+class DeltaCDCScalaSuiteWithCoordinatedCommitsBatch10 extends DeltaCDCScalaSuite
+  with CoordinatedCommitsBaseSuite {
+
+  /** Modify timestamp for a delta commit, used to test timestamp querying */
+  override def modifyDeltaTimestamp(deltaLog: DeltaLog, version: Long, time: Long): Unit = {
+    val fileProvider = DeltaCommitFileProvider(deltaLog.snapshot)
+    val file = new File(fileProvider.deltaFile(version).toUri)
+    InCommitTimestampTestUtils.overwriteICTInDeltaFile(
+      deltaLog,
+      new Path(file.getPath),
+      Some(time))
+    file.setLastModified(time)
+    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
+    if (crc.exists()) {
+      InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(time))
+      crc.setLastModified(time)
+    }
+  }
+
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
 }

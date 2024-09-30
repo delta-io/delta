@@ -296,9 +296,9 @@ object SchemaMergingUtils {
    * @param tf function to apply.
    * @return the transformed schema.
    */
-  def transformColumns(
-      schema: StructType)(
-      tf: (Seq[String], StructField, Resolver) => StructField): StructType = {
+  def transformColumns[T <: DataType](
+      schema: T)(
+      tf: (Seq[String], StructField, Resolver) => StructField): T = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
         case StructType(fields) =>
@@ -319,6 +319,43 @@ object SchemaMergingUtils {
       newDt.asInstanceOf[E]
     }
     transform(Seq.empty, schema)
+  }
+
+  /**
+   * Prune all nested empty structs from the schema. Return None if top level struct is also empty.
+   * @param dataType the data type to prune.
+   */
+  def pruneEmptyStructs(dataType: DataType): Option[DataType] = {
+    dataType match {
+      case StructType(fields) =>
+        val newFields = fields.flatMap { f =>
+          pruneEmptyStructs(f.dataType).map { newType =>
+            StructField(f.name, newType, f.nullable, f.metadata)
+          }
+        }
+        // when there is no fields, i.e., the struct is empty, we will return None to indicate
+        // we don't want to include that field.
+        if (newFields.isEmpty) {
+          None
+        } else {
+          Option(StructType(newFields))
+        }
+      case ArrayType(currentElementType, containsNull) =>
+        // if the array element type is from from_json, we will exclude the array.
+        pruneEmptyStructs(currentElementType).map { newType =>
+          ArrayType(newType, containsNull)
+        }
+      case MapType(keyType, elementType, containsNull) =>
+        // if the map key/element type is from from_json, we will exclude the map.
+        val filtertedKeyType = pruneEmptyStructs(keyType)
+        val filtertedValueType = pruneEmptyStructs(elementType)
+        if (filtertedKeyType.isEmpty || filtertedValueType.isEmpty) {
+          None
+        } else {
+          Option(MapType(filtertedKeyType.get, filtertedValueType.get, containsNull))
+        }
+      case _ => Option(dataType)
+    }
   }
 
   /**

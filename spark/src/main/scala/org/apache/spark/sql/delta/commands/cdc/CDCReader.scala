@@ -19,27 +19,30 @@ package org.apache.spark.sql.delta.commands.cdc
 import java.sql.Timestamp
 
 import scala.collection.mutable.{ListBuffer, Map => MutableMap}
+import scala.util.Try
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Literal}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, AttributeReference, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.sources.{BaseRelation, Filter, PrunedFilteredScan}
+import org.apache.spark.sql.sources.{BaseRelation, CatalystScan, Filter}
 import org.apache.spark.sql.types.{LongType, StringType, StructType, TimestampType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -110,7 +113,7 @@ object CDCReader extends CDCReaderImpl
       snapshotWithSchemaMode: SnapshotWithSchemaMode,
       sqlContext: SQLContext,
       startingVersion: Option[Long],
-      endingVersion: Option[Long]) extends BaseRelation with PrunedFilteredScan {
+      endingVersion: Option[Long]) extends BaseRelation with CatalystScan {
 
     private val deltaLog = snapshotWithSchemaMode.snapshot.deltaLog
 
@@ -149,7 +152,7 @@ object CDCReader extends CDCReaderImpl
 
     override def unhandledFilters(filters: Array[Filter]): Array[Filter] = Array.empty
 
-    override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
+    override def buildScan(requiredColumns: Seq[Attribute], filters: Seq[Expression]): RDD[Row] = {
       val df = changesToBatchDF(
         deltaLog,
         startingVersion.get,
@@ -160,8 +163,18 @@ object CDCReader extends CDCReaderImpl
         sqlContext.sparkSession,
         readSchemaSnapshot = Some(snapshotForBatchSchema))
 
-      val filter = new Column(DeltaSourceUtils.translateFilters(filters))
-      val projections = requiredColumns.map(SchemaUtils.fieldNameToColumn)
+      // Rewrite the attributes in the required columns and pushed down filters to match the output
+      // of the internal DataFrame.
+      val outputMap = df.queryExecution.analyzed.output.map(a => a.name -> a).toMap
+      val projections =
+        requiredColumns.map(a => Column(a.withExprId(outputMap(a.name).exprId)))
+      val filter = Column(
+        filters
+          .map(_.transform { case a: Attribute => a.withExprId(outputMap(a.name).exprId) })
+          .reduceOption(And)
+          .getOrElse(Literal.TrueLiteral)
+      )
+
       df.filter(filter).select(projections: _*).rdd
     }
   }
@@ -300,8 +313,8 @@ trait CDCReaderImpl extends DeltaLogging {
     }
 
     logInfo(
-      s"startingVersion: ${startingVersion.version}, " +
-        s"endingVersion: ${endingVersionOpt.map(_.version)}")
+      log"startingVersion: ${MDC(DeltaLogKeys.START_VERSION, startingVersion.version)}, " +
+      log"endingVersion: ${MDC(DeltaLogKeys.END_VERSION, endingVersionOpt.map(_.version))}")
 
     val startingSnapshot = snapshotToUse.deltaLog.getSnapshotAt(startingVersion.version)
     val columnMappingEnabledAtStartingVersion =
@@ -403,7 +416,7 @@ trait CDCReaderImpl extends DeltaLogging {
       spark.sqlContext,
       startingVersion = None,
       endingVersion = None) {
-      override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] =
+      override def buildScan(requiredColumns: Seq[Attribute], filters: Seq[Expression]): RDD[Row] =
         sqlContext.sparkSession.sparkContext.emptyRDD[Row]
     }
   }
@@ -456,6 +469,8 @@ trait CDCReaderImpl extends DeltaLogging {
    * @param start - startingVersion of the changes
    * @param end - endingVersion of the changes
    * @param changes - changes is an iterator of all FileActions for a particular commit version.
+   *                Note that for log files where InCommitTimestamps are enabled, the iterator
+   *                must also contain the [[CommitInfo]] action.
    * @param spark - SparkSession
    * @param isStreaming - indicates whether the DataFrame returned is a streaming DataFrame
    * @param useCoarseGrainedCDC - ignores checks related to CDC being disabled in any of the
@@ -480,9 +495,11 @@ trait CDCReaderImpl extends DeltaLogging {
       throw DeltaErrors.endBeforeStartVersionInCDC(start, end)
     }
 
-    // A map from change version to associated commit timestamp.
-    val timestampsByVersion: Map[Long, Timestamp] =
-      getTimestampsByVersion(deltaLog, start, end, spark)
+    // A map from change version to associated file modification timestamps.
+    // We only need these for non-InCommitTimestamp commits because for InCommitTimestamp commits,
+    // the timestamps are already stored in the commit info.
+    val nonICTTimestampsByVersion: Map[Long, Timestamp] =
+      getNonICTTimestampsByVersion(deltaLog, start, end)
 
     val changeFiles = ListBuffer[CDCDataSpec[AddCDCFile]]()
     val addFiles = ListBuffer[CDCDataSpec[AddFile]]()
@@ -602,7 +619,6 @@ trait CDCReaderImpl extends DeltaLogging {
 
         // Set up buffers for all action types to avoid multiple passes.
         val cdcActions = ListBuffer[AddCDCFile]()
-        val ts = timestampsByVersion.get(v).orNull
 
         // Note that the CommitInfo is *not* guaranteed to be generated in 100% of cases.
         // We are using it only for a hotfix-safe mitigation/defense-in-depth - the value
@@ -622,6 +638,18 @@ trait CDCReaderImpl extends DeltaLogging {
           case i: CommitInfo => commitInfo = Some(i)
           case _ => // do nothing
         }
+        // If the commit has an In-Commit Timestamp, we should use that as the commit timestamp.
+        // Note that it is technically possible for a commit range to begin with ICT commits
+        // followed by non-ICT commits, and end with ICT commits again. Ideally, for these commits
+        // we should use the file modification time for the first two ranges. However, this
+        // scenario is an edge case not worth optimizing for.
+        val ts = commitInfo
+          .flatMap(_.inCommitTimestamp)
+          .map(ict => new Timestamp(ict))
+          .getOrElse(nonICTTimestampsByVersion.get(v).orNull)
+        // When `isStreaming` = `true` the [CommitInfo] action is only used for passing the
+        // in-commit timestamp to this method. We should filter them out.
+        commitInfo = if (isStreaming) None else commitInfo
 
         // If there are CDC actions, we read them exclusively if we should not use the
         // Add and RemoveFiles.
@@ -874,22 +902,25 @@ trait CDCReaderImpl extends DeltaLogging {
   }
 
   /**
-   * Builds a map from commit versions to associated commit timestamps.
+   * Builds a map from commit versions to associated commit timestamps where the timestamp
+   * is the modification time of the commit file. Note that this function will not return
+   * InCommitTimestamps, it is up to the consumer of this function to decide whether the
+   * file modification time is the correct commit timestamp or whether they need to read the ICT.
+   *
    * @param start  start commit version
-   * @param end  end commit version
+   * @param end  end commit version (inclusive)
    */
-  def getTimestampsByVersion(
+  def getNonICTTimestampsByVersion(
       deltaLog: DeltaLog,
       start: Long,
-      end: Long,
-      spark: SparkSession): Map[Long, Timestamp] = {
+      end: Long): Map[Long, Timestamp] = {
     // Correct timestamp values are only available through DeltaHistoryManager.getCommits(). Commit
     // info timestamps are wrong, and file modification times are wrong because they need to be
     // monotonized first. This just performs a list (we don't read the contents of the files in
     // getCommits()) so the performance overhead is minimal.
     val monotonizationStart =
       math.max(start - DeltaHistoryManager.POTENTIALLY_UNMONOTONIZED_TIMESTAMPS, 0)
-    val commits = DeltaHistoryManager.getCommits(
+    val commits = DeltaHistoryManager.getCommitsWithNonIctTimestamps(
       deltaLog.store,
       deltaLog.logPath,
       monotonizationStart,
@@ -971,11 +1002,20 @@ trait CDCReaderImpl extends DeltaLogging {
    * Based on the read options passed it indicates whether the read was a cdc read or not.
    */
   def isCDCRead(options: CaseInsensitiveStringMap): Boolean = {
+    // Consistent with DeltaOptions.readChangeFeed,
+    // but CDCReader use CaseInsensitiveStringMap vs. CaseInsensitiveMap used by DataFrameReader.
+    def toBoolean(input: String, name: String): Boolean = {
+      Try(input.toBoolean).toOption.getOrElse {
+        throw DeltaErrors.illegalDeltaOptionException(name, input, "must be 'true' or 'false'")
+      }
+    }
+
     val cdcEnabled = options.containsKey(DeltaDataSource.CDC_ENABLED_KEY) &&
-      options.get(DeltaDataSource.CDC_ENABLED_KEY) == "true"
+      toBoolean(options.get(DeltaDataSource.CDC_ENABLED_KEY), DeltaDataSource.CDC_ENABLED_KEY)
 
     val cdcLegacyConfEnabled = options.containsKey(DeltaDataSource.CDC_ENABLED_KEY_LEGACY) &&
-      options.get(DeltaDataSource.CDC_ENABLED_KEY_LEGACY) == "true"
+      toBoolean(
+        options.get(DeltaDataSource.CDC_ENABLED_KEY_LEGACY), DeltaDataSource.CDC_ENABLED_KEY_LEGACY)
 
     cdcEnabled || cdcLegacyConfEnabled
   }
@@ -984,7 +1024,8 @@ trait CDCReaderImpl extends DeltaLogging {
    * Determine if the metadata provided has cdc enabled or not.
    */
   def isCDCEnabledOnTable(metadata: Metadata, spark: SparkSession): Boolean = {
-    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(metadata, spark)
+    ChangeDataFeedTableFeature.metadataRequiresFeatureToBeEnabled(
+      protocol = Protocol(), metadata, spark)
   }
 
   /**

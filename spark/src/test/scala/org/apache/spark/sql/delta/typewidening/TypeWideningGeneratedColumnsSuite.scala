@@ -48,10 +48,10 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
 
       // Changing the type of a column that a generated column depends on is not allowed.
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a TYPE SMALLINT")
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+        "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a",
           "generatedColumns" -> "gen -> hash(a)"
@@ -77,10 +77,10 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
       checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
 
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           sql("ALTER TABLE t CHANGE COLUMN a.x TYPE SMALLINT")
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
+        "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE",
         parameters = Map(
           "columnName" -> "a.x",
           "generatedColumns" -> "gen -> hash(a.x)"
@@ -106,10 +106,10 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           sql("INSERT INTO t (a) VALUES (200)")
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a",
           "columnType" -> "TINYINT",
@@ -130,34 +130,73 @@ trait TypeWideningGeneratedColumnTests extends GeneratedColumnTest {
         partitionColumns = Seq.empty
       )
       sql("INSERT INTO t (a) VALUES (named_struct('x', 2, 'y', 3))")
-      checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
+      checkAnswer(sql("SELECT gen FROM t"), Row(1765031574))
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
           },
-          errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+          "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
           parameters = Map(
-            "columnName" -> "a",
-            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
-            "dataType" -> "STRUCT<x: INT, y: TINYINT>",
+            "columnName" -> "a.x",
+            "columnType" -> "TINYINT",
+            "dataType" -> "INT",
             "generatedColumns" -> "gen -> hash(a.x)"
-        ))
+          )
+        )
 
-        // We're currently too strict and reject changing the type of struct field a.y even though
-        // it's not the field referenced by the generated column.
+        // changing the type of struct field `a.y` when it's not
+        // the field referenced by the generated column is allowed.
+        sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 200))")
+        checkAnswer(sql("SELECT gen FROM t"), Seq(Row(1765031574), Row(1765031574)))
+      }
+    }
+  }
+
+  test("generated column on nested field with complex type evolution") {
+    withTable("t") {
+      createTable(
+        tableName = "t",
+        path = None,
+        schemaString = "a struct<x: struct<z: byte, h: byte>, y: byte>, gen int",
+        generatedColumns = Map("gen" -> "hash(a.x.z)"),
+        partitionColumns = Seq.empty
+      )
+
+      sql("INSERT INTO t (a) VALUES (named_struct('x', named_struct('z', 2, 'h', 3), 'y', 4))")
+      checkAnswer(sql("SELECT gen FROM t"), Row(1765031574))
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t (a) VALUES (named_struct('x', CAST(2 AS byte), 'y', 200))")
+          intercept[DeltaAnalysisException] {
+            sql(
+              s"""
+                 | INSERT INTO t (a) VALUES (
+                 |   named_struct('x', named_struct('z', 200, 'h', 3), 'y', 4)
+                 | )
+                 |""".stripMargin
+            )
           },
-          errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+          "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
           parameters = Map(
-            "columnName" -> "a",
-            "columnType" -> "STRUCT<x: TINYINT, y: TINYINT>",
-            "dataType" -> "STRUCT<x: TINYINT, y: INT>",
-            "generatedColumns" -> "gen -> hash(a.x)"
-        ))
+            "columnName" -> "a.x.z",
+            "columnType" -> "TINYINT",
+            "dataType" -> "INT",
+            "generatedColumns" -> "gen -> hash(a.x.z)"
+          )
+        )
+
+        // changing the type of struct field `a.y` when it's not
+        // the field referenced by the generated column is allowed.
+        sql(
+          """
+            | INSERT INTO t (a) VALUES (
+            |   named_struct('x', named_struct('z', CAST(2 AS BYTE), 'h', 2002), 'y', 1030)
+            | )
+            |""".stripMargin
+        )
+        checkAnswer(sql("SELECT gen FROM t"), Seq(Row(1765031574), Row(1765031574)))
       }
     }
   }

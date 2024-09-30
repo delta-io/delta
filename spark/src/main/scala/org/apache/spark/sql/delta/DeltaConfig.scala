@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -176,6 +178,9 @@ trait DeltaConfigsBase extends DeltaLogging {
         case lKey if lKey.startsWith("delta.") =>
           Option(entries.get(lKey.stripPrefix("delta."))) match {
             case Some(deltaConfig) => deltaConfig(value) // validate the value
+            case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
+              // always allow any delta universal format config with key converted to lower case
+              lKey -> value
             case None if allowArbitraryProperties =>
               logConsole(
                 s"You are setting a property: $key that is not recognized by this " +
@@ -214,7 +219,6 @@ trait DeltaConfigsBase extends DeltaLogging {
       sqlConfs: SQLConf,
       tableConf: Map[String, String],
       ignoreProtocolConfsOpt: Option[Boolean] = None): Map[String, String] = {
-    import scala.collection.JavaConverters._
 
     val ignoreProtocolConfs =
       ignoreProtocolConfsOpt.getOrElse(ignoreProtocolDefaultsIsSet(sqlConfs, tableConf))
@@ -311,6 +315,13 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   def isValidIntervalConfigValue(i: CalendarInterval): Boolean = {
     i.months == 0 && getMicroSeconds(i) >= 0
+  }
+
+  /**
+   * Return all Delta configurations, including both set and unset ones.
+   */
+  def getAllConfigs: Map[String, DeltaConfig[_]] = {
+    entries.asScala.toMap
   }
 
   /**
@@ -763,7 +774,7 @@ trait DeltaConfigsBase extends DeltaLogging {
       " commit-coordinator.")
 
   val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
-    "enableInCommitTimestamps-preview",
+    "enableInCommitTimestamps",
     false.toString,
     _.toBoolean,
     validationFunction = _ => true,
@@ -775,7 +786,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * inCommitTimestamps were enabled.
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
-    "inCommitTimestampEnablementVersion-preview",
+    "inCommitTimestampEnablementVersion",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
@@ -788,7 +799,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
-    "inCommitTimestampEnablementTimestamp-preview",
+    "inCommitTimestampEnablementTimestamp",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,

@@ -25,15 +25,16 @@ import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.SnapshotManagementSuiteShims._
-import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{Commit, CommitCoordinatorClient, GetCommitsResponse, TableDescriptor}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -474,19 +475,13 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       val commitFileProvider = DeltaCommitFileProvider(log.snapshot)
       intercept[IllegalArgumentException] {
         val commitFile = fs.getFileStatus(commitFileProvider.deltaFile(1))
-        val commit = Commit(
-          version = 1,
-          fileStatus = commitFile,
-          commitTimestamp = 0)
+        val commit = new Commit(1, commitFile, 0)
         // Version exists, but not contiguous with old logSegment
         log.getLogSegmentAfterCommit(1, None, oldLogSegment, commit, None, EmptyCheckpointProvider)
       }
       intercept[IllegalArgumentException] {
         val commitFile = fs.getFileStatus(commitFileProvider.deltaFile(0))
-        val commit = Commit(
-          version = 0,
-          fileStatus = commitFile,
-          commitTimestamp = 0)
+        val commit = new Commit(0, commitFile, 0)
 
         // Version exists, but newLogSegment already contains it
         log.getLogSegmentAfterCommit(0, None, newLogSegment, commit, None, EmptyCheckpointProvider)
@@ -551,17 +546,16 @@ case class ConcurrentBackfillCommitCoordinatorClient(
 ) extends InMemoryCommitCoordinator(batchSize) {
   private val deferredBackfills: mutable.Map[Long, () => Unit] = mutable.Map.empty
   override def getCommits(
-      logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
-      startVersion: Option[Long],
-      endVersion: Option[Long]): GetCommitsResponse = {
+      tableDesc: TableDescriptor,
+      startVersion: java.lang.Long,
+      endVersion: java.lang.Long): GetCommitsResponse = {
     if (ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills) {
       CountDownLatchLogStore.listFromCalled.await()
       logInfo(s"Finishing pending backfills concurrently: ${deferredBackfills.keySet}")
       deferredBackfills.keys.toSeq.sorted.foreach((version: Long) => deferredBackfills(version)())
       deferredBackfills.clear()
     }
-    super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+    super.getCommits(tableDesc, startVersion, endVersion)
   }
   override def backfill(
       logStore: LogStore,
@@ -691,6 +685,36 @@ class SnapshotManagementParallelListingSuite extends QueryTest
             verifySnapshotBackfills(snapshot, backfillUntilInclusive = batchSize)
           }
         }
+      }
+    }
+  }
+
+  test("throws exception when additional listing also can't reconcile") {
+    val batchSize = ConcurrentBackfillCommitCoordinatorBuilder.batchSize
+    val endVersion = batchSize + 3
+    withSQLConf(
+        COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
+          ConcurrentBackfillCommitCoordinatorBuilder.getName,
+        DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key -> "false") {
+      withTempDir { tempDir =>
+        val path = tempDir.getCanonicalPath
+        val dataPath = new Path(path)
+
+        writeDeltaData(path, endVersion)
+
+        // Delete 5.json to create a permanent gap between file-system i.e. [0, 4] and
+        // commit-store [6, 8] which would even an additional listing won't be able to reconcile.
+        val deltaLog = DeltaLog.forTable(spark, dataPath)
+        deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf()).delete(
+          FileNames.unsafeDeltaFile(deltaLog.logPath, batchSize), true)
+
+        // Invalidate cache to ensure re-listing.
+        DeltaLog.invalidateCache(spark, dataPath)
+
+        val e = intercept[IllegalStateException] {
+          DeltaLog.forTable(spark, dataPath).update()
+        }
+        assert(e.getMessage.contains("unexpectedly still requires additional file-system listing"))
       }
     }
   }

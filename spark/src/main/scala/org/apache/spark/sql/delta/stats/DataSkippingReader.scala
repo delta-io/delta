@@ -146,7 +146,7 @@ object SkippingEligibleColumn {
  */
 object SkippingEligibleLiteral {
   def unapply(arg: Literal): Option[Column] = {
-    if (SkippingEligibleDataType(arg.dataType)) Some(new Column(arg)) else None
+    if (SkippingEligibleDataType(arg.dataType)) Some(Column(arg)) else None
   }
 }
 
@@ -170,7 +170,7 @@ private[delta] object DataSkippingReader {
   /** Default number of cols for which we should collect stats */
   val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE = 32
 
-  private[this] def col(e: Expression): Column = new Column(e)
+  private[this] def col(e: Expression): Column = Column(e)
   def fold(e: Expression): Column = col(new Literal(e.eval(), e.dataType))
 
   // Literals often used in the data skipping reader expressions.
@@ -183,7 +183,7 @@ private[delta] object DataSkippingReader {
     new Literal(oneMillisecond, CalendarIntervalType)
   }
 
-  val sizeCollectorInputEncoders: Seq[Option[ExpressionEncoder[_]]] = Seq(
+  lazy val sizeCollectorInputEncoders: Seq[Option[ExpressionEncoder[_]]] = Seq(
     Option(ExpressionEncoder[Boolean]()),
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()),
@@ -686,11 +686,11 @@ trait DataSkippingReaderBase
           //
           // There is a longer term task SC-22825 to fix the serialization problem that caused this.
           // But we need the adjustment in any case to correctly read stats written by old versions.
-          new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
+          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
           // We also apply the same adjustment of max stats that was applied to Timestamp
           // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
+          Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
         case (statCol, _, _) =>
           statCol
       }
@@ -827,7 +827,7 @@ trait DataSkippingReaderBase
     recordFrameProfile("Delta", "DataSkippingReader.constructPartitionFilters") {
       val rewritten = DeltaLog.rewritePartitionFilters(
         metadata.partitionSchema, spark.sessionState.conf.resolver, filters)
-      rewritten.reduceOption(And).map { expr => new Column(expr) }.getOrElse(trueLiteral)
+      rewritten.reduceOption(And).map { expr => Column(expr) }.getOrElse(trueLiteral)
     }
   }
 

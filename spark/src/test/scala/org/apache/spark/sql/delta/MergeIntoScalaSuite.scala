@@ -52,6 +52,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     "Negative case - more operations between merge and delta target",
     "test merge on temp view - basic - SQL TempView",
     "test merge on temp view - basic - Dataset TempView",
+    "test merge on temp view - basic - merge condition references subset of target cols - SQL TempView",
+    "test merge on temp view - basic - merge condition references subset of target cols - Dataset TempView",
     "test merge on temp view - subset cols - SQL TempView",
     "test merge on temp view - subset cols - Dataset TempView",
     "test merge on temp view - superset cols - SQL TempView",
@@ -60,6 +62,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     "test merge on temp view - nontrivial projection - Dataset TempView",
     "test merge on temp view - view with too many internal aliases - SQL TempView",
     "test merge on temp view - view with too many internal aliases - Dataset TempView",
+    "test merge on temp view - view with too many internal aliases - merge condition references subset of target cols - SQL TempView",
+    "test merge on temp view - view with too many internal aliases - merge condition references subset of target cols - Dataset TempView",
     "Update specific column works fine in temp views - SQL TempView",
     "Update specific column works fine in temp views - Dataset TempView"
     // scalastyle:on line.size.limit

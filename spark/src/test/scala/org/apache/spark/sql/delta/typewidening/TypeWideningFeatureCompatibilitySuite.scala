@@ -53,10 +53,10 @@ trait TypeWideningCompatibilityTests {
         .drop(CDCReader.CDC_COMMIT_VERSION)
 
     checkErrorMatchPVals(
-      exception = intercept[DeltaUnsupportedOperationException] {
+      intercept[DeltaUnsupportedOperationException] {
         readCDF(start = 1, end = 1).collect()
       },
-      errorClass = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA",
+      "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA",
       parameters = Map(
         "start" -> "1",
         "end" -> "1",
@@ -92,10 +92,10 @@ trait TypeWideningCompatibilityTests {
 
     checkAnswer(readCDF(start = 1, end = 1), Seq(Row(1, "insert"), Row(2, "insert")))
     checkErrorMatchPVals(
-      exception = intercept[DeltaUnsupportedOperationException] {
+      intercept[DeltaUnsupportedOperationException] {
         readCDF(start = 1, end = 3)
       },
-      errorClass = "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
+      "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE",
       parameters = Map(
         "start" -> "1",
         "end" -> "3",

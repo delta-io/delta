@@ -207,11 +207,23 @@
     ],
     "sqlState" : "42809"
   },
+  "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES" : {
+    "message" : [
+      "<Command> cannot override or unset in-commit timestamp table properties because coordinated commits is enabled in this table and depends on them. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_MODIFY_TABLE_PROPERTY" : {
     "message" : [
       "The Delta table configuration <prop> cannot be specified by the user"
     ],
     "sqlState" : "42939"
+  },
+  "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "<Command> cannot override coordinated commits configurations for an existing target table. Please remove them (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\", \"delta.coordinatedCommits.tableConf-preview\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI" : {
     "message" : [
@@ -261,6 +273,12 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES" : {
+    "message" : [
+      "<Command> cannot set in-commit timestamp table properties together with coordinated commits, because the latter depends on the former and sets the former internally. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
     "message" : [
       "Can't set location multiple times. Found <location>"
@@ -272,6 +290,12 @@
       "Cannot change the location of a path based table."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "ALTER cannot unset coordinated commits configurations. To downgrade a table from coordinated commits, please try again using `ALTER TABLE [table-name] DROP FEATURE 'coordinatedCommits-preview'`."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
@@ -372,6 +396,12 @@
       "The supported formats are 'delta', 'iceberg' and 'parquet'."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
+    "message" : [
+      "CLUSTER BY is not supported because the following column(s): <columnsWithDataTypes> don't support data skipping."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
     "message" : [
@@ -539,6 +569,18 @@
       "There is a conflict from these SET columns: <columnList>."
     ],
     "sqlState" : "42701"
+  },
+  "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_COMMAND" : {
+    "message" : [
+      "During <command>, configuration \"<configuration>\" cannot be set from the command. Please remove it from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_SESSION" : {
+    "message" : [
+      "During <command>, configuration \"<configuration>\" cannot be set from the SparkSession configurations. Please unset it by running `spark.conf.unset(\"<configuration>\")` and then retry the command again."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CONSTRAINT_ALREADY_EXISTS" : {
     "message" : [
@@ -948,7 +990,7 @@
   },
   "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED" : {
     "message" : [
-      "History truncation is only relevant for reader features."
+      "The particular feature does not require history truncation."
     ],
     "sqlState" : "0AKDE"
   },
@@ -1088,7 +1130,7 @@
       },
       "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
         "message" : [
-          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table. Please use the ALTER TABLE DROP FEATURE command to disable Deletion Vectors and to remove the existing Deletion Vectors from the table."
+          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table first. Then run REORG PURGE command to purge the Deletion Vectors on the table."
         ]
       },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
@@ -1132,9 +1174,15 @@
           "<schema>"
         ]
       },
+      "UNSUPPORTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "IcebergCompatV<version> does not support the data type <dataType> for partition columns in your schema. Your partition schema:",
+          "<schema>"
+        ]
+      },
       "VERSION_MUTUAL_EXCLUSIVE" : {
         "message" : [
-          "Only one IcebergCompat version can be enabled."
+          "Only one IcebergCompat version can be enabled, please explicitly disable all other IcebergCompat versions that are not needed."
         ]
       },
       "WRONG_REQUIRED_TABLE_PROPERTY" : {
@@ -1145,17 +1193,59 @@
     },
     "sqlState" : "KD00E"
   },
+  "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN is not supported for IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
+  "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY is only supported by Delta."
+    ],
+    "sqlState" : "0AKDD"
+  },
+  "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY cannot be called on non IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
+  "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED" : {
+    "message" : [
+      "Providing values for GENERATED ALWAYS AS IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42808"
+  },
   "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP" : {
     "message" : [
       "IDENTITY column step cannot be 0."
     ],
     "sqlState" : "42611"
   },
+  "DELTA_IDENTITY_COLUMNS_PARTITION_NOT_SUPPORTED" : {
+    "message" : [
+      "PARTITIONED BY IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42601"
+  },
+  "DELTA_IDENTITY_COLUMNS_REPLACE_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "ALTER TABLE REPLACE COLUMNS is not supported for table with IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
   "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE" : {
     "message" : [
       "DataType <dataType> is not supported for IDENTITY columns."
     ],
     "sqlState" : "428H2"
+  },
+  "DELTA_IDENTITY_COLUMNS_UPDATE_NOT_SUPPORTED" : {
+    "message" : [
+      "UPDATE on IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42808"
   },
   "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION" : {
     "message" : [
@@ -1645,6 +1735,18 @@
       "<usageReference>"
     ],
     "sqlState" : "21506"
+  },
+  "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND" : {
+    "message" : [
+      "During <command>, either both coordinated commits configurations (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\") are set in the command or neither of them. Missing: \"<configuration>\". Please specify this configuration in the TBLPROPERTIES clause or remove the other configuration, and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION" : {
+    "message" : [
+      "During <command>, either both coordinated commits configurations (\"coordinatedCommits.commitCoordinator-preview\", \"coordinatedCommits.commitCoordinatorConf-preview\") are set in the SparkSession configurations or neither of them. Missing: \"<configuration>\". Please set this configuration in the SparkSession or unset the other configuration, and then retry the command again."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_NESTED_NOT_NULL_CONSTRAINT" : {
     "message" : [
@@ -2496,20 +2598,6 @@
     ],
     "sqlState" : "0AKDC"
   },
-  "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL" : {
-    "message" : [
-      "",
-      "Your current table protocol version does not support changing column mapping modes",
-      "using <config>.",
-      "",
-      "Required Delta protocol version for column mapping:",
-      "<requiredVersion>",
-      "Your table's current Delta protocol version:",
-      "<currentVersion>",
-      "<advice>"
-    ],
-    "sqlState" : "KD004"
-  },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_SCHEMA_CHANGE" : {
     "message" : [
       "",
@@ -2761,6 +2849,12 @@
       "Table implementation does not support writes: <tableName>"
     ],
     "sqlState" : "42807"
+  },
+  "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR" : {
+    "message" : [
+      "You are trying to perform writes on a table which has been registered with the commit coordinator <coordinatorName>. However, no implementation of this coordinator is available in the current environment and writes without coordinators are not allowed."
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION" : {
     "message" : [

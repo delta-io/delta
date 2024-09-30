@@ -61,7 +61,25 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     }
 
     val properties = Seq(TestRemovableWriterFeature.TABLE_PROP_KEY)
-    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
+    true
+  }
+}
+
+case class TestWriterWithHistoryValidationFeaturePreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+  // To remove the feature we only need to remove the table property.
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    // Make sure feature data/metadata exist before proceeding.
+    if (TestRemovableWriterWithHistoryTruncationFeature.validateRemoval(table.initialSnapshot)) {
+      return false
+    }
+
+    val properties = Seq(TestRemovableWriterWithHistoryTruncationFeature.TABLE_PROP_KEY)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
     true
   }
 }
@@ -79,7 +97,8 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     }
 
     val properties = Seq(TestRemovableReaderWriterFeature.TABLE_PROP_KEY)
-    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
     true
   }
 }
@@ -91,7 +110,8 @@ case class TestLegacyWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     if (TestRemovableLegacyWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
     val properties = Seq(TestRemovableLegacyWriterFeature.TABLE_PROP_KEY)
-    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
     true
   }
 }
@@ -103,7 +123,8 @@ case class TestLegacyReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     if (TestRemovableLegacyReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
 
     val properties = Seq(TestRemovableLegacyReaderWriterFeature.TABLE_PROP_KEY)
-    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
     true
   }
 }
@@ -235,7 +256,11 @@ case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
       traceRemovalNeeded = true
       try {
         AlterTableUnsetPropertiesDeltaCommand(
-          table, CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS, ifExists = true).run(table.spark)
+          table,
+          CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS,
+          ifExists = true,
+          fromDropFeatureCommand = true
+        ).run(table.spark)
       } catch {
         case NonFatal(e) =>
           exceptionOpt = Some(e)
@@ -244,7 +269,7 @@ case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
     var postDisablementUnbackfilledCommitsPresent = false
     if (exceptionOpt.isEmpty) {
       val snapshotAfterDisabling = table.deltaLog.update()
-      assert(snapshotAfterDisabling.tableCommitCoordinatorClientOpt.isEmpty)
+      assert(snapshotAfterDisabling.getTableCommitCoordinatorForWrites.isEmpty)
       postDisablementUnbackfilledCommitsPresent =
         CoordinatedCommitsUtils.unbackfilledCommitsPresent(snapshotAfterDisabling)
       if (postDisablementUnbackfilledCommitsPresent) {
@@ -288,7 +313,8 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
 
     val startTimeNs = System.nanoTime()
     val properties = Seq(DeltaConfigs.ENABLE_TYPE_WIDENING.key)
-    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
     val numFilesRewritten = rewriteFilesIfNeeded()
     val metadataRemoved = removeMetadataIfNeeded()
 

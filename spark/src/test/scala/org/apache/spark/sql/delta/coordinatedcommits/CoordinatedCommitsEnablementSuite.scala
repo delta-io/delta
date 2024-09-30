@@ -92,23 +92,8 @@ class CoordinatedCommitsEnablementSuite
       val log = DeltaLog.forTable(spark, tablePath)
       validateCoordinatedCommitsCompleteEnablement(log.snapshot, expectEnabled = false)
       sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " + // Enable CC
-        s"('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory')")
-      Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
-      validateCoordinatedCommitsCompleteEnablement(log.update(), expectEnabled = true)
-    }
-  }
-
-  testWithDefaultCommitCoordinatorUnset(
-    "enablement after commit 0: CC should enable ICT and VacuumProtocolCheck" +
-      " --- replace table") {
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getAbsolutePath
-      Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 0
-      Seq(1).toDF().write.format("delta").mode("append").save(tablePath) // commit 1
-      val log = DeltaLog.forTable(spark, tablePath)
-      validateCoordinatedCommitsCompleteEnablement(log.snapshot, expectEnabled = false)
-      sql(s"REPLACE TABLE delta.`$tablePath` (value int) USING delta TBLPROPERTIES " + // Enable CC
-        s"('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory')")
+        s"('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}')")
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
       validateCoordinatedCommitsCompleteEnablement(log.update(), expectEnabled = true)
     }

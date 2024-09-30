@@ -87,8 +87,8 @@ class SchemaUtilsSuite extends QueryTest
     val err = getError(e)
     assert(err.isDefined, "exception with the error class not found")
     checkError(
-      exception = err.get,
-      errorClass = errorClass,
+      err.get,
+      errorClass,
       parameters = params,
       matchPVals = true)
   }
@@ -1258,6 +1258,35 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
+  test("addColumn - top level array") {
+    val a = StructField("a", IntegerType)
+    val b = StructField("b", StringType)
+    val schema = ArrayType(new StructType().add(a).add(b))
+
+    val x = StructField("x", LongType)
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, 1)) ===
+      ArrayType(new StructType().add(a).add(x).add(b)))
+  }
+
+  test("addColumn - top level map") {
+    val k = StructField("k", IntegerType)
+    val v = StructField("v", StringType)
+    val schema = MapType(
+      keyType = new StructType().add(k),
+      valueType = new StructType().add(v))
+
+    val x = StructField("x", LongType)
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, 1)) ===
+      MapType(
+        keyType = new StructType().add(k).add(x),
+        valueType = new StructType().add(v)))
+
+    assert(SchemaUtils.addColumn(schema, x, Seq(1, 1)) ===
+      MapType(
+        keyType = new StructType().add(k),
+        valueType = new StructType().add(v).add(x)))
+  }
+
   ////////////////////////////
   // dropColumn
   ////////////////////////////
@@ -1511,6 +1540,29 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
+  test("dropColumn - top level array") {
+    val schema = ArrayType(new StructType().add("a", IntegerType).add("b", StringType))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, 0))._1 ===
+      ArrayType(new StructType().add("b", StringType)))
+  }
+
+  test("dropColumn - top level map") {
+    val schema = MapType(
+      keyType = new StructType().add("k", IntegerType).add("k2", StringType),
+      valueType = new StructType().add("v", StringType).add("v2", StringType))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, 0))._1 ===
+      MapType(
+        keyType = new StructType().add("k2", StringType),
+        valueType = new StructType().add("v", StringType).add("v2", StringType)))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(1, 0))._1 ===
+      MapType(
+        keyType = new StructType().add("k", IntegerType).add("k2", StringType),
+        valueType = new StructType().add("v2", StringType)))
+  }
+
   /////////////////////////////////
   // normalizeColumnNamesInDataType
   /////////////////////////////////
@@ -1680,8 +1732,8 @@ class SchemaUtilsSuite extends QueryTest
         Seq("x", "Y"), new StructType())
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "x.Y.bb", "schema" -> "root\n")
     )
@@ -1948,8 +2000,8 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "two", "schema" -> tableSchema.treeString)
     )
@@ -1974,8 +2026,8 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "s.two", "schema" -> tableSchema.treeString)
     )
@@ -2348,8 +2400,8 @@ class SchemaUtilsSuite extends QueryTest
           mergeSchemas(longType, sourceType)
         }
       checkError(
-        exception = e.getCause.asInstanceOf[AnalysisException],
-        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        e.getCause.asInstanceOf[AnalysisException],
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         parameters = Map("currentDataType" -> "LongType",
           "updateDataType" -> sourceType.head.dataType.toString))
     }
@@ -2584,6 +2636,87 @@ class SchemaUtilsSuite extends QueryTest
     assert(update === res3)
   }
 
+  test("transform top level array type") {
+    val at = ArrayType(
+      new StructType()
+        .add("s1", IntegerType)
+    )
+
+    var visitedFields = 0
+    val updated = SchemaMergingUtils.transformColumns(at) {
+      case (_, field, _) =>
+        visitedFields += 1
+        field.copy(name = "s1_1", dataType = StringType)
+    }
+
+    assert(visitedFields === 1)
+    assert(updated === ArrayType(new StructType().add("s1_1", StringType)))
+  }
+
+  test("transform top level map type") {
+    val mt = MapType(
+      new StructType()
+        .add("k1", IntegerType),
+      new StructType()
+        .add("v1", IntegerType)
+    )
+
+    var visitedFields = 0
+    val updated = SchemaMergingUtils.transformColumns(mt) {
+      case (_, field, _) =>
+        visitedFields += 1
+        field.copy(name = field.name + "_1", dataType = StringType)
+    }
+
+    assert(visitedFields === 2)
+    assert(updated === MapType(
+      new StructType().add("k1_1", StringType),
+      new StructType().add("v1_1", StringType)
+    ))
+  }
+
+  ////////////////////////////
+  // pruneEmptyStructs
+  ////////////////////////////
+  test("prune empty structs") {
+    val emptySchema = new StructType()
+    var schema = emptySchema
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    val elementType = new StructType()
+      .add("a", emptySchema)
+      .add("b", new StructType().add("1", emptySchema).add("2", StringType))
+    val filteredElementType = new StructType().add("b", new StructType().add("2", StringType))
+
+    assert(SchemaMergingUtils.pruneEmptyStructs(elementType).get == filteredElementType)
+
+    // filter out array element type with empty schema
+    schema = new StructType().add("a", new ArrayType(emptySchema, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    // nested empty schema
+    schema = new StructType().add("a", new ArrayType(new StructType().add("a", emptySchema), false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new ArrayType(elementType, false))
+    assert(
+      SchemaMergingUtils.pruneEmptyStructs(schema).get ==
+        new StructType().add("a", new ArrayType(filteredElementType, false))
+    )
+
+    schema = new StructType().add("a", new MapType(emptySchema, StringType, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new MapType(StringType, emptySchema, false))
+    assert(SchemaMergingUtils.pruneEmptyStructs(schema).isEmpty)
+
+    schema = new StructType().add("a", new MapType(StringType, elementType, false))
+    assert(
+      SchemaMergingUtils.pruneEmptyStructs(schema).get ==
+        new StructType().add("a", new MapType(StringType, filteredElementType, false))
+    )
+  }
+
   ////////////////////////////
   // checkFieldNames
   ////////////////////////////
@@ -2595,10 +2728,10 @@ class SchemaUtilsSuite extends QueryTest
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
         checkError(
-          exception = intercept[AnalysisException] {
+          intercept[AnalysisException] {
             SchemaUtils.checkFieldNames(Seq(name))
           },
-          errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
+          "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
           parameters = Map("columnName" -> s"$name")
         )
       }

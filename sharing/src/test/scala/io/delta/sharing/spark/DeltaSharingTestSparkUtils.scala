@@ -85,7 +85,10 @@ trait DeltaSharingTestSparkUtils extends DeltaSQLTestUtils {
 
   protected def createSimpleTable(tableName: String, enableCdf: Boolean): Unit = {
     val tablePropertiesStr = if (enableCdf) {
-      "TBLPROPERTIES (delta.enableChangeDataFeed = true)"
+      """TBLPROPERTIES (
+        |delta.minReaderVersion=1,
+        |delta.minWriterVersion=4,
+        |delta.enableChangeDataFeed = true)""".stripMargin
     } else {
       ""
     }

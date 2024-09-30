@@ -37,6 +37,8 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
 
   override def conf: SQLConf = sqlConf
 
+  override protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = true
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: DeltaUpdateTable if u.resolved =>
       u.condition.foreach { cond =>
@@ -55,7 +57,7 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
         throw DeltaErrors.notADeltaSourceException("UPDATE", Some(o))
     }
 
-    val generatedColumns = GeneratedColumn.getGeneratedColumns(index.snapshotAtAnalysis)
+    val generatedColumns = GeneratedColumn.getGeneratedColumns(index)
     if (generatedColumns.nonEmpty && !deltaLogicalNode.isInstanceOf[LogicalRelation]) {
       // Disallow temp views referring to a Delta table that contains generated columns. When the
       // user doesn't provide expressions for generated columns, we need to create update
@@ -66,6 +68,9 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
     }
 
     val targetColNameParts = update.updateColumns.map(DeltaUpdateTable.getTargetColNameParts(_))
+
+    IdentityColumn.blockIdentityColumnUpdate(index.snapshotAtAnalysis.schema, targetColNameParts)
+
     val alignedUpdateExprs = generateUpdateExpressions(
       targetSchema = update.child.schema,
       defaultExprs = update.child.output,

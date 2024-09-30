@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+libraryDependencies += "org.apache.commons" % "commons-compress" % "1.0"
+
 addSbtPlugin("com.github.sbt" % "sbt-release" % "1.1.0")
 
 addSbtPlugin("com.github.sbt" % "sbt-pgp" % "2.1.2")
@@ -51,3 +53,5 @@ addSbtPlugin("software.purpledragon" % "sbt-checkstyle-plugin" % "4.0.1")
 dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "9.3"
 
 addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.7")
+
+addSbtPlugin("com.lightbend.sbt" % "sbt-java-formatter" % "0.8.0")

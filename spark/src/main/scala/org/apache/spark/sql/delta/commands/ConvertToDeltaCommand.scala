@@ -28,11 +28,13 @@ import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand.{generateCandidateFileMap, getTouchedFile}
 import org.apache.spark.sql.delta.commands.convert.{ConvertTargetFileManifest, ConvertTargetTable, ConvertUtils}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
@@ -131,6 +133,10 @@ abstract class ConvertToDeltaCommandBase(
         case _: DeltaTableV2 =>
           // Already a Delta table
           None
+        case other =>
+          throw DeltaErrors.operationNotSupportedException(
+            s"Converting an unsupported table type $other to a Delta table",
+            tableIdentifier)
       }
     } else {
       Some(ConvertTarget(
@@ -297,13 +303,16 @@ abstract class ConvertToDeltaCommandBase(
         ConvertUtils.createAddFile(
           _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
       if (shouldCollectStats) {
-        logInfo(s"Collecting stats for a batch of ${batch.size} files; " +
-          s"finished $numFiles so far")
+        logInfo(
+          log"Collecting stats for a batch of ${MDC(DeltaLogKeys.NUM_FILES, batch.size)} files; " +
+          log"finished ${MDC(DeltaLogKeys.NUM_FILES2, numFiles)} so far"
+          )
         numFiles += statsBatchSize
         performStatsCollection(spark, txn, adds)
       } else if (collectStats) {
-        logWarning(s"collectStats is set to true but ${DeltaSQLConf.DELTA_COLLECT_STATS.key}" +
-          s" is false. Skip statistics collection")
+        logWarning(log"collectStats is set to true but ${MDC(DeltaLogKeys.CONFIG,
+          DeltaSQLConf.DELTA_COLLECT_STATS.key)}" +
+          log" is false. Skip statistics collection")
         adds.toIterator
       } else {
         adds.toIterator
@@ -367,13 +376,7 @@ abstract class ConvertToDeltaCommandBase(
         createdTime = Some(System.currentTimeMillis()))
       txn.updateMetadataForNewTable(metadata)
 
-      // TODO: we have not decided on how to implement CONVERT TO DELTA under column mapping modes
-      //  for some convert targets so we block this feature for them here
-      checkColumnMapping(txn.metadata, targetTable)
-      RowTracking.checkStatsCollectedIfRowTrackingSupported(
-        txn.protocol,
-        collectStats,
-        statsEnabled)
+      checkConversionIsAllowed(txn, targetTable)
 
       val numFiles = targetTable.numFiles
       val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs)
@@ -433,6 +436,18 @@ abstract class ConvertToDeltaCommandBase(
     }
   }
 
+  /** Check if the conversion is allowed. */
+  private def checkConversionIsAllowed(
+      txn: OptimisticTransaction,
+      targetTable: ConvertTargetTable): Unit = {
+    // TODO: we have not decided on how to implement CONVERT TO DELTA under column mapping modes
+    //  for some convert targets so we block this feature for them here
+    checkColumnMapping(txn.metadata, targetTable)
+    RowTracking.checkStatsCollectedIfRowTrackingSupported(
+      txn.protocol,
+      collectStats,
+      statsEnabled)
+  }
 }
 
 case class ConvertToDeltaCommand(

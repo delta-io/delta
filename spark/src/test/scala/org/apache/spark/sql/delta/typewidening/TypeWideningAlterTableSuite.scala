@@ -99,10 +99,10 @@ trait TypeWideningAlterTableTests
       // are rejected in Delta when the ALTER TABLE command is executed.
       if (Cast.canUpCast(testCase.fromType, testCase.toType)) {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql(alterTableSql)
           },
-          errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+          "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
           sqlState = None,
           parameters = Map(
             "fieldPath" -> "value",
@@ -111,10 +111,10 @@ trait TypeWideningAlterTableTests
         )
       } else {
         checkError(
-          exception = intercept[AnalysisException] {
+          intercept[AnalysisException] {
             sql(alterTableSql)
           },
-          errorClass = "NOT_SUPPORTED_CHANGE_COLUMN",
+          "NOT_SUPPORTED_CHANGE_COLUMN",
           sqlState = None,
           parameters = Map(
             "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
@@ -176,10 +176,10 @@ trait TypeWideningAlterTableTests
         .mkString(", ")
 
       checkError(
-        exception = intercept[DeltaTableFeatureException] {
+        intercept[DeltaTableFeatureException] {
           sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE TIMESTAMP_NTZ")
         },
-        errorClass = "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
+        "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
         parameters = Map(
           "unsupportedFeatures" -> "timestampNtz",
           "supportedFeatures" -> currentFeatures

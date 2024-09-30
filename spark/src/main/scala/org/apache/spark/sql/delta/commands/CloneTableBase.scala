@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
@@ -36,6 +37,7 @@ import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LeafCommand
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{Clock, SerializableConfiguration}
 // scalastyle:on import.ordering.noEmptyLine
@@ -179,7 +181,8 @@ abstract class CloneTableBase(
       txn: OptimisticTransaction,
       destinationTable: DeltaLog,
       hdpConf: Configuration,
-      deltaOperation: DeltaOperations.Operation): Seq[Row] = {
+      deltaOperation: DeltaOperations.Operation,
+      commandMetrics: Option[Map[String, SQLMetric]]): Seq[Row] = {
     val targetFs = targetPath.getFileSystem(hdpConf)
     val qualifiedTarget = targetFs.makeQualified(targetPath).toString
     val qualifiedSource = {
@@ -192,7 +195,7 @@ abstract class CloneTableBase(
       destinationTable.createLogDirectoriesIfNotExists()
     }
 
-    val metadataToUpdate = determineTargetMetadata(txn.snapshot, deltaOperation.name)
+    val metadataToUpdate = determineTargetMetadata(spark, txn.snapshot, deltaOperation.name)
     // Don't merge in the default properties when cloning, or we'll end up with different sets of
     // properties between source and target.
     txn.updateMetadata(metadataToUpdate, ignoreDefaultProperties = true)
@@ -246,6 +249,13 @@ abstract class CloneTableBase(
         addedFilesSize)
       val commitOpMetrics = getOperationMetricsForDeltaLog(opMetrics)
 
+      // Propagate the metrics back to the caller.
+      commandMetrics.foreach { commandMetrics =>
+        commitOpMetrics.foreach { kv =>
+          commandMetrics(kv._1).set(kv._2)
+        }
+      }
+
         recordDeltaOperation(
           destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
           txn.commitLarge(
@@ -274,6 +284,7 @@ abstract class CloneTableBase(
     }
   }
 
+
   /**
    * Prepares the source metadata by making it compatible with the existing target metadata.
    */
@@ -290,7 +301,16 @@ abstract class CloneTableBase(
       // Set the ID equal to the target ID
       clonedMetadata = clonedMetadata.copy(id = targetSnapshot.metadata.id)
     }
-    clonedMetadata
+
+    // Coordinated Commit configurations are never copied over to the target table.
+    val filteredConfiguration = clonedMetadata.configuration
+      .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
+      .toMap
+    val clonedSchema =
+      IdentityColumn.copySchemaWithMergedHighWaterMarks(
+        schemaToCopy = clonedMetadata.schema,
+        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema)
+    clonedMetadata.copy(configuration = filteredConfiguration, schemaString = clonedSchema.json)
   }
 
   /**
@@ -313,16 +333,55 @@ abstract class CloneTableBase(
   }
 
   /**
+   * Priority of Coordinated Commits configurations:
+   *   - When CLONE into a new table, explicit command specification takes precedence over default
+   *     SparkSession configurations.
+   *   - When CLONE into an existing table, use the existing table's configurations.
+   */
+  private def determineCoordinatedCommitsConfigurations(
+      spark: SparkSession,
+      targetSnapshot: SnapshotDescriptor,
+      validatedOverrides: Map[String, String]): Map[String, String] = {
+    if (tableExists(targetSnapshot)) {
+      assert(validatedOverrides.isEmpty,
+        "Explicit overrides on Coordinated Commits configurations for existing tables" +
+          " are not supported, and should have been caught earlier.")
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
+    } else {
+      if (validatedOverrides.nonEmpty) {
+        validatedOverrides
+      } else {
+        CoordinatedCommitsUtils.getDefaultCCConfigurations(spark)
+      }
+    }
+  }
+
+  /**
    * Determines the expected metadata of the target.
    */
   private def determineTargetMetadata(
+      spark: SparkSession,
       targetSnapshot: SnapshotDescriptor,
       opName: String) : Metadata = {
     var metadata = prepareSourceMetadata(targetSnapshot, opName)
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
-    // Merge source configuration and table property overrides
-    metadata = metadata.copy(
-      configuration = metadata.configuration ++ validatedConfigurations)
+
+    // Finalize Coordinated Commits configurations for the target
+    val coordinatedCommitsConfigurationOverrides =
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(validatedConfigurations)
+    val validatedConfigurationsWithoutCoordinatedCommits =
+      validatedConfigurations -- coordinatedCommitsConfigurationOverrides.keys
+    val finalCoordinatedCommitsConfigurations = determineCoordinatedCommitsConfigurations(
+      spark,
+      targetSnapshot,
+      coordinatedCommitsConfigurationOverrides)
+
+    // Merge source configuration, table property overrides and coordinated-commits configurations.
+    metadata = metadata.copy(configuration =
+      metadata.configuration ++
+        validatedConfigurationsWithoutCoordinatedCommits ++
+        finalCoordinatedCommitsConfigurations)
+
     verifyMetadataInvariants(targetSnapshot, metadata)
     metadata
   }

@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -33,6 +33,7 @@ import org.apache.spark.sql.types._
 
 /** Base suite containing the restore tests. */
 trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -216,7 +217,8 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
       val deltaLog = DeltaLog.forTable(spark, path)
       val oldProtocolVersion = deltaLog.snapshot.protocol
       // Update table to latest version.
-      deltaLog.upgradeProtocol(oldProtocolVersion.merge(Protocol()))
+      deltaLog.upgradeProtocol(
+        oldProtocolVersion.merge(Protocol().withFeature(TestReaderWriterFeature)))
       val newProtocolVersion = deltaLog.snapshot.protocol
       assert(newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
         newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
@@ -249,11 +251,11 @@ trait RestoreTableSuiteBase extends QueryTest with SharedSparkSession
         deltaLog.upgradeProtocol(
           Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
             .withFeatures(Seq(TestLegacyReaderWriterFeature))
-            .withFeatures(oldProtocolVersion.implicitlySupportedFeatures))
+            .withFeatures(oldProtocolVersion.implicitlyAndExplicitlySupportedFeatures))
         val newProtocolVersion = deltaLog.snapshot.protocol
         assert(
           newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
-            newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
+            newProtocolVersion.minWriterVersion >= oldProtocolVersion.minWriterVersion,
           s"newProtocolVersion=$newProtocolVersion is not strictly greater than" +
             s" oldProtocolVersion=$oldProtocolVersion")
 

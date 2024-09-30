@@ -1634,14 +1634,14 @@ trait DeltaErrorsBase
       messageParameters = Array(option, operation))
   }
 
-  def foundMapTypeColumnException(key: String, value: String, schema: StructType): Throwable = {
+  def foundMapTypeColumnException(key: String, value: String, schema: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_FOUND_MAP_TYPE_COLUMN",
-      messageParameters = Array(key, value, schema.treeString)
+      messageParameters = Array(key, value, dataTypeToString(schema))
     )
   }
-  def columnNotInSchemaException(column: String, schema: StructType): Throwable = {
-    nonExistentColumnInSchema(column, schema.treeString)
+  def columnNotInSchemaException(column: String, schema: DataType): Throwable = {
+    nonExistentColumnInSchema(column, dataTypeToString(schema))
   }
 
   def metadataAbsentException(): Throwable = {
@@ -2043,41 +2043,18 @@ trait DeltaErrorsBase
         mode.name))
   }
 
-  def changeColumnMappingModeOnOldProtocol(oldProtocol: Protocol): Throwable = {
-    val requiredProtocol = {
-      if (oldProtocol.supportsReaderFeatures || oldProtocol.supportsWriterFeatures) {
-        Protocol(
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-          .withFeature(ColumnMappingTableFeature)
-      } else {
-        ColumnMappingTableFeature.minProtocolVersion
-      }
-    }
-
-    new DeltaColumnMappingUnsupportedException(
-      errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL",
-      messageParameters = Array(
-        s"${DeltaConfigs.COLUMN_MAPPING_MODE.key}",
-        s"$requiredProtocol",
-        s"$oldProtocol",
-        columnMappingAdviceMessage(requiredProtocol)))
-  }
-
-  private def columnMappingAdviceMessage(
+  protected def columnMappingAdviceMessage(
       requiredProtocol: Protocol = ColumnMappingTableFeature.minProtocolVersion): String = {
+    val readerVersion = requiredProtocol.minReaderVersion
+    val writerVersion = requiredProtocol.minWriterVersion
     s"""
        |Please enable Column Mapping on your Delta table with mapping mode 'name'.
        |You can use one of the following commands.
        |
-       |If your table is already on the required protocol version:
        |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
        |
-       |If your table is not on the required protocol version and requires a protocol upgrade:
-       |ALTER TABLE table_name SET TBLPROPERTIES (
-       |   'delta.columnMapping.mode' = 'name',
-       |   'delta.minReaderVersion' = '${requiredProtocol.minReaderVersion}',
-       |   'delta.minWriterVersion' = '${requiredProtocol.minWriterVersion}')
+       |Note, if your table is not on the required protocol version it will be upgraded.
+       |Column mapping requires at least protocol ($readerVersion, $writerVersion)
        |""".stripMargin
   }
 
@@ -2476,6 +2453,18 @@ trait DeltaErrorsBase
     )
   }
 
+  def identityColumnAlterNonIdentityColumnError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnAlterNonDeltaFormatError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT",
+      messageParameters = Array.empty)
+  }
+
   def identityColumnInconsistentMetadata(
       colName: String,
       hasStart: Boolean,
@@ -2485,6 +2474,36 @@ trait DeltaErrorsBase
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0006",
       messageParameters = Array(colName, s"$hasStart", s"$hasStep", s"$hasInsert")
     )
+  }
+
+  def identityColumnExplicitInsertNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED",
+      messageParameters = Array(colName))
+  }
+
+  def identityColumnAlterColumnNotSupported(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnReplaceColumnsNotSupported(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_REPLACE_COLUMN_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
+  def identityColumnPartitionNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_PARTITION_NOT_SUPPORTED",
+      messageParameters = Array(colName))
+  }
+
+  def identityColumnUpdateNotSupported(colName: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_IDENTITY_COLUMNS_UPDATE_NOT_SUPPORTED",
+      messageParameters = Array(colName))
   }
 
   def activeSparkSessionNotFound(): Throwable = {
@@ -2671,10 +2690,14 @@ trait DeltaErrorsBase
   def incorrectArrayAccessByName(
       rightName: String,
       wrongName: String,
-      schema: StructType): Throwable = {
+      schema: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME",
-      messageParameters = Array(rightName, wrongName, schema.treeString)
+      messageParameters = Array(
+        rightName,
+        wrongName,
+        dataTypeToString(schema)
+      )
     )
   }
 
@@ -2682,14 +2705,14 @@ trait DeltaErrorsBase
       columnPath: String,
       other: DataType,
       column: Seq[String],
-      schema: StructType): Throwable = {
+      schema: DataType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_COLUMN_PATH_NOT_NESTED",
       messageParameters = Array(
         s"$columnPath",
         s"$other",
         s"${SchemaUtils.prettyFieldName(column)}",
-        schema.treeString
+        dataTypeToString(schema)
       )
     )
   }
@@ -3231,6 +3254,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatUnsupportedPartitionDataTypeException(
+      version: Int, dataType: DataType, schema: StructType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_PARTITION_DATA_TYPE",
+      messageParameters = Array(version.toString, version.toString,
+        dataType.typeName, schema.treeString)
+    )
+  }
+
   def icebergCompatMissingRequiredTableFeatureException(
       version: Int, tf: TableFeature): Throwable = {
     new DeltaUnsupportedOperationException(
@@ -3312,6 +3344,13 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
       messageParameters = Array(clusteringColumnWithoutStats, statsSchema)
+    )
+  }
+
+  def clusteringColumnUnsupportedDataTypes(clusteringColumnsWithDataTypes: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
+      messageParameters = Array(clusteringColumnsWithDataTypes)
     )
   }
 
@@ -3410,11 +3449,11 @@ trait DeltaErrorsBase
   }
 
   def errorFindingColumnPosition(
-      columnPath: Seq[String], schema: StructType, extraErrMsg: String): Throwable = {
+      columnPath: Seq[String], schema: DataType, extraErrMsg: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "_LEGACY_ERROR_TEMP_DELTA_0008",
       messageParameters = Array(
-        UnresolvedAttribute(columnPath).name, schema.treeString, extraErrMsg))
+        UnresolvedAttribute(columnPath).name, dataTypeToString(schema), extraErrMsg))
   }
 
   def alterTableClusterByOnPartitionedTableException(): Throwable = {
@@ -3439,6 +3478,17 @@ trait DeltaErrorsBase
           .map(_.columnNames.map(_.toString))
           .getOrElse(Seq.empty)
           .mkString(", ")))
+  }
+
+  def unsupportedWritesWithMissingCoordinators(coordinatorName: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+      messageParameters = Array(coordinatorName))
+  }
+
+  private def dataTypeToString(dt: DataType): String = dt match {
+    case s: StructType => s.treeString
+    case other => other.simpleString
   }
 }
 

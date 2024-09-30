@@ -28,8 +28,6 @@ The following <Delta> features break forward compatibility. Features are enabled
    Clustering, [Delta Lake 3.1.0](https://github.com/delta-io/delta/releases/tag/v3.1.0),[_](/delta-clustering.md)
    Row Tracking, [Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-row-tracking.md)
    Type widening (Preview),[Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-type-widening.md)
-   Coordinated Commits (Preview),[Delta Lake 4.0.0 Preview](https://github.com/delta-io/delta/releases/tag/v4.0.0rc1), [_](/delta-coordinated-commits.md)
-   Variant Type (Preview), [Delta Lake 4.0.0 Preview](https://github.com/delta-io/delta/releases/tag/v4.0.0rc1),[Variant Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)
 
 <a id="table-protocol"></a>
 
@@ -113,8 +111,6 @@ The following table shows minimum protocol versions required for <Delta> feature
    Vacuum Protocol Check,7,3,[Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check)
    Row Tracking,7,3,[_](/delta-row-tracking.md)
    Type widening (Preview),7,3,[_](/delta-type-widening.md)
-   Coordinated Commits (Preview),7,3,[_](/delta-coordinated-commits.md)
-   Variant Type (Preview),7,3,[Variant Type](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)
 
 <a id="upgrade"></a>
 
@@ -147,4 +143,5 @@ To upgrade a table to a newer protocol version, use the `DeltaTable.upgradeTable
   delta.upgradeTableProtocol(1, 3) // Upgrades to readerVersion=1, writerVersion=3.
   ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

@@ -20,6 +20,7 @@ import java.io.{File, IOException}
 import java.net.URI
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -255,6 +256,33 @@ abstract class LogStoreSuiteBase extends QueryTest
           iter.close()
         }
       }
+    }
+  }
+
+  test("LogStoreInverseAdaptor is equivalent to base LogStore") {
+    withTempLogDir { tempLogDir =>
+      val scalaStore = createLogStore(spark)
+      val javaStore = new LogStoreInverseAdaptor(scalaStore, sessionHadoopConf)
+
+      // Write with scala, read as java.
+      val testFile = new File(tempLogDir, "readAsIteratorScala").getCanonicalPath
+      scalaStore.write(
+        new Path(testFile), Iterator("foo", "bar"), overwrite = false, sessionHadoopConf)
+
+      val contents = javaStore.read(new Path(testFile), sessionHadoopConf)
+      assert(contents.next() == "foo")
+      assert(contents.next() == "bar")
+      assert(!contents.hasNext)
+      contents.close()
+
+      // Write with java, read as scala.
+      val testFile2 = new File(tempLogDir, "readAsIteratorJava").getCanonicalPath
+      javaStore.write(
+        new Path(testFile2), Iterator("foo", "bar").asJava, overwrite = false, sessionHadoopConf)
+
+      val contents2 = scalaStore.readAsIterator(new Path(testFile), sessionHadoopConf)
+      assert(contents2.toList == "foo" :: "bar" :: Nil)
+      contents2.close()
     }
   }
 }

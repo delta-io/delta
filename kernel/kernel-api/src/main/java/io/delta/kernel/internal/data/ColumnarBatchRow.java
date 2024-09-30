@@ -15,26 +15,22 @@
  */
 package io.delta.kernel.internal.data;
 
-import java.util.Objects;
-
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import java.util.Objects;
 
-/**
- * Row abstraction around a columnar batch and a particular row within the columnar batch.
- */
-public class ColumnarBatchRow
-    extends ChildVectorBasedRow {
+/** Row abstraction around a columnar batch and a particular row within the columnar batch. */
+public class ColumnarBatchRow extends ChildVectorBasedRow {
 
-    private final ColumnarBatch columnarBatch;
+  private final ColumnarBatch columnarBatch;
 
-    public ColumnarBatchRow(ColumnarBatch columnarBatch, int rowId) {
-        super(rowId, Objects.requireNonNull(columnarBatch, "columnarBatch is null").getSchema());
-        this.columnarBatch = columnarBatch;
-    }
+  public ColumnarBatchRow(ColumnarBatch columnarBatch, int rowId) {
+    super(rowId, Objects.requireNonNull(columnarBatch, "columnarBatch is null").getSchema());
+    this.columnarBatch = columnarBatch;
+  }
 
-    @Override
-    protected ColumnVector getChild(int ordinal) {
-        return columnarBatch.getColumnVector(ordinal);
-    }
+  @Override
+  protected ColumnVector getChild(int ordinal) {
+    return columnarBatch.getColumnVector(ordinal);
+  }
 }

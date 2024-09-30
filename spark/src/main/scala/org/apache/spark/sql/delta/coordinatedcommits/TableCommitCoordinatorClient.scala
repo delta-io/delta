@@ -16,10 +16,21 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.storage.LogStore
+import org.apache.spark.sql.delta.storage.{LogStore, LogStoreInverseAdaptor}
+import io.delta.storage.commit.{
+  CommitCoordinatorClient => JCommitCoordinatorClient,
+  CommitResponse,
+  GetCommitsResponse => JGetCommitsResponse,
+  TableDescriptor,
+  UpdatedActions
+}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 
 /**
  * A wrapper around [[CommitCoordinatorClient]] that provides a more user-friendly API for
@@ -34,38 +45,59 @@ import org.apache.hadoop.fs.Path
  * @param logStore the log store
  */
 case class TableCommitCoordinatorClient(
-    commitCoordinatorClient: CommitCoordinatorClient,
+    commitCoordinatorClient: JCommitCoordinatorClient,
     logPath: Path,
     tableConf: Map[String, String],
     hadoopConf: Configuration,
     logStore: LogStore) {
 
+  private def makeTableDesc(
+      tableIdentifierOpt: Option[CatalystTableIdentifier]): TableDescriptor = {
+    val ccTableIdentifier = CoordinatedCommitsUtils.toCCTableIdentifier(tableIdentifierOpt)
+    new TableDescriptor(logPath, ccTableIdentifier, tableConf.asJava)
+  }
+
   def commit(
       commitVersion: Long,
       actions: Iterator[String],
-      updatedActions: UpdatedActions): CommitResponse = {
+      updatedActions: UpdatedActions,
+      tableIdentifierOpt: Option[CatalystTableIdentifier]): CommitResponse = {
     commitCoordinatorClient.commit(
-      logStore, hadoopConf, logPath, tableConf, commitVersion, actions, updatedActions)
+      LogStoreInverseAdaptor(logStore, hadoopConf),
+      hadoopConf,
+      makeTableDesc(tableIdentifierOpt),
+      commitVersion,
+      actions.asJava,
+      updatedActions)
   }
 
   def getCommits(
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
       startVersion: Option[Long] = None,
-      endVersion: Option[Long] = None): GetCommitsResponse = {
-    commitCoordinatorClient.getCommits(logPath, tableConf, startVersion, endVersion)
+      endVersion: Option[Long] = None): JGetCommitsResponse = {
+    commitCoordinatorClient.getCommits(
+      makeTableDesc(tableIdentifierOpt),
+      startVersion.map(Long.box).orNull,
+      endVersion.map(Long.box).orNull)
   }
 
   def backfillToVersion(
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
       version: Long,
       lastKnownBackfilledVersion: Option[Long] = None): Unit = {
     commitCoordinatorClient.backfillToVersion(
-      logStore, hadoopConf, logPath, tableConf, version, lastKnownBackfilledVersion)
+      LogStoreInverseAdaptor(logStore, hadoopConf),
+      hadoopConf,
+      makeTableDesc(tableIdentifierOpt),
+      version,
+      lastKnownBackfilledVersion.map(Long.box).orNull)
   }
 
   /**
    * Checks whether the signature of the underlying backing [[CommitCoordinatorClient]] is the same
    * as the given `otherCommitCoordinatorClient`
    */
-  def semanticsEquals(otherCommitCoordinatorClient: CommitCoordinatorClient): Boolean = {
+  def semanticsEquals(otherCommitCoordinatorClient: JCommitCoordinatorClient): Boolean = {
     CommitCoordinatorClient.semanticEquals(
       Some(commitCoordinatorClient), Some(otherCommitCoordinatorClient))
   }
@@ -81,7 +113,7 @@ case class TableCommitCoordinatorClient(
 
 object TableCommitCoordinatorClient {
     def apply(
-      commitCoordinatorClient: CommitCoordinatorClient,
+      commitCoordinatorClient: JCommitCoordinatorClient,
       deltaLog: DeltaLog,
       coordinatedCommitsTableConf: Map[String, String]): TableCommitCoordinatorClient = {
     val hadoopConf = deltaLog.newDeltaHadoopConf()

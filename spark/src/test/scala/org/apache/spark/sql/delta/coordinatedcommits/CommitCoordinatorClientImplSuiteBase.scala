@@ -20,15 +20,18 @@ import java.io.File
 import java.util.concurrent.{Executors, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider}
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClient
+import io.delta.storage.commit.{Commit => JCommit, CommitFailedException => JCommitFailedException, GetCommitsResponse => JGetCommitsResponse}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -74,7 +77,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
    * where maxVersion is the current latest version of the table.
    */
   protected def validateGetCommitsResult(
-    response: GetCommitsResponse,
+    response: JGetCommitsResponse,
     startVersion: Option[Long],
     endVersion: Option[Long],
     maxVersion: Long): Unit
@@ -98,13 +101,14 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       if (commitResponse.getCommits.isEmpty) {
         commitResponse.getLatestTableVersion.toInt
       } else {
-        assert(
-          commitResponse.getCommits.last.getVersion == commitResponse.getLatestTableVersion,
-          s"Max commit tracked by the commit coordinator ${commitResponse.getCommits.last} must " +
+        assert(commitResponse.getCommits.asScala.last.getVersion ==
+            commitResponse.getLatestTableVersion,
+          s"Max commit tracked by the commit coordinator " +
+            s"${commitResponse.getCommits.asScala.last} must " +
             s"match latestTableVersion tracked by the commit coordinator " +
             s"${commitResponse.getLatestTableVersion}."
         )
-        val minVersion = commitResponse.getCommits.head.getVersion
+        val minVersion = commitResponse.getCommits.asScala.head.getVersion
         assert(
           commitResponse.getLatestTableVersion - minVersion + 1 == commitResponse.getCommits.size,
           "Commit map should have a contiguous range of unbackfilled commits."
@@ -149,7 +153,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
   protected def commit(
       version: Long,
       timestamp: Long,
-      tableCommitCoordinatorClient: TableCommitCoordinatorClient): Commit = {
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient): JCommit = {
     val commitInfo = CommitInfo.empty(version = Some(version)).withTimestamp(timestamp)
       .copy(inCommitTimestamp = Some(timestamp))
     val updatedActions = if (version == 0) {
@@ -179,8 +183,8 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       currentVersion: Long,
       expectedVersion: Long,
       retryable: Boolean,
-      commitFunc: => Commit): Unit = {
-    val e = intercept[CommitFailedException] {
+      commitFunc: => JCommit): Unit = {
+    val e = intercept[JCommitFailedException] {
       commitFunc
     }
     assert(e.getRetryable == retryable)
@@ -193,18 +197,26 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
     assert(e.getMessage === expectedMessage)
   }
 
+  protected def assertResponseEquals(
+      resp1: JGetCommitsResponse,
+      resp2: JGetCommitsResponse): Unit = {
+    assert(resp1.getLatestTableVersion == resp2.getLatestTableVersion)
+    assert(resp1.getCommits == resp2.getCommits)
+  }
+
   test("test basic commit and backfill functionality") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
       val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
 
-      val e = intercept[CommitFailedException] {
+      val e = intercept[JCommitFailedException] {
         commit(version = 0, timestamp = 0, tableCommitCoordinatorClient)
       }
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       writeCommitZero(logPath)
-      assert(tableCommitCoordinatorClient.getCommits() == GetCommitsResponse(Seq.empty, -1))
+      assertResponseEquals(tableCommitCoordinatorClient.getCommits(),
+        new JGetCommitsResponse(Seq.empty.asJava, -1))
       assertBackfilled(version = 0, logPath, Some(0L))
 
       // Test backfilling functionality for commits 1 - 8
@@ -324,7 +336,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
                   assert(commitResponse.getCommitTimestamp == currentTimestamp)
                   assert(commitResponse.getVersion == nextVersion)
                 } catch {
-                  case e: CommitFailedException =>
+                  case e: JCommitFailedException =>
                     assert(e.getConflict)
                     assert(e.getRetryable)
                     commitFailedExceptions.getAndIncrement()

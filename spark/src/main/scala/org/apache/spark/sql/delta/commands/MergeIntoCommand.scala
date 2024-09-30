@@ -56,6 +56,8 @@ import org.apache.spark.sql.types.{LongType, StructType}
  * @param notMatchedBySourceClauses  All info related to not matched by source clauses.
  * @param migratedSchema             The final schema of the target - may be changed by schema
  *                                   evolution.
+ * @param trackHighWaterMarks        The column names for which we will track IDENTITY high water
+ *                                   marks.
  */
 case class MergeIntoCommand(
     @transient source: LogicalPlan,
@@ -67,6 +69,7 @@ case class MergeIntoCommand(
     notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
     notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
     migratedSchema: Option[StructType],
+    trackHighWaterMarks: Set[String] = Set.empty,
     schemaEvolutionEnabled: Boolean = false)
   extends MergeIntoCommandBase
   with InsertOnlyMergeExecutor
@@ -106,6 +109,9 @@ case class MergeIntoCommand(
             deltaTxn.metadata.partitionColumns, deltaTxn.metadata.configuration,
             isOverwriteMode = false, rearrangeOnly = false)
         }
+
+        checkIdentityColumnHighWaterMarks(deltaTxn)
+        deltaTxn.setTrackHighWaterMarks(trackHighWaterMarks)
 
         // Materialize the source if needed.
         prepareMergeSource(
@@ -206,7 +212,8 @@ case class MergeIntoCommand(
     deltaTxn.registerSQLMetrics(spark, metrics)
 
     val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ mergeActions
-    deltaTxn.commitIfNeeded(
+    val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val commitVersion = deltaTxn.commitIfNeeded(
       actions = finalActions,
       op = DeltaOperations.Merge(
         predicate = Option(condition),
@@ -215,7 +222,7 @@ case class MergeIntoCommand(
         notMatchedBySourcePredicates =
           notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))),
       tags = RowTracking.addPreservedRowTrackingTagIfNotSet(deltaTxn.snapshot))
-    val stats = collectMergeStats(deltaTxn, materializeSourceReason)
+    val stats = collectMergeStats(deltaTxn, materializeSourceReason, commitVersion, numRecordsStats)
     recordDeltaEvent(targetDeltaLog, "delta.dml.merge.stats", data = stats)
   }
 }

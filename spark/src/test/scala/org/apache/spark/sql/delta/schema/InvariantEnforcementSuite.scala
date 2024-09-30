@@ -418,14 +418,10 @@ class InvariantEnforcementSuite extends QueryTest
         val newMetadata = txn.metadata.copy(
           configuration = txn.metadata.configuration +
             ("delta.constraints.mychk" -> "valueA < valueB"))
-        assert(txn.protocol.minWriterVersion === writerVersion)
         txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
-        val upVersion = if (TableFeatureProtocolUtils.supportsWriterFeatures(writerVersion)) {
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
-        } else {
-          CheckConstraintsTableFeature.minWriterVersion
-        }
-        assert(table.deltaLog.unsafeVolatileSnapshot.protocol.minWriterVersion === upVersion)
+        val protocol = table.deltaLog.update().protocol
+        assert(protocol.implicitlyAndExplicitlySupportedFeatures
+          .contains(CheckConstraintsTableFeature))
         spark.sql("INSERT INTO constraint VALUES (50, 100, null)")
         val e = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")

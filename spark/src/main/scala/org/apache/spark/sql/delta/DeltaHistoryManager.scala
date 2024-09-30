@@ -26,6 +26,7 @@ import scala.concurrent.{ExecutionContext, ExecutionContextExecutorService, Futu
 import scala.concurrent.duration.Duration
 
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, CommitMarker, JobInfo, NotebookInfo}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
@@ -37,6 +38,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkEnv
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
@@ -189,7 +191,7 @@ class DeltaHistoryManager(
     if (end - start > 2 * maxKeysPerList) {
       parallelSearch(time, start, end)
     } else {
-      val commits = getCommits(
+      val commits = getCommitsWithNonIctTimestamps(
         deltaLog.store,
         deltaLog.logPath,
         start,
@@ -597,9 +599,11 @@ object DeltaHistoryManager extends DeltaLogging {
    * Returns the commit version and timestamps of all commits in `[start, end)`. If `end` is not
    * specified, will return all commits that exist after `start`. Will guarantee that the commits
    * returned will have both monotonically increasing versions as well as timestamps.
-   * Exposed for tests.
+   * Note that this function will return non-ICT timestamps even for commits where
+   * InCommitTimestamps are enabled. The caller is responsible for ensuring that the appropriate
+   * timestamps are used.
    */
-  private[delta] def getCommits(
+  private[delta] def getCommitsWithNonIctTimestamps(
       logStore: LogStore,
       logPath: Path,
       start: Long,
@@ -626,8 +630,10 @@ object DeltaHistoryManager extends DeltaLogging {
       val prevTimestamp = commits(i).getTimestamp
       assert(commits(i).getVersion < commits(i + 1).getVersion, "Unordered commits provided.")
       if (prevTimestamp >= commits(i + 1).getTimestamp) {
-        logWarning(s"Found Delta commit ${commits(i).getVersion} with a timestamp $prevTimestamp " +
-          s"which is greater than the next commit timestamp ${commits(i + 1).getTimestamp}.")
+        logWarning(log"Found Delta commit ${MDC(DeltaLogKeys.VERSION, commits(i).getVersion)} " +
+          log"with a timestamp ${MDC(DeltaLogKeys.TIMESTAMP, prevTimestamp)} " +
+          log"which is greater than the next commit timestamp " +
+          log"${MDC(DeltaLogKeys.TIMESTAMP2, commits(i + 1).getTimestamp)}.")
         commits(i + 1) = commits(i + 1).withTimestamp(prevTimestamp + 1).asInstanceOf[T]
       }
       i += 1
@@ -684,7 +690,7 @@ object DeltaHistoryManager extends DeltaLogging {
       val logStore = LogStore(SparkEnv.get.conf, conf.value)
       val basePath = new Path(logPath)
       startVersions.map { startVersion =>
-        val commits = getCommits(
+        val commits = getCommitsWithNonIctTimestamps(
           logStore,
           basePath,
           startVersion,

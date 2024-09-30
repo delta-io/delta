@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.util.UUID
+
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.{GeneratedAlways, GeneratedAsIdentityType}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
@@ -30,6 +32,9 @@ trait IdentityColumnTestUtils
     super.sparkConf
       .set(DeltaSQLConf.DELTA_IDENTITY_COLUMN_ENABLED.key, "true")
   }
+
+  protected def getRandomTableName: String =
+    s"identity_test_${UUID.randomUUID()}".replaceAll("-", "_")
 
   protected val unsupportedDataTypes: Seq[DataType] = Seq(
     BooleanType,
@@ -63,6 +68,111 @@ trait IdentityColumnTestUtils
       ),
       tblProperties = tblProperties
     )
+  }
+
+  /**
+   * Creates and manages a simple identity column table with one other column "value" of type int
+   */
+  protected def withIdentityColumnTable(
+     generatedAsIdentityType: GeneratedAsIdentityType,
+     tableName: String)(f: => Unit): Unit = {
+    withTable(tableName) {
+      createTableWithIdColAndIntValueCol(tableName, generatedAsIdentityType, None, None)
+      f
+    }
+  }
+
+  protected def generateTableWithIdentityColumn(tableName: String, step: Long = 1): Unit = {
+    createTableWithIdColAndIntValueCol(
+      tableName,
+      GeneratedAlways,
+      startsWith = Some(0),
+      incrementBy = Some(step)
+    )
+
+    // Insert numRows and make sure they assigned sequential IDs
+    val numRows = 6
+    for (i <- 0 until numRows) {
+      sql(s"INSERT INTO $tableName (value) VALUES ($i)")
+    }
+    val expectedAnswer = for (i <- 0 until numRows) yield Row(i * step, i)
+    checkAnswer(sql(s"SELECT * FROM $tableName ORDER BY value ASC"), expectedAnswer)
+  }
+
+  /**
+   * Retrieves the high watermark information for the given `colName` in the metadata of
+   * given `snapshot`
+   */
+  protected def highWaterMark(snapshot: Snapshot, colName: String): Long = {
+    snapshot.schema(colName).metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
+  }
+
+  /**
+   * Helper function to validate values of IDENTITY column `id` in table `tableName`. Returns the
+   * new high water mark. We use minValue and maxValue to filter column `value` to get the set of
+   * values we are checking in this batch.
+   */
+  protected def validateIdentity(
+      tableName: String,
+      expectedRowCount: Long,
+      start: Long,
+      step: Long,
+      minValue: Long,
+      maxValue: Long,
+      oldHighWaterMark: Long): Long = {
+    // Check row count.
+    checkAnswer(
+      sql(s"SELECT COUNT(*) FROM $tableName"),
+      Row(expectedRowCount)
+    )
+    // Check values are unique.
+    checkAnswer(
+      sql(s"SELECT COUNT(DISTINCT id) FROM $tableName"),
+      Row(expectedRowCount)
+    )
+    // Check values follow start and step configuration.
+    checkAnswer(
+      sql(s"SELECT COUNT(*) FROM $tableName WHERE (id - $start) % $step != 0"),
+      Row(0)
+    )
+    // Check values generated in this batch are after previous high water mark.
+    checkAnswer(
+      sql(
+        s"""
+           |SELECT COUNT(*) FROM $tableName
+           |  WHERE (value BETWEEN $minValue and $maxValue)
+           |    AND ((id - $oldHighWaterMark) / $step < 0)
+           |""".stripMargin),
+      Row(0)
+    )
+    // Update high water mark.
+    val func = if (step > 0) "MAX" else "MIN"
+    sql(s"SELECT $func(id) FROM $tableName").collect().head.getLong(0)
+  }
+
+  /**
+   * Helper function to validate generated identity values in sortedRows.
+   *
+   * @param sortedRows rows of the table sorted by id
+   * @param start start value of the identity column
+   * @param step step value of the identity column
+   * @param expectedLowerBound expected lower bound of the generated values
+   * @param expectedUpperBound expected upper bound of the generated values
+   * @param expectedDistinctCount expected distinct count of the generated values
+   */
+  protected def checkGeneratedIdentityValues(
+      sortedRows: Seq[IdentityColumnTestTableRow],
+      start: Long,
+      step: Long,
+      expectedLowerBound: Long,
+      expectedUpperBound: Long,
+      expectedDistinctCount: Long): Unit = {
+    assert(sortedRows.head.id >= expectedLowerBound)
+    for (row <- sortedRows) {
+      assert((row.id - start) % step === 0)
+    }
+    assert(sortedRows.last.id <= expectedUpperBound)
+    assert(sortedRows.map(_.id).distinct.size === expectedDistinctCount)
   }
 }
 

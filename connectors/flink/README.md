@@ -46,7 +46,7 @@ Depending on the version of the connector you can use it with following Apache F
 
 ### APIs
 
-See the [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink/api/java/index.html) here.
+See the [Java API docs](https://docs.delta.io/latest/api/java/flink/overview-summary.html) here.
 
 ### Known limitations
 
@@ -317,6 +317,8 @@ Both Delta Source and Delta Sink can be used as Flink Tables for SELECT and INSE
 
 Flink/Delta SQL connector **must** be used with Delta Catalog. Trying to execute SQL queries on Delta table
 using Flink API without Delta Catalog configured will cause SQL job to fail.
+
+_For an example of configuring Flink SQL to write to Delta Lake, see [this blog](https://www.decodable.co/blog/adventures-with-apache-flink-and-delta-lake)._
 
 | Feature support                                | Notes                                                                                   |
 |------------------------------------------------|-----------------------------------------------------------------------------------------|

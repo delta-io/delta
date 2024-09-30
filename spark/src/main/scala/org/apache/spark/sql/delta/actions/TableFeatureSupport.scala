@@ -22,9 +22,9 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.annotation.JsonIgnore
-
-import org.apache.spark.sql.SparkSession
 
 /**
  * Trait to be mixed into the [[Protocol]] case class to enable Table Features.
@@ -39,13 +39,31 @@ import org.apache.spark.sql.SparkSession
  */
 trait TableFeatureSupport { this: Protocol =>
 
-  /** Check if this protocol is capable of adding features into its `readerFeatures` field. */
+  /**
+   * Check if this protocol can support arbitrary reader features. If this returns false,
+   * then the table may still be able to support the "columnMapping" feature.
+   * See [[canSupportColumnMappingFeature]] below.
+   */
   def supportsReaderFeatures: Boolean =
     TableFeatureProtocolUtils.supportsReaderFeatures(minReaderVersion)
+
+  /**
+   *  Check if this protocol is in table feature representation and can support column mapping.
+   *  Column mapping is the only legacy reader feature and requires special handling in some
+   *  cases.
+   */
+  def canSupportColumnMappingFeature: Boolean =
+    TableFeatureProtocolUtils.canSupportColumnMappingFeature(minReaderVersion, minWriterVersion)
 
   /** Check if this protocol is capable of adding features into its `writerFeatures` field. */
   def supportsWriterFeatures: Boolean =
     TableFeatureProtocolUtils.supportsWriterFeatures(minWriterVersion)
+
+  /**
+   * As soon as a protocol supports writer features it is considered a table features protocol.
+   * It is not possible to support reader features without supporting writer features.
+   */
+  def supportsTableFeatures: Boolean = supportsWriterFeatures
 
   /**
    * Get a new Protocol object that has `feature` supported. Writer-only features will be added to
@@ -60,7 +78,7 @@ trait TableFeatureSupport { this: Protocol =>
    */
   def withFeature(feature: TableFeature): Protocol = {
     def shouldAddRead: Boolean = {
-      if (supportsReaderFeatures) return true
+      if (feature == ColumnMappingTableFeature && canSupportColumnMappingFeature) return true
       if (feature.minReaderVersion <= minReaderVersion) return false
 
       throw DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
@@ -111,25 +129,13 @@ trait TableFeatureSupport { this: Protocol =>
    * `writerFeatures` field.
    *
    * The method does not require the feature to be recognized by the client, therefore will not
-   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
+   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync.
+   * Should never be used directly. Always use withFeature(feature: TableFeature): Protocol.
    */
   private[actions] def withFeature(
       name: String,
       addToReaderFeatures: Boolean,
       addToWriterFeatures: Boolean): Protocol = {
-    if (addToReaderFeatures && !supportsReaderFeatures) {
-      throw DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
-        name,
-        currentVersion = minReaderVersion,
-        requiredVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION)
-    }
-    if (addToWriterFeatures && !supportsWriterFeatures) {
-      throw DeltaErrors.tableFeatureRequiresHigherWriterProtocolVersion(
-        name,
-        currentVersion = minWriterVersion,
-        requiredVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
-    }
-
     val addedReaderFeatureOpt = if (addToReaderFeatures) Some(name) else None
     val addedWriterFeatureOpt = if (addToWriterFeatures) Some(name) else None
 
@@ -143,11 +149,11 @@ trait TableFeatureSupport { this: Protocol =>
    * `readerFeatures` field.
    *
    * The method does not require the features to be recognized by the client, therefore will not
-   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
+   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync.
+   * Intended only for testing. Use with caution.
    */
   private[delta] def withReaderFeatures(names: Iterable[String]): Protocol = {
-    names.foldLeft(this)(
-      _.withFeature(_, addToReaderFeatures = true, addToWriterFeatures = false))
+    names.foldLeft(this)(_.withFeature(_, addToReaderFeatures = true, addToWriterFeatures = false))
   }
 
   /**
@@ -155,11 +161,11 @@ trait TableFeatureSupport { this: Protocol =>
    * `writerFeatures` field.
    *
    * The method does not require the features to be recognized by the client, therefore will not
-   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
+   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync.
+   * Intended only for testing. Use with caution.
    */
   private[delta] def withWriterFeatures(names: Iterable[String]): Protocol = {
-    names.foldLeft(this)(
-      _.withFeature(_, addToReaderFeatures = false, addToWriterFeatures = true))
+    names.foldLeft(this)(_.withFeature(_, addToReaderFeatures = false, addToWriterFeatures = true))
   }
 
   /**
@@ -203,14 +209,16 @@ trait TableFeatureSupport { this: Protocol =>
    */
   @JsonIgnore
   lazy val implicitlySupportedFeatures: Set[TableFeature] = {
-    if (supportsReaderFeatures && supportsWriterFeatures) {
-      // this protocol uses both reader and writer features, no feature can be implicitly supported
+    if (supportsTableFeatures) {
+      // As soon as a protocol supports writer features, all features need to be explicitly defined.
+      // This includes legacy reader features (the only one is Column Mapping), even if the
+      // reader protocol is legacy and explicitly supports Column Mapping.
       Set()
     } else {
       TableFeature.allSupportedFeaturesMap.values
         .filter(_.isLegacyFeature)
-        .filterNot(supportsReaderFeatures || this.minReaderVersion < _.minReaderVersion)
-        .filterNot(supportsWriterFeatures || this.minWriterVersion < _.minWriterVersion)
+        .filter(_.minReaderVersion <= this.minReaderVersion)
+        .filter(_.minWriterVersion <= this.minWriterVersion)
         .toSet
     }
   }
@@ -229,25 +237,16 @@ trait TableFeatureSupport { this: Protocol =>
 
   /**
    * Determine whether this protocol can be safely upgraded to a new protocol `to`. This means:
-   *   - this protocol has reader protocol version less than or equals to `to`.
-   *   - this protocol has writer protocol version less than or equals to `to`.
    *   - all features supported by this protocol are supported by `to`.
    *
    * Examples regarding feature status:
-   *   - from `[appendOnly]` to `[appendOnly]` => allowed
-   *   - from `[appendOnly, changeDataFeed]` to `[appendOnly]` => not allowed
-   *   - from `[appendOnly]` to `[appendOnly, changeDataFeed]` => allowed
+   *   - from `[appendOnly]` to `[appendOnly]` => allowed.
+   *   - from `[appendOnly, changeDataFeed]` to `[appendOnly]` => not allowed.
+   *   - from `[appendOnly]` to `[appendOnly, changeDataFeed]` => allowed.
    */
-  def canUpgradeTo(to: Protocol): Boolean = {
-    if (to.minReaderVersion < this.minReaderVersion) return false
-    if (to.minWriterVersion < this.minWriterVersion) return false
-
-    val thisFeatures =
-      this.readerAndWriterFeatureNames ++ this.implicitlySupportedFeatures.map(_.name)
-    val toFeatures = to.readerAndWriterFeatureNames ++ to.implicitlySupportedFeatures.map(_.name)
-    // all features supported by `this` are supported by `to`
-    thisFeatures.subsetOf(toFeatures)
-  }
+  def canUpgradeTo(to: Protocol): Boolean =
+    // All features supported by `this` are supported by `to`.
+    implicitlyAndExplicitlySupportedFeatures.subsetOf(to.implicitlyAndExplicitlySupportedFeatures)
 
   /**
    * Determine whether this protocol can be safely downgraded to a new protocol `to`.
@@ -280,19 +279,18 @@ trait TableFeatureSupport { this: Protocol =>
     val protocols = this +: others
     val mergedReaderVersion = protocols.map(_.minReaderVersion).max
     val mergedWriterVersion = protocols.map(_.minWriterVersion).max
-    val mergedReaderFeatures = protocols.flatMap(_.readerFeatureNames)
-    val mergedWriterFeatures = protocols.flatMap(_.writerFeatureNames)
+    val mergedFeatures = protocols.flatMap(_.readerAndWriterFeatures)
     val mergedImplicitFeatures = protocols.flatMap(_.implicitlySupportedFeatures)
 
     val mergedProtocol = Protocol(mergedReaderVersion, mergedWriterVersion)
-      .withReaderFeatures(mergedReaderFeatures)
-      .withWriterFeatures(mergedWriterFeatures)
+      .withFeatures(mergedFeatures ++ mergedImplicitFeatures)
 
-    if (mergedProtocol.supportsReaderFeatures || mergedProtocol.supportsWriterFeatures) {
-      mergedProtocol.withFeatures(mergedImplicitFeatures)
-    } else {
-      mergedProtocol
-    }
+    // The merged protocol is always normalized in order to represent the protocol
+    // with the weakest possible form. This enables backward compatibility.
+    // This is preceded by a denormalization step. This allows to fix invalid legacy Protocols.
+    // For example, (2, 3) is normalized to (1, 3). This is because there is no legacy feature
+    // in the set with reader version 2 unless the writer version is at least 5.
+    mergedProtocol.denormalizedNormalized
   }
 
   /**
@@ -323,62 +321,76 @@ trait TableFeatureSupport { this: Protocol =>
    * the feature exists in the protocol. There is a relevant validation at
    * [[AlterTableDropFeatureDeltaCommand]]. We also require targetFeature is removable.
    *
-   * When the feature to remove is the last explicit table feature of the table we also remove the
-   * TableFeatures feature and downgrade the protocol.
+   * After removing the feature we normalize the protocol.
    */
   def removeFeature(targetFeature: TableFeature): Protocol = {
     require(targetFeature.isRemovable)
+    val currentProtocol = this.denormalized
     val newProtocol = targetFeature match {
       case f@(_: ReaderWriterFeature | _: LegacyReaderWriterFeature) =>
-        removeReaderWriterFeature(f)
+        currentProtocol.removeReaderWriterFeature(f)
       case f@(_: WriterFeature | _: LegacyWriterFeature) =>
-        removeWriterFeature(f)
+        currentProtocol.removeWriterFeature(f)
       case f =>
         throw DeltaErrors.dropTableFeatureNonRemovableFeature(f.name)
     }
-    newProtocol.downgradeProtocolVersionsIfNeeded
+    newProtocol.normalized
   }
 
+
   /**
-   * If the current protocol does not contain any non-legacy table features and the remaining
-   * set of legacy table features exactly matches a legacy protocol version, it downgrades the
-   * protocol to the minimum reader/writer versions required to support the protocol's legacy
-   * features.
+   * Protocol normalization is the process of converting a table features protocol to the weakest
+   * possible form. This primarily refers to converting a table features protocol to a legacy
+   * protocol. A Table Features protocol can be represented with the legacy representation only
+   * when the features set of the former exactly matches a legacy protocol.
    *
-   * Note, when a table is initialized with table features (3, 7), by default there are no legacy
-   * features. After we remove the last native feature we downgrade the protocol to (1, 1).
+   * Normalization can also decrease the reader version of a table features protocol when it is
+   * higher than necessary.
+   *
+   * For example:
+   * (1, 7, AppendOnly, Invariants, CheckConstraints) -> (1, 3)
+   * (3, 7, RowTracking) -> (1, 7, RowTracking)
    */
-  def downgradeProtocolVersionsIfNeeded: Protocol = {
-    if (nativeReaderAndWriterFeatures.nonEmpty) {
-      val (minReaderVersion, minWriterVersion) =
-        TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
-      // It is guaranteed by the definitions of WriterFeature and ReaderFeature, that we cannot
-      // end up with invalid protocol versions such as (3, 3). Nevertheless,
-      // we double check it here.
-      val newProtocol =
-        Protocol(minReaderVersion, minWriterVersion).withFeatures(readerAndWriterFeatures)
-      assert(
-        newProtocol.supportsWriterFeatures,
-        s"Downgraded protocol should at least support writer features, but got $newProtocol.")
-      return newProtocol
-    }
+  def normalized: Protocol = {
+    // Normalization can only be applied to table feature protocols.
+    if (!supportsTableFeatures) return this
 
     val (minReaderVersion, minWriterVersion) =
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
     val newProtocol = Protocol(minReaderVersion, minWriterVersion)
 
-    assert(
-      !newProtocol.supportsReaderFeatures && !newProtocol.supportsWriterFeatures,
-      s"Downgraded protocol should not support table features, but got $newProtocol.")
-
-    // Ensure the legacy protocol supports features exactly as the current protocol.
     if (this.implicitlyAndExplicitlySupportedFeatures ==
       newProtocol.implicitlyAndExplicitlySupportedFeatures) {
       newProtocol
     } else {
-      this
+      Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
+        .withFeatures(readerAndWriterFeatures)
     }
   }
+
+  /**
+   * Protocol denormalization is the process of converting a legacy protocol to the
+   * the equivalent table features protocol. This is the inverse of protocol normalization.
+   * It can be used to allow operations on legacy protocols that yield result which
+   * cannot be represented anymore by a legacy protocol.
+   */
+  def denormalized: Protocol = {
+    // Denormalization can only be applied to legacy protocols.
+    if (supportsTableFeatures) return this
+
+    val (minReaderVersion, _) =
+      TableFeatureProtocolUtils.minimumRequiredVersions(implicitlySupportedFeatures.toSeq)
+
+    Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
+      .withFeatures(implicitlySupportedFeatures)
+  }
+
+  /**
+   * Helper method that applies both denormalization and normalization. This can be used to
+   * normalize invalid legacy protocols such as (2, 3), (1, 5). A legacy protocol is invalid
+   * when the version numbers are higher than required to support the implied feature set.
+   */
+  def denormalizedNormalized: Protocol = denormalized.normalized
 
   /**
    * Check if a `feature` is supported by this protocol. This means either (a) the protocol does
@@ -412,7 +424,7 @@ object TableFeatureProtocolUtils {
   /** The string constant "supported" for uses in table properties. */
   val FEATURE_PROP_SUPPORTED = "supported"
 
-  /** Min reader version that supports reader features. */
+  /** Min reader version that supports native reader features. */
   val TABLE_FEATURES_MIN_READER_VERSION = 3
 
   /** Min reader version that supports writer features. */
@@ -433,8 +445,20 @@ object TableFeatureProtocolUtils {
     s"$DEFAULT_FEATURE_PROP_PREFIX$featureName"
 
   /**
-   * Determine whether a [[Protocol]] with the given reader protocol version is capable of adding
-   * features into its `readerFeatures` field.
+   * Determine whether a [[Protocol]] with the given reader protocol version can support column
+   * mapping. All table feature protocols that can support column mapping are capable of adding
+   * the feature to the `readerFeatures` field. This includes legacy reader protocol version
+   * (2, 7).
+   */
+  def canSupportColumnMappingFeature(readerVersion: Int, writerVersion: Int): Boolean = {
+    readerVersion >= ColumnMappingTableFeature.minReaderVersion &&
+      supportsWriterFeatures(writerVersion)
+  }
+
+  /**
+   * Determine whether a [[Protocol]] with the given reader protocol version supports
+   * native features. All protocols that can support native reader features are capable
+   * of adding the feature to the `readerFeatures` field.
    */
   def supportsReaderFeatures(readerVersion: Int): Boolean = {
     readerVersion >= TABLE_FEATURES_MIN_READER_VERSION

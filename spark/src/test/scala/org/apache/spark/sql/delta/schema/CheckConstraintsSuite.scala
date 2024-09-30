@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -79,7 +80,7 @@ class CheckConstraintsSuite extends QueryTest
         exception = intercept[AnalysisException] {
           sql(s"ALTER TABLE $table ADD CONSTRAINT integerVal CHECK (3)")
         },
-        errorClass = "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
+        "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
         parameters = Map(
           "name" -> "integerVal",
           "expr" -> "3"
@@ -91,10 +92,10 @@ class CheckConstraintsSuite extends QueryTest
   test("can't add constraint referencing non-existent columns") {
     withTestTable { table =>
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"ALTER TABLE $table ADD CONSTRAINT c CHECK (does_not_exist)")
         },
-        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        "UNRESOLVED_COLUMN.WITH_SUGGESTION",
         parameters = Map(
           "objectName" -> "`does_not_exist`",
           "proposal" -> "`text`, `num`"
@@ -450,7 +451,7 @@ class CheckConstraintsSuite extends QueryTest
       }
       checkError(
         exception,
-        errorClass = "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
+        "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
         parameters = Map(
           "value" -> "a very long string",
           "expr" -> "((value IS NULL) OR (length(value) <= 12))"
@@ -460,37 +461,46 @@ class CheckConstraintsSuite extends QueryTest
   }
 
   test("drop table feature") {
-    withTable("table") {
-      sql("CREATE TABLE table (a INT, b INT) USING DELTA " +
-        "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
-      sql("ALTER TABLE table ADD CONSTRAINT c1 CHECK (a > 0)")
-      sql("ALTER TABLE table ADD CONSTRAINT c2 CHECK (b > 0)")
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> false.toString) {
+      withTable("table") {
+        sql("CREATE TABLE table (a INT, b INT) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql("ALTER TABLE table ADD CONSTRAINT c1 CHECK (a > 0)")
+        sql("ALTER TABLE table ADD CONSTRAINT c2 CHECK (b > 0)")
 
-      val error1 = intercept[AnalysisException] {
+        val error1 = intercept[AnalysisException] {
+          sql("ALTER TABLE table DROP FEATURE checkConstraints")
+        }
+        checkError(
+          error1,
+          "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+          parameters = Map("constraints" -> "`c1`, `c2`")
+        )
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier("table"))
+        val featureNames1 =
+          deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+        assert(featureNames1.contains("checkConstraints"))
+
+        sql("ALTER TABLE table DROP CONSTRAINT c1")
+        val error2 = intercept[AnalysisException] {
+          sql("ALTER TABLE table DROP FEATURE checkConstraints")
+        }
+        checkError(
+          error2,
+          "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
+          parameters = Map("constraints" -> "`c2`")
+        )
+        val featureNames2 =
+          deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+        assert(featureNames2.contains("checkConstraints"))
+
+        sql("ALTER TABLE table DROP CONSTRAINT c2")
         sql("ALTER TABLE table DROP FEATURE checkConstraints")
+        val featureNames3 =
+          deltaLog.update().protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name)
+        assert(!featureNames3.contains("checkConstraints"))
       }
-      checkError(
-        error1,
-        errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
-        parameters = Map("constraints" -> "`c1`, `c2`")
-      )
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("table"))
-      assert(deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
-
-      sql("ALTER TABLE table DROP CONSTRAINT c1")
-      val error2 = intercept[AnalysisException] {
-        sql("ALTER TABLE table DROP FEATURE checkConstraints")
-      }
-      checkError(
-        error2,
-        errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
-        parameters = Map("constraints" -> "`c2`")
-      )
-      assert(deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
-
-      sql("ALTER TABLE table DROP CONSTRAINT c2")
-      sql("ALTER TABLE table DROP FEATURE checkConstraints")
-      assert(!deltaLog.update().protocol.readerAndWriterFeatureNames.contains("checkConstraints"))
     }
   }
 }

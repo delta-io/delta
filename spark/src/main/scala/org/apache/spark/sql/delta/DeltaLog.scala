@@ -194,7 +194,7 @@ class DeltaLog private(
   def startTransaction(
       catalogTableOpt: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    TransactionExecutionObserver.threadObserver.get().startingTransaction {
+    TransactionExecutionObserver.getObserver.startingTransaction {
       new OptimisticTransaction(this, catalogTableOpt, snapshotOpt)
     }
   }
@@ -221,9 +221,9 @@ class DeltaLog private(
       catalogTableOpt: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None)(
       thunk: OptimisticTransaction => T): T = {
+    val txn = startTransaction(catalogTableOpt, snapshotOpt)
+    OptimisticTransaction.setActive(txn)
     try {
-      val txn = startTransaction(catalogTableOpt, snapshotOpt)
-      OptimisticTransaction.setActive(txn)
       thunk(txn)
     } finally {
       OptimisticTransaction.clearActive()
@@ -233,9 +233,9 @@ class DeltaLog private(
   /** Legacy/compat overload that does not require catalog table information. Avoid prod use. */
   @deprecated("Please use the CatalogTable overload instead", "3.0")
   def withNewTransaction[T](thunk: OptimisticTransaction => T): T = {
+    val txn = startTransaction()
+    OptimisticTransaction.setActive(txn)
     try {
-      val txn = startTransaction()
-      OptimisticTransaction.setActive(txn)
       thunk(txn)
     } finally {
       OptimisticTransaction.clearActive()
@@ -425,12 +425,12 @@ class DeltaLog private(
   def assertTableFeaturesMatchMetadata(
       targetProtocol: Protocol,
       targetMetadata: Metadata): Unit = {
-    if (!targetProtocol.supportsReaderFeatures && !targetProtocol.supportsWriterFeatures) return
+    if (!targetProtocol.supportsTableFeatures) return
 
     val protocolEnabledFeatures = targetProtocol.writerFeatureNames
       .flatMap(TableFeature.featureNameToFeature)
     val activeFeatures =
-      Protocol.extractAutomaticallyEnabledFeatures(spark, targetMetadata, Some(targetProtocol))
+      Protocol.extractAutomaticallyEnabledFeatures(spark, targetMetadata, targetProtocol)
     val activeButNotEnabled = activeFeatures.diff(protocolEnabledFeatures)
     if (activeButNotEnabled.nonEmpty) {
       throw DeltaErrors.tableFeatureMismatchException(activeButNotEnabled.map(_.name))
@@ -970,7 +970,7 @@ object DeltaLog extends DeltaLogging {
       partitionFilters
     }
     val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = new Column(expr)
+    val columnFilter = Column(expr)
     files.filter(columnFilter)
   }
 

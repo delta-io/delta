@@ -181,8 +181,9 @@ public abstract class BaseTableReader {
             return LocalDate.ofEpochDay(daysSinceEpochUTC).toString();
         } else if (dataType instanceof LongType) {
             return Long.toString(row.getLong(columnOrdinal));
-        } else if (dataType instanceof TimestampType) {
-            // TimestampType data is stored internally as the number of microseconds since epoch
+        } else if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
+            // Timestamps are stored internally as the number of microseconds since epoch.
+            // TODO: TimestampType should use the session timezone to display values.
             long microSecsSinceEpochUTC = row.getLong(columnOrdinal);
             LocalDateTime dateTime = LocalDateTime.ofEpochSecond(
                 microSecsSinceEpochUTC / 1_000_000 /* epochSecond */,

@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
 import scala.collection.JavaConverters._
@@ -26,8 +27,10 @@ import com.amazonaws.services.dynamodbv2.model.{AttributeValue, ConditionalCheck
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.dynamodbcommitcoordinator.{DynamoDBCommitCoordinatorClient, DynamoDBCommitCoordinatorClientBuilder}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, GetCommitsResponse => JGetCommitsResponse}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -155,15 +158,11 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
   extends CommitCoordinatorClientImplSuiteBase {
 
   override protected def createTableCommitCoordinatorClient(
-      deltaLog: DeltaLog)
-      : TableCommitCoordinatorClient = {
+      deltaLog: DeltaLog): TableCommitCoordinatorClient = {
     val cs = TestDynamoDBCommitCoordinatorBuilder(batchSize = batchSize).build(spark, Map.empty)
     val tableConf = cs.registerTable(
-      deltaLog.logPath,
-      currentVersion = -1L,
-      Metadata(),
-      Protocol(1, 1))
-    TableCommitCoordinatorClient(cs, deltaLog, tableConf)
+      deltaLog.logPath, Optional.empty(), -1L, Metadata(), Protocol(1, 1))
+    TableCommitCoordinatorClient(cs, deltaLog, tableConf.asScala.toMap)
   }
 
   override protected def registerBackfillOp(
@@ -179,7 +178,7 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
       version: Long): Unit = {
     val lastExpectedBackfilledVersion = (version - (version % batchSize)).toInt
     val unbackfilledCommitVersionsAll = tableCommitCoordinatorClient
-      .getCommits().getCommits.map(_.getVersion)
+      .getCommits().getCommits.asScala.map(_.getVersion)
     val expectedVersions = lastExpectedBackfilledVersion + 1 to version.toInt
 
     assert(unbackfilledCommitVersionsAll == expectedVersions)
@@ -189,11 +188,11 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
   }
 
   protected def validateGetCommitsResult(
-      result: GetCommitsResponse,
+      result: JGetCommitsResponse,
       startVersion: Option[Long],
       endVersion: Option[Long],
       maxVersion: Long): Unit = {
-    val commitVersions = result.getCommits.map(_.getVersion)
+    val commitVersions = result.getCommits.asScala.map(_.getVersion)
     val lastExpectedBackfilledVersion = (maxVersion - (maxVersion % batchSize)).toInt
     val expectedVersions = lastExpectedBackfilledVersion + 1 to maxVersion.toInt
     assert(commitVersions == expectedVersions)
@@ -216,23 +215,25 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
         1, // writeCapacityUnits
         skipPathCheck)
       val tableConf = commitCoordinator.registerTable(
-        logPath,
-        -1L,
-        Metadata(),
-        Protocol(1, 1))
+        logPath, Optional.empty(), -1L, Metadata(), Protocol(1, 1))
       val wrongTablePath = new Path(logPath.getParent, "wrongTable")
       val wrongLogPath = new Path(wrongTablePath, logPath.getName)
       val fs = wrongLogPath.getFileSystem(log.newDeltaHadoopConf())
       fs.mkdirs(wrongTablePath)
       fs.mkdirs(FileNames.commitDirPath(wrongLogPath))
       val wrongTablePathTableCommitCoordinator = new TableCommitCoordinatorClient(
-        commitCoordinator, wrongLogPath, tableConf, log.newDeltaHadoopConf(), log.store)
+        commitCoordinator,
+        wrongLogPath,
+        tableConf.asScala.toMap,
+        log.newDeltaHadoopConf(),
+        log.store
+      )
       if (skipPathCheck) {
         // This should succeed because we are skipping the path check.
         val resp = commit(1L, 1L, wrongTablePathTableCommitCoordinator)
         assert(resp.getVersion == 1L)
       } else {
-        val e = intercept[CommitFailedException] {
+        val e = intercept[JCommitFailedException] {
           commit(1L, 1L, wrongTablePathTableCommitCoordinator)
         }
         assert(e.getMessage.contains("while the table is registered at"))

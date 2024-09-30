@@ -20,7 +20,8 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.tables.DeltaTable
@@ -36,7 +37,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelpe
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, StringType, StructType}
 
-class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
+class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
 
   override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
@@ -47,9 +48,12 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
     }
   })
 
-  def createSourceTable(tbl: String, path: String): Unit = {
-    spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta CLUSTER BY (a) " +
-      s"LOCATION '$path' " +
+  def createSourceTable(
+      tbl: String,
+      path: String,
+      partitionOrClusteringSpec: String): Unit = {
+    spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta " +
+      s"$partitionOrClusteringSpec BY (a) LOCATION '$path' " +
       s"TBLPROPERTIES ('delta.checkpointInterval' = '2', 'delta.checkpointPolicy'='v2')")
     spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
     spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
@@ -97,7 +101,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
     val foundFiles =
       collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
         _.getPath.split('/').last).toSet
-    val expectedFiles = snapshotFromSpark.allFiles.collect().map(_.path).toSet
+    val expectedFiles = snapshotFromSpark.allFiles.collect().map(_.toPath.toString).toSet
     if (strictFileValidation) {
       assert(foundFiles == expectedFiles)
     } else {
@@ -113,7 +117,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           // Create table.
           withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-            createSourceTable(tbl, path.toString)
+            createSourceTable(tbl, path.toString, "CLUSTER")
 
             // Insert more data to ensure multiple ColumnarBatches created.
             spark.createDataFrame(
@@ -152,7 +156,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-            createSourceTable(tbl, path.toString)
+            createSourceTable(tbl, path.toString, "CLUSTER")
           }
 
           // Validate snapshot and data.
@@ -186,7 +190,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-            createSourceTable(tbl, path.toString)
+            createSourceTable(tbl, path.toString, "CLUSTER")
           }
 
           // Evalute Spark result before updating sidecar.
@@ -274,7 +278,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
         withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> "parquet",
           "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
           spark.conf.set(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, "parquet")
-          createSourceTable(tbl, path.toString)
+          createSourceTable(tbl, path.toString, "CLUSTER")
         }
 
         // Spark snapshot and files must be evaluated before renaming the checkpoint file.
@@ -294,6 +298,22 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils {
           path = path.toString,
           expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
         )
+      }
+    }
+  }
+
+  test("read from table with partition predicates") {
+    withTempDir { path =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        // Create source table with schema (a INT, b STRING) partitioned by a.
+        createSourceTable(tbl, path.toString, "PARTITIONED")
+
+        // Read from the source table with a partition predicate and validate the results.
+        val result = readSnapshot(
+          latestSnapshot(path.toString),
+          filter = greaterThan(col("a"), Literal.ofInt(3)))
+        checkAnswer(result, Seq(TestRow(4, "d"), TestRow(5, "e"), TestRow(6, "f")))
       }
     }
   }

@@ -16,13 +16,18 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
+import scala.collection.JavaConverters._
 import scala.reflect.runtime.universe._
 
 import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfigs, DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -36,27 +41,33 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
     override def commit(
         logStore: LogStore,
         hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: Map[String, String],
+        tableDesc: TableDescriptor,
         commitVersion: Long,
-        actions: Iterator[String],
+        actions: java.util.Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
       throw new UnsupportedOperationException("Not implemented")
     }
 
     override def getCommits(
-      logPath: Path,
-      coordinatedCommitsTableConf: Map[String, String],
-      startVersion: Option[Long],
-      endVersion: Option[Long] = None): GetCommitsResponse = GetCommitsResponse(Seq.empty, -1)
+        tableDesc: TableDescriptor,
+        startVersion: java.lang.Long,
+        endVersion: java.lang.Long): JGetCommitsResponse =
+      new JGetCommitsResponse(Seq.empty.asJava, -1)
 
     override def backfillToVersion(
         logStore: LogStore,
         hadoopConf: Configuration,
-        logPath: Path,
-        coordinatedCommitsTableConf: Map[String, String],
+        tableDesc: TableDescriptor,
         version: Long,
-        lastKnownBackfilledVersion: Option[Long]): Unit = {}
+        lastKnownBackfilledVersion: java.lang.Long): Unit = {}
+
+    override def registerTable(
+        logPath: Path,
+        tableIdentifier: Optional[TableIdentifier],
+        currentVersion: Long,
+        currentMetadata: AbstractMetadata,
+        currentProtocol: AbstractProtocol): java.util.Map[String, String] =
+      Map.empty[String, String].asJava
 
     override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
   }

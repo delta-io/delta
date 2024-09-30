@@ -19,7 +19,9 @@ package org.apache.spark.sql.delta.sources
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.util.Utils
 
@@ -198,9 +200,9 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     val changes = getFileChangesForCDC(
       startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
-    val groupedFileActions =
-      changes.map { case (v, indexFiles) =>
-        (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq)
+    val groupedFileAndCommitInfoActions =
+      changes.map { case (v, indexFiles, commitInfoOpt) =>
+        (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq ++ commitInfoOpt)
       }
 
     val (result, duration) = Utils.timeTakenMs {
@@ -209,20 +211,25 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           readSnapshotDescriptor,
           startVersion,
           endOffset.reservoirVersion,
-          groupedFileActions,
+          groupedFileAndCommitInfoActions,
           spark,
           isStreaming = true)
         .fileChangeDf
     }
-    logInfo(s"Getting CDC dataFrame for delta_log_path=${deltaLog.logPath} with " +
-      s"startVersion=$startVersion, startIndex=$startIndex, " +
-      s"isInitialSnapshot=$isInitialSnapshot, endOffset=$endOffset took timeMs=$duration ms")
+    logInfo(log"Getting CDC dataFrame for delta_log_path=" +
+      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
+      log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
+      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
+      log"endOffset=${MDC(DeltaLogKeys.END_OFFSET, endOffset)} took timeMs=" +
+      log"${MDC(DeltaLogKeys.DURATION, duration)} ms")
     result
   }
 
   /**
    * Get the changes starting from (fromVersion, fromIndex). fromVersion is included.
-   * It returns an iterator of (log_version, fileActions)
+   * It returns an iterator of (log_version, fileActions, Optional[CommitInfo]). The commit info
+   * is needed later on so that the InCommitTimestamp of the log files can be determined.
    *
    * If verifyMetadataAction = true, we will break the stream when we detect any read-incompatible
    * metadata changes.
@@ -233,10 +240,12 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       isInitialSnapshot: Boolean,
       limits: Option[AdmissionLimits],
       endOffset: Option[DeltaSourceOffset],
-      verifyMetadataAction: Boolean = true): Iterator[(Long, Iterator[IndexedFile])] = {
+      verifyMetadataAction: Boolean = true
+  ): Iterator[(Long, Iterator[IndexedFile], Option[CommitInfo])] = {
 
     /** Returns matching files that were added on or after startVersion among delta logs. */
-    def filterAndIndexDeltaLogs(startVersion: Long): Iterator[(Long, IndexedChangeFileSeq)] = {
+    def filterAndIndexDeltaLogs(
+        startVersion: Long): Iterator[(Long, IndexedChangeFileSeq, Option[CommitInfo])] = {
       // TODO: handle the case when failOnDataLoss = false and we are missing change log files
       //    in that case, we need to recompute the start snapshot and evolve the schema if needed
       require(options.failOnDataLoss || !trackingMetadataChange,
@@ -244,7 +253,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       deltaLog.getChanges(startVersion, options.failOnDataLoss).map { case (version, actions) =>
         // skipIndexedFile must be applied after creating IndexedFile so that
         // IndexedFile.index is consistent across all versions.
-        val (fileActions, skipIndexedFile, metadataOpt, protocolOpt) =
+        val (fileActions, skipIndexedFile, metadataOpt, protocolOpt, commitInfoOpt) =
           filterCDCActions(
             actions, version, fromVersion, endOffset.map(_.reservoirVersion),
             verifyMetadataAction && !trackingMetadataChange)
@@ -272,7 +281,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
                   remove = remove,
                   shouldSkip = skipIndexedFile)
             })
-        (version, new IndexedChangeFileSeq(itr, isInitialSnapshot = false))
+        (version, new IndexedChangeFileSeq(itr, isInitialSnapshot = false), commitInfoOpt)
       }
     }
 
@@ -287,41 +296,52 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     }
 
     val (result, duration) = Utils.timeTakenMs {
-      val iter: Iterator[(Long, IndexedChangeFileSeq)] = if (isInitialSnapshot) {
-        // If we are reading change data from the start of the table we need to
-        // get the latest snapshot of the table as well.
-        val snapshot: Iterator[IndexedFile] = getSnapshotAt(fromVersion).map { m =>
-          // When we get the snapshot the dataChange is false for the AddFile actions
-          // We need to set it to true for it to be considered by the CDCReader.
-          if (m.add != null) {
-            m.copy(add = m.add.copy(dataChange = true))
-          } else {
-            m
+      val iter: Iterator[(Long, IndexedChangeFileSeq, Option[CommitInfo])] =
+        if (isInitialSnapshot) {
+          // If we are reading change data from the start of the table we need to
+          // get the latest snapshot of the table as well.
+          val (unprocessedSnapshot, snapshotInCommitTimestampOpt) = getSnapshotAt(fromVersion)
+          val snapshot: Iterator[IndexedFile] = unprocessedSnapshot.map { m =>
+            // When we get the snapshot the dataChange is false for the AddFile actions
+            // We need to set it to true for it to be considered by the CDCReader.
+            if (m.add != null) {
+              m.copy(add = m.add.copy(dataChange = true))
+            } else {
+              m
+            }
           }
-        }
-        val snapshotItr: Iterator[(Long, IndexedChangeFileSeq)] = Iterator((
-          fromVersion,
-          new IndexedChangeFileSeq(snapshot, isInitialSnapshot = true)
-        ))
+          // This is a hack so that we can easily access the ICT later on.
+          // This `CommitInfo` action is not useful for anything else and should be filtered
+          // out later on.
+          val ictOnlyCommitInfo = Some(CommitInfo.empty(Some(-1))
+            .copy(inCommitTimestamp = snapshotInCommitTimestampOpt))
+          val snapshotItr: Iterator[(Long, IndexedChangeFileSeq, Option[CommitInfo])] = Iterator((
+            fromVersion,
+            new IndexedChangeFileSeq(snapshot, isInitialSnapshot = true),
+            ictOnlyCommitInfo
+          ))
 
-        snapshotItr ++ filterAndIndexDeltaLogs(fromVersion + 1)
-      } else {
-        filterAndIndexDeltaLogs(fromVersion)
-      }
+          snapshotItr ++ filterAndIndexDeltaLogs(fromVersion + 1)
+        } else {
+          filterAndIndexDeltaLogs(fromVersion)
+        }
 
       // In this case, filterFiles will consume the available capacity. We use takeWhile
       // to stop the iteration when we reach the limit or if endOffset is specified and the
       // endVersion is reached which will save us from reading unnecessary log files.
-      iter.takeWhile { case (version, _) =>
+      iter.takeWhile { case (version, _, _) =>
         limits.forall(_.hasCapacity) && versionLessThanEndOffset(version, endOffset)
-      }.map { case (version, indexItr) =>
-        (version, indexItr.filterFiles(fromVersion, fromIndex, limits, endOffset))
+      }.map { case (version, indexItr, ci) =>
+        (version, indexItr.filterFiles(fromVersion, fromIndex, limits, endOffset), ci)
       }
     }
 
-    logInfo(s"Getting CDC file changes for delta_log_path=${deltaLog.logPath} with " +
-      s"fromVersion=$fromVersion, fromIndex=$fromIndex, isInitialSnapshot=$isInitialSnapshot " +
-      s"took timeMs=$duration ms")
+    logInfo(log"Getting CDC file changes for delta_log_path=" +
+      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, fromIndex=" +
+      log"${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
+      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} took timeMs=" +
+      log"${MDC(DeltaLogKeys.DURATION, duration)} ms")
     result
   }
 
@@ -342,10 +362,11 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       batchStartVersion: Long,
       batchEndVersionOpt: Option[Long] = None,
       verifyMetadataAction: Boolean = true
-  ): (Seq[FileAction], Boolean, Option[Metadata], Option[Protocol]) = {
+  ): (Seq[FileAction], Boolean, Option[Metadata], Option[Protocol], Option[CommitInfo]) = {
     var shouldSkipIndexedFile = false
     var metadataAction: Option[Metadata] = None
     var protocolAction: Option[Protocol] = None
+    var commitInfoAction: Option[CommitInfo] = None
     def checkAndCacheMetadata(m: Metadata): Unit = {
       if (verifyMetadataAction) {
         checkReadIncompatibleSchemaChanges(m, version, batchStartVersion, batchEndVersionOpt)
@@ -358,6 +379,9 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     if (actions.exists(_.isInstanceOf[AddCDCFile])) {
       (actions.filter {
         case _: AddCDCFile => true
+        case commitInfo: CommitInfo =>
+          commitInfoAction = Some(commitInfo)
+          false
         case m: Metadata =>
           checkAndCacheMetadata(m)
           false
@@ -365,7 +389,11 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           protocolAction = Some(p)
           false
         case _ => false
-      }.asInstanceOf[Seq[FileAction]], shouldSkipIndexedFile, metadataAction, protocolAction)
+      }.asInstanceOf[Seq[FileAction]],
+        shouldSkipIndexedFile,
+        metadataAction,
+        protocolAction,
+        commitInfoAction)
     } else {
       (actions.filter {
         case a: AddFile =>
@@ -383,12 +411,17 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           false
         case commitInfo: CommitInfo =>
           shouldSkipIndexedFile = CDCReader.shouldSkipFileActionsInCommit(commitInfo)
+          commitInfoAction = Some(commitInfo)
           false
         case _: AddCDCFile | _: SetTransaction | _: DomainMetadata =>
           false
         case null => // Some crazy future feature. Ignore
           false
-      }.asInstanceOf[Seq[FileAction]], shouldSkipIndexedFile, metadataAction, protocolAction)
+      }.asInstanceOf[Seq[FileAction]],
+        shouldSkipIndexedFile,
+        metadataAction,
+        protocolAction,
+        commitInfoAction)
     }
   }
 }

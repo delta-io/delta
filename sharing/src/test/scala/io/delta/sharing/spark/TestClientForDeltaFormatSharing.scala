@@ -50,13 +50,25 @@ private[spark] class TestClientForDeltaFormatSharing(
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
     readerFeatures: String = "",
     queryTablePaginationEnabled: Boolean = false,
-    maxFilesPerReq: Int = 100000)
+    maxFilesPerReq: Int = 100000,
+    enableAsyncQuery: Boolean = false,
+    asyncQueryPollIntervalMillis: Long = 10000L,
+    asyncQueryMaxDuration: Long = 600000L,
+    tokenExchangeMaxRetries: Int = 5,
+    tokenExchangeMaxRetryDurationInSeconds: Int = 60,
+    tokenRenewalThresholdInSeconds: Int = 600)
     extends DeltaSharingClient {
 
   assert(
     responseFormat == DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET ||
-    (readerFeatures.contains("deletionVectors") && readerFeatures.contains("columnMapping")),
-    "deletionVectors and columnMapping should be supported in all types of queries."
+    (
+      readerFeatures.contains("deletionVectors") &&
+      readerFeatures.contains("columnMapping") &&
+      readerFeatures.contains("timestampNtz") &&
+      readerFeatures.contains("variantType-preview")
+    ),
+    "deletionVectors, columnMapping, timestampNtz, variantType-preview should be supported in " +
+    "all types of queries."
   )
 
   import TestClientForDeltaFormatSharing._
@@ -130,12 +142,18 @@ private[spark] class TestClientForDeltaFormatSharing(
       TestClientForDeltaFormatSharing.jsonPredicateHints.put(tableFullName, p))
 
     val iterator = SparkEnv.get.blockManager
-      .get[String](getBlockId(table.name, "getFiles", versionAsOf, timestampAsOf))
+      .get[String](getBlockId(
+        table.name,
+        "getFiles",
+        versionAsOf = versionAsOf,
+        timestampAsOf = timestampAsOf,
+        limit = limit)
+      )
       .map(_.data.asInstanceOf[Iterator[String]])
       .getOrElse {
         throw new IllegalStateException(
           s"getFiles is missing for: ${table.name} versionAsOf:$versionAsOf, " +
-          s"timestampAsOf:$timestampAsOf. This shouldn't happen in the unit test."
+          s"timestampAsOf:$timestampAsOf, limit: $limit. This shouldn't happen in the unit test."
         )
       }
     // iterator.toSeq doesn't trigger CompletionIterator in BlockManager which releases the reader
@@ -252,7 +270,8 @@ object TestClientForDeltaFormatSharing {
       sharedTableName: String,
       queryType: String,
       versionAsOf: Option[Long] = None,
-      timestampAsOf: Option[String] = None): BlockId = {
+      timestampAsOf: Option[String] = None,
+      limit: Option[Long] = None): BlockId = {
     assert(!(versionAsOf.isDefined && timestampAsOf.isDefined))
     val suffix = if (versionAsOf.isDefined) {
       s"_v${versionAsOf.get}"
@@ -261,9 +280,10 @@ object TestClientForDeltaFormatSharing {
     } else {
       ""
     }
+    val limitSuffix = limit.map{ l => s"_l${l}"}.getOrElse("")
     BlockId(
       s"${DeltaSharingUtils.DELTA_SHARING_BLOCK_ID_PREFIX}" +
-      s"_${sharedTableName}_$queryType$suffix"
+      s"_${sharedTableName}_$queryType$suffix$limitSuffix"
     )
   }
 

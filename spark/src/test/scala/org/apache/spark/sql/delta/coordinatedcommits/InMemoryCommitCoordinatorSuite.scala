@@ -16,8 +16,14 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import io.delta.storage.commit.{GetCommitsResponse => JGetCommitsResponse}
 import org.apache.hadoop.fs.Path
 
 abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
@@ -27,11 +33,8 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
       deltaLog: DeltaLog): TableCommitCoordinatorClient = {
     val cs = InMemoryCommitCoordinatorBuilder(batchSize).build(spark, Map.empty)
     val conf = cs.registerTable(
-      deltaLog.logPath,
-      currentVersion = -1L,
-      initMetadata,
-      Protocol(1, 1))
-    TableCommitCoordinatorClient(cs, deltaLog, conf)
+      deltaLog.logPath, Optional.empty(), -1L, initMetadata, Protocol(1, 1))
+    TableCommitCoordinatorClient(cs, deltaLog, conf.asScala.toMap)
   }
 
   override protected def registerBackfillOp(
@@ -49,7 +52,7 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
       version: Long): Unit = {
     val lastExpectedBackfilledVersion = (version - (version % batchSize)).toInt
     val unbackfilledCommitVersionsAll = tableCommitCoordinatorClient
-      .getCommits().getCommits.map(_.getVersion)
+      .getCommits().getCommits.asScala.map(_.getVersion)
     val expectedVersions = lastExpectedBackfilledVersion + 1 to version.toInt
 
     assert(unbackfilledCommitVersionsAll == expectedVersions)
@@ -59,11 +62,11 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
   }
 
   protected def validateGetCommitsResult(
-      result: GetCommitsResponse,
+      result: JGetCommitsResponse,
       startVersion: Option[Long],
       endVersion: Option[Long],
       maxVersion: Long): Unit = {
-    val commitVersions = result.getCommits.map(_.getVersion)
+    val commitVersions = result.getCommits.asScala.map(_.getVersion)
     val lastExpectedBackfilledVersion = (maxVersion - (maxVersion % batchSize)).toInt
     val expectedVersions = lastExpectedBackfilledVersion + 1 to maxVersion.toInt
     assert(commitVersions == expectedVersions)

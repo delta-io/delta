@@ -18,7 +18,7 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import io.delta.kernel.Table
-import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
+import io.delta.kernel.engine.{CommitCoordinatorClientHandler, Engine, ExpressionHandler, FileSystemClient}
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
 import io.delta.kernel.expressions.Predicate
@@ -37,6 +37,7 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
 import java.nio.file.Files
+import java.util
 import java.util.Optional
 import scala.collection.convert.ImplicitConversions._
 import scala.collection.mutable.ArrayBuffer
@@ -365,6 +366,9 @@ class MetricsEngine(config: Configuration) extends Engine {
   override def getFileSystemClient: FileSystemClient = impl.getFileSystemClient
 
   override def getParquetHandler: MetricsParquetHandler = parquetHandler
+
+  override def getCommitCoordinatorClientHandler(name: String, conf: util.Map[String, String]):
+  CommitCoordinatorClientHandler = impl.getCommitCoordinatorClientHandler(name, conf)
 }
 
 /**

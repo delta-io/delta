@@ -27,10 +27,12 @@ import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTr
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TrackingCommitCoordinatorClient, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.util.FileNames.{checksumFile, unsafeDeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.storage.commit.CommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
 import org.scalatest.Tag
@@ -56,7 +58,9 @@ import org.apache.spark.util.Utils
 trait CloneTableSuiteBase extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with CoordinatedCommitsBaseSuite
+  with CoordinatedCommitsTestUtils {
 
   protected val TAG_HAS_SHALLOW_CLONE = new Tag("SHALLOW CLONE")
   protected val TAG_MODIFY_PROTOCOL = new Tag("CHANGES PROTOCOL")
@@ -456,7 +460,7 @@ trait CloneTableSuiteBase extends QueryTest
         "fs.s3.impl" -> classOf[S3LikeLocalFileSystem].getName,
         "fs.s3.impl.disable.cache" -> "true") {
       val df1 = Seq(1, 2, 3, 4, 5).toDF("id")
-      df1.write.format("delta").mode("append").save(source)
+      df1.write.format("delta").mode("append").save(s"s3:$source")
 
       runAndValidateClone(
         s"s3:$source",
@@ -556,10 +560,11 @@ trait CloneTableSuiteBase extends QueryTest
     }
   }
 
-  cloneTest("create or replace table - shallow", TAG_HAS_SHALLOW_CLONE) { (_, _) =>
-    val tbl = "source"
-    val target = "target"
-    Seq(true, false).foreach { isCreate =>
+  Seq(true, false).foreach { isCreate =>
+    cloneTest(s"create or replace table - shallow, isCreate: $isCreate",
+        TAG_HAS_SHALLOW_CLONE) { (_, _) =>
+      val tbl = "source"
+      val target = "target"
       withTable(tbl, target) {
         spark.range(5).write.format("delta").saveAsTable(tbl)
         spark.range(25).write.format("delta").saveAsTable(target)
@@ -575,11 +580,12 @@ trait CloneTableSuiteBase extends QueryTest
     }
   }
 
-  cloneTest("create or replace non Delta table - shallow", TAG_HAS_SHALLOW_CLONE) { (_, _) =>
-    val tbl = "source"
-    val target = "target"
-    Seq(true, false).foreach { isCreate =>
-      Seq("parquet", "json").foreach { format =>
+  Seq(true, false).foreach { isCreate =>
+    Seq("parquet", "json").foreach { format =>
+      cloneTest(s"create or replace non Delta table - shallow, isCreate: $isCreate, " +
+          s"format: $format", TAG_HAS_SHALLOW_CLONE) { (_, _) =>
+        val tbl = "source"
+        val target = "target"
         withTable(tbl, target) {
           spark.range(5).write.format("delta").saveAsTable(tbl)
           spark.range(25).write.format(format).saveAsTable(target)
@@ -597,9 +603,10 @@ trait CloneTableSuiteBase extends QueryTest
     }
   }
 
-  cloneTest("shallow clone a table unto itself", TAG_HAS_SHALLOW_CLONE) { (_, _) =>
-    val tbl = "source"
-    Seq(true, false).foreach { isCreate =>
+  Seq(true, false).foreach { isCreate =>
+    cloneTest(s"shallow clone a table unto itself, isCreate: $isCreate",
+        TAG_HAS_SHALLOW_CLONE) { (_, _) =>
+      val tbl = "source"
       withTable(tbl) {
         spark.range(5).write.format("delta").saveAsTable(tbl)
 
@@ -622,9 +629,12 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("CLONE ignores reader/writer session defaults", TAG_HAS_SHALLOW_CLONE) {
     (source, clone) =>
+      if (coordinatedCommitsEnabledInTests) {
+        cancel("Expects base protocol version")
+      }
       withSQLConf(
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
         // Create table without a default property setting.
         spark.range(1L).write.format("delta").mode("overwrite").save(source)
         val oldProtocol = DeltaLog.forTable(spark, source).update().protocol
@@ -666,6 +676,12 @@ trait CloneTableSuiteBase extends QueryTest
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     fs.setTimes(path, time, 0)
+    if (coordinatedCommitsEnabledInTests) {
+      InCommitTimestampTestUtils.overwriteICTInDeltaFile(
+        DeltaLog.forTable(spark, source),
+        path,
+        Some(time))
+    }
 
     runAndValidateClone(
       source,
@@ -675,10 +691,10 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("clones take protocol from the source",
     TAG_HAS_SHALLOW_CLONE, TAG_MODIFY_PROTOCOL, TAG_CHANGE_COLUMN_MAPPING_MODE) { (source, clone) =>
-    // Change protocol versions of (read, write) = (2, 3). We cannot initialize this to (0, 0)
+    // Change protocol versions of (read, write) = (2, 5). We cannot initialize this to (0, 0)
     // because min reader and writer versions are at least 1.
     val defaultNewTableProtocol = Protocol.forNewTable(spark, metadataOpt = None)
-    val sourceProtocol = Protocol(2, 3)
+    val sourceProtocol = Protocol(2, 5)
     // Make sure this is actually an upgrade. Downgrades are not supported, and if it's the same
     // version, we aren't testing anything there.
     assert(sourceProtocol.minWriterVersion > defaultNewTableProtocol.minWriterVersion &&
@@ -773,6 +789,10 @@ trait CloneTableSuiteBase extends QueryTest
     testAllClones("Cloning a table with new table properties" +
       s" that force protocol version upgrade - ${featureWithProperty.property.key}"
     ) { (source, target, isShallow) =>
+      if (coordinatedCommitsEnabledInTests) {
+        cancel("table needs to start with default protocol versions but enabling " +
+          "coordinatedCommits upgrades table protocol version.")
+      }
       import DeltaTestUtils.StrictProtocolOrdering
 
       spark.range(5).write.format("delta").save(source)
@@ -807,6 +827,10 @@ trait CloneTableSuiteBase extends QueryTest
 
   testAllClones("Cloning a table without DV property should not upgrade protocol version"
   ) { (source, target, isShallow) =>
+    if (coordinatedCommitsEnabledInTests) {
+      cancel("table needs to start with default protocol versions but enabling " +
+        "coordinatedCommits upgrades table protocol version.")
+    }
     import DeltaTestUtils.StrictProtocolOrdering
 
     spark.range(5).write.format("delta").save(source)
@@ -844,8 +868,10 @@ trait CloneTableColumnMappingSuiteBase
   override protected def runOnlyTests: Seq[String] = Seq(
     "simple shallow clone",
     "shallow clone a shallow clone",
-    "create or replace table - shallow",
-    "shallow clone a table unto itself",
+    "create or replace table - shallow, isCreate: false",
+    "create or replace table - shallow, isCreate: true",
+    "shallow clone a table unto itself, isCreate: false",
+    "shallow clone a table unto itself, isCreate: true",
     "Clone a time traveled source",
 
     "validate commitLarge usage metrics",

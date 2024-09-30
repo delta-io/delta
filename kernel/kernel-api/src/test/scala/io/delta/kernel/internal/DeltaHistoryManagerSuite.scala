@@ -29,25 +29,52 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
   def checkGetActiveCommitAtTimestamp(
     fileList: Seq[FileStatus],
     timestamp: Long,
-    expectedVersion: Long): Unit = {
+    expectedVersion: Long,
+    mustBeRecreatable: Boolean = true,
+    canReturnLastCommit: Boolean = false,
+    canReturnEarliestCommit: Boolean = false): Unit = {
     val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
       createMockFSListFromEngine(fileList),
       logPath,
-      timestamp
+      timestamp,
+      mustBeRecreatable,
+      canReturnLastCommit,
+      canReturnEarliestCommit
     )
-    assert(activeCommit == expectedVersion,
+    assert(activeCommit.getVersion == expectedVersion,
       s"Expected version $expectedVersion but got $activeCommit for timestamp=$timestamp")
+
+    if (mustBeRecreatable) {
+      // When mustBeRecreatable=true, we should have the same answer as mustBeRecreatable=false
+      // for valid queries that do not throw an error
+      val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+        createMockFSListFromEngine(fileList),
+        logPath,
+        timestamp,
+        false, // mustBeRecreatable
+        canReturnLastCommit,
+        canReturnEarliestCommit
+      )
+      assert(activeCommit.getVersion == expectedVersion,
+        s"Expected version $expectedVersion but got $activeCommit for timestamp=$timestamp")
+    }
   }
 
   def checkGetActiveCommitAtTimestampError[T <: Throwable](
     fileList: Seq[FileStatus],
     timestamp: Long,
-    expectedErrorMessageContains: String)(implicit classTag: ClassTag[T]): Unit = {
+    expectedErrorMessageContains: String,
+    mustBeRecreatable: Boolean = true,
+    canReturnLastCommit: Boolean = false,
+    canReturnEarliestCommit: Boolean = false)(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
         logPath,
-        timestamp
+        timestamp,
+        mustBeRecreatable,
+        canReturnLastCommit,
+        canReturnEarliestCommit
       )
     }
     assert(e.getMessage.contains(expectedErrorMessageContains))
@@ -72,6 +99,9 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       21,
       DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
+    // Valid queries with canReturnLastCommit=true and canReturnEarliestCommit=true
+    checkGetActiveCommitAtTimestamp(deltaFiles, -1, 0, canReturnEarliestCommit = true)
+    checkGetActiveCommitAtTimestamp(deltaFiles, 21, 2, canReturnLastCommit = true)
   }
 
   test("getActiveCommitAtTimestamp: basic listing from 0 with a checkpoint") {
@@ -93,6 +123,9 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       21,
       DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
+    // Valid queries with canReturnLastCommit=true and canReturnEarliestCommit=true
+    checkGetActiveCommitAtTimestamp(deltaFiles, -1, 0, canReturnEarliestCommit = true)
+    checkGetActiveCommitAtTimestamp(deltaFiles, 21, 2, canReturnLastCommit = true)
   }
 
   test("getActiveCommitAtTimestamp: truncated delta log") {
@@ -112,6 +145,9 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       31,
       DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 31, 30, 3).getMessage
     )
+    // Valid queries with canReturnLastCommit=true and canReturnEarliestCommit=true
+    checkGetActiveCommitAtTimestamp(deltaFiles, 8, 2, canReturnEarliestCommit = true)
+    checkGetActiveCommitAtTimestamp(deltaFiles, 31, 3, canReturnLastCommit = true)
   }
 
   test("getActiveCommitAtTimestamp: truncated delta log only checkpoint version") {
@@ -129,6 +165,9 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       21,
       DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 21, 20, 2).getMessage
     )
+    // Valid queries with canReturnLastCommit=true and canReturnEarliestCommit=true
+    checkGetActiveCommitAtTimestamp(deltaFiles, 8, 2, canReturnEarliestCommit = true)
+    checkGetActiveCommitAtTimestamp(deltaFiles, 21, 2, canReturnLastCommit = true)
   }
 
   test("getActiveCommitAtTimestamp: truncated delta log with multi-part checkpoint") {
@@ -148,6 +187,9 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       31,
       DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 31, 30, 3).getMessage
     )
+    // Valid queries with canReturnLastCommit=true and canReturnEarliestCommit=true
+    checkGetActiveCommitAtTimestamp(deltaFiles, 8, 2, canReturnEarliestCommit = true)
+    checkGetActiveCommitAtTimestamp(deltaFiles, 31, 3, canReturnLastCommit = true)
   }
 
   test("getActiveCommitAtTimestamp: throws table not found exception") {
@@ -156,7 +198,10 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         logPath,
-        0
+        0,
+        true, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
       )
     )
     // Empty _delta_log directory
@@ -164,7 +209,10 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
         logPath,
-        0
+        0,
+        true, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
       )
     )
   }
@@ -203,6 +251,79 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       deltaFileStatuses(Seq(2L, 3L)) ++ multiCheckpointFileStatuses(Seq(2L), 3).take(2),
       25,
       "No recreatable commits found"
+    )
+  }
+
+  test("getActiveCommitAtTimestamp: when mustBeRecreatable=false") {
+    Seq(deltaFileStatuses(Seq(1L, 2L, 3L)), // w/o checkpoint
+      singularCheckpointFileStatuses(Seq(2L)) ++ deltaFileStatuses(Seq(1L, 2L, 3L)) // w/checkpoint
+    ).foreach { deltaFiles =>
+      // Valid queries
+      checkGetActiveCommitAtTimestamp(deltaFiles, 10, 1, mustBeRecreatable = false)
+      checkGetActiveCommitAtTimestamp(deltaFiles, 11, 1, mustBeRecreatable = false)
+      checkGetActiveCommitAtTimestamp(deltaFiles, 20, 2, mustBeRecreatable = false)
+      checkGetActiveCommitAtTimestamp(deltaFiles, 21, 2, mustBeRecreatable = false)
+      checkGetActiveCommitAtTimestamp(deltaFiles, 30, 3, mustBeRecreatable = false)
+      // Invalid queries
+      checkGetActiveCommitAtTimestampError[RuntimeException](
+        deltaFiles,
+        -1,
+        DeltaErrors.timestampBeforeFirstAvailableCommit(dataPath.toString, -1, 10, 1).getMessage,
+        mustBeRecreatable = false
+      )
+      checkGetActiveCommitAtTimestampError[RuntimeException](
+        deltaFiles,
+        31,
+        DeltaErrors.timestampAfterLatestCommit(dataPath.toString, 31, 30, 3).getMessage,
+        mustBeRecreatable = false
+      )
+      // Valid queries with canReturnLastCommit=true and canReturnEarliestCommit=true
+      checkGetActiveCommitAtTimestamp(
+        deltaFiles, 0, 1, mustBeRecreatable = false, canReturnEarliestCommit = true)
+      checkGetActiveCommitAtTimestamp(
+        deltaFiles, 31, 3, mustBeRecreatable = false, canReturnLastCommit = true)
+    }
+  }
+
+  test("getActiveCommitAtTimestamp: mustBeRecreatable=false error cases") {
+    /* ---------- TABLE NOT FOUND --------- */
+    // Non-existent path
+    intercept[TableNotFoundException](
+      DeltaHistoryManager.getActiveCommitAtTimestamp(
+        createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
+        logPath,
+        0,
+        false, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
+      )
+    )
+    // Empty _delta_log directory
+    intercept[TableNotFoundException](
+      DeltaHistoryManager.getActiveCommitAtTimestamp(
+        createMockFSListFromEngine(p => Seq()),
+        logPath,
+        0,
+        true, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
+      )
+    )
+    /* ---------- CORRUPT LISTINGS --------- */
+    // No commit files at all (only checkpoint files)
+    checkGetActiveCommitAtTimestampError[RuntimeException](
+      singularCheckpointFileStatuses(Seq(1L)),
+      25,
+      "No delta files found in the directory",
+      mustBeRecreatable = false
+    )
+    // No delta files
+    checkGetActiveCommitAtTimestampError[RuntimeException](
+      Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00f.oo0.parquet")
+        .map(FileStatus.of(_, 10, 10)),
+      25,
+      "No delta files found in the directory",
+      mustBeRecreatable = false
     )
   }
 }

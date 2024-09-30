@@ -24,6 +24,7 @@ import java.time.LocalDateTime
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatisticsCollection.{ASCII_MAX_CHARACTER, UTF8_MAX_CHARACTER}
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -359,29 +360,67 @@ class StatsCollectionSuite
     }
   }
 
+  test("Truncate min string") {
+    // scalastyle:off nonascii
+    val inputToExpected = Seq(
+      (s"abcd", s"abc", 3),
+      (s"abcdef", s"abcdef", 6),
+      (s"abcde�", s"abcde�", 6),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        s"$UTF8_MAX_CHARACTER",
+        1),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER", s"$UTF8_MAX_CHARACTER", 1),
+      (s"abcd", null, 0)
+    )
+
+    inputToExpected.foreach {
+      case (input, expected, prefixLen) =>
+        val actual = StatisticsCollection.truncateMinStringAgg(prefixLen)(input)
+        val debugMsg = s"input:$input, actual:$actual, expected:$expected"
+        assert(actual == expected, debugMsg)
+        if (actual != null) {
+          assert(input.startsWith(actual), debugMsg)
+        }
+    }
+    // scalastyle:on nonascii
+  }
+
   test("Truncate max string") {
     // scalastyle:off nonascii
-    val prefixLen = 6
-    // � is the max unicode character with value \ufffd
     val inputToExpected = Seq(
-      (s"abcd", s"abcd"),
-      (s"abcdef", s"abcdef"),
-      (s"abcde�", s"abcde�"),
-      (s"abcd�abcd", s"abcd�a�"),
-      (s"�abcd", s"�abcd"),
-      (s"abcdef�", s"abcdef�"),
-      (s"abcdef-abcdef�", s"abcdef�"),
-      (s"abcdef�abcdef", s"abcdef��"),
-      (s"abcdef��abcdef", s"abcdef���"),
-      (s"abcdef�abcdef�abcdef�abcdef", s"abcdef��"),
-      (s"漢字仮名한글தமி", s"漢字仮名한글�"),
-      (s"漢字仮名한글��", s"漢字仮名한글��"),
-      (s"漢字仮名한글", s"漢字仮名한글")
+      (s"abcd", null, 0),
+      (s"a${UTF8_MAX_CHARACTER}d", s"a$UTF8_MAX_CHARACTER$ASCII_MAX_CHARACTER", 2),
+      (s"abcd", s"abcd", 6),
+      (s"abcdef", s"abcdef", 6),
+      (s"abcde�", s"abcde�", 6),
+      (s"abcd�abcd", s"abcd�a$ASCII_MAX_CHARACTER", 6),
+      (s"�abcd", s"�abcd", 6),
+      (s"abcdef�", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcdef��", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcdef-abcdef�", s"abcdef$ASCII_MAX_CHARACTER", 6),
+      (s"abcdef�abcdef", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcde�abcdef�abcdef�abcdef", s"abcde�$ASCII_MAX_CHARACTER", 6),
+      (s"漢字仮名한글தமி", s"漢字仮名한글$UTF8_MAX_CHARACTER", 6),
+      (s"漢字仮名한글��", s"漢字仮名한글$UTF8_MAX_CHARACTER", 6),
+      (s"漢字仮名한글", s"漢字仮名한글", 6),
+      (s"abcdef🚀", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER", null, 1),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        4),
+      (s"����", s"��$UTF8_MAX_CHARACTER", 2),
+      (s"���", s"�$UTF8_MAX_CHARACTER", 1),
+      ("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀",
+        s"abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼$UTF8_MAX_CHARACTER",
+        32)
     )
+
     inputToExpected.foreach {
-      case (input, expected) =>
+      case (input, expected, prefixLen) =>
         val actual = StatisticsCollection.truncateMaxStringAgg(prefixLen)(input)
-        assert(actual == expected, s"input:$input, actual:$actual, expected:$expected")
+        // `Actual` should be higher or equal than `input` in UTF-8 encoded binary order.
+        val debugMsg = s"input:$input, actual:$actual, expected:$expected"
+        assert(actual == expected, debugMsg)
     }
     // scalastyle:off nonascii
   }

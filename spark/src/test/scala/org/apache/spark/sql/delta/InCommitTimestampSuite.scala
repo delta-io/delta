@@ -19,7 +19,8 @@ package org.apache.spark.sql.delta
 import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.Timestamp
 
-import scala.concurrent.duration.Duration
+import scala.collection.JavaConverters._
+import scala.concurrent.duration._
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
@@ -28,10 +29,13 @@ import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{ManualClock, SerializableConfiguration, ThreadUtils}
 
@@ -40,7 +44,8 @@ class InCommitTimestampSuite
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaTestUtilsBase
-    with CoordinatedCommitsTestUtils {
+    with CoordinatedCommitsTestUtils
+    with StreamTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -54,6 +59,15 @@ class InCommitTimestampSuite
       deltaFile,
       deltaLog.newDeltaHadoopConf())
     commitInfo.get.inCommitTimestamp.get
+  }
+
+  private def getFileModificationTimesMap(
+      deltaLog: DeltaLog, start: Long, end: Long): Map[Long, Long] = {
+    deltaLog.store.listFrom(
+        FileNames.listingPrefix(deltaLog.logPath, start), deltaLog.newDeltaHadoopConf())
+      .collect { case FileNames.DeltaFile(fs, v) => v -> fs.getModificationTime }
+      .takeWhile(_._1 <= end)
+      .toMap
   }
 
   test("Enable ICT on commit 0") {
@@ -203,8 +217,8 @@ class InCommitTimestampSuite
         latestSnapshot.timestamp
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_MISSING_COMMIT_INFO",
+        e,
+        "DELTA_MISSING_COMMIT_INFO",
         parameters = Map(
           "featureName" -> InCommitTimestampTableFeature.name,
           "version" -> "1"))
@@ -242,8 +256,8 @@ class InCommitTimestampSuite
         latestSnapshot.timestamp
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_MISSING_COMMIT_TIMESTAMP",
+        e,
+        "DELTA_MISSING_COMMIT_TIMESTAMP",
         parameters = Map("featureName" -> InCommitTimestampTableFeature.name, "version" -> "1"))
     }
   }
@@ -260,24 +274,26 @@ class InCommitTimestampSuite
   }
 
   test("CREATE OR REPLACE should not disable ICT") {
-    withSQLConf(
-      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
-    ) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
-            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+    withoutCoordinatedCommitsDefaultTableProperties {
+      withSQLConf(
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
+      ) {
+        withTempDir { tempDir =>
+          spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+          spark.sql(
+            s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+              s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
-        spark.sql(
-          s"CREATE OR REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id long) USING delta")
+          spark.sql(
+            s"CREATE OR REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id long) USING delta")
 
-        val deltaLogAfterCreateOrReplace =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        val snapshot = deltaLogAfterCreateOrReplace.snapshot
-        assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
-        assert(snapshot.timestamp ==
-          getInCommitTimestamp(deltaLogAfterCreateOrReplace, snapshot.version))
+          val deltaLogAfterCreateOrReplace =
+            DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          val snapshot = deltaLogAfterCreateOrReplace.snapshot
+          assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(snapshot.metadata))
+          assert(snapshot.timestamp ==
+            getInCommitTimestamp(deltaLogAfterCreateOrReplace, snapshot.version))
+        }
       }
     }
   }
@@ -986,6 +1002,98 @@ class InCommitTimestampSuite
       assert(historySubset.head.timestamp.getTime == getInCommitTimestamp(deltaLog, 2))
     }
   }
+
+  for (ictEnablementVersion <- Seq(1, 4, 7))
+  testWithDefaultCommitCoordinatorUnset(s"CDC read with all commits being ICT " +
+    s"[ictEnablementVersion = $ictEnablementVersion]") {
+    withSQLConf(
+      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false"
+    ) {
+      withTempDir { tempDir =>
+        val path = tempDir.getCanonicalPath
+        for (i <- 0 to 7) {
+          if (i == ictEnablementVersion) {
+            spark.sql(
+              s"ALTER TABLE delta.`$path` " +
+                s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+          } else {
+            spark.range(i, i + 1).write.format("delta").mode("append").save(path)
+          }
+        }
+        val deltaLog = DeltaLog.forTable(spark, new Path(path))
+        val result = spark.read
+          .format("delta")
+          .option("startingVersion", "1")
+          .option("endingVersion", "7")
+          .option("readChangeFeed", "true")
+          .load(path)
+          .select("_commit_timestamp", "_commit_version")
+          .collect()
+        val fileTimestampsMap = getFileModificationTimesMap(deltaLog, 0, 7)
+        result.foreach { row =>
+          val v = row.getAs[Long]("_commit_version")
+          val expectedTimestamp = if (v >= ictEnablementVersion) {
+            getInCommitTimestamp(deltaLog, v)
+          } else {
+            fileTimestampsMap(v)
+          }
+          assert(row.getAs[Timestamp]("_commit_timestamp").getTime == expectedTimestamp)
+        }
+      }
+    }
+  }
+
+  for (ictEnablementVersion <- Seq(1, 4, 7))
+  testWithDefaultCommitCoordinatorUnset(s"Streaming query + CDC " +
+    s"[ictEnablementVersion = $ictEnablementVersion]") {
+    withSQLConf(
+      DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false"
+    ) {
+      withTempDir { tempDir => withTempDir { checkpointDir => withTempDir { streamingSink =>
+        val path = tempDir.getCanonicalPath
+        spark.range(0).write.format("delta").mode("append").save(path)
+
+        val sourceDeltaLog = DeltaLog.forTable(spark, new Path(path))
+        val sinkPath = streamingSink.getCanonicalPath
+        val streamingQuery = spark.readStream
+          .format("delta")
+          .option("readChangeFeed", "true")
+          .load(path)
+          .select(
+            col("_commit_timestamp").alias("source_commit_timestamp"),
+            col("_commit_version").alias("source_commit_version"))
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start(sinkPath)
+        for (i <- 1 to 7) {
+          if (i == ictEnablementVersion) {
+            spark.sql(s"ALTER TABLE delta.`$path` " +
+              s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+          } else {
+            spark.range(i, i + 1).write.format("delta").mode("append").save(path)
+          }
+        }
+        streamingQuery.processAllAvailable()
+        val fileTimestampsMap = getFileModificationTimesMap(sourceDeltaLog, 0, 7)
+        val result = spark.read.format("delta")
+          .load(sinkPath)
+          .collect()
+        result.foreach { row =>
+          val v = row.getAs[Long]("source_commit_version")
+          val expectedTimestamp = if (v >= ictEnablementVersion) {
+            getInCommitTimestamp(sourceDeltaLog, v)
+          } else {
+            fileTimestampsMap(v)
+          }
+          assert(
+            row.getAs[Timestamp]("source_commit_timestamp").getTime == expectedTimestamp)
+        }
+      }}}
+    }
+  }
 }
 
 class InCommitTimestampWithCoordinatedCommitsSuite
@@ -1015,8 +1123,8 @@ class InCommitTimestampWithCoordinatedCommitsSuite
       val commitFileProvider = DeltaCommitFileProvider(deltaLog.update())
       val unbackfilledCommits =
         tableCommitCoordinatorClient
-          .getCommits(Some(1))
-          .getCommits
+          .getCommits(Some(1L))
+          .getCommits.asScala
           .map { commit => DeltaHistoryManager.Commit(commit.getVersion, commit.getCommitTimestamp)}
       val commits = (Seq(commit0) ++ unbackfilledCommits).toList
       // Search for the exact timestamp.

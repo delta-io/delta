@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{CLUSTERING_PARAMETER_KEY, ZORDER_PARAMETER_KEY}
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -32,7 +33,10 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession {
+trait ClusteredTableTestUtilsBase
+    extends SparkFunSuite
+    with SharedSparkSession
+    with CoordinatedCommitsBaseSuite {
   import testImplicits._
 
   /**
@@ -161,6 +165,23 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     }
   }
 
+  protected def deleteTableFromCommitCoordinatorIfNeeded(table: String): Unit = {
+    if (coordinatedCommitsEnabledInTests) {
+      // Clean up the table data in commit coordinator because DROP/REPLACE TABLE does not bother
+      // commit coordinator.
+      deleteTableFromCommitCoordinator(table)
+    }
+  }
+
+  override def withTable(tableNames: String*)(f: => Unit): Unit = {
+    Utils.tryWithSafeFinally(f) {
+      tableNames.foreach { name =>
+        deleteTableFromCommitCoordinatorIfNeeded(name)
+        spark.sql(s"DROP TABLE IF EXISTS $name")
+      }
+    }
+  }
+
   def withClusteredTable[T](
       table: String,
       schema: String,
@@ -170,6 +191,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     createOrReplaceClusteredTable("CREATE", table, schema, clusterBy, tableProperties, location)
 
     Utils.tryWithSafeFinally(f) {
+      deleteTableFromCommitCoordinatorIfNeeded(table)
       spark.sql(s"DROP TABLE IF EXISTS $table")
     }
   }
@@ -199,6 +221,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     }
     spark.sql(s"$clause TABLE $table ($schema) USING delta CLUSTER BY ($clusterBy) " +
       s"$tablePropertiesClause $locationClause")
+    location.foreach { loc => locRefCount(loc) = locRefCount.getOrElse(loc, 0) + 1 }
   }
 
   protected def createOrReplaceAsSelectClusteredTable(

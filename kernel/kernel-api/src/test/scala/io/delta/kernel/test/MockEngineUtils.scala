@@ -52,7 +52,8 @@ trait MockEngineUtils {
     fileSystemClient: FileSystemClient = null,
     jsonHandler: JsonHandler = null,
     parquetHandler: ParquetHandler = null,
-    expressionHandler: ExpressionHandler = null): Engine = {
+    expressionHandler: ExpressionHandler = null,
+    commitCoordinatorClientHandler: CommitCoordinatorClientHandler = null): Engine = {
     new Engine() {
       override def getExpressionHandler: ExpressionHandler =
         Option(expressionHandler).getOrElse(
@@ -69,6 +70,11 @@ trait MockEngineUtils {
       override def getParquetHandler: ParquetHandler =
         Option(parquetHandler).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))
+
+      override def getCommitCoordinatorClientHandler(name: String, conf: util.Map[String, String]):
+      CommitCoordinatorClientHandler =
+        Option(commitCoordinatorClientHandler).getOrElse(
+          throw new UnsupportedOperationException("not supported in this test suite"))
     }
   }
 }
@@ -81,9 +87,6 @@ trait BaseMockJsonHandler extends JsonHandler {
       jsonStringVector: ColumnVector,
       outputSchema: StructType,
       selectionVector: Optional[ColumnVector]): ColumnarBatch =
-    throw new UnsupportedOperationException("not supported in this test suite")
-
-  override def deserializeStructType(structTypeJson: String): StructType =
     throw new UnsupportedOperationException("not supported in this test suite")
 
   override def readJsonFiles(
@@ -155,5 +158,8 @@ trait BaseMockFileSystemClient extends FileSystemClient {
     throw new UnsupportedOperationException("not supported in this test suite")
 
   override def mkdirs(path: String): Boolean =
+    throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def delete(path: String): Boolean =
     throw new UnsupportedOperationException("not supported in this test suite")
 }
