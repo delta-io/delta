@@ -196,6 +196,33 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           defaultCollationIdentifier)
       ),
       (
+        new CollatedPredicate(
+          "=",
+          new Column("a1"),
+          Literal.ofString("a"),
+          defaultCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "AND",
+          new CollatedDataSkippingPredicate(
+            "<=",
+            new Column(Array(STATS_WITH_COLLATION,
+              defaultCollationIdentifier.toString,
+              MIN,
+              "a1")),
+            Literal.ofString("a"),
+            defaultCollationIdentifier),
+          new CollatedDataSkippingPredicate(
+            ">=",
+            new Column(Array(STATS_WITH_COLLATION,
+              defaultCollationIdentifier.toString,
+              MAX,
+              "a1")),
+            Literal.ofString("a"),
+            defaultCollationIdentifier))
+      ),
+      (
         new And(
           new CollatedPredicate(
             "<",
@@ -226,7 +253,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
               Literal.ofString("a")).asJava,
             new util.HashSet(),
             new util.HashMap()))
-      )
+      ),
     ).foreach {
       case (predicate, schema, dataSkippingPredicate) =>
         assert(DataSkippingUtils.constructDataSkippingFilter(predicate, schema).get().toString

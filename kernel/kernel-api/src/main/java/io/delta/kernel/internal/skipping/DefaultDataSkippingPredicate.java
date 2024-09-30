@@ -43,7 +43,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
       Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
-    this.referencedCollatedCols = Collections.unmodifiableMap(collatedReferencedCols);
+    this.referencedCollatedCols = collatedReferencedCols;
   }
 
   /**
