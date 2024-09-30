@@ -1063,7 +1063,7 @@ Row Tracking is defined to be **supported** or **enabled** on a table as follows
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`. The feature `domainMetadata` is required in the table `protocol`'s `writerFeatures`.
 - The table property `delta.enableRowTracking` must be set to `true`.
 
 ## Row IDs
