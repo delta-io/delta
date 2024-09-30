@@ -325,7 +325,12 @@ public class StatsSchemaHelper {
     checkArgument(
         logicalToPhysicalColumn.containsKey(column),
         String.format("%s is not a valid leaf column for data schema", column, dataSchema));
-    return getChildColumn(getChildColumn(column, statType), collatedIdentifier.toString());
+    return getChildColumn(
+              getChildColumn(
+                    getChildColumn(
+                            logicalToPhysicalColumn.get(column), statType),
+                      collatedIdentifier.toString()),
+          STATS_WITH_COLLATION);
   }
 
   /**

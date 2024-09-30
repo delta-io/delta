@@ -16,11 +16,10 @@
 package io.delta.kernel.internal.util
 
 import scala.collection.JavaConverters._
-
-import io.delta.kernel.expressions.Column
+import io.delta.kernel.expressions.{CollatedPredicate, Column, Literal}
 import io.delta.kernel.internal.skipping.DataSkippingUtils
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.{DataType, StructField, StructType}
+import io.delta.kernel.types.{CollationIdentifier, DataType, StringType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
 class DataSkippingUtilsSuite extends AnyFunSuite {
@@ -166,5 +165,27 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       Set(),
       new StructType()
     )
+  }
+
+  test("constructDataSkippingFilter - with collated predicates") {
+    val defaultCollationIdentifier =
+      CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+
+    Seq(
+      // (predicate, schema)
+      (
+        new CollatedPredicate(
+          "<",
+          new Column("a1"),
+          Literal.ofString("a"),
+          defaultCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING)
+      )
+    ).foreach {
+      case (predicate, schema) =>
+        assert(DataSkippingUtils.constructDataSkippingFilter(predicate, schema).toString
+        .equals())
+    }
   }
 }
