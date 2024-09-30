@@ -2493,6 +2493,13 @@ trait DeltaErrorsSuiteBase
           "Did you manually delete files in the _delta_log directory?"))
     }
     {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.unsupportedDeepCloneException()
+      }
+      checkErrorMessage(e, Some("DELTA_UNSUPPORTED_DEEP_CLONE"), Some("0A000"),
+        Some("Deep clone is not supported by this Delta version."))
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.viewInDescribeDetailException(TableIdentifier("customer"))
       }

@@ -16,44 +16,32 @@
 
 package org.apache.spark.sql.delta
 
-// scalastyle:off import.ordering.noEmptyLine
 import java.io.File
-import java.net.URI
 import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TrackingCommitCoordinatorClient, TrackingInMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
-import org.apache.spark.sql.delta.util.FileNames.{checksumFile, unsafeDeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 import org.apache.spark.sql.delta.util.JsonUtils
-import io.delta.storage.commit.CommitCoordinatorClient
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.Path
 import org.scalatest.Tag
 
-import org.apache.spark.{DebugFilesystem, SparkException, TaskFailedReason}
-import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.NoSuchDatabaseException
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.execution.streaming.{CheckpointFileManager, FileSystemBasedCheckpointFileManager, MemoryStream}
-import org.apache.spark.sql.functions.{col, floor, from_json}
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.util.Utils
-// scalastyle:on import.ordering.noEmptyLine
 
 trait CloneTableSuiteBase extends QueryTest
   with SharedSparkSession
@@ -112,6 +100,7 @@ trait CloneTableSuiteBase extends QueryTest
   protected def runAndValidateClone(
       source: String,
       target: String,
+      isShallow: Boolean,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
       targetLocation: Option[String] = None,
@@ -129,6 +118,7 @@ trait CloneTableSuiteBase extends QueryTest
         () => cloneTable(
           source,
           target,
+          isShallow,
           sourceIsTable,
           targetIsTable,
           targetLocation,
@@ -323,6 +313,7 @@ trait CloneTableSuiteBase extends QueryTest
   protected def cloneTable(
       source: String,
       target: String,
+      isShallow: Boolean,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
       targetLocation: Option[String] = None,
@@ -368,12 +359,14 @@ trait CloneTableSuiteBase extends QueryTest
       source: String,
       target: String,
       sqlString: String,
+      isShallow: Boolean = true,
       targetIsTable: Boolean = false): Unit = {
     withTable(source) {
       spark.range(5).write.format("delta").saveAsTable(source)
       runAndValidateClone(
         source,
         target,
+        isShallow,
         sourceIsTable = true,
         targetIsTable = targetIsTable) {
         () => sql(sqlString)
@@ -389,7 +382,8 @@ trait CloneTableSuiteBase extends QueryTest
 
     runAndValidateClone(
       source,
-      clone
+      clone,
+      isShallow = true
     )()
     // no files should be copied
     val cloneDir = new File(clone).list()
@@ -416,12 +410,14 @@ trait CloneTableSuiteBase extends QueryTest
 
     runAndValidateClone(
       source,
-      shallow1
+      shallow1,
+      isShallow = true
     )()
 
     runAndValidateClone(
       shallow1,
-      shallow2
+      shallow2,
+      isShallow = true
     )()
 
     deleteSourceAndCompareData(shallow1, spark.read.format("delta").load(shallow2), df1)
@@ -447,6 +443,7 @@ trait CloneTableSuiteBase extends QueryTest
     runAndValidateClone(
       source,
       clone,
+      isShallow,
       commitLargeMetricsMap = commitLargeMetricsMap)()
 
     checkAnswer(
@@ -464,7 +461,8 @@ trait CloneTableSuiteBase extends QueryTest
 
       runAndValidateClone(
         s"s3:$source",
-        s"file:$clone"
+        s"file:$clone",
+        isShallow = true
       )()
 
       checkAnswer(
@@ -491,7 +489,8 @@ trait CloneTableSuiteBase extends QueryTest
     val ex = intercept[AnalysisException] {
       runAndValidateClone(
         source,
-        clone
+        clone,
+        isShallow
       )()
     }
     assert(ex.getMessage.contains("is not empty"))
@@ -520,7 +519,8 @@ trait CloneTableSuiteBase extends QueryTest
     // Create a clone
     runAndValidateClone(
       source,
-      target
+      target,
+      isShallow
     )()
 
     // Write to clone should be visible
@@ -538,11 +538,12 @@ trait CloneTableSuiteBase extends QueryTest
       runAndValidateClone(
         tableName,
         target,
+        isShallow,
         sourceIsTable = true)()
     }
   }
 
-  testAllClones("Clone a time traveled source") { (_, target, isShallow) =>
+  testAllClones("clone a time traveled source using version") { (_, target, isShallow) =>
     val tableName = "source"
     withTable(tableName) {
       spark.range(5).write.format("delta").saveAsTable(tableName)
@@ -554,6 +555,7 @@ trait CloneTableSuiteBase extends QueryTest
       runAndValidateClone(
         tableName,
         target,
+        isShallow,
         sourceIsTable = true,
         sourceVersion = Some(2))()
       assert(spark.read.format("delta").load(target).count() === 15)
@@ -572,6 +574,7 @@ trait CloneTableSuiteBase extends QueryTest
         runAndValidateClone(
           tbl,
           target,
+          isShallow = true,
           sourceIsTable = true,
           targetIsTable = true,
           isCreate = isCreate,
@@ -593,6 +596,7 @@ trait CloneTableSuiteBase extends QueryTest
           runAndValidateClone(
             tbl,
             target,
+            isShallow = true,
             sourceIsTable = true,
             targetIsTable = true,
             isCreate = isCreate,
@@ -613,6 +617,7 @@ trait CloneTableSuiteBase extends QueryTest
         runAndValidateClone(
           tbl,
           tbl,
+          isShallow = true,
           sourceIsTable = true,
           targetIsTable = true,
           isCreate = isCreate,
@@ -648,7 +653,8 @@ trait CloneTableSuiteBase extends QueryTest
           // (i.e. target properties are identical to source properties).
           runAndValidateClone(
             source,
-            clone
+            clone,
+            isShallow = true
           )()
         }
 
@@ -686,6 +692,7 @@ trait CloneTableSuiteBase extends QueryTest
     runAndValidateClone(
       source,
       clone,
+      isShallow,
       sourceTimestamp = Some(desiredTime))()
   }
 
@@ -713,7 +720,8 @@ trait CloneTableSuiteBase extends QueryTest
     // Validate that clone has the new protocol version
     runAndValidateClone(
       source,
-      clone
+      clone,
+      isShallow = true
     )()
   }
 
@@ -733,7 +741,8 @@ trait CloneTableSuiteBase extends QueryTest
 
       runAndValidateClone(
         path,
-        target
+        target,
+        isShallow
       )()
     }
   }
@@ -747,6 +756,7 @@ trait CloneTableSuiteBase extends QueryTest
       runAndValidateClone(
         source,
         target,
+        isShallow,
         tableProperties = Map(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false"))()
     }.getErrorClass === "DELTA_ADDING_DELETION_VECTORS_DISALLOWED"
   }
@@ -768,6 +778,7 @@ trait CloneTableSuiteBase extends QueryTest
       cloneTable(
         source,
         target,
+        isShallow,
         isReplace = true,
         tableProperties = tblPropertyOverrides)
 
@@ -811,6 +822,7 @@ trait CloneTableSuiteBase extends QueryTest
       cloneTable(
         source,
         target,
+        isShallow,
         isReplace = true,
         tableProperties = tblProperties)
 
@@ -849,6 +861,7 @@ trait CloneTableSuiteBase extends QueryTest
       cloneTable(
         source,
         target,
+        isShallow,
         isReplace = true)
 
       val targetDeltaLog = DeltaLog.forTable(spark, target)
@@ -872,8 +885,8 @@ trait CloneTableColumnMappingSuiteBase
     "create or replace table - shallow, isCreate: true",
     "shallow clone a table unto itself, isCreate: false",
     "shallow clone a table unto itself, isCreate: true",
-    "Clone a time traveled source",
-
+    "clone a time traveled source using version",
+    "clone a time traveled source using timestamp",
     "validate commitLarge usage metrics",
     "clones take the set transactions of the source",
     "block changing column mapping mode and modify max id modes under CLONE"
@@ -900,6 +913,7 @@ trait CloneTableColumnMappingSuiteBase
           cloneTable(
             source,
             target,
+            isShallow,
             tableProperties = Map(
               DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> "123123"
           ))
@@ -909,7 +923,8 @@ trait CloneTableColumnMappingSuiteBase
           withMaxColumnIdConf("123123") {
             cloneTable(
               source,
-              target
+              target,
+              isShallow
             )
           }
         }
@@ -932,6 +947,7 @@ trait CloneTableColumnMappingSuiteBase
           cloneTable(
             source,
             target,
+            isShallow,
             tableProperties = Map(
               DeltaConfigs.COLUMN_MAPPING_MODE.key -> otherMode
           ))
@@ -944,7 +960,8 @@ trait CloneTableColumnMappingSuiteBase
         withColumnMappingConf(otherMode) {
           cloneTable(
             source,
-            target
+            target,
+            isShallow
           )
         }
         assert(DeltaLog.forTable(spark, target).snapshot.metadata.columnMappingMode.name ==
@@ -959,6 +976,7 @@ trait CloneTableColumnMappingSuiteBase
           cloneTable(
             source,
             target,
+            isShallow,
             tableProperties = Map(
               DeltaConfigs.COLUMN_MAPPING_MODE.key -> "none"
           ))
@@ -970,7 +988,8 @@ trait CloneTableColumnMappingSuiteBase
         withColumnMappingConf("none") {
           cloneTable(
             source,
-            target
+            target,
+            isShallow
           )
         }
         assert(DeltaLog.forTable(spark, target).snapshot.metadata.columnMappingMode.name ==

@@ -627,6 +627,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def unsupportedDeepCloneException(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_UNSUPPORTED_DEEP_CLONE",
+      messageParameters = Array.empty
+    )
+  }
+
   def viewInDescribeDetailException(view: TableIdentifier): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW",
