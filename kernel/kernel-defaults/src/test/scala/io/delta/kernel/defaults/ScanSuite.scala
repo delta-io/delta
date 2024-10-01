@@ -1355,8 +1355,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         "<",
         new Column("as_string"),
         Literal.ofString("0")),
-      0
-    )
+      0)
 
     checkResults(
       new CollatedPredicate(
@@ -1364,8 +1363,15 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         new Column("as_string"),
         Literal.ofString("0"),
         defaultCollationIdentifier),
-      0
-    )
+      0)
+
+    checkResults(
+      new CollatedPredicate(
+        "<",
+        new Column("as_string"),
+        Literal.ofString("0"),
+        CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
+      2)
   }
 
   test("data skipping - non-eligible min/max data skipping types all nulls in file") {
