@@ -89,6 +89,14 @@ object TypeWidening {
     TypeWideningMetadata.getAllTypeChanges(metadata.schema).foreach {
       case (_, TypeChange(_, from: AtomicType, to: AtomicType, _))
         if isTypeChangeSupported(from, to) =>
+      case (fieldPath, TypeChange(_, from: AtomicType, to: AtomicType, _))
+        if stableFeatureCanReadTypeChange(from, to) =>
+        val featureName = if (protocol.isFeatureSupported(TypeWideningPreviewTableFeature)) {
+          TypeWideningPreviewTableFeature
+        } else {
+          TypeWideningTableFeature
+        }
+        throw DeltaErrors.unsupportedTypeChangeInPreview(fieldPath, from, to, featureName)
       case (fieldPath, invalidChange) =>
         throw DeltaErrors.unsupportedTypeChangeInSchema(
           fieldPath ++ invalidChange.fieldPath,
@@ -97,4 +105,25 @@ object TypeWidening {
         )
     }
   }
+
+  /**
+   * Whether the given type change is supported in the stable version of the feature. Used to
+   * provide a helpful error message during the preview phase if upgrading to Delta 4.0 would allow
+   * reading the table.
+   */
+  private def stableFeatureCanReadTypeChange(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (DateType, TimestampNTZType) => true
+      case (ByteType | ShortType | IntegerType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
+      // Byte, Short, Integer are all stored as INT32 in parquet. The parquet readers support
+      // converting INT32 to Decimal(10, 0) and wider.
+      case (ByteType | ShortType | IntegerType, d: DecimalType) => d.isWiderThan(IntegerType)
+      // The parquet readers support converting INT64 to Decimal(20, 0) and wider.
+      case (LongType, d: DecimalType) => d.isWiderThan(LongType)
+      case _ => false
+    }
 }

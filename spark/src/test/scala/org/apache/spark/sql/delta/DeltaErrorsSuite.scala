@@ -1031,6 +1031,24 @@ trait DeltaErrorsSuiteBase
       ))
     }
     {
+      checkError(
+        exception = intercept[DeltaUnsupportedOperationException] {
+          throw DeltaErrors.unsupportedTypeChangeInPreview(
+            fieldPath = Seq("origin", "country"),
+            fromType = IntegerType,
+            toType = LongType,
+            feature = TypeWideningPreviewTableFeature
+          )
+        },
+        "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW",
+        parameters = Map(
+          "fieldPath" -> "origin.country",
+          "fromType" -> "INT",
+          "toType" -> "BIGINT",
+          "typeWideningFeatureName" -> "typeWidening-preview"
+        ))
+    }
+    {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.unsupportedTypeChangeInSchema(Seq("s", "a"), IntegerType, StringType)
       }

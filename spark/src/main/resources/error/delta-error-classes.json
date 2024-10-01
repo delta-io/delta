@@ -2838,6 +2838,14 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW" : {
+    "message" : [
+      "This table can't be read by this version of Delta because an unsupported type change was applied. Field <fieldPath> was changed from <fromType> to <toType>.",
+      "Please upgrade to Delta 4.0 or higher to read this table, or drop the Type Widening table feature using a client that supports reading this table:",
+      "  ALTER TABLE tableName DROP FEATURE <typeWideningFeatureName>"
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA" : {
     "message" : [
       "Unable to operate on this table because an unsupported type change was applied. Field <fieldName> was changed from <fromType> to <toType>."
