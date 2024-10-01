@@ -46,7 +46,7 @@ trait TypeWideningAlterTableTests
   import testImplicits._
 
   for {
-    testCase <- supportedTestCases ++ alterTableOnlySupportedTestCases
+    testCase <- supportedTestCases
     partitioned <- BOOLEAN_DOMAIN
   } {
     test(s"type widening ${testCase.fromType.sql} -> ${testCase.toType.sql}, " +
@@ -80,7 +80,7 @@ trait TypeWideningAlterTableTests
   }
 
   for {
-    testCase <- unsupportedTestCases
+    testCase <- unsupportedTestCases ++ previewOnlySupportedTestCases
     partitioned <- BOOLEAN_DOMAIN
   } {
     test(s"unsupported type changes ${testCase.fromType.sql} -> ${testCase.toType.sql}, " +

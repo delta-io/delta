@@ -454,6 +454,38 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     )
   }
 
+  for (testCase <- previewOnlySupportedTestCases)
+  test(s"preview only type changes can still be read after the preview - " +
+    s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+    sql(s"CREATE TABLE delta.`$tempDir` (value ${testCase.fromType.sql}) USING DELTA")
+    append(testCase.initialValuesDF)
+
+    // Add a type change that was only allowed during the preview phase. We have to manually
+    // commit the schema change since ALTER TABLE won't allow this anymore.
+    val metadata = new MetadataBuilder()
+    .putMetadataArray("delta.typeChanges", Array(
+      new MetadataBuilder()
+        .putString("toType", testCase.toType.typeName)
+        .putString("fromType", testCase.fromType.typeName)
+        .putLong("tableVersion", 2)
+        .build()
+    )).build()
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("value", testCase.toType, nullable = true, metadata).json
+        )),
+        ManualUpdate)
+    }
+
+    checkAnswerWithTolerance(
+      actualDf = readDeltaTable(tempPath),
+      expectedDf = testCase.initialValuesDF.select($"value".cast(testCase.toType)),
+      toType = testCase.toType
+    )
+  }
+
   test("type widening rewrite metrics") {
     sql(s"CREATE TABLE delta.`$tempDir` (a byte) USING DELTA")
     addSingleFile(Seq(1, 2, 3), ByteType)
