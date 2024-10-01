@@ -781,7 +781,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   test("evaluate expression: compare collated strings") {
     // scalastyle:off nonascii
-    // TODO: add UTF8_LCASE when supported
     Seq(
       "UTF8_BINARY"
     ).foreach {
@@ -851,6 +850,29 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       assertCompare(new String(Character.toChars(i)), minCodePointStr, "UTF8_BINARY", 1)
 
       i += 1
+    }
+  }
+
+  test("evaluate expression: compare strings using unsupported collations") {
+    Seq(
+      CollationIdentifier.fromString("SPARK.UTF8_LCASE"),
+      CollationIdentifier.fromString("ICU.UNICODE"),
+      CollationIdentifier.fromString("ICU.UNICODE_AI"),
+      CollationIdentifier.fromString("ICU.SR_Latn_AI")
+    ).foreach {
+      collationIdentifier =>
+        val collatedPredicate = new CollatedPredicate(
+          "<",
+          ofString("A"),
+          ofString("B"),
+          collationIdentifier)
+        val batch = zeroColumnBatch(rowCount = 1)
+
+        val ex = intercept[IllegalArgumentException] {
+          evaluator(batch.getSchema, collatedPredicate, BooleanType.BOOLEAN).eval(batch)
+        }
+        assert(ex.getMessage.contains(
+          String.format("Invalid collation identifier: \"%s\"", collationIdentifier)))
     }
   }
 
