@@ -390,6 +390,9 @@ public class DataSkippingUtils {
    */
   private static DataSkippingPredicate constructCollatedDataSkippingPredicate(
       String exprName, Column col, Literal lit, CollationIdentifier collationIdentifier) {
+    if (collationIdentifier.equals(CollationIdentifier.fromString("SPARK.UTF8_BINARY"))) {
+      return new DefaultDataSkippingPredicate(exprName, Arrays.asList(col, lit), Collections.singleton(col), Collections.emptyMap());
+    }
     return new CollatedDataSkippingPredicate(exprName, col, lit, collationIdentifier);
   }
 
