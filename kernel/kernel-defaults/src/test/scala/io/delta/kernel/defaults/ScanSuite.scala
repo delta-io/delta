@@ -1335,6 +1335,39 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  test("data skipping - collated predicates") {
+    def checkResults(predicate: Predicate, expNumFiles: Long): Unit = {
+      val snapshot = latestSnapshot(goldenTablePath("data-skipping-basic-stats-all-types"))
+      val scanFiles = collectScanFileRows(
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, predicate)
+          .build())
+      assert(scanFiles.length == expNumFiles,
+        s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
+    }
+
+    val defaultCollationIdentifier = CollationIdentifier.fromString("SPARK.UTF8_BINARY");
+
+    // DefaultEngine should ignore collated predicates but still perform file
+    // pruning with the remaining predicates
+    checkResults(
+      new Predicate(
+        "<",
+        new Column("as_string"),
+        Literal.ofString("0")),
+      0
+    )
+
+    checkResults(
+      new CollatedPredicate(
+        "<",
+        new Column("as_string"),
+        Literal.ofString("0"),
+        defaultCollationIdentifier),
+      0
+    )
+  }
+
   test("data skipping - non-eligible min/max data skipping types all nulls in file") {
     withTempDir { tempDir =>
       val schema = SparkStructType.fromDDL("`id` INT, `arr_col` ARRAY<INT>, " +
