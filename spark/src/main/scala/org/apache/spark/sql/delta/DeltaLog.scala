@@ -69,6 +69,7 @@ import org.apache.spark.util._
  * @param options Filesystem options filtered from `allOptions`.
  * @param allOptions All options provided by the user, for example via `df.write.option()`. This
  *                   includes but not limited to filesystem and table properties.
+ * @param initialTableIdentifier Identifier of the table when the log is initialized.
  * @param clock Clock to be used when starting a new transaction.
  */
 class DeltaLog private(
@@ -76,6 +77,7 @@ class DeltaLog private(
     val dataPath: Path,
     val options: Map[String, String],
     val allOptions: Map[String, String],
+    val initialTableIdentifier: Option[TableIdentifier],
     val clock: Clock
   ) extends Checkpoints
   with MetadataCleanup
@@ -750,22 +752,22 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: String): DeltaLog = {
-    apply(spark, logPathFor(dataPath), Map.empty, new SystemClock)
+    apply(spark, logPathFor(dataPath), Map.empty, None, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
-    apply(spark, logPathFor(dataPath), new SystemClock)
+    apply(spark, logPathFor(dataPath), None, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, options: Map[String, String]): DeltaLog = {
-    apply(spark, logPathFor(dataPath), options, new SystemClock)
+    apply(spark, logPathFor(dataPath), options, None, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
-    apply(spark, logPathFor(dataPath), clock)
+    apply(spark, logPathFor(dataPath), None, clock)
   }
 
   /** Helper for creating a log for the table. */
@@ -789,11 +791,15 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
-    apply(spark, logPathFor(new Path(table.location)), clock)
+    apply(spark, logPathFor(new Path(table.location)), Some(table.identifier), clock)
   }
 
-  private def apply(spark: SparkSession, rawPath: Path, clock: Clock = new SystemClock): DeltaLog =
-    apply(spark, rawPath, Map.empty, clock)
+  private def apply(
+      spark: SparkSession,
+      rawPath: Path,
+      initialTableIdentifier: Option[TableIdentifier],
+      clock: Clock): DeltaLog =
+    apply(spark, rawPath, Map.empty, initialTableIdentifier, clock)
 
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
@@ -815,7 +821,7 @@ object DeltaLog extends DeltaLogging {
       spark: SparkSession,
       dataPath: Path,
       options: Map[String, String]): (DeltaLog, Snapshot) =
-    withFreshSnapshot { apply(spark, logPathFor(dataPath), options, _) }
+    withFreshSnapshot { apply(spark, logPathFor(dataPath), options, None, _) }
 
   /**
    * Helper function to be used with the forTableWithSnapshot calls. Thunk is a
@@ -834,6 +840,7 @@ object DeltaLog extends DeltaLogging {
       spark: SparkSession,
       rawPath: Path,
       options: Map[String, String],
+      initialTableIdentifier: Option[TableIdentifier],
       clock: Clock
   ): DeltaLog = {
     val fileSystemOptions: Map[String, String] =
@@ -862,6 +869,7 @@ object DeltaLog extends DeltaLogging {
             dataPath = path.getParent,
             options = fileSystemOptions,
             allOptions = options,
+            initialTableIdentifier = initialTableIdentifier,
             clock = clock
           )
         }
