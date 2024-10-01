@@ -171,7 +171,6 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
 
   val defaultCollationIdentifier =
     CollationIdentifier.fromString("SPARK.UTF8_BINARY")
-  val STATS_WITH_COLLATION = "statsWithCollation"
   val MIN = "minValues"
   val MAX = "maxValues"
 
@@ -240,10 +239,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           .add("a1", StringType.STRING),
         new CollatedDataSkippingPredicate(
           "<",
-          new Column(Array(STATS_WITH_COLLATION,
-            defaultCollationIdentifier.toString,
-            MIN,
-            "a1")),
+          new Column(Array(MIN, "a1")),
           Literal.ofString("a"),
           defaultCollationIdentifier)
       ),
@@ -259,18 +255,12 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           "AND",
           new CollatedDataSkippingPredicate(
             "<=",
-            new Column(Array(STATS_WITH_COLLATION,
-              defaultCollationIdentifier.toString,
-              MIN,
-              "a1")),
+            new Column(Array(MIN, "a1")),
             Literal.ofString("a"),
             defaultCollationIdentifier),
           new CollatedDataSkippingPredicate(
             ">=",
-            new Column(Array(STATS_WITH_COLLATION,
-              defaultCollationIdentifier.toString,
-              MAX,
-              "a1")),
+            new Column(Array(MAX, "a1")),
             Literal.ofString("a"),
             defaultCollationIdentifier))
       ),
@@ -290,10 +280,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           "AND",
           new CollatedDataSkippingPredicate(
             "<",
-            new Column(Array(STATS_WITH_COLLATION,
-              defaultCollationIdentifier.toString,
-              MIN,
-              "a1")),
+            new Column(Array(MIN, "a1")),
             Literal.ofString("a"),
             defaultCollationIdentifier),
           new DefaultDataSkippingPredicate(
@@ -322,10 +309,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           "OR",
           new CollatedDataSkippingPredicate(
             "<",
-            new Column(Array(STATS_WITH_COLLATION,
-              defaultCollationIdentifier.toString,
-              MIN,
-              "a1")),
+            new Column(Array(MIN, "a1")),
             Literal.ofString("a"),
             defaultCollationIdentifier),
           new DefaultDataSkippingPredicate(
@@ -350,10 +334,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           .add("a1", StringType.STRING),
         new CollatedDataSkippingPredicate(
           ">=",
-          new Column(Array(STATS_WITH_COLLATION,
-            defaultCollationIdentifier.toString,
-            MAX,
-            "a1")),
+          new Column(Array(MAX, "a1")),
           Literal.ofString("a"),
           defaultCollationIdentifier)
       ),
@@ -374,10 +355,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
         new Or(
           new CollatedDataSkippingPredicate(
             ">=",
-            new Column(Array(STATS_WITH_COLLATION,
-              defaultCollationIdentifier.toString,
-              MAX,
-              "a1")),
+            new Column(Array(MAX, "a1")),
             Literal.ofString("a"),
             defaultCollationIdentifier),
           new DefaultDataSkippingPredicate(
@@ -405,10 +383,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           .add("a2", StringType.STRING),
         new CollatedDataSkippingPredicate(
           "<",
-          new Column(Array(STATS_WITH_COLLATION,
-            defaultCollationIdentifier.toString,
-            MIN,
-            "a1")),
+          new Column(Array(MIN, "a1")),
           Literal.ofString("a"),
           defaultCollationIdentifier)
       )

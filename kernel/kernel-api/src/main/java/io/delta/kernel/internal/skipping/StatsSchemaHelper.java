@@ -150,38 +150,6 @@ public class StatsSchemaHelper {
 
   /**
    * Given a logical column in the data schema provided when creating {@code this}, return the
-   * corresponding collated MIN column.
-   *
-   * @param column the logical column name.
-   * @param collationIdentifier identifier collation stats to use for data skipping
-   * @return the collated MIN column
-   */
-  public Column getCollatedMinColumn(Column column, CollationIdentifier collationIdentifier) {
-    checkArgument(
-        isSkippingEligibleCollatedMinMaxColumn(column),
-        String.format(
-            "%s is not a valid collated min column for data schema %s", column, dataSchema));
-    return getCollatedStatsColumn(column, MIN, collationIdentifier);
-  }
-
-  /**
-   * Given a logical column in the data schema provided when creating {@code this}, return the
-   * corresponding collated MAX column.
-   *
-   * @param column the logical column name.
-   * @param collationIdentifier identifier collation stats to use for data skipping
-   * @return the collated MAX column
-   */
-  public Column getCollatedMaxColumn(Column column, CollationIdentifier collationIdentifier) {
-    checkArgument(
-        isSkippingEligibleCollatedMinMaxColumn(column),
-        String.format(
-            "%s is not a valid collated max column for data schema %s", column, dataSchema));
-    return getCollatedStatsColumn(column, MAX, collationIdentifier);
-  }
-
-  /**
-   * Given a logical column in the data schema provided when creating {@code this}, return the
    * corresponding MIN column and an optional column adjustment expression from the statistic schema
    * that stores the MIN values for the provided logical column.
    *
@@ -359,22 +327,6 @@ public class StatsSchemaHelper {
         logicalToPhysicalColumn.containsKey(column),
         String.format("%s is not a valid leaf column for data schema", column, dataSchema));
     return getChildColumn(logicalToPhysicalColumn.get(column), statType);
-  }
-
-  /**
-   * Given a logical column, a stats type, and a {@link CollationIdentifier} returns the
-   * corresponding column in the collated statistics schema
-   */
-  private Column getCollatedStatsColumn(
-      Column column, String statType, CollationIdentifier collatedIdentifier) {
-    checkArgument(
-        logicalToPhysicalColumn.containsKey(column),
-        String.format("%s is not a valid leaf column for data schema", column, dataSchema));
-    return getChildColumn(
-        getChildColumn(
-            getChildColumn(logicalToPhysicalColumn.get(column), statType),
-            collatedIdentifier.toString()),
-        STATS_WITH_COLLATION);
   }
 
   /**

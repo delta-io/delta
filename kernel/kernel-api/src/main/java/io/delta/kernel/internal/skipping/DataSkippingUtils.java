@@ -314,26 +314,26 @@ public class DataSkippingUtils {
             "AND",
             constructCollatedDataSkippingPredicate(
                 "<=",
-                schemaHelper.getCollatedMinColumn(leftCol, collationIdentifier),
+                schemaHelper.getMinColumn(leftCol)._1,
                 rightLit,
                 collationIdentifier),
             constructCollatedDataSkippingPredicate(
                 ">=",
-                schemaHelper.getCollatedMaxColumn(leftCol, collationIdentifier),
+                schemaHelper.getMaxColumn(leftCol)._1,
                 rightLit,
                 collationIdentifier));
       case "<":
       case "<=":
         return constructCollatedDataSkippingPredicate(
             name,
-            schemaHelper.getCollatedMinColumn(leftCol, collationIdentifier),
+            schemaHelper.getMinColumn(leftCol)._1,
             rightLit,
             collationIdentifier);
       case ">":
       case ">=":
         return constructCollatedDataSkippingPredicate(
             name,
-            schemaHelper.getCollatedMaxColumn(leftCol, collationIdentifier),
+            schemaHelper.getMaxColumn(leftCol)._1,
             rightLit,
             collationIdentifier);
       default:
@@ -500,13 +500,13 @@ public class DataSkippingUtils {
                     "OR",
                     constructCollatedComparatorDataSkippingFilters(
                         "<",
-                        schemaHelper.getCollatedMinColumn(leftCol, collationIdentifier),
+                        schemaHelper.getMinColumn(leftCol)._1,
                         rightLit,
                         schemaHelper,
                         collationIdentifier),
                     constructCollatedComparatorDataSkippingFilters(
                         ">",
-                        schemaHelper.getCollatedMaxColumn(leftCol, collationIdentifier),
+                        schemaHelper.getMaxColumn(leftCol)._1,
                         rightLit,
                         schemaHelper,
                         collationIdentifier)));
