@@ -20,6 +20,9 @@ import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static java.util.stream.Collectors.joining;
 
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.skipping.CollatedDataSkippingPredicate;
+import io.delta.kernel.types.CollationIdentifier;
+
 import java.util.List;
 import java.util.Locale;
 
@@ -98,12 +101,7 @@ abstract class ExpressionVisitor<R> {
       case ">":
       case ">=":
       case "IS NOT DISTINCT FROM":
-        if (expression instanceof CollatedPredicate) {
-          return visitComparator(
-              new CollatedPredicate(
-                  name, children, ((CollatedPredicate) expression).getCollationIdentifier()));
-        }
-        return visitComparator(new Predicate(name, children));
+        return visitComparisonScalarExpression(expression);
       case "ELEMENT_AT":
         return visitElementAt(expression);
       case "NOT":
@@ -121,6 +119,25 @@ abstract class ExpressionVisitor<R> {
       default:
         throw new UnsupportedOperationException(
             String.format("Scalar expression `%s` is not supported.", name));
+    }
+  }
+
+  private R visitComparisonScalarExpression(ScalarExpression expression) {
+    List<Expression> children = expression.getChildren();
+    String name = expression.getName().toUpperCase(Locale.ENGLISH);
+
+    if (expression instanceof CollatedDataSkippingPredicate) {
+      CollationIdentifier collationIdentifier = ((CollatedDataSkippingPredicate) expression).getCollationIdentifier();
+      CollationIdentifier defaultCollationIdentifier = CollationIdentifier.fromString("SPARK.UTF8_BINARY");
+      if (collationIdentifier.equals(defaultCollationIdentifier)) {
+        return visitComparator(new Predicate(name, children));
+      } else {
+        return visitScalarExpression(ALWAYS_TRUE);
+      }
+    } else if (expression instanceof CollatedPredicate) {
+      return visitComparator(new CollatedPredicate(name, children, ((CollatedPredicate) expression).getCollationIdentifier()));
+    } else {
+      return visitComparator(new Predicate(name, children));
     }
   }
 
