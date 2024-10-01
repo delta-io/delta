@@ -28,7 +28,6 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
           .add("a2", IntegerType.INTEGER, false)
           .add("a3", new StructType()
             .add("b1", StringType.STRING, false), true)
-          .add(STATS_WITH_COLLATION, new StructType(), true)
       ),
       (
         new StructType()
