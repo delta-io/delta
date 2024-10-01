@@ -106,13 +106,18 @@ public class StatsSchemaHelper {
     for (Map.Entry<CollationIdentifier, Set<Column>> entry : collatedReferencedCols.entrySet()) {
       StructType statsSchema =
           DataSkippingUtils.pruneStatsSchema(getMinMaxStatsSchema(dataSchema), entry.getValue());
-      collatedStatsSchema =
-          collatedStatsSchema.add(
-              entry.getKey().toString(),
-              new StructType().add(MIN, statsSchema, true).add(MAX, statsSchema, true),
-              true);
+      if (statsSchema.length() > 0) {
+        collatedStatsSchema =
+            collatedStatsSchema.add(
+                entry.getKey().toString(),
+                new StructType().add(MIN, statsSchema, true).add(MAX, statsSchema, true),
+                true);
+      }
     }
-    return dataSchema.add(STATS_WITH_COLLATION, collatedStatsSchema, true);
+    if (collatedStatsSchema.length() > 0) {
+      return dataSchema.add(STATS_WITH_COLLATION, collatedStatsSchema, true);
+    }
+    return dataSchema;
   }
 
   //////////////////////////////////////////////////////////////////////////////////
