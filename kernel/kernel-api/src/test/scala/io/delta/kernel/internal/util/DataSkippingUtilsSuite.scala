@@ -171,6 +171,8 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
 
   val defaultCollationIdentifier =
     CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+  val unicodeCollationIdentifier =
+    CollationIdentifier.fromString("ICU.UNICODE")
   val MIN = "minValues"
   val MAX = "maxValues"
 
@@ -237,11 +239,26 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           defaultCollationIdentifier),
         new StructType()
           .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "<",
+          List(new Column(Array(MIN, "a1")),
+          Literal.ofString("a")).asJava,
+          new util.HashSet(),
+          new util.HashMap())
+      ),
+      (
+        new CollatedPredicate(
+          ">",
+          Literal.ofString("a"),
+          new Column("a1"),
+          unicodeCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING),
         new CollatedDataSkippingPredicate(
           "<",
           new Column(Array(MIN, "a1")),
           Literal.ofString("a"),
-          defaultCollationIdentifier)
+          unicodeCollationIdentifier)
       ),
       (
         new CollatedPredicate(
@@ -253,16 +270,39 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           .add("a1", StringType.STRING),
         new DefaultDataSkippingPredicate(
           "AND",
+          new DefaultDataSkippingPredicate(
+            "<=",
+            List(new Column(Array(MIN, "a1")),
+            Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()),
+          new DefaultDataSkippingPredicate(
+            ">=",
+            List(new Column(Array(MAX, "a1")),
+            Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()))
+      ),
+      (
+        new CollatedPredicate(
+          "=",
+          Literal.ofString("a"),
+          new Column("a1"),
+          unicodeCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "AND",
           new CollatedDataSkippingPredicate(
             "<=",
             new Column(Array(MIN, "a1")),
             Literal.ofString("a"),
-            defaultCollationIdentifier),
+            unicodeCollationIdentifier),
           new CollatedDataSkippingPredicate(
             ">=",
             new Column(Array(MAX, "a1")),
             Literal.ofString("a"),
-            defaultCollationIdentifier))
+            unicodeCollationIdentifier))
       ),
       (
         new And(
@@ -270,7 +310,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             "<",
             new Column("a1"),
             Literal.ofString("a"),
-            defaultCollationIdentifier),
+            unicodeCollationIdentifier),
           new Predicate("<",
             new Column("a1"),
             Literal.ofString("a"))),
@@ -282,7 +322,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             "<",
             new Column(Array(MIN, "a1")),
             Literal.ofString("a"),
-            defaultCollationIdentifier),
+            unicodeCollationIdentifier),
           new DefaultDataSkippingPredicate(
             "<",
             List(
@@ -299,7 +339,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             "<",
             new Column("a1"),
             Literal.ofString("a"),
-            defaultCollationIdentifier),
+            unicodeCollationIdentifier),
           new Predicate("<",
             new Column("a1"),
             Literal.ofString("a"))),
@@ -311,7 +351,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             "<",
             new Column(Array(MIN, "a1")),
             Literal.ofString("a"),
-            defaultCollationIdentifier),
+            unicodeCollationIdentifier),
           new DefaultDataSkippingPredicate(
             "<",
             List(
@@ -329,14 +369,14 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             "<",
             new Column("a1"),
             Literal.ofString("a"),
-            defaultCollationIdentifier)),
+            unicodeCollationIdentifier)),
         new StructType()
           .add("a1", StringType.STRING),
         new CollatedDataSkippingPredicate(
           ">=",
           new Column(Array(MAX, "a1")),
           Literal.ofString("a"),
-          defaultCollationIdentifier)
+          unicodeCollationIdentifier)
       ),
       (
         new Predicate(
@@ -346,7 +386,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
               "<",
               new Column("a1"),
               Literal.ofString("a"),
-              defaultCollationIdentifier),
+              unicodeCollationIdentifier),
             new Predicate("<",
               new Column("a1"),
               Literal.ofString("a")))),
@@ -357,7 +397,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             ">=",
             new Column(Array(MAX, "a1")),
             Literal.ofString("a"),
-            defaultCollationIdentifier),
+            unicodeCollationIdentifier),
           new DefaultDataSkippingPredicate(
             ">=",
             List(
@@ -374,7 +414,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             "<",
             new Column("a1"),
             Literal.ofString("a"),
-            defaultCollationIdentifier),
+            unicodeCollationIdentifier),
           new Predicate("<",
             new Column("a1"),
             new Column("a2"))),
@@ -385,7 +425,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           "<",
           new Column(Array(MIN, "a1")),
           Literal.ofString("a"),
-          defaultCollationIdentifier)
+          unicodeCollationIdentifier)
       )
     ).foreach {
       case (predicate, schema, dataSkippingPredicate) =>
