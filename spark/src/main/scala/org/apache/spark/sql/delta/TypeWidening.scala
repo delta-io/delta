@@ -81,7 +81,8 @@ object TypeWidening {
    * specification.
    */
   def assertTableReadable(protocol: Protocol, metadata: Metadata): Unit = {
-    if (!isSupported(protocol) ||
+    if (DeltaConfigs.TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK.fromMetaData(metadata) ||
+      !isSupported(protocol) ||
       !TypeWideningMetadata.containsTypeWideningMetadata(metadata.schema)) {
       return
     }
@@ -89,6 +90,12 @@ object TypeWidening {
     TypeWideningMetadata.getAllTypeChanges(metadata.schema).foreach {
       case (_, TypeChange(_, from: AtomicType, to: AtomicType, _))
         if isTypeChangeSupported(from, to) =>
+      // Char/Varchar/String type changes are allowed and independent from type widening.
+      // Implementations shouldn't record these type changes in the table metadata per the Delta
+      // spec, but in case that happen we really shouldn't block reading the table.
+      case (_, TypeChange(_,
+        _: StringType | CharType(_) | VarcharType(_),
+        _: StringType | CharType(_) | VarcharType(_), _)) =>
       case (fieldPath, TypeChange(_, from: AtomicType, to: AtomicType, _))
         if stableFeatureCanReadTypeChange(from, to) =>
         val featureName = if (protocol.isFeatureSupported(TypeWideningPreviewTableFeature)) {

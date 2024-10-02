@@ -455,6 +455,47 @@ trait TypeWideningTableFeatureTests
         "toType" -> "STRING"
       )
     )
+
+    // Validate that the internal table property can be used to bypass the check if needed.
+    sql(s"ALTER TABLE delta.`$tempDir` SET TBLPROPERTIES (" +
+      s"'${DeltaConfigs.TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK.key}' = 'true')")
+    readDeltaTable(tempPath).collect()
+  }
+
+  test("char/varchar/string type changes don't trigger the unsupported type change check") {
+    sql(
+      s"""
+        |CREATE TABLE delta.`$tempDir` (
+        |  a string, b string, c char(4), d char(4), e varchar(4), f varchar(4)
+        |) USING DELTA
+        |""".stripMargin)
+
+    // Add type change metadata for all string<->char<->varchar type changes and ensure the table
+    // can still be read.
+    // Note: compliant delta implementations shouldn't actually record these type changes in the
+    // table schema metadata. This test ensures that if a non-compliant implementation still does,
+    // we don't unnecessarily block reads.
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("a", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, StringType, CharType(4)))
+            .add("b", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, StringType, VarcharType(4)))
+            .add("c", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, CharType(4), StringType))
+            .add("d", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, CharType(4), VarcharType(4)))
+            .add("e", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, VarcharType(4), StringType))
+            .add("f", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, VarcharType(4), CharType(4)))
+            .json
+        )),
+        ManualUpdate)
+    }
+    readDeltaTable(tempPath).collect()
   }
 
   testSparkLatestOnly(
