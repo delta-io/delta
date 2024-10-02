@@ -457,9 +457,10 @@ trait TypeWideningTableFeatureTests
     )
 
     // Validate that the internal table property can be used to bypass the check if needed.
-    sql(s"ALTER TABLE delta.`$tempDir` SET TBLPROPERTIES (" +
-      s"'${DeltaConfigs.TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK.key}' = 'true')")
-    readDeltaTable(tempPath).collect()
+    withSQLConf(
+      DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK.key -> "true") {
+      readDeltaTable(tempPath).collect()
+    }
   }
 
   test("unsupported type changes in nested structs") {

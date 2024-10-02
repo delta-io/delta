@@ -747,18 +747,6 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
 
-  /**
-   * Internal property to bypass the check that ensures the table doesn't contain any unsupported
-   * type changes when reading it. Meant as a mitigation in case the check incorrectly flags valid
-   * cases.
-   */
-  val TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK = buildConfig[Boolean](
-    key = "typeWidening.bypassUnsupportedTypeChangeCheck",
-    defaultValue = false.toString,
-    fromString = _.toBoolean,
-    validationFunction = _ => true,
-    helpMessage = "needs to be a boolean.")
-
   val COORDINATED_COMMITS_COORDINATOR_NAME = buildConfig[Option[String]](
     "coordinatedCommits.commitCoordinator-preview",
     null,

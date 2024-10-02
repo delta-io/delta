@@ -17,8 +17,10 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 object TypeWidening {
@@ -80,8 +82,8 @@ object TypeWidening {
    * happen unless a non-compliant writer applied a type change that is not part of the feature
    * specification.
    */
-  def assertTableReadable(protocol: Protocol, metadata: Metadata): Unit = {
-    if (DeltaConfigs.TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK.fromMetaData(metadata) ||
+  def assertTableReadable(conf: SQLConf, protocol: Protocol, metadata: Metadata): Unit = {
+    if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK) ||
       !isSupported(protocol) ||
       !TypeWideningMetadata.containsTypeWideningMetadata(metadata.schema)) {
       return
