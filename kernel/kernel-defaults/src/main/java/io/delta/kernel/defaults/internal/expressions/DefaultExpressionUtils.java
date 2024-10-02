@@ -128,6 +128,7 @@ class DefaultExpressionUtils {
     }
   }
 
+  /** Identifies default/binary collation */
   private static CollationIdentifier defaultCollationIdentifier =
       CollationIdentifier.fromString("SPARK.UTF8_BINARY");
 
