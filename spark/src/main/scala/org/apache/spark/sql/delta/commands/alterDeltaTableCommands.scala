@@ -720,7 +720,10 @@ case class AlterTableChangeColumnDeltaCommand(
         StatisticsCollection.renameDeltaStatsColumn(metadata, oldColumnPath, newColumnPath)
 
       val newSchemaWithTypeWideningMetadata =
-        TypeWideningMetadata.addTypeWideningMetadata(txn, schema = newSchema, oldSchema = oldSchema)
+        TypeWideningMetadata.addTypeWideningMetadata(
+          txn,
+          schema = newSchema,
+          oldSchema = metadata.schema)
 
       val newMetadata = metadata.copy(
         schemaString = newSchemaWithTypeWideningMetadata.json,

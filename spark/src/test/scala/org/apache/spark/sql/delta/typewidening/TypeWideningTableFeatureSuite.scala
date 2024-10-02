@@ -462,11 +462,38 @@ trait TypeWideningTableFeatureTests
     readDeltaTable(tempPath).collect()
   }
 
+  test("unsupported type changes in nested structs") {
+    sql(s"CREATE TABLE delta.`$tempDir` (s struct<a: int>) USING DELTA")
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("s", new StructType()
+              .add("a", BooleanType, nullable = true,
+                metadata = typeWideningMetadata(version = 1, IntegerType, BooleanType)))
+          .json
+        )),
+        ManualUpdate)
+    }
+
+    checkError(
+      intercept[DeltaIllegalStateException] {
+        readDeltaTable(tempPath).collect()
+      },
+      "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      parameters = Map(
+        "fieldName" -> "s.a",
+        "fromType" -> "INT",
+        "toType" -> "BOOLEAN"
+      )
+    )
+  }
+
   test("char/varchar/string type changes don't trigger the unsupported type change check") {
     sql(
       s"""
         |CREATE TABLE delta.`$tempDir` (
-        |  a string, b string, c char(4), d char(4), e varchar(4), f varchar(4)
+        |  a string, b string, c char(4), d char(4), e varchar(4), f varchar(4), s struct<x: string>
         |) USING DELTA
         |""".stripMargin)
 
@@ -491,6 +518,10 @@ trait TypeWideningTableFeatureTests
               metadata = typeWideningMetadata(version = 1, VarcharType(4), StringType))
             .add("f", StringType, nullable = true,
               metadata = typeWideningMetadata(version = 1, VarcharType(4), CharType(4)))
+            .add("s", new StructType()
+              .add("x", StringType, nullable = true,
+                metadata = typeWideningMetadata(version = 1, StringType, CharType(4)))
+            )
             .json
         )),
         ManualUpdate)
