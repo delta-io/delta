@@ -139,10 +139,15 @@ case class Protocol private (
   extends Action
   with AbstractProtocol
   with TableFeatureSupport {
-  // Correctness check
-  // Reader and writer versions must match the status of reader and writer features
+  // Correctness check.
+  // Reader and writer versions must match the status of reader and writer features.
+  // For the reader features requirement we exclude the column mapping reader version (2)
+  // to allow backward compatibility with older writers. The correct behavior is when
+  // column mapping exists it should be included in the reader features. However, there used
+  // to be a bug where the reader features would not be set in that case.
   require(
-    (supportsReaderFeatures || canSupportColumnMappingFeature) == readerFeatures.isDefined,
+    supportsReaderFeatures == readerFeatures.isDefined ||
+      minReaderVersion == ColumnMappingTableFeature.minReaderVersion,
     "Mismatched minReaderVersion and readerFeatures.")
   require(
     supportsWriterFeatures == writerFeatures.isDefined,

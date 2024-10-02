@@ -2397,6 +2397,60 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test("Can construct a protocol with column mapping only in writer features") {
+    // Column mapping should appear in both reader and writer features. However,
+    // we allow the construction of invalid protocols such as the one below to allow backward
+    // compatibility. This is to protect against the case a table was created by an older writer
+    // (that somehow serialized the protocol without column mapping in the reader features set)
+    // and then attempted to read the table with a newer reader.
+    Protocol(
+      minReaderVersion = 2,
+      minWriterVersion = 7,
+      readerFeatures = Some(Set.empty),
+      writerFeatures = Some(Set(ColumnMappingTableFeature.name)))
+
+    Protocol(
+      minReaderVersion = 2,
+      minWriterVersion = 7,
+      readerFeatures = Some(Set.empty),
+      writerFeatures = Some(Set(ColumnMappingTableFeature.name, TestWriterFeature.name)))
+
+    // Valid protocol are also allowed.
+    Protocol(
+      minReaderVersion = 2,
+      minWriterVersion = 7,
+      readerFeatures = Some(Set(ColumnMappingTableFeature.name)),
+      writerFeatures = Some(Set(ColumnMappingTableFeature.name)))
+
+    Protocol(
+      minReaderVersion = 2,
+      minWriterVersion = 7,
+      readerFeatures = Some(Set(ColumnMappingTableFeature.name)),
+      writerFeatures = Some(Set(ColumnMappingTableFeature.name, TestWriterFeature.name)))
+  }
+
+  test("Can read serialized protocol with column mapping not in reader features") {
+    withTempDir { path =>
+      val log = createTableWithProtocol(
+        Protocol(
+          minReaderVersion = 2,
+          minWriterVersion = 7,
+          readerFeatures = None,
+          writerFeatures = Some(Set(ColumnMappingTableFeature.name))),
+        path)
+      spark.range(1)
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(path.getCanonicalPath)
+      assert(log.update().protocol ===
+        Protocol(2, 7, None, Some(Set(ColumnMappingTableFeature.name))))
+
+      val targetTable = io.delta.tables.DeltaTable.forPath(path.getAbsolutePath)
+      assert(targetTable.toDF.count() === 1)
+    }
+  }
+
   def protocolWithFeatures(
       readerFeatures: Seq[TableFeature] = Seq.empty,
       writerFeatures: Seq[TableFeature] = Seq.empty): Protocol = {
