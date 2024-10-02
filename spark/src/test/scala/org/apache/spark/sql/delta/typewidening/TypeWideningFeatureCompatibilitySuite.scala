@@ -120,6 +120,41 @@ trait TypeWideningCompatibilityTests {
     assert(latestVersion.schema("a").dataType === ShortType)
     checkAnswer(latestVersion, Seq(Row(1), Row(2)))
   }
+
+  test("compatibility with char/varchar columns") {
+    sql(s"CREATE TABLE delta.`$tempPath` (a byte, c char(3), v varchar(3)) USING DELTA")
+    append(Seq((1.toByte, "abc", "def")).toDF("a", "c", "v"))
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1, "abc", "def")))
+
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE smallint")
+    append(Seq((2.toShort, "ghi", "jkl")).toDF("a", "c", "v"))
+    assert(readDeltaTable(tempPath).schema ===
+      new StructType()
+        .add("a", ShortType, nullable = true,
+          metadata = typeWideningMetadata(version = 2, ByteType, ShortType))
+        .add("c", StringType, nullable = true,
+          metadata = new MetadataBuilder()
+            .putString("__CHAR_VARCHAR_TYPE_STRING", "char(3)")
+            .build()
+        )
+        .add("v", StringType, nullable = true,
+          metadata = new MetadataBuilder()
+            .putString("__CHAR_VARCHAR_TYPE_STRING", "varchar(3)")
+            .build()))
+    checkAnswer(readDeltaTable(tempPath), Seq(Row(1, "abc", "def"), Row(2, "ghi", "jkl")))
+
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN c TYPE string")
+    sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN v TYPE string")
+    append(Seq((3.toShort, "longer string 1", "longer string 2")).toDF("a", "c", "v"))
+    assert(readDeltaTable(tempPath).schema ===
+      new StructType()
+        .add("a", ShortType, nullable = true,
+          metadata = typeWideningMetadata(version = 2, ByteType, ShortType))
+        .add("c", StringType)
+        .add("v", StringType))
+    checkAnswer(readDeltaTable(tempPath),
+      Seq(Row(1, "abc", "def"), Row(2, "ghi", "jkl"), Row(3, "longer string 1", "longer string 2")))
+  }
 }
 
 /** Trait collecting tests covering type widening + column mapping. */

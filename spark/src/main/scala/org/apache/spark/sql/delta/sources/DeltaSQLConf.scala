@@ -1074,6 +1074,20 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  /**
+   * Internal config to bypass the check that ensures a table doesn't contain any unsupported type
+   * change when reading it. Meant as a mitigation in case the check incorrectly flags valid cases.
+   */
+  val DELTA_TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK =
+    buildConf("typeWidening.bypassUnsupportedTypeChangeCheck")
+      .internal()
+      .doc("""
+           | Disables check that ensures a table doesn't contain any unsupported type change when
+           | reading it.
+           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_IS_DELTA_TABLE_THROW_ON_ERROR =
     buildConf("isDeltaTable.throwOnError")
       .internal()

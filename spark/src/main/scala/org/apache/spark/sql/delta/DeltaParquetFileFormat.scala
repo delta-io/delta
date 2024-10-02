@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAll
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.Job
@@ -73,7 +74,10 @@ case class DeltaParquetFileFormat(
     }
   }
 
-  TypeWidening.assertTableReadable(protocol, metadata)
+  SparkSession.getActiveSession.ifDefined { session =>
+    TypeWidening.assertTableReadable(session.sessionState.conf, protocol, metadata)
+  }
+
 
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
   val referenceSchema: StructType = metadata.schema
