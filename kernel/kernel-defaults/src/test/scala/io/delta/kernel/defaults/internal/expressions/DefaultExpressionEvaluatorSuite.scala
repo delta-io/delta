@@ -839,7 +839,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     var i = 0
     while (i < maxCodePoint && Character.isValidCodePoint(i)) {
       assertCompare(new String(Character.toChars(i)), maxCodePointStr, "UTF8_BINARY", -1)
-
       i += 1
     }
     // Minimum code point.// Minimum code point.

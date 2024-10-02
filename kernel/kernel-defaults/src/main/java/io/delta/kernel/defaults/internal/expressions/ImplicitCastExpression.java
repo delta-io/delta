@@ -23,6 +23,8 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.defaults.engine.DefaultExpressionHandler;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StringType;
+
 import java.util.*;
 
 /**
@@ -110,7 +112,6 @@ final class ImplicitCastExpression implements Expression {
               this.put("integer", Arrays.asList("long", "float", "double"));
               this.put("long", Arrays.asList("float", "double"));
               this.put("float", Arrays.asList("double"));
-              this.put("string", Arrays.asList("string"));
             }
           });
 
@@ -120,6 +121,11 @@ final class ImplicitCastExpression implements Expression {
    */
   static boolean canCastTo(DataType from, DataType to) {
     // TODO: The type name should be a first class method on `DataType` instead of getting it
+    // This separate check is needed since both collated and non-collated StringTypes
+    // have same toString ("string")
+    if (from instanceof StringType && to instanceof StringType) {
+      return true;
+    }
     // using the `toString`.
     String fromStr = from.toString();
     String toStr = to.toString();
