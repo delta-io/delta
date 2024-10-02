@@ -1348,8 +1348,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
     val defaultCollationIdentifier = CollationIdentifier.fromString("SPARK.UTF8_BINARY");
 
-    // DefaultEngine should ignore collated predicates but still perform file
-    // pruning with the remaining predicates
+    // DefaultEngine should ignore collated predicates (except for UTF8_BINARY collation),
+    // but still perform file pruning with the remaining predicates
     checkResults(
       new Predicate(
         "<",
@@ -1372,6 +1372,19 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         Literal.ofString("0"),
         CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
       1)
+
+    checkResults(
+      new And(
+        new Predicate(
+          "<",
+          new Column("as_string"),
+          Literal.ofString("0")),
+        new CollatedPredicate(
+          "<",
+          new Column("as_string"),
+          Literal.ofString("0"),
+          CollationIdentifier.fromString("SPARK.UTF8_LCASE"))),
+      0)
   }
 
   test("data skipping - non-eligible min/max data skipping types all nulls in file") {
