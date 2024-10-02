@@ -2406,8 +2406,20 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     Protocol(
       minReaderVersion = 2,
       minWriterVersion = 7,
+      readerFeatures = None,
+      writerFeatures = Some(Set(ColumnMappingTableFeature.name)))
+
+    Protocol(
+      minReaderVersion = 2,
+      minWriterVersion = 7,
       readerFeatures = Some(Set.empty),
       writerFeatures = Some(Set(ColumnMappingTableFeature.name)))
+
+    Protocol(
+      minReaderVersion = 2,
+      minWriterVersion = 7,
+      readerFeatures = None,
+      writerFeatures = Some(Set(ColumnMappingTableFeature.name, TestWriterFeature.name)))
 
     Protocol(
       minReaderVersion = 2,
