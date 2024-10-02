@@ -89,6 +89,7 @@ public class DefaultDataSkippingPredicate extends Predicate implements DataSkipp
         });
   }
 
+  @Override
   public Set<Column> getReferencedCols() {
     return referencedCols;
   }
