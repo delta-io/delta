@@ -381,6 +381,29 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       (
         new Predicate(
           "NOT",
+          new CollatedPredicate(
+            "=",
+            Literal.ofString("a"),
+            new Column("a1"),
+            unicodeCollationIdentifier)),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "OR",
+          new CollatedDataSkippingPredicate(
+            "<",
+            new Column(Array(MIN, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new CollatedDataSkippingPredicate(
+            ">",
+            new Column(Array(MAX, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier))
+      ),
+      (
+        new Predicate(
+          "NOT",
           new And(
             new CollatedPredicate(
               "<",
