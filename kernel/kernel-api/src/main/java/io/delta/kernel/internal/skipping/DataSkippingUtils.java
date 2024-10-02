@@ -491,17 +491,9 @@ public class DataSkippingUtils {
                 new DefaultDataSkippingPredicate(
                     "OR",
                     constructCollatedComparatorDataSkippingFilters(
-                        "<",
-                        leftCol,
-                        rightLit,
-                        schemaHelper,
-                        collationIdentifier),
+                        "<", leftCol, rightLit, schemaHelper, collationIdentifier),
                     constructCollatedComparatorDataSkippingFilters(
-                        ">",
-                        leftCol,
-                        rightLit,
-                        schemaHelper,
-                        collationIdentifier)));
+                        ">", leftCol, rightLit, schemaHelper, collationIdentifier)));
           }
 
           if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
@@ -520,11 +512,11 @@ public class DataSkippingUtils {
         } else if (right instanceof Column && left instanceof Literal) {
           Predicate reversed = new Predicate("=", right, left);
           if (childPredicate instanceof CollatedPredicate) {
-            CollationIdentifier collationIdentifier = ((CollatedPredicate) childPredicate).getCollationIdentifier();
+            CollationIdentifier collationIdentifier =
+                ((CollatedPredicate) childPredicate).getCollationIdentifier();
             reversed = new CollatedPredicate("=", right, left, collationIdentifier);
           }
-          return constructDataSkippingFilter(
-              new Predicate("NOT", reversed), schemaHelper);
+          return constructDataSkippingFilter(new Predicate("NOT", reversed), schemaHelper);
         }
         break;
       case "<":
