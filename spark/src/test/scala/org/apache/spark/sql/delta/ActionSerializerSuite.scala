@@ -235,7 +235,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     expectedJson =
       s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
         s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
-        """"readerFeatures":[],""" +
+        """"readerFeatures":["testLegacyReaderWriter"],""" +
         """"writerFeatures":["testLegacyReaderWriter"]}}""")
 
   testActionSerDe(
@@ -248,7 +248,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     expectedJson =
       s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
         s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
-        """"readerFeatures":["testReaderWriter"],""" +
+        """"readerFeatures":["testLegacyReaderWriter","testReaderWriter"],""" +
         """"writerFeatures":["testLegacyReaderWriter","testReaderWriter"]}}""")
 
   testActionSerDe(

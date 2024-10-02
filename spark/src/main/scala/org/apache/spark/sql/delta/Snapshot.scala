@@ -542,7 +542,7 @@ class Snapshot(
     }
     base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
     base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
-    if (protocol.supportsTableFeatures) {
+    if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
       val features = protocol.readerAndWriterFeatureNames.map(name =>
         s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}$name" ->
           TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED)
