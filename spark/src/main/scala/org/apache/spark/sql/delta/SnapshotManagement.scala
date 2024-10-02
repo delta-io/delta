@@ -1105,6 +1105,7 @@ trait SnapshotManagement { self: DeltaLog =>
    * @param initialSegmentForNewSnapshot the log segment constructed for the new snapshot
    * @param initialTableCommitCoordinatorClient the commit-coordinator used for constructing the
    *                           `initialSegmentForNewSnapshot`
+   * @param tableIdentifierOpt The optional identifier of the target table.
    * @param isAsync Whether the update is async.
    * @return The new snapshot.
    */
