@@ -424,7 +424,7 @@ trait DescribeDeltaHistorySuiteBase
         Seq("UPGRADE PROTOCOL",
           s"""{"minReaderVersion":$readerVersion,""" +
             s""""minWriterVersion":$writerVersion,""" +
-            s""""readerFeatures":[],""" +
+            s""""readerFeatures":["${TestLegacyReaderWriterFeature.name}"],""" +
             s""""writerFeatures":["${TestLegacyReaderWriterFeature.name}"]}"""),
         Seq($"operation", $"operationParameters.newProtocol"))
       // scalastyle:on line.size.limit

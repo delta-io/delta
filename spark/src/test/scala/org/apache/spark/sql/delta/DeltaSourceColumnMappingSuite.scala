@@ -303,7 +303,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
 
       // upgrade to name mode
       val protocol = deltaLog.snapshot.protocol
-        val (r, w) = if (protocol.supportsTableFeatures) {
+        val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
         (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
       } else {
