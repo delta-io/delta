@@ -24,7 +24,6 @@ import io.delta.kernel.defaults.engine.DefaultExpressionHandler;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
-
 import java.util.*;
 
 /**
