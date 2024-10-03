@@ -43,15 +43,11 @@ Example schema
 
 ```
 |-- col1: string
-|-- col2: map
-|       |-- keyType: string
-|       |-- valueType: array
-|                    |-- elementType: map
-|                                   |-- keyType: string
-|                                   |-- valueType: map
-|                                                |-- keyType: string
-|                                                |-- valueType: struct
-|                                                             |-- f1: string
+|-- col2: array
+|       |-- elementType: map
+|                      |-- keyType: string
+|                      |-- valueType: struct
+|                                   |-- f1: string
 ```
 
 Schema with collation information
@@ -72,39 +68,29 @@ Schema with collation information
       {
          "name":"col2",
          "type":{
-            "type":"map",
-            "keyType":"string",
-            "valueType":{
-               "type":"array",
-               "elementType":{
-                  "type":"map",
-                  "keyType":"string",
-                  "valueType":{
-                     "type":"map",
-                     "keyType":"string",
-                     "valueType":{
-                        "type":"struct",
-                        "fields":[
-                           {
-                              "name":"f1",
-                              "type":"string",
-                              "metadata":{
-                                 "__COLLATIONS":{
-                                    "f1":"ICU.de_DE"
-                                 }
-                              }
+            "type":"array",
+            "elementType":{
+               "type":"map",
+               "keyType":"string",
+               "valueType":{
+                  "type":"struct",
+                  "fields":[
+                     {
+                        "name":"f1",
+                        "type":"string",
+                        "metadata":{
+                           "__COLLATIONS":{
+                              "f1":"ICU.de_DE"
                            }
-                        ]
+                        }
                      }
-                  }
+                  ]
                }
             }
          },
          "metadata":{
             "__COLLATIONS":{
-               "col2.value.element.key":"ICU.en_US",
-               "col2.value.element.value.key":"ICU.en_US",
-               "col2.key":"ICU.en_US"
+               "col2.element.key":"ICU.en_US"
             }
          }
       }
