@@ -862,6 +862,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val IMPLICIT_NOT_NULL_CONSTRAINT_ENABLED =
+    buildConf("constraints.implicitNotNull.enabled")
+      .internal()
+      .doc("If enabled, NOT NULL constraints will be automatically added for non-nullable " +
+        "fields. Note that nullability is determined independently at each level of a nested " +
+        "struct, so non-nullable children of a nullable struct must always be non-null.")
+      .booleanConf
+      .createWithDefault(true)
+
   val CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH =
     buildConf("checkpointSchema.writeThresholdLength")
       .internal()
