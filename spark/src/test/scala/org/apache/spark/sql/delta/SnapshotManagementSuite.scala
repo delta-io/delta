@@ -469,6 +469,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       val newLogSegment = log.snapshot.logSegment
       assert(log.getLogSegmentAfterCommit(
         log.snapshot.tableCommitCoordinatorClientOpt,
+        tableIdentifierOpt = None,
         oldLogSegment.checkpointProvider) === newLogSegment)
       spark.range(10).write.format("delta").mode("append").save(path)
       val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
@@ -477,17 +478,20 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         val commitFile = fs.getFileStatus(commitFileProvider.deltaFile(1))
         val commit = new Commit(1, commitFile, 0)
         // Version exists, but not contiguous with old logSegment
-        log.getLogSegmentAfterCommit(1, None, oldLogSegment, commit, None, EmptyCheckpointProvider)
+        log.getLogSegmentAfterCommit(
+          1, None, oldLogSegment, commit, None, None, EmptyCheckpointProvider)
       }
       intercept[IllegalArgumentException] {
         val commitFile = fs.getFileStatus(commitFileProvider.deltaFile(0))
         val commit = new Commit(0, commitFile, 0)
 
         // Version exists, but newLogSegment already contains it
-        log.getLogSegmentAfterCommit(0, None, newLogSegment, commit, None, EmptyCheckpointProvider)
+        log.getLogSegmentAfterCommit(
+          0, None, newLogSegment, commit, None, None, EmptyCheckpointProvider)
       }
       assert(log.getLogSegmentAfterCommit(
         log.snapshot.tableCommitCoordinatorClientOpt,
+        tableIdentifierOpt = None,
         oldLogSegment.checkpointProvider) === log.snapshot.logSegment)
     }
   }
