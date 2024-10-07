@@ -39,7 +39,8 @@ object CheckpointHook extends PostCommitHook {
     val snapshotToCheckpoint = txn.deltaLog.getSnapshotAt(
       committedVersion,
       lastCheckpointHint = None,
-      lastCheckpointProvider = Some(cp))
+      lastCheckpointProvider = Some(cp),
+      tableIdentifierOpt = txn.catalogTable.map(_.identifier))
     txn.deltaLog.checkpoint(snapshotToCheckpoint, txn.catalogTable.map(_.identifier))
   }
 }
