@@ -240,11 +240,13 @@ case class CreateDeltaTableCommand(
     updateCatalog(sparkSession, tableWithLocation, postCommitSnapshot, didNotChangeMetadata)
 
 
-    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
+    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata) &&
+        !txnUsedForCommit.containsPostCommitHook(IcebergConverterHook)) {
       deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
     }
 
-    if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata)) {
+    if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata) &&
+        !txnUsedForCommit.containsPostCommitHook(HudiConverterHook)) {
       deltaLog.hudiConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
     }
   }
@@ -797,11 +799,12 @@ case class CreateDeltaTableCommand(
     val txn = deltaLog.startTransaction(None, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
-    // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
-    // we always remove the post commit hook here.
-    txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
-    txn.unregisterPostCommitHooksWhere(hook => hook.name == HudiConverterHook.name)
-
+    // During CREATE (not REPLACE/overwrites), we synchronously run conversion
+    //  (if Uniform is enabled) so we always remove the post commit hook here.
+    if (!isReplace) {
+      txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
+      txn.unregisterPostCommitHooksWhere(hook => hook.name == HudiConverterHook.name)
+    }
     txn
   }
 
