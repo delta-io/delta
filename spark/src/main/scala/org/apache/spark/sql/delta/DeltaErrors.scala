@@ -1676,6 +1676,11 @@ trait DeltaErrorsBase
       messageParameters = Array(tableName, tablePath, tableName))
   }
 
+  def deltaCannotVacuumLite(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_CANNOT_VACUUM_LITE")
+  }
+
   def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION",

@@ -481,6 +481,12 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createOptional
 
+  val LITE_VACUUM_ENABLED =
+    buildConf("vacuum.lite.enabled")
+      .doc("Allows Vacuum to be run in Lite mode")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
       .doc("Adds a check preventing users from running vacuum with a very short retention " +
