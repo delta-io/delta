@@ -183,7 +183,7 @@ trait SnapshotManagement { self: DeltaLog =>
         this, tableCommitCoordinatorClient, tableIdentifierOpt,
         startVersion, versionToLoad, isAsyncRequest)
     }
-    val unbackfilledCommitsResponseFuture =
+    def getGetCommitsResponseFuture(): Future[GetCommitsResponse] = {
       if (threadPool.getActiveCount < threadPool.getMaximumPoolSize) {
         threadPool.submit[GetCommitsResponse](spark) { getCommitsTask(isAsyncRequest = true) }
       } else {
@@ -195,6 +195,8 @@ trait SnapshotManagement { self: DeltaLog =>
           this, CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_LISTING_THREADPOOL_FULL)
         CompletableFuture.completedFuture(getCommitsTask(isAsyncRequest = false))
       }
+    }
+    val unbackfilledCommitsResponseFuture = getGetCommitsResponseFuture
 
     var maxDeltaVersionSeen = startVersion - 1
     val (initialLogTuplesFromFsListingOpt, initialChecksumOpt) =
@@ -1045,7 +1047,9 @@ trait SnapshotManagement { self: DeltaLog =>
     if (!doAsync) {
       recordFrameProfile("Delta", "SnapshotManagement.update") {
         withSnapshotLockInterruptibly {
-          val newSnapshot = updateInternal(isAsync = false, tableIdentifierOpt)
+          val newSnapshot = updateInternal(
+            isAsync = false,
+            tableIdentifierOpt)
           sendEvent(newSnapshot = capturedSnapshot.snapshot)
           newSnapshot
         }
@@ -1061,7 +1065,9 @@ trait SnapshotManagement { self: DeltaLog =>
               jobGroup,
               s"Updating state of Delta table at ${capturedSnapshot.snapshot.path}",
               interruptOnCancel = true)
-            tryUpdate(isAsync = true, tableIdentifierOpt)
+            tryUpdate(
+              isAsync = true,
+              tableIdentifierOpt)
           }
         } catch {
           case NonFatal(e) if !Utils.isTesting =>
@@ -1077,10 +1083,14 @@ trait SnapshotManagement { self: DeltaLog =>
    * Try to update ActionLog. If another thread is updating ActionLog, then this method returns
    * at once and return the current snapshot. The return snapshot may be stale.
    */
-  private def tryUpdate(isAsync: Boolean, tableIdentifierOpt: Option[TableIdentifier]): Snapshot = {
+  private def tryUpdate(
+    isAsync: Boolean,
+    tableIdentifierOpt: Option[TableIdentifier]): Snapshot = {
     if (snapshotLock.tryLock()) {
       try {
-        updateInternal(isAsync, tableIdentifierOpt)
+        updateInternal(
+          isAsync,
+          tableIdentifierOpt)
       } finally {
         snapshotLock.unlock()
       }
@@ -1099,7 +1109,9 @@ trait SnapshotManagement { self: DeltaLog =>
     recordDeltaOperation(this, "delta.log.update", Map(TAG_ASYNC -> isAsync.toString)) {
       val updateStartTimeMs = clock.getTimeMillis()
       val previousSnapshot = currentSnapshot.snapshot
-      val segmentOpt = createLogSegment(previousSnapshot, tableIdentifierOpt)
+      val segmentOpt = createLogSegment(
+        previousSnapshot,
+        tableIdentifierOpt)
       val newSnapshot = getUpdatedSnapshot(
         oldSnapshotOpt = Some(previousSnapshot),
         initialSegmentForNewSnapshot = segmentOpt,
@@ -1144,7 +1156,9 @@ trait SnapshotManagement { self: DeltaLog =>
         initialTableCommitCoordinatorClient.forall(!_.semanticsEquals(newStore))
       }
     if (usedStaleCommitCoordinator) {
-      val segmentOpt = createLogSegment(newSnapshot, tableIdentifierOpt)
+      val segmentOpt = createLogSegment(
+        newSnapshot,
+        tableIdentifierOpt)
       newSnapshot = getSnapshotForLogSegmentInternal(
         Some(newSnapshot),
         segmentOpt,
