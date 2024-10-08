@@ -212,11 +212,12 @@ object SchemaMergingUtils {
             merge(currentElementType, updateElementType),
             currentContainsNull)
 
-        // Simply keeps the existing type for primitive types
-        case (current, update) if keepExistingType => current
-
+        // If allowTypeWidening is true and supported, it takes precedence over keepExistingType
         case (current: AtomicType, update: AtomicType) if allowTypeWidening &&
           TypeWidening.isTypeChangeSupportedForSchemaEvolution(current, update) => update
+
+        // Simply keeps the existing type for primitive types
+        case (current, update) if keepExistingType => current
 
         // If implicit conversions are allowed, that means we can use any valid implicit cast to
         // perform the merge.

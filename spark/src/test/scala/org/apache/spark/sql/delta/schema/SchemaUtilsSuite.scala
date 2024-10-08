@@ -2428,6 +2428,40 @@ class SchemaUtilsSuite extends QueryTest
     testParquetUpcast()
 
   }
+
+  test("keepExistingType and allowTypeWidening both true allows both widening and " +
+    "preserving non-widenable existing types") {
+    val base = new StructType()
+      .add("widened", IntegerType)
+      .add("struct", new StructType()
+        .add("b", ByteType)
+        .add("a", StringType))
+      .add("map", MapType(IntegerType, IntegerType))
+      .add("array", ArrayType(StringType))
+      .add("nonwidened", IntegerType)
+
+    val update = new StructType()
+      .add("widened", LongType)
+      .add("struct", new StructType()
+        .add("b", IntegerType)
+        .add("a", IntegerType))
+      .add("map", MapType(LongType, StringType))
+      .add("array", ArrayType(ByteType))
+      .add("nonwidened", StringType)
+
+    val expected = new StructType()
+      .add("widened", LongType)
+      .add("struct", new StructType()
+        .add("b", IntegerType)
+        .add("a", StringType))
+      .add("map", MapType(LongType, IntegerType))
+      .add("array", ArrayType(StringType))
+      .add("nonwidened", IntegerType)
+    assert(
+      mergeSchemas(base, update, allowTypeWidening = true, keepExistingType = true) === expected
+    )
+  }
+
   ////////////////////////////
   // transformColumns
   ////////////////////////////
