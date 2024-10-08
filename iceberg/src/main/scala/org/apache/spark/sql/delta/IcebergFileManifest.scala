@@ -47,7 +47,7 @@ class IcebergFileManifest(
 
   private var _numFiles: Option[Long] = None
 
-  val basePath = table.location()
+  val basePath = IcebergTable.rewritePath(table.location())
 
   val icebergSchema = table.schema()
 
@@ -115,7 +115,7 @@ class IcebergFileManifest(
         log"finished ${MDC(DeltaLogKeys.NUM_FILES, numFiles)} files so far")
       numFiles += batch.length
       val filePathWithPartValues = batch.map { fileScanTask =>
-        val filePath = fileScanTask.file().path().toString
+        val filePath = IcebergTable.rewritePath(fileScanTask.file().path().toString)
         // If an Iceberg table has deletion file associated with the data file (Supported in
         // Iceberg V2, either position deletes or equality deletes), we could not convert directly.
         val hasMergeOnReadDeletionFiles = fileScanTask.deletes().size() > 0

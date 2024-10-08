@@ -155,4 +155,13 @@ object IcebergTable {
        |$conflictingColumns. Delta does not support case sensitive column names.
        |Please rename these columns before converting to Delta.
        """.stripMargin
+
+  /**
+   * Convert a wasbs URI to an abfss URI when reading an iceberg table
+   */
+  def rewritePath(path: String) : String = {
+    if (path.startsWith("wasbs://")) path.replace("wasbs://", "abfss://")
+      .replace("blob.core.windows.net", "dfs.core.windows.net")
+    else path
+  }
 }
