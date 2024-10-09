@@ -651,17 +651,28 @@ object Snapshot extends DeltaLogging {
 }
 
 /**
- * An initial snapshot with only metadata specified. Useful for creating a DataFrame from an
- * existing parquet table during its conversion to delta.
+ * A dummy snapshot with only metadata and protocol specified. It is used for a targeted table
+ * version that does not exist yet before commiting a change. This can be used to create a
+ * DataFrame, or to derive the stats schema from an existing Parquet table when converting it to
+ * Delta or cloning it to a Delta table prior to the actual snapshot being available after a commit.
+ *
+ * Note that the snapshot state reconstruction contains only the protocol and metadata - it does not
+ * include add/remove actions, appids, or metadata domains, even if the actual table currently has
+ * or will have them in the future.
  *
  * @param logPath the path to transaction log
  * @param deltaLog the delta log object
  * @param metadata the metadata of the table
+ * @param protocolOpt the protocol version of the table (optional). If not specified, a default
+ *                    protocol will be computed based on the metadata. This must be explicitly
+ *                    specified when replacing an existing Delta table, otherwise using the metadata
+ *                    to compute the protocol might result in a protocol downgrade for the table.
  */
-class InitialSnapshot(
+class DummySnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
-    override val metadata: Metadata)
+    override val metadata: Metadata,
+    protocolOpt: Option[Protocol] = None)
   extends Snapshot(
     path = logPath,
     version = -1,
@@ -685,8 +696,10 @@ class InitialSnapshot(
 
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]
   override def stateDF: DataFrame = emptyDF
-  override protected lazy val computedState: SnapshotState = initialState(metadata)
-  override def protocol: Protocol = computedState.protocol
+  override def protocol: Protocol =
+    protocolOpt.getOrElse(Protocol.forNewTable(spark, Some(metadata)))
+
+  override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
 
   // The [[InitialSnapshot]] is not backed by any external commit-coordinator.
