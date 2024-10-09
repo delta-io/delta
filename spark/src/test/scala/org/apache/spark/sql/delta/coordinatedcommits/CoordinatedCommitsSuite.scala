@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.CoordinatedCommitType._
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.DummySnapshot
+import org.apache.spark.sql.delta.InitialSnapshot
 import org.apache.spark.sql.delta.LogSegment
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions._
@@ -242,12 +242,12 @@ class CoordinatedCommitsSuite
       val tablePath = tempDir.getAbsolutePath
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog.forTable(spark, new Path(tablePath), clock)
-      assert(log.unsafeVolatileSnapshot.isInstanceOf[DummySnapshot])
+      assert(log.unsafeVolatileSnapshot.isInstanceOf[InitialSnapshot])
       assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
       assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
       clock.advance(500)
       log.update()
-      assert(log.unsafeVolatileSnapshot.isInstanceOf[DummySnapshot])
+      assert(log.unsafeVolatileSnapshot.isInstanceOf[InitialSnapshot])
       assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
     }
   }

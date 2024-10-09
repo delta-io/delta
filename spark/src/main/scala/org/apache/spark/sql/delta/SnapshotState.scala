@@ -168,8 +168,9 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   protected[delta] def numOfFilesIfKnown: Option[Long] = Some(numOfFiles)
   protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadata)
 
-  /** Generate a default SnapshotState of a new table given the table metadata and the protocol. */
-  protected def initialState(metadata: Metadata, protocol: Protocol): SnapshotState = {
+  /** Generate a default SnapshotState of a new table, given the table metadata */
+  protected def initialState(metadata: Metadata): SnapshotState = {
+    val protocol = Protocol.forNewTable(spark, Some(metadata))
 
     SnapshotState(
       sizeInBytes = 0L,

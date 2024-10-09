@@ -272,10 +272,12 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       if (filesWithNoStats.nonEmpty) {
         StatsCollectionUtils.computeStats(spark,
           conf = snapshot.deltaLog.newDeltaHadoopConf(),
-          deltaLog = snapshot.deltaLog,
-          snapshot = snapshot,
+          dataPath = snapshot.deltaLog.dataPath,
           addFiles = filesWithNoStats.toDS(spark),
           numFilesOpt = Some(filesWithNoStats.size),
+          columnMappingMode = snapshot.metadata.columnMappingMode,
+          dataSchema = snapshot.dataSchema,
+          statsSchema = snapshot.statsSchema,
           setBoundsToWide = true)
           .collect()
           .toSeq
