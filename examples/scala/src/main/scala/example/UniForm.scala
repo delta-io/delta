@@ -28,19 +28,16 @@ import org.apache.spark.sql.SparkSession
  * A standalone HMS can be created using the following docker command.
  *  ************************************************************
  *  docker run -d -p 9083:9083 --env SERVICE_NAME=metastore \
- *  --name metastore-standalone apache/hive:4.0.0-beta-1
+ *  --name metastore-standalone apache/hive:4.0.0
  *  ************************************************************
  *  The URL of this standalone HMS is thrift://localhost:9083
- *
- *  By default this hms will use `/opt/hive/data/warehouse` as warehouse path.
- *  Please make sure this path exists or change it prior to running the example.
  */
 object UniForm {
 
   def main(args: Array[String]): Unit = {
     // Update this according to the metastore config
     val port = 9083
-    val warehousePath = "/opt/hive/data/warehouse/"
+    val warehousePath = FileUtils.getTempDirectoryPath()
 
     if (!hmsReady(port)) {
       print("HMS not available. Exit.")
