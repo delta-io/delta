@@ -162,7 +162,7 @@ This directory format is only used to follow existing conventions and is not req
 Actual partition values for a file must be read from the transaction log.
 
 ### Deletion Vector Files
-Deletion Vector (DV) files are stored root directory of the table alongside the data files. A DV file contains one or more serialised DV, each describing the set of *invalidated* (or "soft deleted") rows for a particular data file it is associated with.
+Deletion Vector (DV) files are stored in the root directory of the table alongside the data files. A DV file contains one or more serialised DV, each describing the set of *invalidated* (or "soft deleted") rows for a particular data file it is associated with.
 For data with partition values, DV files are *not* kept in the same directory hierarchy as data files, as each one can contain DVs for files from multiple partitions.
 DV files store DVs in a [binary format](#deletion-vector-format).
 
@@ -256,7 +256,7 @@ Because a multi-part checkpoint cannot be created atomically (e.g. vulnerable to
 
 Checkpoints for a given version must only be created after the associated delta file has been successfully written.
 
-#### Sidecar Files
+### Sidecar Files
 
 A sidecar file contains file actions. These files are in parquet format and they must have unique names.
 These are then [linked](#sidecar-file-information) to checkpoints. Refer to [V2 checkpoint spec](#v2-spec)
