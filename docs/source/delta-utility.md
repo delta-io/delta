@@ -706,7 +706,7 @@ LOCATION 'xx://archive/my_table'
 
 .. note:: It is available from Delta Lake 2.3 and above.
 
-Shallow clone for Parquet and Iceberg combines functionality used to clone Delta tables and convert tables to Delta Lake, you can use clone functionality to convert data from Parquet or Iceberg data sources to managed or external Delta tables with the same basic syntax.
+Shallow clone for Parquet and Iceberg combines functionality used to clone Delta tables and convert tables to Delta Lake. You can use shallow clone functionality to convert data from Parquet or Iceberg data sources to managed or external Delta tables with the same basic syntax.
 
 `replace` has the same limitation as Delta shallow clone, the target table must be emptied before applying replace.
 
