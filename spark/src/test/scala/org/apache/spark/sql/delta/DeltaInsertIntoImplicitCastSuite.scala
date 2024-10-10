@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.SaveMode
+
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -38,15 +38,17 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
+  test("all test cases are implemented") {
+    checkAllTestCasesImplemented()
+  }
+
   for (schemaEvolution <- BOOLEAN_DOMAIN) {
     testInserts("insert with implicit up and down cast on top-level fields, " +
       s"schemaEvolution=$schemaEvolution")(
-      initialSchemaDDL = "a long, b int",
-      initialJsonData = Seq("""{ "a": 1, "b": 2 }"""),
+      initialData = TestData("a long, b int", Seq("""{ "a": 1, "b": 2 }""")),
       partitionBy = Seq("a"),
       overwriteWhere = "a" -> 1,
-      insertSchemaDDL = "a int, b long",
-      insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
+      insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
       expectedResult = ExpectedResult.Success(
         expected = new StructType()
           .add("a", LongType)
@@ -54,26 +56,16 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       // The following insert operations don't implicitly cast the data but fail instead - see
       // following test covering failure for these cases. We should change this to offer consistent
       // behavior across all inserts.
-      excludeInserts = Seq(
-        DFv1SaveAsTable(SaveMode.Append),
-        DFv1SaveAsTable(SaveMode.Overwrite),
-        DFv1Save(SaveMode.Append),
-        DFv1Save(SaveMode.Overwrite),
-        DFv2Append,
-        DFv2Overwrite,
-        DFv2OverwritePartition
-      ),
+      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
     testInserts("insert with implicit up and down cast on top-level fields, " +
       s"schemaEvolution=$schemaEvolution")(
-      initialSchemaDDL = "a long, b int",
-      initialJsonData = Seq("""{ "a": 1, "b": 2 }"""),
+      initialData = TestData("a long, b int", Seq("""{ "a": 1, "b": 2 }""")),
       partitionBy = Seq("a"),
       overwriteWhere = "a" -> 1,
-      insertSchemaDDL = "a int, b long",
-      insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
+      insertData = TestData("a int, b long", Seq("""{ "a": 1, "b": 4 }""")),
       expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
@@ -83,26 +75,18 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
             "updateField" -> "a"
         ))
       },
-      includeInserts = Seq(
-        DFv1SaveAsTable(SaveMode.Append),
-        DFv1SaveAsTable(SaveMode.Overwrite),
-        DFv1Save(SaveMode.Append),
-        DFv1Save(SaveMode.Overwrite),
-        DFv2Append,
-        DFv2Overwrite,
-        DFv2OverwritePartition
-      ),
+      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
     testInserts("insert with implicit up and down cast on fields nested in array, " +
       s"schemaEvolution=$schemaEvolution")(
-      initialSchemaDDL = "key int, a array<struct<x: long, y: int>>",
-      initialJsonData = Seq("""{ "key": 1, "a": [ { "x": 1, "y": 2 } ] }"""),
+      initialData = TestData("key int, a array<struct<x: long, y: int>>",
+        Seq("""{ "key": 1, "a": [ { "x": 1, "y": 2 } ] }""")),
       partitionBy = Seq("key"),
       overwriteWhere = "key" -> 1,
-      insertSchemaDDL = "key int, a array<struct<x: int, y: long>>",
-      insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
+      insertData = TestData("key int, a array<struct<x: int, y: long>>",
+        Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }""")),
       expectedResult = ExpectedResult.Success(
         expected = new StructType()
           .add("key", IntegerType)
@@ -112,26 +96,18 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       // The following insert operations don't implicitly cast the data but fail instead - see
       // following test covering failure for these cases. We should change this to offer consistent
       // behavior across all inserts.
-      excludeInserts = Seq(
-        DFv1SaveAsTable(SaveMode.Append),
-        DFv1SaveAsTable(SaveMode.Overwrite),
-        DFv1Save(SaveMode.Append),
-        DFv1Save(SaveMode.Overwrite),
-        DFv2Append,
-        DFv2Overwrite,
-        DFv2OverwritePartition
-      ),
+      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
     testInserts("insert with implicit up and down cast on fields nested in array, " +
       s"schemaEvolution=$schemaEvolution")(
-      initialSchemaDDL = "key int, a array<struct<x: long, y: int>>",
-      initialJsonData = Seq("""{ "key": 1, "a": [ { "x": 1, "y": 2 } ] }"""),
+      initialData = TestData("key int, a array<struct<x: long, y: int>>",
+        Seq("""{ "key": 1, "a": [ { "x": 1, "y": 2 } ] }""")),
       partitionBy = Seq("key"),
       overwriteWhere = "key" -> 1,
-      insertSchemaDDL = "key int, a array<struct<x: int, y: long>>",
-      insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
+      insertData = TestData("key int, a array<struct<x: int, y: long>>",
+        Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }""")),
       expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
@@ -141,26 +117,18 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
             "updateField" -> "a"
         ))
       },
-      includeInserts = Seq(
-        DFv1SaveAsTable(SaveMode.Append),
-        DFv1SaveAsTable(SaveMode.Overwrite),
-        DFv1Save(SaveMode.Append),
-        DFv1Save(SaveMode.Overwrite),
-        DFv2Append,
-        DFv2Overwrite,
-        DFv2OverwritePartition
-      ),
+      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
     testInserts("insert with implicit up and down cast on fields nested in map, " +
       s"schemaEvolution=$schemaEvolution")(
-      initialSchemaDDL = "key int, m map<string, struct<x: long, y: int>>",
-      initialJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }"""),
+      initialData = TestData("key int, m map<string, struct<x: long, y: int>>",
+        Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }""")),
       partitionBy = Seq("key"),
       overwriteWhere = "key" -> 1,
-      insertSchemaDDL = "key int, m map<string, struct<x: int, y: long>>",
-      insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
+      insertData = TestData("key int, m map<string, struct<x: int, y: long>>",
+        Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }""")),
       expectedResult = ExpectedResult.Success(
         expected = new StructType()
           .add("key", IntegerType)
@@ -170,26 +138,18 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       // The following insert operations don't implicitly cast the data but fail instead - see
       // following test covering failure for these cases. We should change this to offer consistent
       // behavior across all inserts.
-      excludeInserts = Seq(
-        DFv1SaveAsTable(SaveMode.Append),
-        DFv1SaveAsTable(SaveMode.Overwrite),
-        DFv1Save(SaveMode.Append),
-        DFv1Save(SaveMode.Overwrite),
-        DFv2Append,
-        DFv2Overwrite,
-        DFv2OverwritePartition
-      ),
+      excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
     testInserts("insert with implicit up and down cast on fields nested in map, " +
       s"schemaEvolution=$schemaEvolution")(
-      initialSchemaDDL = "key int, m map<string, struct<x: long, y: int>>",
-      initialJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }"""),
+      initialData = TestData("key int, m map<string, struct<x: long, y: int>>",
+        Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }""")),
       partitionBy = Seq("key"),
       overwriteWhere = "key" -> 1,
-      insertSchemaDDL = "key int, m map<string, struct<x: int, y: long>>",
-      insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
+      insertData = TestData("key int, m map<string, struct<x: int, y: long>>",
+        Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }""")),
       expectedResult = ExpectedResult.Failure { ex =>
         checkError(
           ex,
@@ -199,15 +159,7 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
             "updateField" -> "m"
         ))
       },
-      includeInserts = Seq(
-        DFv1SaveAsTable(SaveMode.Append),
-        DFv1SaveAsTable(SaveMode.Overwrite),
-        DFv1Save(SaveMode.Append),
-        DFv1Save(SaveMode.Overwrite),
-        DFv2Append,
-        DFv2Overwrite,
-        DFv2OverwritePartition
-      ),
+      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
   }
