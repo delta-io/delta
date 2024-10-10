@@ -90,20 +90,28 @@ class DeltaSharingDataSourceTypeWideningSuite
     }
   }
 
-  /** Short-hand for the type widening metadata for column `value` for the test table above. */
-  private val typeWideningMetadata: Metadata =
-    new MetadataBuilder()
-      .putMetadataArray(
-        "delta.typeChanges", Array(
-          new MetadataBuilder()
-            .putLong("tableVersion", 2)
-            .putString("fromType", "short")
-            .putString("toType", "integer")
-            .build()))
-      .build()
+  for (responseFormat <- Seq(
+    DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
+    DeltaSharingOptions.RESPONSE_FORMAT_PARQUET
+  )) {
+    // Type widening metadata for column `value` for the test table above.
+    // The server strips the metadata in Parquet format sharing, this is ok since it's not used on
+    // the read path anyway.
+    val typeWideningMetadata: Metadata =
+      if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+        new MetadataBuilder()
+          .putMetadataArray(
+            "delta.typeChanges", Array(
+              new MetadataBuilder()
+                .putLong("tableVersion", 2)
+                .putString("fromType", "short")
+                .putString("toType", "integer")
+                .build()))
+          .build()
+      } else {
+        Metadata.empty
+      }
 
-  for (responseFormat <- Seq(DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
-    DeltaSharingOptions.RESPONSE_FORMAT_PARQUET)) {
     test(s"Delta sharing with type widening, responseFormat=$responseFormat") {
       withTestTable { tableName =>
         testReadingDeltaShare(
@@ -121,7 +129,7 @@ class DeltaSharingDataSourceTypeWideningSuite
         testReadingDeltaShare(
           tableName,
           versionAsOf = Some(3),
-          responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
+          responseFormat,
           expectedSchema = new StructType()
             .add("value", IntegerType, nullable = true, metadata = typeWideningMetadata),
           expectedResult = Seq(1, 2, 3, Int.MaxValue).toDF("value"))
@@ -129,7 +137,7 @@ class DeltaSharingDataSourceTypeWideningSuite
         testReadingDeltaShare(
           tableName,
           versionAsOf = Some(2),
-          responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
+          responseFormat,
           expectedSchema = new StructType()
             .add("value", IntegerType, nullable = true, metadata = typeWideningMetadata),
           expectedResult = Seq(1, 2).toDF("value"))
@@ -137,7 +145,7 @@ class DeltaSharingDataSourceTypeWideningSuite
         testReadingDeltaShare(
           tableName,
           versionAsOf = Some(1),
-          responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
+          responseFormat,
           expectedSchema = new StructType()
             .add("value", ShortType),
           expectedResult = Seq(1, 2).toDF("value"))
