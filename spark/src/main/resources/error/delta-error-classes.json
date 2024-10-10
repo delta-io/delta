@@ -327,6 +327,12 @@
     ],
     "sqlState" : "428FT"
   },
+  "DELTA_CANNOT_VACUUM_LITE" : {
+    "message" : [
+      "VACUUM LITE cannot delete all eligible files as some files are not referenced by the Delta log. Please run VACUUM FULL."
+    ],
+    "sqlState" : "55000"
+  },
   "DELTA_CANNOT_WRITE_INTO_VIEW" : {
     "message" : [
       "<table> is a view. Writes to a view are not supported."
