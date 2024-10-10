@@ -2473,6 +2473,39 @@ class SchemaUtilsSuite extends QueryTest
       ArrayType(new StructType().add("a", MapType(StringType, StringType)).add("b", StringType)))
   }
 
+  test("keepExistingType and allowTypeWidening both true allows both widening and " +
+    "preserving non-widenable existing types") {
+    val base = new StructType()
+      .add("widened", ShortType)
+      .add("struct", new StructType()
+        .add("b", ByteType)
+        .add("a", StringType))
+      .add("map", MapType(ShortType, IntegerType))
+      .add("array", ArrayType(StringType))
+      .add("nonwidened", IntegerType)
+
+    val update = new StructType()
+      .add("widened", IntegerType)
+      .add("struct", new StructType()
+        .add("b", IntegerType)
+        .add("a", IntegerType))
+      .add("map", MapType(IntegerType, StringType))
+      .add("array", ArrayType(ByteType))
+      .add("nonwidened", StringType)
+
+    val expected = new StructType()
+      .add("widened", IntegerType)
+      .add("struct", new StructType()
+        .add("b", IntegerType)
+        .add("a", StringType))
+      .add("map", MapType(IntegerType, IntegerType))
+      .add("array", ArrayType(StringType))
+      .add("nonwidened", IntegerType)
+    assert(
+      mergeSchemas(base, update, allowTypeWidening = true, keepExistingType = true) === expected
+    )
+  }
+
   ////////////////////////////
   // transformColumns
   ////////////////////////////
