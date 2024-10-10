@@ -529,8 +529,4 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
       throw new InvalidObjectException("No URI in deserialized Path");
     }
   }
-
-  public static String getName(String pathString) {
-    return new Path(pathString).getName();
-  }
 }

@@ -263,7 +263,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
     // Sidecars will exist in schema. Extract sidecar files, then remove sidecar files from
     // batch output.
-    List<DeltaLogFile> outputFiles = new ArrayList<>();
     int sidecarIndex = columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
     ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
     for (int i = 0; i < columnarBatch.getSize(); i++) {

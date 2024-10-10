@@ -212,7 +212,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           FileNames.checkpointVersion(topLevelFile.getPath) == v
         }
         if (matchingCheckpoints.nonEmpty) {
-          matchingCheckpoints.maxBy(f => new CheckpointInstance(f._1.getPath)) match {
+          matchingCheckpoints.maxBy(f => new CheckpointInstance(new Path(f._1.getPath))) match {
             case (c, sidecars) => (Seq(c), sidecars)
           }
         } else {

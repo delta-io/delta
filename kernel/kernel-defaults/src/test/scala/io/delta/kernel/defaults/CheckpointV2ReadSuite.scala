@@ -23,6 +23,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
+import io.delta.kernel.internal.fs.{Path => DeltaPath}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.conf.Configuration
@@ -92,7 +93,8 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       f => FileNames.checkpointVersion(new Path(f.getPath)))
       .contains(expectedV2CkptToRead))
     assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
-      f => new CheckpointInstance(f.getPath).format == CheckpointInstance.CheckpointFormat.V2)
+      f => new CheckpointInstance(new DeltaPath(f.getPath)).format
+        == CheckpointInstance.CheckpointFormat.V2)
       .contains(expectV2CheckpointFormat))
 
 

@@ -54,10 +54,9 @@ public final class FileNames {
     return Long.parseLong(path.getName().split("\\.")[0]);
   }
 
-  public static long deltaVersion(String path) {
-    final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
-    final String name = path.substring(slashIdx + 1);
-    return Long.parseLong(name.split("\\.")[0]);
+  public static long deltaVersion(String pathString) {
+    final Path path = new Path(pathString);
+    return deltaVersion(path);
   }
 
   /** Returns the version for the given checkpoint path. */
@@ -65,10 +64,9 @@ public final class FileNames {
     return Long.parseLong(path.getName().split("\\.")[0]);
   }
 
-  public static long checkpointVersion(String path) {
-    final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
-    final String name = path.substring(slashIdx + 1);
-    return Long.parseLong(name.split("\\.")[0]);
+  public static long checkpointVersion(String pathString) {
+    final Path path = new Path(pathString);
+    return checkpointVersion(path);
   }
 
   public static String sidecarFile(Path path, String sidecar) {
@@ -128,26 +126,25 @@ public final class FileNames {
     return output;
   }
 
-  public static boolean isCheckpointFile(String fileName) {
-    return CHECKPOINT_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
+  public static boolean isCheckpointFile(Path filePath) {
+    return CHECKPOINT_FILE_PATTERN.matcher(filePath.getName()).matches();
   }
 
-  public static boolean isClassicCheckpointFile(String fileName) {
-    return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+  public static boolean isClassicCheckpointFile(Path filePath) {
+    return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(filePath.getName()).matches();
   }
 
-  public static boolean isMulitPartCheckpointFile(String fileName) {
-    return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+  public static boolean isMultiPartCheckpointFile(Path filePath) {
+    return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(filePath.getName()).matches();
   }
 
-  public static boolean isV2CheckpointFile(String fileName) {
-    return V2_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+  public static boolean isV2CheckpointFile(Path filePath) {
+    return V2_CHECKPOINT_FILE_PATTERN.matcher(filePath.getName()).matches();
   }
 
-  public static boolean isCommitFile(String fileName) {
-    String filename = new Path(fileName).getName();
-    return DELTA_FILE_PATTERN.matcher(filename).matches()
-        || UUID_DELTA_FILE_REGEX.matcher(filename).matches();
+  public static boolean isCommitFile(Path filePath) {
+    return DELTA_FILE_PATTERN.matcher(filePath.getName()).matches()
+        || UUID_DELTA_FILE_REGEX.matcher(filePath.getName()).matches();
   }
 
   /**
@@ -157,9 +154,9 @@ public final class FileNames {
    * upgrade.
    */
   public static long getFileVersion(Path path) {
-    if (isCheckpointFile(path.getName())) {
+    if (isCheckpointFile(path)) {
       return checkpointVersion(path);
-    } else if (isCommitFile(path.getName())) {
+    } else if (isCommitFile(path)) {
       return deltaVersion(path);
       // } else if (isChecksumFile(path)) {
       //    checksumVersion(path);
