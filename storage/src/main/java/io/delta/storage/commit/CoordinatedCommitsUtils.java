@@ -98,7 +98,7 @@ public class CoordinatedCommitsUtils {
     /**
      * Write a UUID-based commit file for the specified version to the table at logPath.
      */
-    public static FileStatus writeCommitFile(
+    public static FileStatus writeUnbackfilledCommitFile(
             LogStore logStore,
             Configuration hadoopConf,
             String logPath,
@@ -111,7 +111,10 @@ public class CoordinatedCommitsUtils {
         if (!fs.exists(commitPath.getParent())) {
             fs.mkdirs(commitPath.getParent());
         }
-        logStore.write(commitPath, actions, false, hadoopConf);
+        // Do not use Put-If-Absent for Unbackfilled Commits files since we assume that UUID-based
+        // commit files are globally unique, and so we will never have concurrent writers attempting
+        // to write the same commit file.
+        logStore.write(commitPath, actions, true /* overwrite */, hadoopConf);
         return commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath);
     }
 

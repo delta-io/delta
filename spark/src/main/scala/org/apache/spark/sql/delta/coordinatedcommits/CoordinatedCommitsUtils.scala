@@ -149,27 +149,6 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     }
   }
 
-  /**
-   * Write a UUID-based commit file for the specified version to the
-   * table at [[logPath]].
-   */
-  def writeCommitFile(
-      logStore: LogStore,
-      hadoopConf: Configuration,
-      logPath: Path,
-      commitVersion: Long,
-      actions: Iterator[String],
-      uuid: String): FileStatus = {
-    val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuid))
-    logStore.write(commitPath, actions.asJava, true, hadoopConf)
-    commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
-  }
-
-  /**
-   * Get the table path from the provided log path.
-   */
-  def getTablePath(logPath: Path): Path = logPath.getParent
-
   def getCommitCoordinatorClient(
       spark: SparkSession,
       deltaLog: DeltaLog, // Used for logging

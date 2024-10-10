@@ -359,17 +359,19 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                     "Commit version 0 must go via filesystem.");
         }
         try {
-            FileSystem fs = logPath.getFileSystem(hadoopConf);
-            Path commitPath =
-                    CoordinatedCommitsUtils.generateUnbackfilledDeltaFilePath(logPath, commitVersion);
-            logStore.write(commitPath, actions, true /* overwrite */, hadoopConf);
-            FileStatus commitFileStatus = fs.getFileStatus(commitPath);
+            FileStatus commitFileStatus = CoordinatedCommitsUtils.writeUnbackfilledCommitFile(
+                    logStore,
+                    hadoopConf,
+                    logPath.toString(),
+                    commitVersion,
+                    actions,
+                    UUID.randomUUID().toString());
             long inCommitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
             boolean isCCtoFSConversion =
                     CoordinatedCommitsUtils.isCoordinatedCommitsToFSConversion(commitVersion, updatedActions);
 
             LOG.info("Committing version {} with UUID delta file {} to DynamoDB.",
-                    commitVersion, commitPath);
+                    commitVersion, commitFileStatus.getPath());
             CommitResponse res = commitToCoordinator(
                     logPath,
                     tableDesc.getTableConf(),
