@@ -2472,7 +2472,7 @@ class SchemaUtilsSuite extends QueryTest
       base2, update2, false, false, false, false, allowOverride = true) ===
       ArrayType(new StructType().add("a", MapType(StringType, StringType)).add("b", StringType)))
   }
-    
+
   test("keepExistingType and allowTypeWidening both true allows both widening and " +
     "preserving non-widenable existing types") {
     val base = new StructType()
