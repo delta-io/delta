@@ -1730,6 +1730,30 @@ trait DeltaSQLConfBase {
     .createWithDefault(false)
 
   //////////////////
+  // FSCK Configs
+  //////////////////
+
+  val FSCK_MAX_NUM_ENTRIES_IN_RESULT =
+  buildConf("fsck.maxNumEntriesInResult")
+    .doc("""
+       | How many entries are displayed in the result of the FSCK command in
+       | DRY RUN mode.""".stripMargin)
+    .intConf
+    .checkValue(_ >= 0, "maxNumEntriesInResult must be non-negative")
+    .createWithDefault(1000)
+
+  val FSCK_MISSING_DVS_MODE =
+  buildConf("fsck.missingDeletionVectorsMode")
+    .doc("""
+      | What to do in case of missing deletion vectors.
+      | removeDV - remove the missing DV from the delta log (keep the parquet file)
+      | exception - throw an exception when a missing DV is detected""".stripMargin)
+    .stringConf
+    .checkValue(Seq("removeDV", "exception").contains(_),
+      "missingDeletionVectorsMode can be only exception or removeDV")
+    .createWithDefault("exception")
+
+  //////////////////
   // Idempotent DML
   //////////////////
 
