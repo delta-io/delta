@@ -44,9 +44,28 @@ public final class FileNames {
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
+  /**
+   * The subdirectory in the delta log directory where un-backfilled commits are stored as part of
+   * the coordinated commits table feature.
+   */
+  public static final String COMMIT_SUBDIR = "_commits";
+
   /** Returns the delta (json format) path for a given delta file. */
   public static String deltaFile(Path path, long version) {
     return String.format("%s/%020d.json", path, version);
+  }
+
+  /**
+   * Returns the un-backfilled uuid formatted delta (json format) path for a given version.
+   *
+   * @param logPath The root path of the delta log.
+   * @param version The version of the delta file.
+   * @param uuidString An optional UUID string.
+   * @return The path to the un-backfilled delta file: <logPath>/_commits/<version>.<uuid>.json
+   */
+  public static String unbackfilledDeltaFile(Path logPath, long version, String uuidString) {
+    Path commitsPath = commitDirPath(logPath);
+    return new Path(commitsPath, String.format("%020d.%s.json", version, uuidString)).toString();
   }
 
   /** Returns the version for the given delta path. */
@@ -136,7 +155,7 @@ public final class FileNames {
     return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
   }
 
-  public static boolean isMulitPartCheckpointFile(String fileName) {
+  public static boolean isMultiPartCheckpointFile(String fileName) {
     return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
   }
 
@@ -144,10 +163,17 @@ public final class FileNames {
     return V2_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
   }
 
-  public static boolean isCommitFile(String fileName) {
-    String filename = new Path(fileName).getName();
-    return DELTA_FILE_PATTERN.matcher(filename).matches()
-        || UUID_DELTA_FILE_REGEX.matcher(filename).matches();
+  public static boolean isCommitFile(String filePathStr) {
+    Path filePath = new Path(filePathStr);
+    String fileName = filePath.getName();
+    if (DELTA_FILE_PATTERN.matcher(fileName).matches()) {
+      return true;
+    } else {
+      String fileParentName = filePath.getParent().getName();
+      // If parent is _commits dir, then match against un-backfilled commit file name pattern.
+      return COMMIT_SUBDIR.equals(fileParentName)
+          && UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
+    }
   }
 
   /**
@@ -167,5 +193,10 @@ public final class FileNames {
       throw new IllegalArgumentException(
           String.format("Unexpected file type found in transaction log: %s", path));
     }
+  }
+
+  /** Returns path to the sidecar directory */
+  public static Path commitDirPath(Path logPath) {
+    return new Path(logPath, COMMIT_SUBDIR);
   }
 }
