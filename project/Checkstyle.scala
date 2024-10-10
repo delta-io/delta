@@ -57,21 +57,19 @@ object Checkstyle {
     // and during tests (e.g. build/sbt test)
     Seq(
       checkstyleConfigLocation := CheckstyleConfigLocation.File(checkstyleFile),
-      // if we keep the Error severity, `build/sbt` will throw an error and immediately stop at
-      // the `checkstyle` phase (if error) -> never execute the `check-report` phase of
-      // `checkstyle-report.xml` and `checkstyle-test-report.xml`. We need to ignore and throw
-      // error if exists when checking *report.xml.
-      checkstyleSeverityLevel := CheckstyleSeverityLevel.Ignore,
+      checkstyleSeverityLevel := CheckstyleSeverityLevel.Error,
 
       compileJavastyle := {
-        (Compile / checkstyle).value
-        javaCheckstyle(streams.value.log, checkstyleOutputFile.value)
+        try {(Compile / checkstyle).value}
+        finally {javaCheckstyle(streams.value.log, checkstyleOutputFile.value)}
       },
       (Compile / compile) := ((Compile / compile) dependsOn compileJavastyle).value,
 
       testJavastyle := {
-        (Test / checkstyle).value
-        javaCheckstyle(streams.value.log, (Compile / target).value / "checkstyle-test-report.xml")
+        try {(Test / checkstyle).value}
+        finally {
+          javaCheckstyle(streams.value.log, (Compile / target).value / "checkstyle-test-report.xml")
+        }
       },
       (Test / test) := ((Test / test) dependsOn (Test / testJavastyle)).value
     )
