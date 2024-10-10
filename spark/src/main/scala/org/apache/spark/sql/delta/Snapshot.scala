@@ -95,6 +95,8 @@ class Snapshot(
   // For implicits which re-use Encoder:
   import org.apache.spark.sql.delta.implicits._
 
+  // some change
+
   protected def spark = SparkSession.active
 
   /** Snapshot to scan by the DeltaScanGenerator for metadata query optimizations */
