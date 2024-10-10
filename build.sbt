@@ -64,6 +64,8 @@ sharing / sparkVersion := getSparkVersion()
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
 val flinkVersion = "1.16.1"
+val kafkaVersion = "3.8.0"
+val icebergVersionForKafkaConnector = "1.6.1"
 val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
@@ -1539,6 +1541,69 @@ lazy val flink = (project in file("connectors/flink"))
     //  standalone-specific import orders
     javaCheckstyleSettings("dev/connectors-checkstyle.xml")
   ).configureUnidoc()
+
+lazy val kafka = (project in file("connectors/kafka"))
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .settings(
+    name := "delta-kafka",
+    commonSettings,
+    javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.kafka" % "connect-api" % kafkaVersion exclude("com.github.luben", "zstd-jni"),
+      "org.apache.kafka" % "connect-json" % kafkaVersion exclude("com.github.luben", "zstd-jni"),
+      "org.apache.kafka" % "kafka-clients" % kafkaVersion exclude("com.github.luben", "zstd-jni"),
+      "org.apache.iceberg" % "iceberg-core" % "1.6.1",
+      "org.apache.iceberg" % "iceberg-common" % "1.6.1",
+      "org.apache.iceberg" % "iceberg-parquet" % "1.6.1",
+      "org.apache.iceberg" % "iceberg-kafka-connect" % "1.6.1"
+    ),
+    // Shade jackson libraries so that connector developers don't have to worry
+    // about jackson version conflicts.
+    Compile / packageBin := assembly.value,
+    assembly / assemblyMergeStrategy := {
+      // Discard `module-info.class` to fix the `different file contents found` error.
+      // TODO Upgrade SBT to 1.5 which will do this automatically
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("mozilla", "public-suffix-list.txt") => MergeStrategy.first
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      case "META-INF/versions/9/module-info.class" => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
+    // Generate the package object to provide the version information in runtime.
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "kafka" / "DeltaKafkaMeta.java"
+      IO.write(file,
+        s"""/*
+           | * Copyright (2024) The Delta Lake Project Authors.
+           | *
+           | * Licensed under the Apache License, Version 2.0 (the "License");
+           | * you may not use this file except in compliance with the License.
+           | * You may obtain a copy of the License at
+           | *
+           | * http://www.apache.org/licenses/LICENSE-2.0
+           | *
+           | * Unless required by applicable law or agreed to in writing, software
+           | * distributed under the License is distributed on an "AS IS" BASIS,
+           | * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+           | * See the License for the specific language governing permissions and
+           | * limitations under the License.
+           | */
+           |package io.delta.kafka;
+           |
+           |public final class DeltaKafkaMeta {
+           |    public static final String DELTA_KAFKA_CONNECT_VERSION = "${version.value}";
+           |}
+           |""".stripMargin)
+      Seq(file)
+    },
+    // Unidoc settings
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kafka/")),
+  ).configureUnidoc(docTitle = "Delta Kafka Connect")
+
 
 /**
  * Get list of python files and return the mapping between source files and target paths
