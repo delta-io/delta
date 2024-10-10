@@ -659,15 +659,15 @@ trait DeltaConfigsBase extends DeltaLogging {
 
   /**
    * The isolation level of a table defines the degree to which a transaction must be isolated from
-   * modifications made by concurrent transactions. Delta currently supports one isolation level:
-   * Serializable.
+   * modifications made by concurrent transactions. Delta supports two isolation levels:
+   * Serializable and WriteSerializable. The default is Serializable.
    */
   val ISOLATION_LEVEL = buildConfig[IsolationLevel](
     "isolationLevel",
     Serializable.toString,
-    IsolationLevel.fromString(_),
-    _ == Serializable,
-    "must be Serializable"
+    IsolationLevel.fromString,
+    Set[IsolationLevel](Serializable, WriteSerializable).contains,
+    "must be Serializable or WriteSerializable"
   )
 
   /** Policy to decide what kind of checkpoint to write to a table. */
