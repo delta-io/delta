@@ -2428,6 +2428,51 @@ class SchemaUtilsSuite extends QueryTest
     testParquetUpcast()
 
   }
+
+  test("schema merging non struct root type") {
+    // Array root type
+    val base1 = ArrayType(new StructType().add("a", IntegerType))
+    val update1 = ArrayType(new StructType().add("b", IntegerType))
+
+    assert(mergeDataTypes(
+      base1, update1, false, false, false, false, allowOverride = false) ===
+      ArrayType(new StructType().add("a", IntegerType).add("b", IntegerType)))
+
+    // Map root type
+    val base2 = MapType(
+      new StructType().add("a", IntegerType),
+      new StructType().add("b", IntegerType)
+    )
+    val update2 = MapType(
+      new StructType().add("b", IntegerType),
+      new StructType().add("c", IntegerType)
+    )
+
+    assert(mergeDataTypes(
+      base2, update2, false, false, false, false, allowOverride = false) ===
+      MapType(
+        new StructType().add("a", IntegerType).add("b", IntegerType),
+        new StructType().add("b", IntegerType).add("c", IntegerType)
+      ))
+  }
+
+  test("schema merging allow override") {
+    // override root type
+    val base1 = new StructType().add("a", IntegerType)
+    val update1 = ArrayType(LongType)
+
+    assert(mergeDataTypes(
+      base1, update1, false, false, false, false, allowOverride = true) === ArrayType(LongType))
+
+    // override nested type
+    val base2 = ArrayType(new StructType().add("a", IntegerType).add("b", StringType))
+    val update2 = ArrayType(new StructType().add("a", MapType(StringType, StringType)))
+
+    assert(mergeDataTypes(
+      base2, update2, false, false, false, false, allowOverride = true) ===
+      ArrayType(new StructType().add("a", MapType(StringType, StringType)).add("b", StringType)))
+  }
+
   ////////////////////////////
   // transformColumns
   ////////////////////////////
