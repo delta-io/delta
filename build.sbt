@@ -1542,6 +1542,10 @@ lazy val flink = (project in file("connectors/flink"))
     javaCheckstyleSettings("dev/connectors-checkstyle.xml")
   ).configureUnidoc()
 
+import Keys._
+
+lazy val copyDependencies = taskKey[Unit]("Copy all dependencies to a lib folder")
+
 lazy val kafka = (project in file("connectors/kafka"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
@@ -1550,18 +1554,52 @@ lazy val kafka = (project in file("connectors/kafka"))
     commonSettings,
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
+    excludeDependencies += "com.github.luben" % "zstd-jni" % "1.5.0-1",
     libraryDependencies ++= Seq(
-      "org.apache.kafka" % "connect-api" % kafkaVersion exclude("com.github.luben", "zstd-jni"),
-      "org.apache.kafka" % "connect-json" % kafkaVersion exclude("com.github.luben", "zstd-jni"),
-      "org.apache.kafka" % "kafka-clients" % kafkaVersion exclude("com.github.luben", "zstd-jni"),
+      "org.apache.parquet" % "parquet-hadoop" % "1.13.1" excludeAll (
+        ExclusionRule("com.github.luben", "zstd-jni")
+      ),
+      "org.apache.kafka" % "connect-api" % kafkaVersion,
+      "org.apache.kafka" % "connect-json" % kafkaVersion,
+      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
       "org.apache.iceberg" % "iceberg-core" % "1.6.1",
       "org.apache.iceberg" % "iceberg-common" % "1.6.1",
-      "org.apache.iceberg" % "iceberg-parquet" % "1.6.1",
-      "org.apache.iceberg" % "iceberg-kafka-connect" % "1.6.1"
+      "org.apache.iceberg" % "iceberg-parquet" % "1.6.1" excludeAll (
+        ExclusionRule("com.github.luben", "zstd-jni")
+      ),
+      "org.apache.iceberg" % "iceberg-aws" % "1.6.1",
+      "software.amazon.awssdk" % "s3" % "2.24.0",
+      "software.amazon.awssdk" % "sts" % "2.24.0",
+      "org.apache.iceberg" % "iceberg-kafka-connect" % "1.6.1",
+      "com.github.luben" % "zstd-jni" % "1.5.6-3",
+      "org.awaitility" % "awaitility" % "4.2.2" % "test",
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
+      "org.apache.iceberg" % "iceberg-aws" % "1.6.1" % Test,
+      "software.amazon.awssdk" % "s3" % "2.24.0" % Test,
+      "software.amazon.awssdk" % "sts" % "2.24.0" % Test,
+      "org.testcontainers" % "testcontainers" % "1.20.1" % Test,
+      "org.junit.jupiter" % "junit-jupiter" % "5.10.1" % Test,
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.10.1" % Test,
+      "org.junit.platform" % "junit-platform-suite-api" % "1.10.3" % Test,
+      "org.junit.platform" % "junit-platform-suite-engine" % "1.10.3" % Test,
+      "org.junit.vintage" % "junit-vintage-engine" % "5.10.1" % Test
     ),
+    dependencyOverrides += "com.github.luben" % "zstd-jni" % "1.5.6-3",
+    // Compile, patch and generated Iceberg JARs
+    copyDependencies := {
+      val libDir = target.value / "delta-kafka-connect-runtime/lib"
+      IO.createDirectory(libDir)
+      val dependencies = (Compile / managedClasspath).value
+      println("dependencies: " + dependencies)
+      dependencies.files.foreach { file =>
+        println(s"Copying ${file.getName} to ${libDir.getAbsolutePath}")
+        IO.copyFile(file, libDir / file.name)
+      }
+      println(s"Dependencies copied to ${libDir.getAbsolutePath}")
+    },
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.
-    Compile / packageBin := assembly.value,
+    Compile / packageBin := ((assembly).dependsOn(copyDependencies)).value,
     assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
       // TODO Upgrade SBT to 1.5 which will do this automatically
