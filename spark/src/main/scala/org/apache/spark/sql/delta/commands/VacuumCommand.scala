@@ -92,6 +92,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         |insert/upsert/delete/optimize, then you may turn off this check by setting:
         |spark.databricks.delta.retentionDurationCheck.enabled = false
         |
+        |For PySpark users, set as follows: spark.sql("SET spark.databricks.delta.retentionDurationCheck.enabled=false") 
+        |
         |If you are not sure, please use a value not less than "$configuredRetentionHours hours".
        """.stripMargin)
   }
