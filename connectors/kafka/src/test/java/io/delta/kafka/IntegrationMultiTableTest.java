@@ -28,7 +28,6 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.connect.IcebergSinkConnector;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -87,7 +86,7 @@ public class IntegrationMultiTableTest extends IntegrationTestBase {
     KafkaConnectUtils.Config connectorConfig =
         new KafkaConnectUtils.Config(connectorName())
             .config("topics", testTopic())
-            .config("connector.class", IcebergSinkConnector.class.getName())
+            .config("connector.class", DeltaSinkConnector.class.getName())
             .config("tasks.max", 2)
             .config("consumer.override.auto.offset.reset", "earliest")
             .config("key.converter", "org.apache.kafka.connect.json.JsonConverter")
