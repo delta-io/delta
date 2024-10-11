@@ -19,12 +19,12 @@
 package io.delta.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.delta.catalog.UnityCatalog;
 import java.io.File;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import org.apache.iceberg.CatalogProperties;
-import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.rest.RESTCatalog;
@@ -93,10 +93,14 @@ public class TestContext {
 
   public Map<String, Object> connectorCatalogProperties() {
     return ImmutableMap.<String, Object>builder()
+        // .put(
+        //    "iceberg.catalog." + CatalogUtil.ICEBERG_CATALOG_TYPE,
+        //    CatalogUtil.ICEBERG_CATALOG_TYPE_REST)
+        // .put("iceberg.catalog." + CatalogProperties.URI, "http://iceberg:" + CATALOG_PORT)
+        // temporary change to use UnityCatalog
         .put(
-            "iceberg.catalog." + CatalogUtil.ICEBERG_CATALOG_TYPE,
-            CatalogUtil.ICEBERG_CATALOG_TYPE_REST)
-        .put("iceberg.catalog." + CatalogProperties.URI, "http://iceberg:" + CATALOG_PORT)
+            "iceberg.catalog." + CatalogProperties.CATALOG_IMPL,
+            UnityCatalog.class.getCanonicalName())
         .put(
             "iceberg.catalog." + CatalogProperties.FILE_IO_IMPL,
             "org.apache.iceberg.aws.s3.S3FileIO")

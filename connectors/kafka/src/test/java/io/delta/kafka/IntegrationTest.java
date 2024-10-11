@@ -90,6 +90,7 @@ public class IntegrationTest extends IntegrationTestBase {
   @NullSource
   @ValueSource(strings = "test_branch")
   public void testIcebergSinkUnpartitionedTable(String branch) {
+    // TESTING: focus on getting this test working
     catalog().createTable(TABLE_IDENTIFIER, TestEvent.TEST_SCHEMA);
 
     boolean useSchema = branch == null; // use a schema for one of the tests
