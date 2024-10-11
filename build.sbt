@@ -1587,7 +1587,8 @@ lazy val kafka = (project in file("connectors/kafka"))
     dependencyOverrides += "com.github.luben" % "zstd-jni" % "1.5.6-3",
     // Compile, patch and generated Iceberg JARs
     copyDependencies := {
-      val libDir = target.value / "delta-kafka-connect-runtime/lib"
+      val runtimeRoot = target.value / "delta-kafka-connect-runtime"
+      val libDir = runtimeRoot / "lib"
       IO.createDirectory(libDir)
       val dependencies = (Compile / managedClasspath).value
       println("dependencies: " + dependencies)
@@ -1596,6 +1597,8 @@ lazy val kafka = (project in file("connectors/kafka"))
         IO.copyFile(file, libDir / file.name)
       }
       println(s"Dependencies copied to ${libDir.getAbsolutePath}")
+      val manifestFile = target.value / "../src/main/resources/manifest.json"
+      IO.copyFile(manifestFile, runtimeRoot / "manifest.json")
     },
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.

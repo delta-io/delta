@@ -87,7 +87,7 @@ services:
     ports:
       - 8083:8083
     volumes:
-      - ../build/install:/test/kafka-connect
+      - ../target/delta-kafka-connect-runtime:/test/kafka-connect
     environment:
       CONNECT_REST_ADVERTISED_HOST_NAME: localhost
       CONNECT_REST_PORT: 8083
