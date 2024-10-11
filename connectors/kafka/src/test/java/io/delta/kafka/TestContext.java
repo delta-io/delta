@@ -19,7 +19,7 @@
 package io.delta.kafka;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.delta.catalog.UnityCatalog;
+import io.delta.table.DeltaCatalog;
 import java.io.File;
 import java.time.Duration;
 import java.util.Map;
@@ -27,7 +27,6 @@ import java.util.UUID;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
-import org.apache.iceberg.rest.RESTCatalog;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -75,40 +74,60 @@ public class TestContext {
   }
 
   public Catalog initLocalCatalog() {
-    String localCatalogUri = "http://localhost:" + CATALOG_PORT;
-    RESTCatalog result = new RESTCatalog();
-    result.initialize(
-        "local",
-        ImmutableMap.<String, String>builder()
-            .put(CatalogProperties.URI, localCatalogUri)
-            .put(CatalogProperties.FILE_IO_IMPL, "org.apache.iceberg.aws.s3.S3FileIO")
-            .put("s3.endpoint", "http://localhost:" + MINIO_PORT)
-            .put("s3.access-key-id", AWS_ACCESS_KEY)
-            .put("s3.secret-access-key", AWS_SECRET_KEY)
-            .put("s3.path-style-access", "true")
-            .put("client.region", AWS_REGION)
-            .build());
-    return result;
+    DeltaCatalog deltaCatalog = new DeltaCatalog();
+
+    deltaCatalog.initialize("delta-catalog", deltaCatalogProperties());
+
+    return deltaCatalog;
+
+    //    String localCatalogUri = "http://localhost:" + CATALOG_PORT;
+    //    RESTCatalog result = new RESTCatalog();
+    //    result.initialize(
+    //        "local",
+    //        ImmutableMap.<String, String>builder()
+    //            .put(CatalogProperties.URI, localCatalogUri)
+    //            .put(CatalogProperties.FILE_IO_IMPL, "org.apache.iceberg.aws.s3.S3FileIO")
+    //            .put("s3.endpoint", "http://localhost:" + MINIO_PORT)
+    //            .put("s3.access-key-id", AWS_ACCESS_KEY)
+    //            .put("s3.secret-access-key", AWS_SECRET_KEY)
+    //            .put("s3.path-style-access", "true")
+    //            .put("client.region", AWS_REGION)
+    //            .build());
+    //    return result;
   }
 
-  public Map<String, Object> connectorCatalogProperties() {
-    return ImmutableMap.<String, Object>builder()
-        // .put(
-        //    "iceberg.catalog." + CatalogUtil.ICEBERG_CATALOG_TYPE,
-        //    CatalogUtil.ICEBERG_CATALOG_TYPE_REST)
-        // .put("iceberg.catalog." + CatalogProperties.URI, "http://iceberg:" + CATALOG_PORT)
-        // temporary change to use UnityCatalog
-        .put(
-            "iceberg.catalog." + CatalogProperties.CATALOG_IMPL,
-            UnityCatalog.class.getCanonicalName())
-        .put(
-            "iceberg.catalog." + CatalogProperties.FILE_IO_IMPL,
-            "org.apache.iceberg.aws.s3.S3FileIO")
-        .put("iceberg.catalog.s3.endpoint", "http://minio:" + MINIO_PORT)
-        .put("iceberg.catalog.s3.access-key-id", AWS_ACCESS_KEY)
-        .put("iceberg.catalog.s3.secret-access-key", AWS_SECRET_KEY)
-        .put("iceberg.catalog.s3.path-style-access", true)
-        .put("iceberg.catalog.client.region", AWS_REGION)
+  public Map<String, String> connectorCatalogProperties() {
+    return deltaCatalogProperties();
+    //    return ImmutableMap.<String, Object>builder()
+    // .put(
+    //    "iceberg.catalog." + CatalogUtil.ICEBERG_CATALOG_TYPE,
+    //    CatalogUtil.ICEBERG_CATALOG_TYPE_REST)
+    // .put("iceberg.catalog." + CatalogProperties.URI, "http://iceberg:" + CATALOG_PORT)
+    // temporary change to use UnityCatalog
+    //        .put(
+    //            "iceberg.catalog." + CatalogProperties.CATALOG_IMPL,
+    //            DeltaCatalog.class.getCanonicalName())
+    //        .put(
+    //            "iceberg.catalog." + CatalogProperties.FILE_IO_IMPL,
+    //            "org.apache.iceberg.aws.s3.S3FileIO")
+    //        .put("iceberg.catalog.s3.endpoint", "http://minio:" + MINIO_PORT)
+    //        .put("iceberg.catalog.s3.access-key-id", AWS_ACCESS_KEY)
+    //        .put("iceberg.catalog.s3.secret-access-key", AWS_SECRET_KEY)
+    //        .put("iceberg.catalog.s3.path-style-access", true)
+    //        .put("iceberg.catalog.client.region", AWS_REGION)
+    //        .build();
+  }
+
+  private Map<String, String> deltaCatalogProperties() {
+    return ImmutableMap.<String, String>builder()
+        .put(CatalogProperties.CATALOG_IMPL, DeltaCatalog.class.getCanonicalName())
+        .put(CatalogProperties.WAREHOUSE_LOCATION, "s3a://bucket/warehouse/")
+        .put(CatalogProperties.FILE_IO_IMPL, "org.apache.iceberg.aws.s3.S3FileIO")
+        .put("s3.endpoint", "http://localhost:" + MINIO_PORT)
+        .put("s3.access-key-id", AWS_ACCESS_KEY)
+        .put("s3.secret-access-key", AWS_SECRET_KEY)
+        .put("s3.path-style-access", "true")
+        .put("client.region", AWS_REGION)
         .build();
   }
 

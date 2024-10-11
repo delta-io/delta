@@ -18,16 +18,26 @@
  */
 package io.delta.table;
 
+import io.delta.kernel.Operation;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.utils.CloseableIterable;
+import io.delta.utils.SchemaUtils;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.hadoop.Configurable;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
@@ -38,16 +48,16 @@ import org.apache.iceberg.util.LocationUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class DeltaCatalog implements Catalog, Configurable<Configuration> {
+public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<Configuration> {
   private static final Logger LOG = LoggerFactory.getLogger(DeltaCatalog.class);
-  private static final String HIVE_WAREHOUSE_PROP = "hive.metastore.warehouse.dir";
+  public static final String HIVE_WAREHOUSE_PROP = "hive.metastore.warehouse.dir";
   private static final Joiner SLASH = Joiner.on("/");
 
   private Configuration conf = null;
   private String name = null;
   private Map<String, String> catalogProperties = null;
   private String warehouse = null;
-  private FileIO io = null;
+  private FileIO fileIO = null;
 
   @Override
   public String name() {
@@ -70,15 +80,27 @@ public class DeltaCatalog implements Catalog, Configurable<Configuration> {
   }
 
   @Override
+  public Table createTable(TableIdentifier identifier, Schema schema) {
+    String tableLocation = tableLocation(identifier);
+    Engine engine = DefaultEngine.create(conf);
+    io.delta.kernel.Table kernelTable = io.delta.kernel.Table.forPath(engine, tableLocation);
+    kernelTable
+        .createTransactionBuilder(engine, "iceberg", Operation.CREATE_TABLE)
+        .withSchema(engine, SchemaUtils.fromIcebergSchema(schema.asStruct()))
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable());
+
+    return new DeltaTable(identifier, conf, tableLocation);
+  }
+
+  @Override
   public Table loadTable(TableIdentifier ident) {
-    String tableLocation;
-    if (ident.namespace().isEmpty()) {
-      tableLocation = SLASH.join(warehouse, ident.name());
-    } else {
-      tableLocation =
-          SLASH.join(warehouse, SLASH.join(SLASH.join(ident.namespace().levels()), ident.name()));
-    }
+    String tableLocation = tableLocation(ident);
     return new DeltaTable(ident, conf, tableLocation);
+  }
+
+  private String tableLocation(TableIdentifier ident) {
+    return SLASH.join(warehouse, ident.name());
   }
 
   @Override
@@ -103,12 +125,57 @@ public class DeltaCatalog implements Catalog, Configurable<Configuration> {
         warehouse != null, "Missing required property: %s", CatalogProperties.WAREHOUSE_LOCATION);
 
     String ioImpl = properties.get(CatalogProperties.FILE_IO_IMPL);
-    this.io =
+    this.fileIO =
         ioImpl == null ? new HadoopFileIO(conf) : CatalogUtil.loadFileIO(ioImpl, properties, conf);
+
+    // copy S3 properties to Hadoop Configuration
+    ImmutableMap.of(
+            "s3.endpoint", "fs.s3a.endpoint",
+            "s3.access-key-id", "fs.s3a.access.key",
+            "s3.secret-access-key", "fs.s3a.secret.key")
+        .forEach(
+            (s3Prop, hadoopProp) -> {
+              if (properties.containsKey(s3Prop)) {
+                conf.set(hadoopProp, properties.get(s3Prop));
+              }
+            });
+    conf.set("fs.s3a.connection.ssl.enabled", "false");
+    conf.set("fs.s3a.path.style.access", "true");
   }
 
   @Override
   public void setConf(Configuration conf) {
     this.conf = conf;
+  }
+
+  @Override
+  public void createNamespace(Namespace namespace, Map<String, String> metadata) {}
+
+  @Override
+  public List<Namespace> listNamespaces(Namespace namespace) throws NoSuchNamespaceException {
+    return Collections.emptyList();
+  }
+
+  @Override
+  public Map<String, String> loadNamespaceMetadata(Namespace namespace)
+      throws NoSuchNamespaceException {
+    return Collections.emptyMap();
+  }
+
+  @Override
+  public boolean dropNamespace(Namespace namespace) throws NamespaceNotEmptyException {
+    return false;
+  }
+
+  @Override
+  public boolean setProperties(Namespace namespace, Map<String, String> properties)
+      throws NoSuchNamespaceException {
+    return false;
+  }
+
+  @Override
+  public boolean removeProperties(Namespace namespace, Set<String> properties)
+      throws NoSuchNamespaceException {
+    return false;
   }
 }

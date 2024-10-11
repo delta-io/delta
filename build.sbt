@@ -1571,6 +1571,7 @@ lazy val kafka = (project in file("connectors/kafka"))
       "software.amazon.awssdk" % "s3" % "2.24.0",
       "software.amazon.awssdk" % "sts" % "2.24.0",
       "org.apache.iceberg" % "iceberg-kafka-connect" % "1.6.1",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
       "com.github.luben" % "zstd-jni" % "1.5.6-3",
       "org.awaitility" % "awaitility" % "4.2.2" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",

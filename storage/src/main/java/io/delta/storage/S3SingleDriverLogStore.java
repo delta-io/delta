@@ -19,6 +19,7 @@ package io.delta.storage;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -161,8 +162,7 @@ public class S3SingleDriverLogStore extends HadoopFileSystemLogStore {
                     );
                 }
 
-                final CountingOutputStream stream =
-                    new CountingOutputStream(fs.create(resolvedPath, overwrite));
+                final OutputStream stream = fs.create(resolvedPath, overwrite);
 
                 while (actions.hasNext()) {
                     stream.write((actions.next() + "\n").getBytes(StandardCharsets.UTF_8));
