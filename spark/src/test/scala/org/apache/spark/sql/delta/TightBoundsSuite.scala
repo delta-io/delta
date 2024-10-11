@@ -117,7 +117,7 @@ class TightBoundsSuite
       val exception = intercept[DeltaIllegalStateException] {
         txn.commitActions(DeltaOperations.TestOperation(), addFiles: _*)
       }
-      assert(exception.getErrorClass ===
+      assert(exception.getCondition ===
         "DELTA_ADDING_DELETION_VECTORS_WITH_TIGHT_BOUNDS_DISALLOWED")
     }
   }

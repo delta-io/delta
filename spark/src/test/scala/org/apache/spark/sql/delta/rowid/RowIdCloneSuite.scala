@@ -233,7 +233,7 @@ class RowIdCloneSuite
         rowIdsEnabled = true, tableState = TableState.NON_EMPTY)) {
       assert(intercept[DeltaIllegalStateException] {
         cloneTable(targetTableName = "target", sourceTableName = "source")
-      }.getErrorClass === "DELTA_UNSUPPORTED_NON_EMPTY_CLONE")
+      }.getCondition === "DELTA_UNSUPPORTED_NON_EMPTY_CLONE")
     }
   }
 

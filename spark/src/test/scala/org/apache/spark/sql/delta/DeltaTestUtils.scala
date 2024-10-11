@@ -477,14 +477,14 @@ trait DeltaTestUtilsForTempViews
         errorContains(ex.getMessage, expectedErrorMsgForSQLTempView)
       }
       if (expectedErrorClassForSQLTempView != null) {
-        assert(ex.getErrorClass == expectedErrorClassForSQLTempView)
+        assert(ex.getCondition == expectedErrorClassForSQLTempView)
       }
     } else {
       if (expectedErrorMsgForDataSetTempView != null) {
         errorContains(ex.getMessage, expectedErrorMsgForDataSetTempView)
       }
       if (expectedErrorClassForDataSetTempView != null) {
-        assert(ex.getErrorClass == expectedErrorClassForDataSetTempView, ex.getMessage)
+        assert(ex.getCondition == expectedErrorClassForDataSetTempView, ex.getMessage)
       }
     }
   }

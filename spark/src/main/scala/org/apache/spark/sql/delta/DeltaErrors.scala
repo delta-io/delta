@@ -3693,7 +3693,7 @@ class DeltaColumnMappingUnsupportedException(
   extends ColumnMappingUnsupportedException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 class DeltaFileNotFoundException(
@@ -3702,7 +3702,7 @@ class DeltaFileNotFoundException(
   extends FileNotFoundException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 class DeltaFileAlreadyExistsException(
@@ -3711,7 +3711,7 @@ class DeltaFileAlreadyExistsException(
   extends FileAlreadyExistsException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 class DeltaIOException(
@@ -3721,7 +3721,7 @@ class DeltaIOException(
   extends IOException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 class DeltaIllegalStateException(
@@ -3731,7 +3731,7 @@ class DeltaIllegalStateException(
   extends IllegalStateException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] = {
     DeltaThrowableHelper.getParameterNames(errorClass, null)
@@ -3745,7 +3745,7 @@ class DeltaIndexOutOfBoundsException(
   extends IndexOutOfBoundsException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
@@ -3765,7 +3765,7 @@ case class InvalidProtocolVersionException(
       supportedReaderVersions.sorted.mkString(", "),
       supportedWriterVersions.sorted.mkString(", "))))
   with DeltaThrowable {
-  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_VERSION"
+  override def getCondition: String = "DELTA_INVALID_PROTOCOL_VERSION"
 }
 
 class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
@@ -3773,7 +3773,7 @@ class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
     errorClass = "DELTA_INVALID_PROTOCOL_DOWNGRADE",
     messageParameters = Array(s"(${oldProtocol.simpleString})", s"(${newProtocol.simpleString})")
   )) with DeltaThrowable {
-  override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
+  override def getCondition: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
 }
 
 class DeltaTableFeatureException(
@@ -3795,7 +3795,7 @@ class DeltaRuntimeException(
   extends RuntimeException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] =
     DeltaThrowableHelper.getParameterNames(errorClass, null)
@@ -3809,7 +3809,7 @@ class DeltaSparkException(
   extends SparkException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 class DeltaNoSuchTableException(
@@ -3818,7 +3818,7 @@ class DeltaNoSuchTableException(
   extends AnalysisException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 class DeltaCommandUnsupportedWithDeletionVectorsException(
@@ -3827,7 +3827,7 @@ class DeltaCommandUnsupportedWithDeletionVectorsException(
   extends UnsupportedOperationException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 sealed trait DeltaTablePropertyValidationFailedSubClass {
@@ -3867,7 +3867,7 @@ class DeltaTablePropertyValidationFailedException(
       subClass.tag).zip(subClass.messageParameters(table)).toMap.asJava
   }
 
-  override def getErrorClass: String =
+  override def getCondition: String =
     "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag
 }
 
@@ -3884,7 +3884,7 @@ class DeltaChecksumException(
   extends ChecksumException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), pos)
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 }
 
 /**

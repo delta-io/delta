@@ -1891,7 +1891,7 @@ class DeltaTableCreationSuite
           val e = intercept[AnalysisException] {
             sql(s"CREATE TABLE $emptySchemaTableName USING delta LOCATION '${dir.getAbsolutePath}'")
           }
-          assert(e.getErrorClass == "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG")
+          assert(e.getCondition == "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG")
         }
       }
 

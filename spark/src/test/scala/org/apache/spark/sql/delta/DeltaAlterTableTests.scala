@@ -1934,7 +1934,7 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
         val e = intercept[DeltaAnalysisException] {
           sql(s"alter table $identifier set location '$path'")
         }
-        assert(e.getErrorClass == "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER")
+        assert(e.getCondition == "DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER")
         assert(e.getSqlState == "42613")
         assert(e.getMessage == "[DELTA_CANNOT_SET_LOCATION_ON_PATH_IDENTIFIER] " +
           "Cannot change the location of a path based table.")

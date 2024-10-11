@@ -272,7 +272,7 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     e = intercept[AnalysisException] {
       sql(s"SELECT * FROM table_changes('invalidtable', 1, 1)")
     }
-    assert(e.getErrorClass === "TABLE_OR_VIEW_NOT_FOUND")
+    assert(e.getCondition === "TABLE_OR_VIEW_NOT_FOUND")
 
     withTable ("tbl") {
       spark.range(1).write.format("delta").saveAsTable("tbl")
@@ -332,13 +332,13 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
         var e = intercept[AnalysisException] {
           spark.sql(s"SELECT * FROM table_changes('tbl', 0, 1)")
         }
-        assert(e.getErrorClass == "DELTA_TABLE_ONLY_OPERATION")
+        assert(e.getCondition == "DELTA_TABLE_ONLY_OPERATION")
         assert(e.getMessage.contains("table_changes"))
 
         e = intercept[AnalysisException] {
           spark.sql(s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}', 0, 1)")
         }
-        assert(e.getErrorClass == "DELTA_MISSING_DELTA_TABLE")
+        assert(e.getCondition == "DELTA_MISSING_DELTA_TABLE")
         assert(e.getMessage.contains("not a Delta table"))
       }
     }

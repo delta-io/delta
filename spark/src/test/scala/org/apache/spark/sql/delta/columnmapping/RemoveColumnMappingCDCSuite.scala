@@ -218,7 +218,7 @@ class RemoveColumnMappingCDCSuite extends RemoveColumnMappingSuiteUtils {
     val e = intercept[DeltaUnsupportedOperationException] {
       getChanges(startVersion, endVersion)
     }
-    assert(e.getErrorClass === "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE")
+    assert(e.getCondition === "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE")
   }
 
   private def getCDCAndFailIncompatibleDataSchema(
@@ -227,7 +227,7 @@ class RemoveColumnMappingCDCSuite extends RemoveColumnMappingSuiteUtils {
     val e = intercept[DeltaUnsupportedOperationException] {
       getChanges(startVersion, endVersion)
     }
-    assert(e.getErrorClass === "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA")
+    assert(e.getCondition === "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA")
   }
 
   private def getChanges(startVersion: Long, endVersion: Option[Long]): Array[Row] = {

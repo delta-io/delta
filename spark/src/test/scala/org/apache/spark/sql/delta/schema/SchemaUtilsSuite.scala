@@ -79,7 +79,7 @@ class SchemaUtilsSuite extends QueryTest
 
     @tailrec
     def getError(ex: Throwable): Option[DeltaAnalysisException] = ex match {
-      case e: DeltaAnalysisException if e.getErrorClass() == errorClass => Some(e)
+      case e: DeltaAnalysisException if e.getCondition() == errorClass => Some(e)
       case e: AnalysisException => getError(e.getCause)
       case _ => None
     }

@@ -1167,7 +1167,7 @@ class DeltaFormatSharingSourceSuite
             var e = intercept[StreamingQueryException] {
               processAllAvailableInStream(0)
             }
-            assert(e.getCause.asInstanceOf[DeltaIllegalStateException].getErrorClass
+            assert(e.getCause.asInstanceOf[DeltaIllegalStateException].getCondition
               == "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS")
             assert(e.getMessage.contains("Detected schema change in version 3"))
 

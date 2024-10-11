@@ -98,7 +98,7 @@ trait DeletionVectorStoreSuiteBase
         dvStore.read(dvPath.path, dvRange.offset, dvRange.length)
       }
       // make sure this is our exception not ChecksumFileSystem's
-      assert(e.getErrorClass == "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH")
+      assert(e.getCondition == "DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH")
       assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == "[DELTA_DELETION_VECTOR_CHECKSUM_MISMATCH] " +
         "Could not verify deletion vector integrity, CRC checksum verification failed.")
@@ -122,7 +122,7 @@ trait DeletionVectorStoreSuiteBase
       val e = intercept[DeltaChecksumException] {
         dvStore.read(dvPath.path, dvRange.offset, dvRange.length)
       }
-      assert(e.getErrorClass == "DELTA_DELETION_VECTOR_SIZE_MISMATCH")
+      assert(e.getCondition == "DELTA_DELETION_VECTOR_SIZE_MISMATCH")
       assert(e.getSqlState == "XXKDS")
       assert(e.getMessage == "[DELTA_DELETION_VECTOR_SIZE_MISMATCH] " +
         "Deletion vector integrity check failed. Encountered a size mismatch.")
@@ -173,7 +173,7 @@ trait DeletionVectorStoreSuiteBase
             updateStats = false
           )
         }
-        assert(e.getErrorClass == "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX")
+        assert(e.getCondition == "DELTA_DELETION_VECTOR_INVALID_ROW_INDEX")
         assert(e.getSqlState == "XXKDS")
         assert(e.getMessage == "[DELTA_DELETION_VECTOR_INVALID_ROW_INDEX] " +
             "Deletion vector integrity check failed. Encountered an invalid row index.")
