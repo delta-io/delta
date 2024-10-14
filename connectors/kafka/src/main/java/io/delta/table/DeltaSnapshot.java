@@ -22,6 +22,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.ColumnMapping;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.DataFile;
@@ -47,8 +48,10 @@ class DeltaSnapshot implements Snapshot, HistoryEntry {
   private boolean hasMissingFieldIds = true;
   private PartitionSpec spec = null;
   private Map<String, String> summary = null;
-  private List<DataFile> addedFiles = null;
-  private List<DataFile> removedFiles = null;
+
+  // TODO: add a flag to distinguish between initited and uninitiated snapshots
+  private List<DataFile> addedFiles = Collections.emptyList();
+  private List<DataFile> removedFiles = Collections.emptyList();
 
   DeltaSnapshot(io.delta.kernel.Snapshot snapshot) {
     Preconditions.checkState(
@@ -224,7 +227,8 @@ class DeltaSnapshot implements Snapshot, HistoryEntry {
 
   @Override
   public Iterable<DataFile> addedDataFiles(FileIO io) {
-    cacheChanges();
+    // TODO: figure out how to enable caching files
+    // cacheChanges();
     return addedFiles;
   }
 

@@ -84,8 +84,8 @@ services:
     depends_on:
       - kafka
     hostname: connect
-    ports:
-      - 8083:8083
+#    ports:
+#      - 8083:8083
     volumes:
       - ../target/delta-kafka-connect-runtime:/test/kafka-connect
     environment:

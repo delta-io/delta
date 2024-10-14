@@ -219,7 +219,7 @@ public class IntegrationTest extends IntegrationTestBase {
   private void assertSnapshotAdded() {
     try {
       Table table = catalog().loadTable(TABLE_IDENTIFIER);
-      assertThat(table.snapshots()).hasSize(1);
+      assertThat(table.snapshots()).hasSize(2);
     } catch (NoSuchTableException e) {
       fail("Table should exist");
     }

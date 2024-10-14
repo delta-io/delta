@@ -41,10 +41,11 @@ public class TestContext {
 
   public static final ObjectMapper MAPPER = new ObjectMapper();
   public static final int CONNECT_PORT = 8083;
+  public static final String BOOTSTRAP_SERVERS = "localhost:29092";
 
   private static final int MINIO_PORT = 9000;
   private static final int CATALOG_PORT = 8181;
-  private static final String BOOTSTRAP_SERVERS = "localhost:29092";
+
   private static final String AWS_ACCESS_KEY = "minioadmin";
   private static final String AWS_SECRET_KEY = "minioadmin";
   private static final String AWS_REGION = "us-east-1";
@@ -66,7 +67,8 @@ public class TestContext {
 
   public void startConnector(KafkaConnectUtils.Config config) {
     KafkaConnectUtils.startConnector(config);
-    KafkaConnectUtils.ensureConnectorRunning(config.getName());
+    KafkaConnectUtils.ensureConnectorRunning(
+        config.getName(), Integer.parseInt(config.getConfig().get("tasks.max")));
   }
 
   public void stopConnector(String name) {
@@ -120,7 +122,9 @@ public class TestContext {
 
   private Map<String, String> deltaCatalogProperties() {
     return ImmutableMap.<String, String>builder()
-        .put(CatalogProperties.CATALOG_IMPL, DeltaCatalog.class.getCanonicalName())
+        .put(
+            "iceberg.catalog." + CatalogProperties.CATALOG_IMPL,
+            DeltaCatalog.class.getCanonicalName())
         .put(CatalogProperties.WAREHOUSE_LOCATION, "s3a://bucket/warehouse/")
         .put(CatalogProperties.FILE_IO_IMPL, "org.apache.iceberg.aws.s3.S3FileIO")
         .put("s3.endpoint", "http://localhost:" + MINIO_PORT)
@@ -135,7 +139,7 @@ public class TestContext {
     return new KafkaProducer<>(
         ImmutableMap.of(
             ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
-            BOOTSTRAP_SERVERS,
+            KafkaConnectUtils.getBootstrapServers(),
             ProducerConfig.CLIENT_ID_CONFIG,
             UUID.randomUUID().toString()),
         new StringSerializer(),
@@ -144,6 +148,7 @@ public class TestContext {
 
   public Admin initLocalAdmin() {
     return Admin.create(
-        ImmutableMap.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS));
+        ImmutableMap.of(
+            AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KafkaConnectUtils.getBootstrapServers()));
   }
 }

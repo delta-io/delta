@@ -79,6 +79,7 @@ public class IntegrationTestBase {
 
   @BeforeEach
   public void baseBefore() {
+    KafkaConnectUtils.startConnectCluster();
     this.catalog = context.initLocalCatalog();
     this.producer = context.initLocalProducer();
     this.admin = context.initLocalAdmin();

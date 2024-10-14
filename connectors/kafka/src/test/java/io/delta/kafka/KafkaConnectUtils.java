@@ -73,37 +73,42 @@ public class KafkaConnectUtils {
     }
   }
 
+  public static void startConnectCluster() {
+    if (USE_EMBEDDED_CONNECT) {
+      Map<String, String> workerProps = new HashMap<>();
+      // permit all Kafka client overrides; required for testing different consumer partition
+      // assignment strategies
+      workerProps.put(CONNECTOR_CLIENT_POLICY_CLASS_CONFIG, "All");
+      workerProps.put(PLUGIN_DISCOVERY_CONFIG, PluginDiscoveryMode.ONLY_SCAN.toString());
+
+      // setup Kafka broker properties
+      Properties brokerProps = new Properties();
+      brokerProps.put("auto.create.topics.enable", "false");
+      brokerProps.put("delete.topic.enable", "true");
+      brokerProps.put(PLUGIN_DISCOVERY_CONFIG, PluginDiscoveryMode.ONLY_SCAN.toString());
+
+      connectCluster =
+          new EmbeddedConnectCluster.Builder()
+              .name("connect-cluster")
+              .numWorkers(2)
+              .workerProps(workerProps)
+              .brokerProps(brokerProps)
+              .build();
+      connectCluster.start();
+    }
+  }
+
+  public static void stopConnectCluster() {
+    if (USE_EMBEDDED_CONNECT && connectCluster != null) {
+      connectCluster.stop();
+      connectCluster = null;
+    }
+  }
+
   public static void startConnector(Config config) {
     try {
       if (USE_EMBEDDED_CONNECT) {
-        Map<String, String> workerProps = new HashMap<>();
-        // permit all Kafka client overrides; required for testing different consumer partition
-        // assignment strategies
-        workerProps.put(CONNECTOR_CLIENT_POLICY_CLASS_CONFIG, "All");
-        workerProps.put(PLUGIN_DISCOVERY_CONFIG, PluginDiscoveryMode.ONLY_SCAN.toString());
-
-        // setup Kafka broker properties
-        Properties brokerProps = new Properties();
-        brokerProps.put("auto.create.topics.enable", "false");
-        brokerProps.put("delete.topic.enable", "true");
-        brokerProps.put(PLUGIN_DISCOVERY_CONFIG, PluginDiscoveryMode.ONLY_SCAN.toString());
-
-        connectCluster =
-            new EmbeddedConnectCluster.Builder()
-                .name("connect-cluster")
-                .numWorkers(2)
-                .workerProps(workerProps)
-                .brokerProps(brokerProps)
-                .build();
-        connectCluster.start();
-
         connectCluster.configureConnector(config.getName(), config.getConfig());
-        connectCluster
-            .assertions()
-            .assertConnectorAndAtLeastNumTasksAreRunning(
-                config.name,
-                Integer.parseInt(config.getConfig().get("tasks.max")),
-                "Connector tasks did not start in time.");
       } else {
 
         HttpPost request =
@@ -120,35 +125,54 @@ public class KafkaConnectUtils {
               return null;
             });
       }
-    } catch (IOException | InterruptedException e) {
+    } catch (IOException e) {
       throw new RuntimeException(e);
     }
   }
 
-  public static void ensureConnectorRunning(String name) {
-    HttpGet request =
-        new HttpGet(
-            String.format(
-                "http://localhost:%d/connectors/%s/status", TestContext.CONNECT_PORT, name));
-    Awaitility.await()
-        .atMost(120, TimeUnit.SECONDS)
-        .until(
-            () ->
-                HTTP.execute(
-                    request,
-                    response -> {
-                      if (response.getCode() == HttpStatus.SC_OK) {
-                        JsonNode root =
-                            TestContext.MAPPER.readTree(response.getEntity().getContent());
-                        String connectorState = root.get("connector").get("state").asText();
-                        ArrayNode taskNodes = (ArrayNode) root.get("tasks");
-                        List<String> taskStates = Lists.newArrayList();
-                        taskNodes.forEach(node -> taskStates.add(node.get("state").asText()));
-                        return "RUNNING".equals(connectorState)
-                            && taskStates.stream().allMatch("RUNNING"::equals);
-                      }
-                      return false;
-                    }));
+  public static String getBootstrapServers() {
+    if (USE_EMBEDDED_CONNECT) {
+      return connectCluster.kafka().bootstrapServers();
+    } else {
+      return TestContext.BOOTSTRAP_SERVERS;
+    }
+  }
+
+  public static void ensureConnectorRunning(String name, int numTasks) {
+    try {
+      if (USE_EMBEDDED_CONNECT) {
+        connectCluster
+            .assertions()
+            .assertConnectorAndExactlyNumTasksAreRunning(
+                name, numTasks, "Connector tasks did not start in time.");
+      } else {
+        HttpGet request =
+            new HttpGet(
+                String.format(
+                    "http://localhost:%d/connectors/%s/status", TestContext.CONNECT_PORT, name));
+        Awaitility.await()
+            .atMost(120, TimeUnit.SECONDS)
+            .until(
+                () ->
+                    HTTP.execute(
+                        request,
+                        response -> {
+                          if (response.getCode() == HttpStatus.SC_OK) {
+                            JsonNode root =
+                                TestContext.MAPPER.readTree(response.getEntity().getContent());
+                            String connectorState = root.get("connector").get("state").asText();
+                            ArrayNode taskNodes = (ArrayNode) root.get("tasks");
+                            List<String> taskStates = Lists.newArrayList();
+                            taskNodes.forEach(node -> taskStates.add(node.get("state").asText()));
+                            return "RUNNING".equals(connectorState)
+                                && taskStates.stream().allMatch("RUNNING"::equals);
+                          }
+                          return false;
+                        }));
+      }
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
 
   public static void stopConnector(String name) {
