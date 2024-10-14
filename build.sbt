@@ -1583,7 +1583,14 @@ lazy val kafka = (project in file("connectors/kafka"))
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.10.1" % Test,
       "org.junit.platform" % "junit-platform-suite-api" % "1.10.3" % Test,
       "org.junit.platform" % "junit-platform-suite-engine" % "1.10.3" % Test,
-      "org.junit.vintage" % "junit-vintage-engine" % "5.10.1" % Test
+      "org.junit.vintage" % "junit-vintage-engine" % "5.10.1" % Test,
+      "org.apache.kafka" % "kafka-streams-test-utils" % kafkaVersion % Test,
+      "org.apache.kafka" % "connect-runtime" % kafkaVersion,
+      "org.apache.kafka" % "connect-runtime" % kafkaVersion % Test classifier "test",
+      "org.apache.kafka" %% "kafka-streams-scala" % kafkaVersion % Test,
+      "org.apache.kafka" %% "kafka" % kafkaVersion % Test,
+      "org.apache.kafka" %% "kafka" % kafkaVersion % Test classifier "test",
+      "org.apache.kafka" % "kafka-clients" % kafkaVersion % Test classifier "test",
     ),
     dependencyOverrides += "com.github.luben" % "zstd-jni" % "1.5.6-3",
     // Compile, patch and generated Iceberg JARs
