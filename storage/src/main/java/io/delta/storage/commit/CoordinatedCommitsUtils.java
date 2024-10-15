@@ -16,15 +16,18 @@
 
 package io.delta.storage.commit;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.storage.LogStore;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,6 +41,15 @@ public class CoordinatedCommitsUtils {
     /** The configuration key for the coordinated commits owner name. */
     private static final String COORDINATED_COMMITS_COORDINATOR_NAME_KEY =
             "delta.coordinatedCommits.commitCoordinator-preview";
+
+    /** The configuration key for the coordinated commits owner conf. */
+    private static final String COORDINATED_COMMITS_COORDINATOR_CONF_KEY =
+        "delta.coordinatedCommits.commitCoordinatorConf-preview";
+
+
+    /** The configuration key for the coordinated commits table conf. */
+    private static final String COORDINATED_COMMITS_TABLE_CONF_KEY =
+        "delta.coordinatedCommits.tableConf-preview";
 
     /**
      * Creates a new unbackfilled delta file path for the given commit version.
@@ -71,7 +83,8 @@ public class CoordinatedCommitsUtils {
                 getCoordinatorName(updatedActions.getOldMetadata()).isPresent();
         boolean newMetadataHasCoordinatedCommits =
                 getCoordinatorName(updatedActions.getNewMetadata()).isPresent();
-        return oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits && commitVersion > 0;
+        return oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits &&
+                commitVersion > 0;
     }
 
     /**
@@ -98,7 +111,7 @@ public class CoordinatedCommitsUtils {
     /**
      * Write a UUID-based commit file for the specified version to the table at logPath.
      */
-    public static FileStatus writeCommitFile(
+    public static FileStatus writeUnbackfilledCommitFile(
             LogStore logStore,
             Configuration hadoopConf,
             String logPath,
@@ -107,11 +120,10 @@ public class CoordinatedCommitsUtils {
             String uuid) throws IOException {
         Path commitPath = new Path(getUnbackfilledDeltaFile(
                 new Path(logPath), commitVersion, Optional.of(uuid)).toString());
-        FileSystem fs = commitPath.getFileSystem(hadoopConf);
-        if (!fs.exists(commitPath.getParent())) {
-            fs.mkdirs(commitPath.getParent());
-        }
-        logStore.write(commitPath, actions, false, hadoopConf);
+        // Do not use Put-If-Absent for Unbackfilled Commits files since we assume that UUID-based
+        // commit files are globally unique, and so we will never have concurrent writers attempting
+        // to write the same commit file.
+        logStore.write(commitPath, actions, true /* overwrite */, hadoopConf);
         return commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath);
     }
 
@@ -132,5 +144,34 @@ public class CoordinatedCommitsUtils {
                 .getConfiguration()
                 .get(COORDINATED_COMMITS_COORDINATOR_NAME_KEY);
         return Optional.ofNullable(coordinator);
+    }
+
+    private static Map<String, String> parseConfFromMetadata(
+            AbstractMetadata abstractMetadata,
+            String confKey) {
+        String conf = abstractMetadata
+            .getConfiguration()
+            .getOrDefault(confKey, "{}");
+        try {
+            return new ObjectMapper().readValue(
+                conf,
+                new TypeReference<Map<String, String>>() {});
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to parse conf: ", e);
+        }
+    }
+
+    /**
+     * Get the coordinated commits owner configuration from the provided abstract metadata.
+     */
+    public static Map<String, String> getCoordinatorConf(AbstractMetadata abstractMetadata) {
+        return parseConfFromMetadata(abstractMetadata, COORDINATED_COMMITS_COORDINATOR_CONF_KEY);
+    }
+
+    /**
+     * Get the coordinated commits table configuration from the provided abstract metadata.
+     */
+    public static Map<String, String> getTableConf(AbstractMetadata abstractMetadata) {
+        return parseConfFromMetadata(abstractMetadata, COORDINATED_COMMITS_TABLE_CONF_KEY);
     }
 }

@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, CommitResponse, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, CommitResponse, CoordinatedCommitsUtils => JCoordinatedCommitsUtils, TableDescriptor, TableIdentifier, UpdatedActions}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -70,7 +70,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       updatedActions: UpdatedActions): CommitResponse = {
     val logPath = tableDesc.getLogPath
     val executionObserver = TransactionExecutionObserver.getObserver
-    val tablePath = CoordinatedCommitsUtils.getTablePath(logPath)
+    val tablePath = JCoordinatedCommitsUtils.getTablePath(logPath)
     if (commitVersion == 0) {
       throw new JCommitFailedException(false, false, "Commit version 0 must go via filesystem.")
     }
@@ -92,8 +92,8 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
     }
 
     // Write new commit file in _commits directory
-    val fileStatus = CoordinatedCommitsUtils.writeCommitFile(
-      logStore, hadoopConf, logPath, commitVersion, actions.asScala, generateUUID())
+    val fileStatus = JCoordinatedCommitsUtils.writeUnbackfilledCommitFile(
+      logStore, hadoopConf, logPath.toString, commitVersion, actions, generateUUID())
 
     // Do the actual commit
     val commitTimestamp = updatedActions.getCommitInfo.getCommitTimestamp
@@ -132,9 +132,9 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       commitVersion: Long,
       updatedActions: UpdatedActions): Boolean = {
     val oldMetadataHasCoordinatedCommits =
-      CoordinatedCommitsUtils.getCommitCoordinatorName(updatedActions.getOldMetadata).nonEmpty
+      JCoordinatedCommitsUtils.getCoordinatorName(updatedActions.getOldMetadata).isPresent
     val newMetadataHasCoordinatedCommits =
-      CoordinatedCommitsUtils.getCommitCoordinatorName(updatedActions.getNewMetadata).nonEmpty
+      JCoordinatedCommitsUtils.getCoordinatorName(updatedActions.getNewMetadata).isPresent
     oldMetadataHasCoordinatedCommits && !newMetadataHasCoordinatedCommits && commitVersion > 0
   }
 

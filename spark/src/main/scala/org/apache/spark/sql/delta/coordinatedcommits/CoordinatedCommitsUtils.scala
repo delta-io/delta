@@ -149,27 +149,6 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     }
   }
 
-  /**
-   * Write a UUID-based commit file for the specified version to the
-   * table at [[logPath]].
-   */
-  def writeCommitFile(
-      logStore: LogStore,
-      hadoopConf: Configuration,
-      logPath: Path,
-      commitVersion: Long,
-      actions: Iterator[String],
-      uuid: String): FileStatus = {
-    val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuid))
-    logStore.write(commitPath, actions.asJava, true, hadoopConf)
-    commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
-  }
-
-  /**
-   * Get the table path from the provided log path.
-   */
-  def getTablePath(logPath: Path): Path = logPath.getParent
-
   def getCommitCoordinatorClient(
       spark: SparkSession,
       deltaLog: DeltaLog, // Used for logging
@@ -234,44 +213,6 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       case Some(name) => (Some(name), metadata.coordinatedCommitsCoordinatorConf)
       case None => (None, Map.empty)
     }
-  }
-
-  /**
-   * Helper method to recover the saved value of `deltaConfig` from `abstractMetadata`.
-   * If undefined, fall back to alternate keys, returning defaultValue if none match.
-   */
-  private[delta] def fromAbstractMetadataAndDeltaConfig[T](
-      abstractMetadata: AbstractMetadata,
-      deltaConfig: DeltaConfig[T]): T = {
-    val conf = abstractMetadata.getConfiguration
-    for (key <- deltaConfig.key +: deltaConfig.alternateKeys) {
-      Option(conf.get(key)).map { value => return deltaConfig.fromString(value) }
-    }
-    deltaConfig.fromString(deltaConfig.defaultValue)
-  }
-
-  /**
-   * Get the commit coordinator name from the provided abstract metadata.
-   */
-  def getCommitCoordinatorName(abstractMetadata: AbstractMetadata): Option[String] = {
-    fromAbstractMetadataAndDeltaConfig(
-      abstractMetadata, DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME)
-  }
-
-  /**
-   * Get the commit coordinator configuration from the provided abstract metadata.
-   */
-  def getCommitCoordinatorConf(abstractMetadata: AbstractMetadata): Map[String, String] = {
-    fromAbstractMetadataAndDeltaConfig(
-      abstractMetadata, DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF)
-  }
-
-  /**
-   * Get the coordinated commits table configuration from the provided abstract metadata.
-   */
-  def getCoordinatedCommitsTableConf(abstractMetadata: AbstractMetadata): Map[String, String] = {
-    fromAbstractMetadataAndDeltaConfig(
-      abstractMetadata, DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF)
   }
 
   val TABLE_PROPERTY_CONFS = Seq(
