@@ -42,6 +42,7 @@ import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.LongType;
 import org.apache.iceberg.types.Types.StringType;
 import org.apache.iceberg.types.Types.TimestampType;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -189,7 +190,10 @@ public class IntegrationTest extends IntegrationTestBase {
             .config("iceberg.tables", String.format("%s.%s", TEST_DB, TEST_TABLE))
             .config("iceberg.control.commit.interval-ms", 1000)
             .config("iceberg.control.commit.timeout-ms", Integer.MAX_VALUE)
-            .config("iceberg.kafka.auto.offset.reset", "earliest");
+            .config("iceberg.kafka.auto.offset.reset", "earliest")
+            .config(
+                "iceberg.kafka." + ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
+                KafkaConnectUtils.getBootstrapServers());
 
     context().connectorCatalogProperties().forEach(connectorConfig::config);
 

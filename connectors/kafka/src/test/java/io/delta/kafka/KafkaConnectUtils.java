@@ -75,6 +75,10 @@ public class KafkaConnectUtils {
 
   public static void startConnectCluster() {
     if (USE_EMBEDDED_CONNECT) {
+      if (connectCluster != null) {
+        // cluster is already running
+        return;
+      }
       Map<String, String> workerProps = new HashMap<>();
       // permit all Kafka client overrides; required for testing different consumer partition
       // assignment strategies
