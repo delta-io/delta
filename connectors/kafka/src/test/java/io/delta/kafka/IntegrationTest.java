@@ -191,6 +191,9 @@ public class IntegrationTest extends IntegrationTestBase {
             .config("iceberg.control.commit.interval-ms", 1000)
             .config("iceberg.control.commit.timeout-ms", Integer.MAX_VALUE)
             .config("iceberg.kafka.auto.offset.reset", "earliest")
+            .config("iceberg.kafka.transaction.state.log.replication.factor", "1")
+            .config("iceberg.kafka.transaction.state.log.min.isr", "1")
+            .config("iceberg.kafka.max.block.ms", "200000000")
             .config(
                 "iceberg.kafka." + ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
                 KafkaConnectUtils.getBootstrapServers());

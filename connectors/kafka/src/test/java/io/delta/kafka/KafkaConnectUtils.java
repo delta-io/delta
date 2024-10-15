@@ -18,8 +18,17 @@
  */
 package io.delta.kafka;
 
+import static org.apache.kafka.clients.CommonClientConfigs.GROUP_ID_CONFIG;
+import static org.apache.kafka.connect.runtime.ConnectorConfig.KEY_CONVERTER_CLASS_CONFIG;
+import static org.apache.kafka.connect.runtime.ConnectorConfig.VALUE_CONVERTER_CLASS_CONFIG;
 import static org.apache.kafka.connect.runtime.WorkerConfig.CONNECTOR_CLIENT_POLICY_CLASS_CONFIG;
 import static org.apache.kafka.connect.runtime.WorkerConfig.PLUGIN_DISCOVERY_CONFIG;
+import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.CONFIG_STORAGE_REPLICATION_FACTOR_CONFIG;
+import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.CONFIG_TOPIC_CONFIG;
+import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.OFFSET_STORAGE_REPLICATION_FACTOR_CONFIG;
+import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.OFFSET_STORAGE_TOPIC_CONFIG;
+import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.STATUS_STORAGE_REPLICATION_FACTOR_CONFIG;
+import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.STATUS_STORAGE_TOPIC_CONFIG;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -28,6 +37,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.apache.hc.client5.http.classic.HttpClient;
 import org.apache.hc.client5.http.classic.methods.HttpDelete;
@@ -79,17 +89,45 @@ public class KafkaConnectUtils {
         // cluster is already running
         return;
       }
+      String connectClusterName = "connect-cluster-" + UUID.randomUUID().toString();
       Map<String, String> workerProps = new HashMap<>();
       // permit all Kafka client overrides; required for testing different consumer partition
       // assignment strategies
       workerProps.put(CONNECTOR_CLIENT_POLICY_CLASS_CONFIG, "All");
       workerProps.put(PLUGIN_DISCOVERY_CONFIG, PluginDiscoveryMode.ONLY_SCAN.toString());
+      workerProps.put("transaction.state.log.replication.factor", "1");
+      workerProps.put("transaction.state.log.min.isr", "1");
+      workerProps.putIfAbsent(GROUP_ID_CONFIG, "kc");
+      workerProps.putIfAbsent(OFFSET_STORAGE_TOPIC_CONFIG, "kc-offsets");
+      workerProps.putIfAbsent(OFFSET_STORAGE_REPLICATION_FACTOR_CONFIG, "1");
+      workerProps.putIfAbsent(CONFIG_TOPIC_CONFIG, "kc-config");
+      workerProps.putIfAbsent(CONFIG_STORAGE_REPLICATION_FACTOR_CONFIG, "1");
+      workerProps.putIfAbsent(STATUS_STORAGE_TOPIC_CONFIG, "kc-storage");
+      workerProps.putIfAbsent(STATUS_STORAGE_REPLICATION_FACTOR_CONFIG, "1");
+      workerProps.putIfAbsent(
+          KEY_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
+      workerProps.putIfAbsent(
+          VALUE_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
+      workerProps.put("max.block.ms", "200000000");
 
       // setup Kafka broker properties
       Properties brokerProps = new Properties();
       brokerProps.put("auto.create.topics.enable", "false");
       brokerProps.put("delete.topic.enable", "true");
       brokerProps.put(PLUGIN_DISCOVERY_CONFIG, PluginDiscoveryMode.ONLY_SCAN.toString());
+      brokerProps.put("transaction.state.log.replication.factor", "1");
+      brokerProps.put("transaction.state.log.min.isr", "1");
+      brokerProps.putIfAbsent(GROUP_ID_CONFIG, "kc");
+      brokerProps.putIfAbsent(OFFSET_STORAGE_TOPIC_CONFIG, "kc-offsets");
+      brokerProps.putIfAbsent(OFFSET_STORAGE_REPLICATION_FACTOR_CONFIG, "1");
+      brokerProps.putIfAbsent(CONFIG_TOPIC_CONFIG, "kc-config");
+      brokerProps.putIfAbsent(CONFIG_STORAGE_REPLICATION_FACTOR_CONFIG, "1");
+      brokerProps.putIfAbsent(STATUS_STORAGE_TOPIC_CONFIG, "kc-storage");
+      brokerProps.putIfAbsent(STATUS_STORAGE_REPLICATION_FACTOR_CONFIG, "1");
+      brokerProps.putIfAbsent(
+          KEY_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
+      brokerProps.putIfAbsent(
+          VALUE_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
 
       connectCluster =
           new EmbeddedConnectCluster.Builder()
