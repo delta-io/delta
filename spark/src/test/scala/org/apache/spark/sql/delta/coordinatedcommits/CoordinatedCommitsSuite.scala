@@ -43,7 +43,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, CoordinatedCommitsUtils => JCoordinatedCommitsUtils, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -79,27 +79,23 @@ class CoordinatedCommitsSuite
     val m1 = Metadata(
       configuration = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> "string_value")
     )
-    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
-      m1, COORDINATED_COMMITS_COORDINATOR_NAME) === Some("string_value"))
+    assert(JCoordinatedCommitsUtils.getCoordinatorName(m1) === Optional.of("string_value"))
 
     val m2 = Metadata(
       configuration = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> "")
     )
-    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
-      m2, COORDINATED_COMMITS_COORDINATOR_NAME) === Some(""))
+    assert(JCoordinatedCommitsUtils.getCoordinatorName(m2)=== Optional.of(""))
 
     val m3 = Metadata(
       configuration = Map(
         COORDINATED_COMMITS_COORDINATOR_CONF.key ->
           """{"key1": "string_value", "key2Int": 2, "key3ComplexStr": "\"hello\""}""")
     )
-    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
-      m3, COORDINATED_COMMITS_COORDINATOR_CONF) ===
-      Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\""))
+    assert(JCoordinatedCommitsUtils.getCoordinatorConf(m3) ===
+      Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\"").asJava)
 
     val m4 = Metadata()
-    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
-      m4, COORDINATED_COMMITS_TABLE_CONF) === Map.empty)
+    assert(JCoordinatedCommitsUtils.getCoordinatorConf(m4) === Map.empty.asJava)
   }
 
 
