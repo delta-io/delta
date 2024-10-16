@@ -41,6 +41,7 @@ import org.apache.hudi.storage.hadoop.HadoopStorageConfiguration
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 object HudiConverter {
@@ -177,7 +178,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, None, Option.apply(catalogTable.identifier.table))
+    convertSnapshot(snapshotToConvert, None, Some(catalogTable.identifier))
   }
 
   /**
@@ -193,7 +194,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable.map(_.identifier.table))
+    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable.map(_.identifier))
   }
 
   /**
@@ -208,11 +209,11 @@ class HudiConverter(spark: SparkSession)
   private def convertSnapshot(
       snapshotToConvert: Snapshot,
       txnOpt: Option[OptimisticTransactionImpl],
-      tableName: Option[String]): Option[(Long, Long)] =
+      tableIdentifier: Option[TableIdentifier]): Option[(Long, Long)] =
       recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
     val metaClient = loadTableMetaClient(snapshotToConvert.deltaLog.dataPath.toString,
-      tableName, snapshotToConvert.metadata.partitionColumns,
+      tableIdentifier.map(_.table), snapshotToConvert.metadata.partitionColumns,
       new HadoopStorageConfiguration(log.newDeltaHadoopConf()))
     val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
     val maxCommitsToConvert =
@@ -233,7 +234,7 @@ class HudiConverter(spark: SparkSession)
         try {
           // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
           //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
-          Some(log.getSnapshotAt(version))
+          Some(log.getSnapshotAt(version, tableIdentifierOpt = tableIdentifier))
         } catch {
           // If we can't load the file since the last time Hudi was converted, it's likely that
           // the commit file expired. Treat this like a new Hudi table conversion.
