@@ -85,6 +85,7 @@ public class IntegrationTestBase {
     this.admin = context.initLocalAdmin();
     this.connectorName = "test_connector-" + UUID.randomUUID();
     this.testTopic = "test-topic-" + UUID.randomUUID();
+    KafkaConnectUtils.createControlTopic(admin);
   }
 
   @AfterEach

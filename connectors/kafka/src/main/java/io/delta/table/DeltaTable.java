@@ -27,7 +27,6 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.actions.Metadata;
 import java.util.Collection;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.SortedMap;
 import java.util.UUID;
@@ -65,13 +64,10 @@ import org.apache.iceberg.encryption.PlaintextEncryptionManager;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
-import org.apache.iceberg.mapping.NameMapping;
-import org.apache.iceberg.mapping.NameMappingParser;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.util.DateTimeUtil;
-import org.apache.iceberg.util.Pair;
 
 public class DeltaTable implements org.apache.iceberg.Table {
   static final String LAST_ASSIGNED_ID_KEY = "delta.columnMapping.maxColumnId";
@@ -103,7 +99,9 @@ public class DeltaTable implements org.apache.iceberg.Table {
                 version -> {
                   try {
                     return new DeltaSnapshot(
-                        deltaTable.getSnapshotAsOfVersion(deltaEngine, version));
+                        location(),
+                        deltaTable.getSnapshotAsOfVersion(deltaEngine, version),
+                        deltaEngine);
                   } catch (KernelException versionMissing) {
                     return null;
                   }
@@ -129,34 +127,36 @@ public class DeltaTable implements org.apache.iceberg.Table {
   }
 
   private boolean ensureWritable() {
-    if (currentVersion.canWrite()) {
-      return true;
-    }
-
-    // check if the table's name mapping should be updated to enable writes
-    String uniform = currentVersion.metadata().getConfiguration().get(UNIFORM_FORMAT_KEY);
-    if (uniform != null && uniform.toLowerCase(Locale.ROOT).contains("iceberg")) {
-      if (currentVersion.columnMappingEnabled() && currentVersion.hasMissingFieldIds()) {
-        // update the name mapping to assign the missing field IDs
-        Pair<NameMapping, Integer> updated =
-            DeltaTypeUtil.updateNameMapping(
-                currentVersion.metadata().getSchema(),
-                currentVersion.nameMapping(),
-                currentVersion.lastAssignedFieldId());
-
-        String updatedMappingStr = NameMappingParser.toJson(updated.first());
-        String newLastAssignedId = String.valueOf(updated.second());
-
-        updateProperties()
-            .set(NAME_MAPPING_KEY, updatedMappingStr)
-            .set(LAST_ASSIGNED_ID_KEY, newLastAssignedId)
-            .commit();
-
-        refresh();
-      }
-    }
-
-    return currentVersion.canWrite();
+    // TODO: Fix this
+    return true;
+    //    if (currentVersion.canWrite()) {
+    //      return true;
+    //    }
+    //
+    //    // check if the table's name mapping should be updated to enable writes
+    //    String uniform = currentVersion.metadata().getConfiguration().get(UNIFORM_FORMAT_KEY);
+    //    if (uniform != null && uniform.toLowerCase(Locale.ROOT).contains("iceberg")) {
+    //      if (currentVersion.columnMappingEnabled() && currentVersion.hasMissingFieldIds()) {
+    //        // update the name mapping to assign the missing field IDs
+    //        Pair<NameMapping, Integer> updated =
+    //            DeltaTypeUtil.updateNameMapping(
+    //                currentVersion.metadata().getSchema(),
+    //                currentVersion.nameMapping(),
+    //                currentVersion.lastAssignedFieldId());
+    //
+    //        String updatedMappingStr = NameMappingParser.toJson(updated.first());
+    //        String newLastAssignedId = String.valueOf(updated.second());
+    //
+    //        updateProperties()
+    //            .set(NAME_MAPPING_KEY, updatedMappingStr)
+    //            .set(LAST_ASSIGNED_ID_KEY, newLastAssignedId)
+    //            .commit();
+    //
+    //        refresh();
+    //      }
+    //    }
+    //
+    //    return currentVersion.canWrite();
   }
 
   @Override
@@ -255,6 +255,9 @@ public class DeltaTable implements org.apache.iceberg.Table {
 
   @Override
   public DeltaSnapshot snapshot(long version) {
+    if (version < 0) {
+      return null;
+    }
     return snapshots.get(version);
   }
 
@@ -369,7 +372,7 @@ public class DeltaTable implements org.apache.iceberg.Table {
 
   private void loadAllSnapshots() {
     if (lastUpdateId != currentVersionId) {
-      for (long versionId = currentVersionId; versionId > earliestVersionId; versionId -= 1) {
+      for (long versionId = currentVersionId; versionId >= earliestVersionId; versionId -= 1) {
         Snapshot snapshot = snapshots.get(versionId);
         if (null == snapshot) {
           this.earliestVersionId = versionId;

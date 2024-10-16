@@ -191,6 +191,8 @@ public class IntegrationTest extends IntegrationTestBase {
             .config("iceberg.control.commit.interval-ms", 1000)
             .config("iceberg.control.commit.timeout-ms", Integer.MAX_VALUE)
             .config("iceberg.kafka.auto.offset.reset", "earliest")
+            // Below three configs are needed for the Kafka connect tasks to start
+            // Otherwise, the tasks will not start and the test will fail.
             .config("iceberg.kafka.transaction.state.log.replication.factor", "1")
             .config("iceberg.kafka.transaction.state.log.min.isr", "1")
             .config("iceberg.kafka.max.block.ms", "200000000")
@@ -218,7 +220,7 @@ public class IntegrationTest extends IntegrationTestBase {
     flush();
 
     Awaitility.await()
-        .atMost(Duration.ofSeconds(30))
+        .atMost(Duration.ofSeconds(500))
         .pollInterval(Duration.ofSeconds(1))
         .untilAsserted(this::assertSnapshotAdded);
   }

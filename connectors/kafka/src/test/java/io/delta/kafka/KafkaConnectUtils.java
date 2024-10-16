@@ -33,6 +33,7 @@ import static org.apache.kafka.connect.runtime.distributed.DistributedConfig.STA
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +49,10 @@ import org.apache.hc.core5.http.HttpStatus;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.CreateTopicsResult;
+import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.connect.runtime.isolation.PluginDiscoveryMode;
 import org.apache.kafka.connect.util.clusters.EmbeddedConnectCluster;
 import org.awaitility.Awaitility;
@@ -105,10 +110,19 @@ public class KafkaConnectUtils {
       workerProps.putIfAbsent(STATUS_STORAGE_TOPIC_CONFIG, "kc-storage");
       workerProps.putIfAbsent(STATUS_STORAGE_REPLICATION_FACTOR_CONFIG, "1");
       workerProps.putIfAbsent(
-          KEY_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
+          KEY_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.json.JsonConverter");
       workerProps.putIfAbsent(
-          VALUE_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
-      workerProps.put("max.block.ms", "200000000");
+          VALUE_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.json.JsonConverter");
+      workerProps.putIfAbsent("key.converter.schemas.enable", "false");
+      //      workerProps.putIfAbsent("value.converter.schemas.enable", "false");
+      // workerProps.put("max.block.ms", "200000000");
+      workerProps.putIfAbsent("offset.flush.interval.ms", "500");
+
+      // To create the control topic whenever the KafkaProducer is created, otherwise
+      // the KafkaProducer to send events from the Coordinator to the Worker will block
+      // saying partitions not found. Iceberg docs advise to set this to true in the
+      // production environment or manually create the control topic.
+      workerProps.putIfAbsent("auto.create.topics.enable", "true");
 
       // setup Kafka broker properties
       Properties brokerProps = new Properties();
@@ -125,9 +139,19 @@ public class KafkaConnectUtils {
       brokerProps.putIfAbsent(STATUS_STORAGE_TOPIC_CONFIG, "kc-storage");
       brokerProps.putIfAbsent(STATUS_STORAGE_REPLICATION_FACTOR_CONFIG, "1");
       brokerProps.putIfAbsent(
-          KEY_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
+          // KEY_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.json.JsonConverter");
+          KEY_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.json.JsonConverter");
       brokerProps.putIfAbsent(
-          VALUE_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.storage.StringConverter");
+          VALUE_CONVERTER_CLASS_CONFIG, "org.apache.kafka.connect.json.JsonConverter");
+      brokerProps.putIfAbsent("offset.flush.interval.ms", "500");
+      //      brokerProps.putIfAbsent("key.converter.schemas.enable", "false");
+      //      brokerProps.putIfAbsent("value.converter.schemas.enable", "false");
+
+      // To create the control topic whenever the KafkaProducer is created, otherwise
+      // the KafkaProducer to send events from the Coordinator to the Worker will block
+      // saying partitions not found. Iceberg docs advise to set this to true in the
+      // production environment or manually create the control topic.
+      brokerProps.putIfAbsent("auto.create.topics.enable", "true");
 
       connectCluster =
           new EmbeddedConnectCluster.Builder()
@@ -144,6 +168,21 @@ public class KafkaConnectUtils {
     if (USE_EMBEDDED_CONNECT && connectCluster != null) {
       connectCluster.stop();
       connectCluster = null;
+    }
+  }
+
+  public static void createControlTopic(Admin admin) {
+    try {
+      NewTopic newTopic = new NewTopic("control-iceberg", 1, (short) 1);
+      CreateTopicsResult result = admin.createTopics(Collections.singleton(newTopic));
+
+      // Wait for the operation to complete
+      KafkaFuture<Void> future = result.values().get("control-iceberg");
+      future.get();
+
+      System.out.println("Topic 'control-iceberg' created successfully.");
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
   }
 
