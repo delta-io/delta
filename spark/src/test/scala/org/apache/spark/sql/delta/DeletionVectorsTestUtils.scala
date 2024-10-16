@@ -110,6 +110,11 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     super.withTempDir(prefix = "s p a r k %2a")(f)
   }
 
+  /** Helper that checks that log contains DVs */
+  def checkDVsExist(targetLog: DeltaLog): Boolean = {
+    getFilesWithDeletionVectors(targetLog).nonEmpty
+  }
+
   /** Helper that verifies whether a defined number of DVs exist */
   def verifyDVsExist(targetLog: DeltaLog, filesWithDVsSize: Int): Unit = {
     val filesWithDVs = getFilesWithDeletionVectors(targetLog)
