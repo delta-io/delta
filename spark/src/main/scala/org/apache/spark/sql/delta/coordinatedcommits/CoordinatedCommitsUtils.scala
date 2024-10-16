@@ -79,7 +79,12 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         response
       } catch {
         case NonFatal(e) =>
-          recordEvent(Map("exception" -> Utils.exceptionString(e)))
+          recordEvent(
+            Map(
+              "exceptionClass" -> e.getClass.getName,
+              "exceptionString" -> Utils.exceptionString(e)
+            )
+          )
           throw e
       }
     }
@@ -168,7 +173,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
             "commitCoordinatorName" -> commitCoordinatorStr,
             "registeredCommitCoordinators" ->
               CommitCoordinatorProvider.getRegisteredCoordinatorNames.mkString(", "),
-            "commitCoordinatorConf" -> JsonUtils.toJson(coordinatorConf),
+            "commitCoordinatorConf" -> coordinatorConf,
             "failIfImplUnavailable" -> failIfImplUnavailable.toString
           )
         )
