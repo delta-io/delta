@@ -56,7 +56,10 @@ case class DeltaSink(
     with UpdateExpressionsSupport
     with DeltaLogging {
 
-  private val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
+  private val deltaLog = catalogTable match {
+    case Some(table) => DeltaLog.forTable(sqlContext.sparkSession, table)
+    case None => DeltaLog.forTable(sqlContext.sparkSession, path)
+  }
 
   private val sqlConf = sqlContext.sparkSession.sessionState.conf
 
