@@ -35,6 +35,9 @@ public class CoordinatedCommitsUtils {
 
     private CoordinatedCommitsUtils() {}
 
+    /** The subdirectory in which to store the delta log. */
+    private static final String LOG_DIR_NAME = "_delta_log";
+
     /** The subdirectory in which to store the unbackfilled commit files. */
     private static final String COMMIT_SUBDIR = "_commits";
 
@@ -125,6 +128,11 @@ public class CoordinatedCommitsUtils {
         // to write the same commit file.
         logStore.write(commitPath, actions, true /* overwrite */, hadoopConf);
         return commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath);
+    }
+
+    /** Returns path to the directory which holds the delta log */
+    public static Path logDirPath(Path tablePath) {
+        return new Path(tablePath, LOG_DIR_NAME);
     }
 
     /** Returns path to the directory which holds the unbackfilled commits */
