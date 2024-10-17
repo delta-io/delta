@@ -58,14 +58,14 @@ trait IdentityColumnAdmissionSuiteBase
             val ex = intercept[AnalysisException] {
               sql(s"ALTER TABLE $tblName $keyword COLUMN id TYPE ${targetType.sql}")
             }
-            assert(ex.getErrorClass === "NOT_SUPPORTED_CHANGE_COLUMN")
+            assert(ex.getCondition === "NOT_SUPPORTED_CHANGE_COLUMN")
           case DoubleType =>
             // Long -> Double (upcast) is rejected in Delta when altering data type of an
             // identity column.
             val ex = intercept[DeltaAnalysisException] {
               sql(s"ALTER TABLE $tblName $keyword COLUMN id TYPE ${targetType.sql}")
             }
-            assert(ex.getErrorClass === "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED")
+            assert(ex.getCondition === "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED")
           case _ => fail("unexpected targetType")
         }
       }

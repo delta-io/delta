@@ -397,7 +397,7 @@ abstract class DeltaCDCSuiteBase
           StartingTimestamp(ts0),
           EndingTimestamp(ts1))
           .collect()
-      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+      }.getCondition === "DELTA_INVALID_CDC_RANGE"
     }
   }
 
@@ -418,7 +418,7 @@ abstract class DeltaCDCSuiteBase
           StartingTimestamp(ts0),
           EndingTimestamp(ts1))
           .collect()
-      }.getErrorClass === "DELTA_INVALID_CDC_RANGE"
+      }.getCondition === "DELTA_INVALID_CDC_RANGE"
     }
   }
 

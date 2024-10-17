@@ -174,7 +174,7 @@ abstract class HiveConvertToDeltaSuiteBase
           convertToDelta(tbl, Some("part string"))
         }
 
-        assert(ae.getErrorClass == "DELTA_CONVERSION_NO_PARTITION_FOUND")
+        assert(ae.getCondition == "DELTA_CONVERSION_NO_PARTITION_FOUND")
         assert(ae.getSqlState == "42KD6")
         assert(ae.getMessage.contains(tbl))
       }

@@ -1045,7 +1045,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
             "target.key = source.key",
             update("extra = -1"), insert("*"))
         }
-        assert(e.getErrorClass === "DELTA_MERGE_UNRESOLVED_EXPRESSION")
+        assert(e.getCondition === "DELTA_MERGE_UNRESOLVED_EXPRESSION")
         assert(e.getMessage.contains("resolve extra in UPDATE clause"))
 
         // Should succeed with schema evolution

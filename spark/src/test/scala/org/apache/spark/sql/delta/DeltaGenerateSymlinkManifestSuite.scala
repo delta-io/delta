@@ -649,7 +649,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       exception: SparkThrowable,
       errorClass: String
   ): Unit = {
-    assert(exception.getErrorClass === errorClass,
+    assert(exception.getCondition === errorClass,
       s"Expected errorClass $errorClass, but got $exception")
   }
 

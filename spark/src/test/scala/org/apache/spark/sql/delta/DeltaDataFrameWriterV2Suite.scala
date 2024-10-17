@@ -148,7 +148,7 @@ trait OpenSourceDataFrameWriterV2Tests
     val e = intercept[AnalysisException] {
       spark.table("source2").writeTo("table_name").overwrite($"id" === 3)
     }
-    assert(e.getErrorClass == "DELTA_REPLACE_WHERE_MISMATCH")
+    assert(e.getCondition == "DELTA_REPLACE_WHERE_MISMATCH")
     assert(e.getMessage.startsWith(
       "[DELTA_REPLACE_WHERE_MISMATCH] Written data does not conform to partial table overwrite " +
         "condition or constraint"))

@@ -123,7 +123,7 @@ class DeltaInvariantViolationException(
     messageParameters: Array[String])
   extends InvariantViolationException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters)) with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 
   override def getMessageParameters: util.Map[String, String] = {
     DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)

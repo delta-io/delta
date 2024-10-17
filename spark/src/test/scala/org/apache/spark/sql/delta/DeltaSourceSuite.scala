@@ -81,7 +81,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           val e = intercept[StreamingQueryException] {
             runStream()
           }
-          assert(e.getErrorClass == "STREAM_FAILED")
+          assert(e.getCondition == "STREAM_FAILED")
           // This assertion checks the schema of the source did not change while processing a batch.
           assert(e.getMessage.contains("assertion failed: Invalid batch: nullTypeCol"))
         } else {
@@ -821,7 +821,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         SerializedOffset(json)
       )
     }
-    assert(e.getErrorClass == "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION")
+    assert(e.getCondition == "DELTA_INVALID_FORMAT_FROM_SOURCE_VERSION")
     assert(e.toString.contains("Please upgrade to newer version of Delta"))
   }
 
@@ -842,7 +842,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         SerializedOffset(json)
       )
     }
-    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
+    assert(e.getCondition == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
     assert(e.toString.contains("source offset format is invalid"))
   }
 
@@ -862,7 +862,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         SerializedOffset(json)
       )
     }
-    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_VERSION")
+    assert(e.getCondition == "DELTA_INVALID_SOURCE_VERSION")
     for (msg <- "is invalid") {
       assert(e.toString.contains(msg))
     }
@@ -886,7 +886,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         SerializedOffset(json)
       )
     }
-    assert(e.getErrorClass == "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE")
+    assert(e.getCondition == "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE")
     for (msg <- Seq("delete", "checkpoint", "restart")) {
       assert(e.toString.contains(msg))
     }
@@ -998,7 +998,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     val e = intercept[SparkThrowable] {
       JsonUtils.fromJson[DeltaSourceOffset](jsonV1)
     }
-    assert(e.getErrorClass == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
+    assert(e.getCondition == "DELTA_INVALID_SOURCE_OFFSET_FORMAT")
   }
 
   test("DeltaSourceOffset serialization") {

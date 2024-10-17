@@ -758,7 +758,7 @@ trait CloneTableSuiteBase extends QueryTest
         target,
         isShallow,
         tableProperties = Map(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false"))()
-    }.getErrorClass === "DELTA_ADDING_DELETION_VECTORS_DISALLOWED"
+    }.getCondition === "DELTA_ADDING_DELETION_VECTORS_DISALLOWED"
   }
 
   for(targetExists <- BOOLEAN_DOMAIN)

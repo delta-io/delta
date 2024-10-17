@@ -187,7 +187,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     } catch {
       case ex: AnalysisException =>
         // Improve error message if possible
-        if (ex.getErrorClass == "UNRESOLVED_COLUMN.WITH_SUGGESTION") {
+        if (ex.getCondition == "UNRESOLVED_COLUMN.WITH_SUGGESTION") {
           throw DeltaErrors.generatedColumnsReferToWrongColumns(ex)
         }
         throw ex

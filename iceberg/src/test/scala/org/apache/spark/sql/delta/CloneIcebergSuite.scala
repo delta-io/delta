@@ -436,7 +436,7 @@ class CloneIcebergByNameSuite extends CloneIcebergSuiteBase
           val e = intercept[DeltaIllegalStateException] {
             runCreateOrReplace("SHALLOW", sourceIdentifier)
           }
-          assert(e.getErrorClass == "DELTA_MISSING_ICEBERG_CLASS")
+          assert(e.getCondition == "DELTA_MISSING_ICEBERG_CLASS")
         }
       } finally {
         ConvertUtils.icebergSparkTableClassPath = validIcebergSparkTableClassPath

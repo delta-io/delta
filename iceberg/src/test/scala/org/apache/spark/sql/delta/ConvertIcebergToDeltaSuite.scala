@@ -196,7 +196,7 @@ trait ConvertIcebergToDeltaSuiteBase
           val e = intercept[DeltaIllegalStateException] {
             convert(s"iceberg.`$tablePath`")
           }
-          assert(e.getErrorClass == "DELTA_MISSING_ICEBERG_CLASS")
+          assert(e.getCondition == "DELTA_MISSING_ICEBERG_CLASS")
         }
       } finally {
         ConvertUtils.icebergSparkTableClassPath = validIcebergSparkTableClassPath

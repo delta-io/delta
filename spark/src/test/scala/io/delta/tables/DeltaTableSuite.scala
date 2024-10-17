@@ -666,7 +666,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       // update the protocol again with invalid feature name.
       assert(intercept[DeltaTableFeatureException] {
         table.addFeatureSupport("__invalid_feature__")
-      }.getErrorClass === "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG")
+      }.getCondition === "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG")
     }
   }
 

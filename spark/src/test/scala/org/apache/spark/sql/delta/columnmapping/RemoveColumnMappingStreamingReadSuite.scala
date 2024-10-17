@@ -198,7 +198,7 @@ class RemoveColumnMappingStreamingReadSuite
   protected val ExpectMetadataEvolutionException =
     ExpectFailure[DeltaRuntimeException](e =>
       assert(
-        e.asInstanceOf[DeltaRuntimeException].getErrorClass ==
+        e.asInstanceOf[DeltaRuntimeException].getCondition ==
           "DELTA_STREAMING_METADATA_EVOLUTION" &&
           e.getStackTrace.exists(
             _.toString.contains("updateMetadataTrackingLogAndFailTheStreamIfNeeded"))

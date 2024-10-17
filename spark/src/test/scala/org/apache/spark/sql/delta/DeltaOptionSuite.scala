@@ -302,7 +302,7 @@ class DeltaOptionSuite extends QueryTest
             .save(tempDir.getAbsolutePath)
         }
       }
-      assert(e.getErrorClass == "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE")
+      assert(e.getCondition == "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE")
     }
   }
 
@@ -322,7 +322,7 @@ class DeltaOptionSuite extends QueryTest
             .saveAsTable("temp")
         }
       }
-      assert(e.getErrorClass == "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE")
+      assert(e.getCondition == "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE")
     }
   }
 
@@ -339,7 +339,7 @@ class DeltaOptionSuite extends QueryTest
             .option("partitionOverwriteMode", "dynamic")
             .save(tempDir.getAbsolutePath)
         }
-        assert(e.getErrorClass == "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED")
+        assert(e.getCondition == "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED")
         withSQLConf(PARTITION_OVERWRITE_MODE.key -> "dynamic") {
           e = intercept[DeltaIllegalArgumentException] {
             Seq(1, 2, 3).toDF
@@ -350,7 +350,7 @@ class DeltaOptionSuite extends QueryTest
               .save(tempDir.getAbsolutePath)
           }
         }
-        assert(e.getErrorClass == "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED")
+        assert(e.getCondition == "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED")
       }
     }
   }
