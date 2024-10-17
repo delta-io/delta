@@ -85,3 +85,10 @@ jobs:
         run: |
           TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }}
         if: steps.git-diff.outputs.diff
+      - name: Upload test result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-DSL-${{ matrix.scala }}-shard-${{ matrix.shard }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            test_results_*.csv
