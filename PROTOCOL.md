@@ -328,7 +328,7 @@ This section lists the space of available actions as well as their schema.
 ### Change Metadata
 The `metaData` action changes the current metadata of the table.
 The first version of a table must contain a `metaData` action.
-Subsequent` metaData` actions completely overwrite the current metadata of the table.
+Subsequent `metaData` actions completely overwrite the current metadata of the table.
 
 There can be at most one metadata action in a given version of the table.
 
@@ -827,9 +827,9 @@ If the table is on Reader Version 2, or if the table is on Reader Version 3 and 
 
 In `none` mode, or if the table property is not present, readers must read the parquet files by using the display names (the `name` field of the column definition) of the columns in the schema.
 
-In `id ` mode, readers must resolve columns by using the `field_id` in the parquet metadata for each file, as given by the column metadata property `delta.columnMapping.id` in the Delta schema. Partition values and column level statistics must be resolved by their *physical names* for each `add` entry in the transaction log. If a data file does not contain field ids, readers must refuse to read that file or return nulls for each column. For ids that cannot be found in a file, readers must return `null` values for those columns.
+In `id` mode, readers must resolve columns by using the `field_id` in the parquet metadata for each file, as given by the column metadata property `delta.columnMapping.id` in the Delta schema. Partition values and column level statistics must be resolved by their *physical names* for each `add` entry in the transaction log. If a data file does not contain field ids, readers must refuse to read that file or return `null`s for each column. For columns ids that cannot be found with same `field_id` in a file, readers must return `null` values for those columns.
 
-In `name` mode, readers must resolve columns in the data files by their physical names as given by the column metadata property `delta.columnMapping.physicalName` in the Delta schema. Partition values and column level statistics will also be resolved by their physical names. For columns that are not found in the files, `null`s need to be returned. Column ids are not used in this mode for resolution purposes.
+In `name` mode, readers must resolve columns in the data files by their physical names as given by the column metadata property `delta.columnMapping.physicalName` in the Delta schema. Partition values and column level statistics will also be resolved by their physical names. For columns that are not found in the files, `null`s need to be returned. `delta.columnMapping.id` in table property and `field_id` in parquet files are not used in this mode for resolution purposes.
 
 # Deletion Vectors
 To support this feature:
