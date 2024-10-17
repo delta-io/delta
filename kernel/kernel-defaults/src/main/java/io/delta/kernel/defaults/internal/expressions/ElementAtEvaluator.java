@@ -16,12 +16,13 @@
 package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
-import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
+import static io.delta.kernel.defaults.internal.expressions.CastExpressionEvaluator.canCastTo;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.expressions.Cast;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.internal.util.Utils;
@@ -50,7 +51,7 @@ class ElementAtEvaluator {
 
     if (!keyTypeFromMapInput.equivalent(lookupKeyType)) {
       if (canCastTo(lookupKeyType, keyTypeFromMapInput)) {
-        lookupKey = new ImplicitCastExpression(lookupKey, keyTypeFromMapInput);
+        lookupKey = new Cast(lookupKey, keyTypeFromMapInput);
       } else {
         String reason =
             format(
