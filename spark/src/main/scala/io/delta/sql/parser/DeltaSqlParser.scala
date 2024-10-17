@@ -332,6 +332,26 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       dryRun = ctx.RUN != null)
   }
 
+   /**
+   * Create a [[FsckRepairTableCommand]] logical plan. Example SQL:
+   * {{{
+   *   FSCK REPAIR TABLE ('/path/to/dir' | delta.`/path/to/dir`) [DRY RUN];
+   * }}}
+   */
+  override def visitFsckRepairTable(ctx: FsckRepairTableContext): AnyRef = withOrigin(ctx) {
+    if (ctx.path == null && ctx.table == null) {
+      throw new DeltaParseException(
+        ctx,
+        "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH",
+        Map("command" -> "FSCK")
+      )
+    }
+    FsckRepairTableCommand(
+      Option(ctx.path).map(string),
+      Option(ctx.table).map(visitTableIdentifier),
+      ctx.RUN != null)
+  }
+
   /** Provides a list of unresolved attributes for multi dimensional clustering. */
   override def visitZorderSpec(ctx: ZorderSpecContext): Seq[UnresolvedAttribute] = {
     ctx.interleave.asScala
