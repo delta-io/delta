@@ -30,6 +30,7 @@ import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -238,7 +239,7 @@ public class ConflictChecker {
       List<FileStatus> winningCommitFiles = new ArrayList<>();
       while (files.hasNext()) {
         FileStatus file = files.next();
-        if (FileNames.isCommitFile(file.getPath())) {
+        if (FileNames.isCommitFile(new Path(file.getPath()))) {
           winningCommitFiles.add(file);
         }
       }

@@ -51,11 +51,11 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
 
   public final Optional<Path> filePath; // Guaranteed to be present for V2 checkpoints.
 
-  public CheckpointInstance(String path) {
+  public CheckpointInstance(Path path) {
     Preconditions.checkArgument(
         FileNames.isCheckpointFile(path), "not a valid checkpoint file name");
 
-    String[] pathParts = getPathName(path).split("\\.");
+    String[] pathParts = path.getName().split("\\.");
 
     if (pathParts.length == 3 && pathParts[2].equals("parquet")) {
       // Classic checkpoint 00000000000000000010.checkpoint.parquet
@@ -75,9 +75,9 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
       this.version = Long.parseLong(pathParts[0]);
       this.numParts = Optional.empty();
       this.format = CheckpointFormat.V2;
-      this.filePath = Optional.of(new Path(path));
+      this.filePath = Optional.of(path);
     } else {
-      throw new RuntimeException("Unrecognized checkpoint path format: " + getPathName(path));
+      throw new RuntimeException("Unrecognized checkpoint path format: " + path.getName());
     }
   }
 
@@ -192,10 +192,5 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
     // different UUID checkpoints to be different checkpoint instances. Otherwise, ignore
     // the filepath (which is empty) when hashing.
     return Objects.hash(version, numParts, format, filePath);
-  }
-
-  private String getPathName(String path) {
-    int slash = path.lastIndexOf("/");
-    return path.substring(slash + 1);
   }
 }

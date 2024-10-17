@@ -24,12 +24,12 @@ import org.scalatest.funsuite.AnyFunSuite
 class FileNamesSuite extends AnyFunSuite {
 
   test("isCheckpointFile") {
-    assert(FileNames.isCheckpointFile("/a/123.checkpoint.parquet"))
-    assert(FileNames.isCheckpointFile("/a/123.checkpoint.0000000001.0000000087.parquet"))
-    assert(FileNames.isCheckpointFile("/a/000000010.checkpoint.80a083e8-7026.json"))
-    assert(FileNames.isCheckpointFile("/a/000000010.checkpoint.80a083e8-7026.parquet"))
-    assert(!FileNames.isCheckpointFile("/a/123.json"))
-    assert(!FileNames.isCommitFile("/a/123.checkpoint.3.json"))
+    assert(FileNames.isCheckpointFile(new Path("/a/123.checkpoint.parquet")))
+    assert(FileNames.isCheckpointFile(new Path("/a/123.checkpoint.0000000001.0000000087.parquet")))
+    assert(FileNames.isCheckpointFile(new Path("/a/000000010.checkpoint.80a083e8-7026.json")))
+    assert(FileNames.isCheckpointFile(new Path("/a/000000010.checkpoint.80a083e8-7026.parquet")))
+    assert(!FileNames.isCheckpointFile(new Path("/a/123.json")))
+    assert(!FileNames.isCommitFile(new Path("/a/123.checkpoint.3.json")))
   }
 
   test("checkpointVersion") {

@@ -34,21 +34,21 @@ public class DeltaLogFile {
   }
 
   public static DeltaLogFile forCommitOrCheckpoint(FileStatus file) {
-    String fileName = new Path(file.getPath()).getName();
-    LogType logType = null;
-    long version = -1;
-    if (FileNames.isCommitFile(fileName)) {
+    Path filePath = new Path(file.getPath());
+    LogType logType;
+    long version;
+    if (FileNames.isCommitFile(filePath)) {
       logType = LogType.COMMIT;
-      version = FileNames.deltaVersion(fileName);
-    } else if (FileNames.isClassicCheckpointFile(fileName)) {
+      version = FileNames.deltaVersion(filePath);
+    } else if (FileNames.isClassicCheckpointFile(filePath)) {
       logType = LogType.CHECKPOINT_CLASSIC;
-      version = FileNames.checkpointVersion(fileName);
-    } else if (FileNames.isMulitPartCheckpointFile(fileName)) {
+      version = FileNames.checkpointVersion(filePath);
+    } else if (FileNames.isMultiPartCheckpointFile(filePath)) {
       logType = LogType.MULTIPART_CHECKPOINT;
-      version = FileNames.checkpointVersion(fileName);
-    } else if (FileNames.isV2CheckpointFile(fileName)) {
+      version = FileNames.checkpointVersion(filePath);
+    } else if (FileNames.isV2CheckpointFile(filePath)) {
       logType = LogType.V2_CHECKPOINT_MANIFEST;
-      version = FileNames.checkpointVersion(fileName);
+      version = FileNames.checkpointVersion(filePath);
     } else {
       throw new IllegalArgumentException(
           "File is not a commit or checkpoint file: " + file.getPath());

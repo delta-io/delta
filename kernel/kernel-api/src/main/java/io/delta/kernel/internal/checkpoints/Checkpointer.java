@@ -111,13 +111,13 @@ public class Checkpointer {
         List<CheckpointInstance> checkpoints = new ArrayList<>();
         while (deltaLogFileIter.hasNext()) {
           FileStatus fileStatus = deltaLogFileIter.next();
-          String fileName = new Path(fileStatus.getPath()).getName();
+          Path filePath = new Path(fileStatus.getPath());
 
           long currentFileVersion;
-          if (FileNames.isCommitFile(fileName)) {
-            currentFileVersion = FileNames.deltaVersion(fileName);
-          } else if (FileNames.isCheckpointFile(fileName)) {
-            currentFileVersion = FileNames.checkpointVersion(fileName);
+          if (FileNames.isCommitFile(filePath)) {
+            currentFileVersion = FileNames.deltaVersion(filePath);
+          } else if (FileNames.isCheckpointFile(filePath)) {
+            currentFileVersion = FileNames.checkpointVersion(filePath);
           } else {
             // allow all other types of files.
             currentFileVersion = currentVersion;
@@ -133,7 +133,7 @@ public class Checkpointer {
             break;
           }
           if (validCheckpointFile(fileStatus)) {
-            checkpoints.add(new CheckpointInstance(fileStatus.getPath()));
+            checkpoints.add(new CheckpointInstance(filePath));
           }
           numberOfFilesSearched++;
         }
@@ -162,8 +162,7 @@ public class Checkpointer {
   }
 
   private static boolean validCheckpointFile(FileStatus fileStatus) {
-    return FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName())
-        && fileStatus.getSize() > 0;
+    return FileNames.isCheckpointFile(new Path(fileStatus.getPath())) && fileStatus.getSize() > 0;
   }
 
   /** The path to the file that holds metadata about the most recent checkpoint. */
