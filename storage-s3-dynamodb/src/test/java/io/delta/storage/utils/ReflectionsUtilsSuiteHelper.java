@@ -16,40 +16,54 @@
 
 package io.delta.storage.utils;
 
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.AWSCredentialsProvider;
 import org.apache.hadoop.conf.Configuration;
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.identity.spi.AwsCredentialsIdentity;
+import software.amazon.awssdk.identity.spi.ResolveIdentityRequest;
+
+import java.util.concurrent.CompletableFuture;
 
 public class ReflectionsUtilsSuiteHelper {
     // this class only purpose to test DynamoDBLogStore logic to create AWS credentials provider with reflection.
-    public static class TestOnlyAWSCredentialsProviderWithHadoopConf implements AWSCredentialsProvider {
+    public static class TestOnlyAWSCredentialsProviderWithHadoopConf implements AwsCredentialsProvider {
 
         public TestOnlyAWSCredentialsProviderWithHadoopConf(Configuration hadoopConf) {}
 
         @Override
-        public AWSCredentials getCredentials() {
+        public AwsCredentials resolveCredentials() {
             return null;
         }
 
         @Override
-        public void refresh() {
+        public Class<AwsCredentialsIdentity> identityType() {
+            return AwsCredentialsProvider.super.identityType();
+        }
 
+        @Override
+        public CompletableFuture<AwsCredentialsIdentity> resolveIdentity(ResolveIdentityRequest request) {
+            return AwsCredentialsProvider.super.resolveIdentity(request);
         }
     }
 
     // this class only purpose to test DynamoDBLogStore logic to create AWS credentials provider with reflection.
-    public static class TestOnlyAWSCredentialsProviderWithUnexpectedConstructor implements AWSCredentialsProvider {
+    public static class TestOnlyAWSCredentialsProviderWithUnexpectedConstructor implements AwsCredentialsProvider {
 
         public TestOnlyAWSCredentialsProviderWithUnexpectedConstructor(String hadoopConf) {}
 
         @Override
-        public AWSCredentials getCredentials() {
+        public AwsCredentials resolveCredentials() {
             return null;
         }
 
         @Override
-        public void refresh() {
+        public Class<AwsCredentialsIdentity> identityType() {
+            return AwsCredentialsProvider.super.identityType();
+        }
 
+        @Override
+        public CompletableFuture<AwsCredentialsIdentity> resolveIdentity(ResolveIdentityRequest request) {
+            return AwsCredentialsProvider.super.resolveIdentity(request);
         }
     }
 }
