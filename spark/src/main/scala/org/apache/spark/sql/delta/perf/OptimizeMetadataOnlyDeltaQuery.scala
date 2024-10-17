@@ -23,13 +23,12 @@ import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTable, DeltaTableUtils, Snapshot}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.stats.DeltaScanGenerator
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
-
 import java.sql.Date
 import java.util.Locale
 
@@ -41,7 +40,7 @@ import java.util.Locale
  * or the columns must be partitioned, in the latter case it uses partitionValues, a required field.
  * - Table has no deletion vectors, or query has no MIN/MAX expressions.
  * - COUNT has no DISTINCT.
- * - Query has no filters.
+ * - Query has no data filters.
  * - Query has no GROUP BY.
  * Example of valid query: SELECT COUNT(*), MIN(id), MAX(partition_col) FROM MyDeltaTable
  */
@@ -60,7 +59,9 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       tahoeLogFileIndex: TahoeLogFileIndex): LogicalPlan = {
 
     val aggColumnsNames = Set(extractMinMaxFieldNames(plan).map(_.toLowerCase(Locale.ROOT)) : _*)
-    val (rowCount, columnStats) = extractCountMinMaxFromDeltaLog(tahoeLogFileIndex, aggColumnsNames)
+    val partitionFilter = extractPartitionFilters(plan)
+    val (rowCount, columnStats) =
+      extractCountMinMaxFromDeltaLog(tahoeLogFileIndex, aggColumnsNames, partitionFilter.toSeq)
 
     def checkStatsExists(attrRef: AttributeReference): Boolean = {
       columnStats.contains(attrRef.name) &&
@@ -133,6 +134,15 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
     }
   }
 
+  private def extractPartitionFilters(plan: LogicalPlan): Option[Expression] = {
+    plan match {
+      case Filter(cond, _) => Some(cond)
+      case Project(_, child) => extractPartitionFilters(child)
+      case Aggregate(_, _, child) => extractPartitionFilters(child)
+      case _ => None
+    }
+  }
+
   /**
    * Min and max values from Delta Log stats or partitionValues.
   */
@@ -140,14 +150,15 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
 
   private def extractCountMinMaxFromStats(
       deltaScanGenerator: DeltaScanGenerator,
-      lowerCaseColumnNames: Set[String]): (Option[Long], Map[String, DeltaColumnStat]) = {
+      lowerCaseColumnNames: Set[String],
+      partitionFilters: Seq[Expression]): (Option[Long], Map[String, DeltaColumnStat]) = {
     val snapshot = deltaScanGenerator.snapshotToScan
 
     // Count - account for deleted rows according to deletion vectors
     val dvCardinality = coalesce(col("deletionVector.cardinality"), lit(0))
     val numLogicalRecords = (col("stats.numRecords") - dvCardinality).as("numLogicalRecords")
 
-    val filesWithStatsForScan = deltaScanGenerator.filesWithStatsForScan(Nil)
+    val filesWithStatsForScan = deltaScanGenerator.filesWithStatsForScan(partitionFilters)
     // Validate all the files has stats
     val filesStatsCount = filesWithStatsForScan.select(
       sum(numLogicalRecords).as("numLogicalRecords"),
@@ -248,10 +259,11 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
 
   private def extractMinMaxFromPartitionValue(
       snapshot: Snapshot,
-      lowerCaseColumnNames: Set[String]): Map[String, DeltaColumnStat] = {
+      aggColumnNames: Set[String],
+      partitionFilters: Seq[Expression]): Map[String, DeltaColumnStat] = {
 
     val partitionedColumns = snapshot.metadata.partitionSchema
-      .filter(col => lowerCaseColumnNames.contains(col.name.toLowerCase(Locale.ROOT)))
+      .filter(col => aggColumnNames.contains(col.name.toLowerCase(Locale.ROOT)))
       .map(col => (col, DeltaColumnMapping.getPhysicalName(col)))
 
     if (partitionedColumns.isEmpty) {
@@ -270,7 +282,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
           max(s"`$physicalName`").as(s"max_$physicalName"))
       }
 
-      val partitionedColumnsQuery = snapshot.allFiles
+      val partitionedColumnsQuery = snapshot.filesWithStatsForScan(partitionFilters)
         .select(partitionedColumnsValues: _*)
         .agg(partitionedColumnsAgg.head, partitionedColumnsAgg.tail: _*)
         .head()
@@ -294,17 +306,20 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
   */
   private def extractCountMinMaxFromDeltaLog(
       tahoeLogFileIndex: TahoeLogFileIndex,
-      lowerCaseColumnNames: Set[String]):
+      aggColumnNames: Set[String],
+      partitionFilters: Seq[Expression]):
   (Option[Long], CaseInsensitiveMap[DeltaColumnStat]) = {
     val deltaScanGen = getDeltaScanGenerator(tahoeLogFileIndex)
 
     val partitionedValues = extractMinMaxFromPartitionValue(
       deltaScanGen.snapshotToScan,
-      lowerCaseColumnNames)
+      aggColumnNames,
+      partitionFilters)
 
     val partitionedColNames = partitionedValues.keySet.map(_.toLowerCase(Locale.ROOT))
-    val dataColumnNames = lowerCaseColumnNames -- partitionedColNames
-    val (rowCount, columnStats) = extractCountMinMaxFromStats(deltaScanGen, dataColumnNames)
+    val dataColumnNames = aggColumnNames -- partitionedColNames
+    val (rowCount, columnStats) =
+      extractCountMinMaxFromStats(deltaScanGen, dataColumnNames, partitionFilters)
 
     (rowCount, CaseInsensitiveMap(columnStats ++ partitionedValues))
   }
@@ -343,6 +358,14 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       case _ => false
     }
 
+    private def isFilterByPartitionCols(filters: Seq[Expression],
+                                       fileIndex: TahoeLogFileIndex): Boolean = {
+      val partitionColumns = fileIndex.deltaLog.snapshot.metadata.partitionColumns
+      filters.filterNot(f =>
+        DeltaTableUtils.isPredicatePartitionColumnsOnly(f, partitionColumns, fileIndex.spark))
+        .isEmpty
+    }
+
     private def fieldsAreAttributeReference(fields: Seq[NamedExpression]): Boolean = fields.forall {
       // Fields should be AttributeReference to avoid getting the incorrect column name
       // from stats when we create the Local Relation, example
@@ -357,10 +380,10 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         Nil, // GROUP BY not supported
         aggExprs: Seq[Alias @unchecked], // Underlying type is not checked because of type erasure.
         // Alias type check is done in isStatsOptimizable.
-        PhysicalOperation(fields, Nil, DeltaTable(fileIndex: TahoeLogFileIndex)))
-          if fileIndex.partitionFilters.isEmpty &&
-            fieldsAreAttributeReference(fields) &&
-            isStatsOptimizable(aggExprs) => Some(fileIndex)
+        PhysicalOperation(fields, filters, DeltaTable(fileIndex: TahoeLogFileIndex)))
+          if fieldsAreAttributeReference(fields) &&
+            isStatsOptimizable(aggExprs) &&
+            isFilterByPartitionCols(filters, fileIndex) => Some(fileIndex)
       case Aggregate(
         Nil,
         aggExprs: Seq[Alias @unchecked],
