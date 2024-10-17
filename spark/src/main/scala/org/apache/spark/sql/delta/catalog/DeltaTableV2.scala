@@ -165,6 +165,18 @@ case class DeltaTableV2(
     )
   }
 
+  /**
+   * Returns a fresh snapshot for this table. If time travel is in use, this is just the table's
+   * initial snapshot. Otherwise, obtain a fresh snapshot from the table's [[DeltaLog]].
+   */
+  def getFreshSnapshot(checkIfUpdatedSinceTs: Option[Long] = None): Snapshot = {
+    if (timeTravelSpec.isDefined) {
+      initialSnapshot
+    } else {
+      deltaLog.update(checkIfUpdatedSinceTs = checkIfUpdatedSinceTs)
+    }
+  }
+
   // We get the cdcRelation ahead of time if this is a CDC read to be able to return the correct
   // schema. The schema for CDC reads are currently convoluted due to column mapping behavior
   private lazy val cdcRelation: Option[BaseRelation] = {
