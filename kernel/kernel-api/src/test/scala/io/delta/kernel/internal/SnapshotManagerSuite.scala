@@ -15,11 +15,11 @@
  */
 package io.delta.kernel.internal.snapshot
 
-import java.util.{Arrays, Collections, List, Optional}
+import java.util.{Arrays, Collections, List, Optional, UUID}
 import java.{lang => javaLang}
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.engine.CommitCoordinatorClientHandler
 import io.delta.kernel.engine.coordinatedcommits.{Commit, CommitResponse, GetCommitsResponse}
 import io.delta.kernel.exceptions.InvalidTableException
@@ -910,6 +910,33 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           logPath, e = new RuntimeException(errMsg)))
     )
   }
+
+  test("delta log contains commit files with non-conforming names") {
+    // non-conforming name: name that is not "%020d.json" format
+    val files =
+      singularCheckpointFileStatuses(Seq(10L)) ++
+      deltaFileStatuses(11L until 15L) ++
+      // non-conforming name
+      nonConformingDeltaFileStatuses(15L until 20L)
+
+    // try to load the latest snapshot and expect to load the latest valid delta file
+    // which is version 14.
+    val logSegment = snapshotManager.getLogSegmentAtOrBeforeVersion(
+      createMockFSListFromEngine(files),
+      Optional.of(10L),
+      Optional.empty(), /* start version */
+      Optional.empty() /* tableCommitCoordinatorClientHandlerOpt */
+    )
+    assert(logSegment.isPresent)
+    checkLogSegment(
+      logSegment.get(),
+      expectedVersion = 14,
+      expectedDeltas = deltaFileStatuses(11L until 15L),
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10L)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 140L
+    )
+  }
 }
 
 trait SidecarIteratorProvider extends VectorTestUtils {
@@ -960,7 +987,13 @@ class MockTableCommitCoordinatorClientHandler(
     }
     new GetCommitsResponse(
       versions
-        .map(v => new Commit(v, FileStatus.of(FileNames.deltaFile(logPath, v), v, v*10), v)).asJava,
+        .map(v => new Commit(
+          v,
+          FileStatus.of(
+            FileNames.unbackfilledDeltaFile(logPath, v, UUID.randomUUID().toString),
+            v, /* size */
+            v * 10 /* modTime */),
+          v)).asJava,
       if (versions.isEmpty) -1 else versions.last)
   }
 }

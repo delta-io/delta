@@ -42,6 +42,15 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v*10))
   }
 
+  /* non-conforming name: name that is not "%020d.json" format */
+  def nonConformingDeltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
+    deltaVersions.map(v => FileStatus.of(
+      new Path(logPath, f"$v%020d.${UUID.randomUUID.toString}.json").toString,
+      v, /* size */
+      v*10 /* modTime */
+    ))
+  }
+
   /** Checkpoint file statuses where the timestamp = 10*version */
   def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
