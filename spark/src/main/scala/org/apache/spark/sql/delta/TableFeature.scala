@@ -501,12 +501,25 @@ object CheckConstraintsTableFeature
 
 object ChangeDataFeedTableFeature
   extends LegacyWriterFeature(name = "changeDataFeed", minWriterVersion = 4)
-  with FeatureAutomaticallyEnabledByMetadata {
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    ChangeDataFeedPreDowngradeCommand(table)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !snapshot.metadata.configuration.contains(DeltaConfigs.CHANGE_DATA_FEED.key)
+
+  override def actionUsesFeature(action: Action): Boolean = {
+    // This method is never called, as it is only used for ReaderWriterFeatures.
+    throw new UnsupportedOperationException()
   }
 }
 
