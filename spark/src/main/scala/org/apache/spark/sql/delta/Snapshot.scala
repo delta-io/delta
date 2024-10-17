@@ -90,6 +90,8 @@ class Snapshot(
   with DataSkippingReader
   with DeltaLogging {
 
+  // some change 1
+
   import Snapshot._
   import DeltaLogFileIndex.COMMIT_VERSION_COLUMN
   // For implicits which re-use Encoder:
