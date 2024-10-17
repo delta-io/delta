@@ -16,11 +16,11 @@
 
 package io.delta.hive
 
-import org.apache.hadoop.fs.Path
-import org.apache.hadoop.mapred.JobConf
+//import org.apache.hadoop.fs.Path
+//import org.apache.hadoop.mapred.JobConf
 
 class HiveInputFormat extends org.apache.hadoop.hive.ql.io.HiveInputFormat {
-
+/*
   override def pushProjectionsAndFilters(
       jobConf: JobConf,
       inputFormatClass: Class[_],
@@ -32,4 +32,5 @@ class HiveInputFormat extends org.apache.hadoop.hive.ql.io.HiveInputFormat {
       super.pushProjectionsAndFilters(jobConf, inputFormatClass, splitPath, nonNative)
     }
   }
+  */
 }
