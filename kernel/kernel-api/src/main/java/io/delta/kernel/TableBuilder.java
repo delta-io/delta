@@ -16,12 +16,61 @@
 
 package io.delta.kernel;
 
+import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.config.ConfigurationProvider;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableNotFoundException;
 
+/**
+ * Builder for creating a {@link Table} instance.
+ *
+ * <p>Required parameters for building a {@link TableBuilder} instance include:
+ *
+ * <ul>
+ *   <li>{@code Engine}: The {@link Engine} instance required to interact with Delta Kernel.
+ *   <li>{@code Path}: The location of the table, resolved by the provided {@code Engine}.
+ * </ul>
+ *
+ * @since 3.3.0
+ */
+@Evolving
 public interface TableBuilder {
+
+  /**
+   * Set the {@link ConfigurationProvider} to use for the table.
+   *
+   * @param configProvider {@link ConfigurationProvider} to use for the table
+   * @return this updated {@link TableBuilder} instance
+   */
   TableBuilder withConfigurationProvider(ConfigurationProvider configProvider);
 
+  /**
+   * Set the {@link TableIdentifier} for the table.
+   *
+   * @param tableId {@link TableIdentifier} for the table
+   * @return this updated {@link TableBuilder} instance
+   */
   TableBuilder withTableId(TableIdentifier tableId);
 
+  /**
+   * Builds the table object for the Delta Lake table at the given path.
+   *
+   * <ul>
+   *   <li>Behavior when the table location doesn't exist:
+   *       <ul>
+   *         <li>Reads will fail with a {@link TableNotFoundException}
+   *         <li>Writes will create the location
+   *       </ul>
+   *   <li>Behavior when the table location exists (with contents or not) but is not a Delta table:
+   *       <ul>
+   *         <li>Reads will fail with a {@link TableNotFoundException}
+   *         <li>Writes will create a Delta table at the given location. If there are any existing
+   *             files in the location that are not already part of the Delta table, they will
+   *             remain excluded from the Delta table.
+   *       </ul>
+   * </ul>
+   *
+   * @return the new {@link Table} instance
+   */
   Table build();
 }

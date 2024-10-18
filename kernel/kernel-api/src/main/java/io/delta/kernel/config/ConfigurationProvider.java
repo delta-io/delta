@@ -16,12 +16,46 @@
 
 package io.delta.kernel.config;
 
+import io.delta.kernel.annotation.Evolving;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
+/**
+ * Provides per-session configuration values for Delta Kernel, specific to the current execution.
+ *
+ * <p>These values are not Delta table properties. Delta table properties are stored in the Delta
+ * log metadata and apply globally to all readers and writers interacting with the table.
+ *
+ * <p>Instead, the configuration values provided by this interface are scoped to a single instance
+ * of Delta Kernel during its execution.
+ *
+ * @since 3.3.0
+ */
+@Evolving
 public interface ConfigurationProvider {
+  /**
+   * Retrieves the configuration value for the given key.
+   *
+   * @param key the configuration key
+   * @return the configuration value associated with the key
+   * @throws NoSuchElementException if the key is not found
+   */
   String get(String key);
 
+  /**
+   * Retrieves the configuration value for the given key. If it doesn't exist, returns {@link
+   * Optional#empty}.
+   *
+   * @param key the configuration key
+   * @return the configuration value associated with the key, if it exists
+   */
   Optional<String> getOptional(String key);
 
+  /**
+   * Checks if the configuration provider contains the given key.
+   *
+   * @param key the configuration key
+   * @return {@code true} if the key exists, else {@code false}
+   */
   boolean contains(String key);
 }

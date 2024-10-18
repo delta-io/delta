@@ -55,6 +55,7 @@ public class TableImpl implements Table {
     return new TableBuilderImpl(engine, path);
   }
 
+  /** Package-private method */
   static Table create(
       Engine engine,
       String unresolvedPath,

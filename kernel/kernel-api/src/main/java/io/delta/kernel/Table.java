@@ -33,20 +33,8 @@ public interface Table {
   /**
    * Instantiate a table object for the Delta Lake table at the given path.
    *
-   * <ul>
-   *   <li>Behavior when the table location doesn't exist:
-   *       <ul>
-   *         <li>Reads will fail with a {@link TableNotFoundException}
-   *         <li>Writes will create the location
-   *       </ul>
-   *   <li>Behavior when the table location exists (with contents or not) but not a Delta table:
-   *       <ul>
-   *         <li>Reads will fail with a {@link TableNotFoundException}
-   *         <li>Writes will create a Delta table at the given location. If there are any existing
-   *             files in the location that are not already part of the Delta table, they will
-   *             remain excluded from the Delta table.
-   *       </ul>
-   * </ul>
+   * <p>For detailed behavior when creating, reading from, or writing to the table, see {@link
+   * TableBuilder#build()}.
    *
    * @param engine {@link Engine} instance to use in Delta Kernel.
    * @param path location of the table. Path is resolved to fully qualified path using the given
@@ -54,15 +42,16 @@ public interface Table {
    * @return an instance of {@link Table} representing the Delta table at the given path
    */
   static Table forPath(Engine engine, String path) {
-    return new TableBuilderImpl(engine, path).build();
+    return builder(engine, path).build();
   }
 
   /**
    * Create a {@link TableBuilder} to build a {@link Table} instance.
    *
-   * @param engine
-   * @param path
-   * @return
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @param path location of the table. Path is resolved to fully qualified path using the given
+   *     {@code engine}.
+   * @return a {@link TableBuilder} instance
    * @since 3.3.0
    */
   static TableBuilder builder(Engine engine, String path) {

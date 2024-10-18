@@ -20,6 +20,11 @@ import io.delta.kernel.config.ConfigurationProvider;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
+/**
+ * An implementation of {@link ConfigurationProvider} that always returns empty results or throws
+ * exceptions for configuration values. This class is intended to be used in cases where no
+ * configuration is provided or expected.
+ */
 public class EmptyConfigurationProvider implements ConfigurationProvider {
   @Override
   public String get(String key) {
