@@ -236,7 +236,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Enablement tracking works when ICT is enabled post commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -323,7 +323,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Metadata toString should work with ICT enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -360,7 +360,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Table with ICT enabled is readable") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -422,7 +422,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Conflict resolution of timestamps") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+      val table = Table.forPath(engine, tablePath)
       setTablePropAndVerify(
         engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
 
@@ -453,7 +453,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   Seq(10, 2).foreach { winningCommitCount =>
     test(s"Conflict resolution of enablement version(Winning Commit Count=$winningCommitCount)") {
       withTempDirAndEngine { (tablePath, engine) =>
-        val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+        val table = Table.forPath(engine, tablePath)
         val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
         val txn = txnBuilder
@@ -504,7 +504,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   test("Missing CommitInfo in last winning commit in conflict resolution should result in a " +
     "DELTA_MISSING_COMMIT_INFO exception") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+      val table = Table.forPath(engine, tablePath)
       setTablePropAndVerify(
         engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
 
@@ -549,7 +549,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   test("Throw an error where the winning txn enables the ICT and losing txn prepares txn with " +
     "ICT enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder

@@ -272,7 +272,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     clock: Clock = () => System.currentTimeMillis): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
-      TableImpl.forPath(engine, tablePath, clock))
+      TableImpl.builder(engine, tablePath).withClock(clock).build())
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
