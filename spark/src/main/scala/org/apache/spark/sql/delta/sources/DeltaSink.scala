@@ -56,6 +56,8 @@ case class DeltaSink(
     with UpdateExpressionsSupport
     with DeltaLogging {
 
+  // Use the catalog table to get the delta log if available so that the code in delta log,
+  // can differentiate between path-based and name-based table access.
   private val deltaLog = catalogTable match {
     case Some(table) => DeltaLog.forTable(sqlContext.sparkSession, table)
     case None => DeltaLog.forTable(sqlContext.sparkSession, path)
