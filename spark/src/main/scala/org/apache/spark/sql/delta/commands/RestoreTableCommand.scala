@@ -92,6 +92,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
 
   override def run(spark: SparkSession): Seq[Row] = {
     val deltaLog = sourceTable.deltaLog
+    val catalogTable = sourceTable.catalogTable
     val version = sourceTable.timeTravelOpt.get.version
     val timestamp = getTimestamp()
     recordDeltaOperation(deltaLog, "delta.restore") {
@@ -105,14 +106,18 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           .version
       }
 
-      val latestVersion = deltaLog.update().version
+      val latestVersion = deltaLog
+        .update(tableIdentifierOpt = catalogTable.map(_.identifier))
+        .version
 
       require(versionToRestore < latestVersion, s"Version to restore ($versionToRestore)" +
         s"should be less then last available version ($latestVersion)")
 
-      deltaLog.withNewTransaction(sourceTable.catalogTable) { txn =>
+      deltaLog.withNewTransaction(catalogTable) { txn =>
         val latestSnapshot = txn.snapshot
-        val snapshotToRestore = deltaLog.getSnapshotAt(versionToRestore)
+        val snapshotToRestore = deltaLog.getSnapshotAt(
+          versionToRestore,
+          tableIdentifierOpt = catalogTable.map(_.identifier))
         val latestSnapshotFiles = latestSnapshot.allFiles
         val snapshotToRestoreFiles = snapshotToRestore.allFiles
 

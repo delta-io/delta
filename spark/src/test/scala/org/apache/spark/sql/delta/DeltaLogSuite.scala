@@ -582,7 +582,7 @@ class DeltaLogSuite extends QueryTest
       val deltaLog = DeltaLog.forTable(spark, path)
       assert(deltaLog.snapshot.version === 0)
 
-      val (_, snapshot) = DeltaLog.withFreshSnapshot { _ =>
+      val (_, snapshot) = DeltaLog.withFreshSnapshot() { _ =>
         // This update is necessary to advance the lastUpdatedTs beyond the start time of
         // withFreshSnapshot call.
         deltaLog.update()
