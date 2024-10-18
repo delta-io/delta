@@ -20,7 +20,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
-import io.delta.kernel.internal.TableImpl;
+import io.delta.kernel.internal.TableBuilderImpl;
 import java.io.IOException;
 
 /**
@@ -54,7 +54,19 @@ public interface Table {
    * @return an instance of {@link Table} representing the Delta table at the given path
    */
   static Table forPath(Engine engine, String path) {
-    return TableImpl.forPath(engine, path);
+    return new TableBuilderImpl(engine, path).build();
+  }
+
+  /**
+   * Create a {@link TableBuilder} to build a {@link Table} instance.
+   *
+   * @param engine
+   * @param path
+   * @return
+   * @since 3.3.0
+   */
+  static TableBuilder builder(Engine engine, String path) {
+    return new TableBuilderImpl(engine, path);
   }
 
   /**

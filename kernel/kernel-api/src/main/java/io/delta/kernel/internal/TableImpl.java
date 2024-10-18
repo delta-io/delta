@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 
 import io.delta.kernel.*;
+import io.delta.kernel.config.ConfigurationProvider;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
@@ -44,43 +45,57 @@ import org.slf4j.LoggerFactory;
 
 public class TableImpl implements Table {
 
+  ///////////////////////////
+  // Static fields/methods //
+  ///////////////////////////
+
   private static final Logger logger = LoggerFactory.getLogger(TableImpl.class);
 
-  public static Table forPath(Engine engine, String path) {
-    return forPath(engine, path, System::currentTimeMillis);
+  public static TableBuilderImpl builder(Engine engine, String path) {
+    return new TableBuilderImpl(engine, path);
   }
 
-  /**
-   * Instantiate a table object for the Delta Lake table at the given path. It takes an additional
-   * parameter called {@link Clock} which helps in testing.
-   *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
-   * @param path location of the table.
-   * @param clock {@link Clock} instance to use for time-related operations.
-   * @return an instance of {@link Table} representing the Delta table at the given path
-   */
-  public static Table forPath(Engine engine, String path, Clock clock) {
-    String resolvedPath;
+  static Table create(
+      Engine engine,
+      String unresolvedPath,
+      Clock clock,
+      ConfigurationProvider configProvider,
+      Optional<TableIdentifier> tableIdOpt) {
+    final String resolvedPath;
     try {
       resolvedPath =
           wrapEngineExceptionThrowsIO(
-              () -> engine.getFileSystemClient().resolvePath(path), "Resolving path %s", path);
+              () -> engine.getFileSystemClient().resolvePath(unresolvedPath),
+              "Resolving path %s",
+              unresolvedPath);
     } catch (IOException io) {
       throw new UncheckedIOException(io);
     }
-    return new TableImpl(resolvedPath, clock);
+    return new TableImpl(resolvedPath, clock, configProvider, tableIdOpt);
   }
+
+  ///////////////////////////
+  // Member fields/methods //
+  ///////////////////////////
 
   private final SnapshotManager snapshotManager;
   private final String tablePath;
   private final Clock clock;
+  private final ConfigurationProvider configProvider;
+  private final Optional<TableIdentifier> tableIdOpt;
 
-  public TableImpl(String tablePath, Clock clock) {
+  private TableImpl(
+      String tablePath,
+      Clock clock,
+      ConfigurationProvider configProvider,
+      Optional<TableIdentifier> tableIdOpt) {
     this.tablePath = tablePath;
     final Path dataPath = new Path(tablePath);
     final Path logPath = new Path(dataPath, "_delta_log");
     this.snapshotManager = new SnapshotManager(logPath, dataPath);
     this.clock = clock;
+    this.configProvider = configProvider;
+    this.tableIdOpt = tableIdOpt;
   }
 
   @Override
@@ -181,14 +196,6 @@ public class TableImpl implements Table {
             });
   }
 
-  protected Path getDataPath() {
-    return new Path(tablePath);
-  }
-
-  protected Path getLogPath() {
-    return new Path(tablePath, "_delta_log");
-  }
-
   /**
    * Returns the latest version that was committed before or at {@code millisSinceEpochUTC}. If no
    * version exists, throws a {@link KernelException}
@@ -268,6 +275,18 @@ public class TableImpl implements Table {
       return commit.getVersion() + 1;
     }
   }
+
+  protected Path getDataPath() {
+    return new Path(tablePath);
+  }
+
+  protected Path getLogPath() {
+    return new Path(tablePath, "_delta_log");
+  }
+
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
 
   /**
    * Returns the raw delta actions for each version between startVersion and endVersion. Only reads
