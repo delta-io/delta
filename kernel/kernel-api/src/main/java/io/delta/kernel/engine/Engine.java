@@ -17,6 +17,7 @@
 package io.delta.kernel.engine;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.config.ConfigurationProvider;
 import java.util.Map;
 
 /**
@@ -55,6 +56,26 @@ public interface Engine {
    * @return An implementation of {@link ParquetHandler}.
    */
   ParquetHandler getParquetHandler();
+
+  /**
+   * Retrieves a {@link CommitCoordinatorClient} for the specified commit coordinator name.
+   *
+   * @param commitCoordinatorName The name (identifier) of the underlying commit coordinator client
+   *     to instantiate
+   * @param sessionConfig The current per-session configuration values for Delta Kernel
+   * @param commitCoordinatorConf The configuration settings for the underlying commit coordinator
+   *     client, taken directly from the Delta table property {@link
+   *     io.delta.kernel.internal.TableConfig#COORDINATED_COMMITS_TABLE_CONF}
+   * @return A {@link CommitCoordinatorClient} implementation corresponding to the specified commit
+   *     coordinator name
+   * @since 3.3.0
+   */
+  default CommitCoordinatorClient getCommitCoordinatorClient(
+      String commitCoordinatorName,
+      ConfigurationProvider sessionConfig,
+      Map<String, String> commitCoordinatorConf) {
+    throw new UnsupportedOperationException("Not implemented");
+  }
 
   /**
    * Retrieves a {@link CommitCoordinatorClientHandler} for the specified commit coordinator client.
