@@ -73,7 +73,7 @@ public class ParquetFileWriter {
     this.location = requireNonNull(location, "directory is null");
     // Default target file size is 128 MB.
     this.targetMaxFileSize = configuration.getLong(TARGET_FILE_SIZE_CONF, DEFAULT_TARGET_FILE_SIZE);
-    checkArgument(targetMaxFileSize > 0, "Invalid target Parquet file size: " + targetMaxFileSize);
+    checkArgument(targetMaxFileSize > 0, "Invalid target Parquet file size: %s", targetMaxFileSize);
     this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
     this.writeAsSingleFile = false;
   }

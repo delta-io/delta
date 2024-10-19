@@ -103,13 +103,15 @@ public class SnapshotManager {
         v -> {
           checkArgument(
               !versions.isEmpty() && Objects.equals(versions.get(0), v),
-              format("Did not get the first delta file version %s to compute Snapshot", v));
+              "Did not get the first delta file version %s to compute Snapshot",
+              v);
         });
     expectedEndVersion.ifPresent(
         v -> {
           checkArgument(
               !versions.isEmpty() && Objects.equals(versions.get(versions.size() - 1), v),
-              format("Did not get the last delta file version %s to compute Snapshot", v));
+              "Did not get the last delta file version %s to compute Snapshot",
+              v);
         });
   }
 
@@ -350,7 +352,9 @@ public class SnapshotManager {
         v ->
             checkArgument(
                 v >= startVersion,
-                format("versionToLoad=%s provided is less than startVersion=%s", v, startVersion)));
+                "versionToLoad=%s provided is less than startVersion=%s",
+                v,
+                startVersion));
     logger.debug(
         "startVersion: {}, versionToLoad: {}, coordinated commits enabled: {}",
         startVersion,

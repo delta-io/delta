@@ -123,7 +123,9 @@ public class StatsSchemaHelper {
   public Tuple2<Column, Optional<Expression>> getMinColumn(Column column) {
     checkArgument(
         isSkippingEligibleMinMaxColumn(column),
-        String.format("%s is not a valid min column for data schema %s", column, dataSchema));
+        "%s is not a valid min column for data schema %s",
+        column,
+        dataSchema);
     return new Tuple2<>(getStatsColumn(column, MIN), Optional.empty());
   }
 
@@ -138,7 +140,9 @@ public class StatsSchemaHelper {
   public Tuple2<Column, Optional<Expression>> getMaxColumn(Column column) {
     checkArgument(
         isSkippingEligibleMinMaxColumn(column),
-        String.format("%s is not a valid min column for data schema %s", column, dataSchema));
+        "%s is not a valid min column for data schema %s",
+        column,
+        dataSchema);
     DataType dataType = logicalToDataType.get(column);
     Column maxColumn = getStatsColumn(column, MAX);
 
@@ -164,8 +168,9 @@ public class StatsSchemaHelper {
   public Column getNullCountColumn(Column column) {
     checkArgument(
         isSkippingEligibleNullCountColumn(column),
-        String.format(
-            "%s is not a valid null_count column for data schema %s", column, dataSchema));
+        "%s is not a valid null_count column for data schema %s",
+        column,
+        dataSchema);
     return getStatsColumn(column, NULL_COUNT);
   }
 
@@ -279,7 +284,9 @@ public class StatsSchemaHelper {
   private Column getStatsColumn(Column column, String statType) {
     checkArgument(
         logicalToPhysicalColumn.containsKey(column),
-        String.format("%s is not a valid leaf column for data schema", column, dataSchema));
+        "%s is not a valid leaf column for data schema: %s",
+        column,
+        dataSchema);
     return getChildColumn(logicalToPhysicalColumn.get(column), statType);
   }
 
