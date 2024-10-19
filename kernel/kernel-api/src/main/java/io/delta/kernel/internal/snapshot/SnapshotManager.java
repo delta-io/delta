@@ -141,9 +141,9 @@ public class SnapshotManager {
             Optional.of(version) /* versionToLoadOpt */,
             Optional.empty() /* tableCommitHandlerOpt */);
 
-    // For non-coordinated commit table, the {@code getCoodinatedCommitsAwareSnapshot} will
+    // For non-coordinated commit table, the {@code getCoordinatedCommitsAwareSnapshot} will
     // create the snapshot with the {@code logSegmentOpt} built here and will not trigger other
-    // operations. For coordinated commit table, the {@code getCoodinatedCommitsAwareSnapshot}
+    // operations. For coordinated commit table, the {@code getCoordinatedCommitsAwareSnapshot}
     // will create the snapshot with the {@code logSegmentOpt} built here and will build the
     // logSegment again by also fetching the unbackfilled commits from the commit coordinator.
     // With the unbackfilled commits plus the backfilled commits in Delta log, a new snapshot
@@ -403,7 +403,7 @@ public class SnapshotManager {
                   break;
                 }
 
-                // Ideally listFromOrNone should return lexiographically sorted
+                // Ideally listFromOrNone should return lexicographically sorted
                 // files and so maxDeltaVersionSeen should be equal to fileVersion.
                 // But we are being defensive here and taking max of all the
                 // fileVersions seen.
