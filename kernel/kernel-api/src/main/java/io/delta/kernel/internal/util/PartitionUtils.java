@@ -230,7 +230,7 @@ public class PartitionUtils {
           combineWithAndOp(leftResult._2, rightResult._2));
     }
     if (hasNonPartitionColumns(children, partitionColNames)) {
-      return new Tuple2(ALWAYS_TRUE, predicate);
+      return new Tuple2<>(ALWAYS_TRUE, predicate);
     } else {
       return new Tuple2<>(predicate, ALWAYS_TRUE);
     }
