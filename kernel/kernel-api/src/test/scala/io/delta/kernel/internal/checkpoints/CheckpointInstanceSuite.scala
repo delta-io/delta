@@ -13,15 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel
+package io.delta.kernel.internal.checkpoints
 
-import java.util.Optional
-
-import scala.collection.JavaConverters._
-
-import io.delta.kernel.internal.checkpoints.CheckpointInstance
 import io.delta.kernel.internal.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
+
+import java.util.Optional
+import scala.collection.JavaConverters._
 
 class CheckpointInstanceSuite extends AnyFunSuite {
 
