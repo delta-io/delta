@@ -113,14 +113,17 @@ object OptimizeTableCommand {
    *
    * Note that the returned OptimizeTableCommand will have an *unresolved* child table
    * and hence, the command needs to be analyzed before it can be executed.
-   * TODO: isFull
+   *
+   * Note isFull is only used for clustered table. When set, it indicates that all data
+   * within the table is eligible for clustering, including data that are clustered based
+   * on different sets of clustering columns.
    */
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
       userPartitionPredicates: Seq[String],
-      optimizeContext: DeltaOptimizeContext = DeltaOptimizeContext(),
-      isFull: Boolean)(
+      isFull: Boolean,
+      optimizeContext: DeltaOptimizeContext = DeltaOptimizeContext())(
       zOrderBy: Seq[UnresolvedAttribute]): OptimizeTableCommand = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, "OPTIMIZE")
     OptimizeTableCommand(plan, userPartitionPredicates, optimizeContext, isFull)(zOrderBy)
@@ -130,10 +133,10 @@ object OptimizeTableCommand {
 /**
  * The `optimize` command implementation for Spark SQL. Example SQL:
  * {{{
- *    OPTIMIZE ('/path/to/dir' | delta.table) [WHERE part = 25];
+ *    OPTIMIZE ('/path/to/dir' | delta.table) [WHERE part = 25] [FULL];
  * }}}
  *
- * TODO: isFull
+ * Note FULL and WHERE clauses are set exclusively.
  */
 case class OptimizeTableCommand(
     override val child: LogicalPlan,

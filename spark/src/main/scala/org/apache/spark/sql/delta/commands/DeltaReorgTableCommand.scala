@@ -65,7 +65,8 @@ case class DeltaReorgTableCommand(
       optimizeContext = DeltaOptimizeContext(
         reorg = Some(reorgOperation),
         minFileSize = Some(0L),
-        maxDeletedRowsRatio = Some(0d))
+        maxDeletedRowsRatio = Some(0d)),
+      isFull = false
     )(zOrderBy = Nil)
     command.run(sparkSession)
   }
