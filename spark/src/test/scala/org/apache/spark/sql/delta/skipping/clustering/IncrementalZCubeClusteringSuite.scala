@@ -282,6 +282,92 @@ class IncrementalZCubeClusteringSuite extends QueryTest
     }
   }
 
+  test("OPTIMIZE FULL") {
+    withSQLConf(
+      SQLConf.MAX_RECORDS_PER_FILE.key -> "2",
+      // Enable update catalog for verifyClusteringColumns.
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
+      withClusteredTable(
+        table = table,
+        schema = "col1 int, col2 int",
+        clusterBy = "col1, col2") {
+        addFiles(table, numFiles = 4)
+        val files0 = getFiles(table)
+        assert(files0.size === 4)
+        // Cluster the table into two ZCUBEs.
+        runOptimize(table) { metrics =>
+          assert(metrics.clusteringStats.nonEmpty)
+          validateClusteringMetrics(
+            actualMetrics = metrics.clusteringStats.get,
+            expectedMetrics = ClusteringStats(
+              inputZCubeFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+              inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+              inputNumZCubes = 0,
+              mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+              numOutputZCubes = 1))
+
+          assert(metrics.numFilesRemoved == 4)
+          assert(metrics.numFilesAdded == 2)
+        }
+        val files1 = getFiles(table)
+        assert(files1.size === 2)
+
+        addFiles(table, numFiles = 4)
+        assert(getFiles(table).size == 6)
+
+        // Change the clustering columns and verify files with previous clustering columns
+        // are not clustered.
+        sql(s"ALTER TABLE $table CLUSTER BY (col2, col1)")
+        verifyClusteringColumns(TableIdentifier(table), Seq("col2", "col1"))
+
+        withSQLConf(
+          // Set an extreme value to make all zcubes unstable.
+          DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> Long.MaxValue.toString) {
+          runOptimize(table) { metrics =>
+            assert(metrics.clusteringStats.nonEmpty)
+            validateClusteringMetrics(
+              actualMetrics = metrics.clusteringStats.get,
+              expectedMetrics = ClusteringStats(
+                inputZCubeFiles = ClusteringFileStats(2, SKIP_CHECK_SIZE_VALUE),
+                inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                inputNumZCubes = 1,
+                mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                numOutputZCubes = 1))
+            assert(metrics.numFilesRemoved == 4)
+            assert(metrics.numFilesAdded == 2)
+          }
+        }
+        val files2 = getFiles(table)
+        assert(files2.size === 4)
+        assertClustered(table, files2)
+        assert(getZCubeIds(table).size == 2)
+        // validate files clustered to previous clustering columns are not re-clustered.
+        assert(files2.intersect(files1) === files1)
+
+        // OPTIMIZE FULL should re-cluster all files.
+        runOptimize(table) { metrics =>
+          assert(metrics.clusteringStats.nonEmpty)
+          validateClusteringMetrics(
+            actualMetrics = metrics.clusteringStats.get,
+            expectedMetrics = ClusteringStats(
+              inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+              inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+              inputNumZCubes = 2,
+              mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+              numOutputZCubes = 1))
+          assert(metrics.numFilesRemoved == 4)
+          assert(metrics.numFilesAdded == 4)
+        }
+
+        // Incremental OPTIMIZE to validate no files should be clustered.
+        runOptimize(table) { metrics =>
+          assert(metrics.clusteringStats.nonEmpty)
+          assert(metrics.numFilesRemoved == 0)
+        }
+      }
+    }
+  }
+
   // Test to validate OPTIMIZE FULL is only applied to a clustered table with non-empty clustering
   // columns.
   test("OPTIMIZE FULL - error cases") {

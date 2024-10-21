@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterByTransform
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.{UnresolvedPathBasedDeltaTable, UnresolvedPathBasedTable}
-import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory, OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.commands.{DeltaOptimizeContext, DeltaReorgTable, DescribeDeltaDetailCommand, DescribeDeltaHistory, OptimizeTableCommand}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
@@ -86,91 +86,91 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     val parser = new DeltaSqlParser(null)
     var parsedCmd = parser.parsePlan("OPTIMIZE tbl")
     assert(parsedCmd ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("tbl"), "OPTIMIZE"))
 
     parsedCmd = parser.parsePlan("OPTIMIZE db.tbl")
     assert(parsedCmd ===
-      OptimizeTableCommand(None, Some(tblId("tbl", "db")), Nil, isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("tbl", "db")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("db", "tbl"), "OPTIMIZE"))
 
     parsedCmd = parser.parsePlan("OPTIMIZE catalog_foo.db.tbl")
     assert(parsedCmd ===
-      OptimizeTableCommand(None, Some(tblId("tbl", "db", "catalog_foo")), Nil, isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("tbl", "db", "catalog_foo")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("catalog_foo", "db", "tbl"), "OPTIMIZE"))
 
     assert(parser.parsePlan("OPTIMIZE tbl_${system:spark.testing}") ===
-      OptimizeTableCommand(None, Some(tblId("tbl_true")), Nil, isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("tbl_true")), Nil)(Nil))
 
     withSQLConf("tbl_var" -> "tbl") {
       assert(parser.parsePlan("OPTIMIZE ${tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = false)(Nil))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
 
       assert(parser.parsePlan("OPTIMIZE ${spark:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = false)(Nil))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
 
       assert(parser.parsePlan("OPTIMIZE ${sparkconf:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = false)(Nil))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
 
       assert(parser.parsePlan("OPTIMIZE ${hiveconf:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = false)(Nil))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
 
       assert(parser.parsePlan("OPTIMIZE ${hivevar:tbl_var}") ===
-        OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = false)(Nil))
+        OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(Nil))
     }
 
     parsedCmd = parser.parsePlan("OPTIMIZE '/path/to/tbl'")
     assert(parsedCmd ===
-      OptimizeTableCommand(Some("/path/to/tbl"), None, Nil, isFull = false)(Nil))
+      OptimizeTableCommand(Some("/path/to/tbl"), None, Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedPathBasedDeltaTable("/path/to/tbl", Map.empty, "OPTIMIZE"))
 
     parsedCmd = parser.parsePlan("OPTIMIZE delta.`/path/to/tbl`")
     assert(parsedCmd ===
-      OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), Nil, isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), Nil)(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("delta", "/path/to/tbl"), "OPTIMIZE"))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"), isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"))(Nil))
 
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (col1)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = false)
+      OptimizeTableCommand(None, Some(tblId("tbl")), Nil)
       (Seq(unresolvedAttr("col1"))))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY col1, col2.subcol") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"), isFull = false)(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"))(
         Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
 
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY (col1, col2.subcol)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"), isFull = false)(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"))(
         Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
 
     // Validate OPTIMIZE works correctly with FULL keyword.
     parsedCmd = parser.parsePlan("OPTIMIZE tbl FULL")
     assert(parsedCmd ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = true)(Nil))
+      OptimizeTableCommand(None, Some(tblId("tbl")), Nil, DeltaOptimizeContext(isFull = true))(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("tbl"), "OPTIMIZE"))
 
     parsedCmd = parser.parsePlan("OPTIMIZE catalog_foo.db.tbl FULL")
-    assert(parsedCmd ===
-      OptimizeTableCommand(None, Some(tblId("tbl", "db", "catalog_foo")), Nil, isFull = true)(Nil))
+    assert(parsedCmd === OptimizeTableCommand(
+      None, Some(tblId("tbl", "db", "catalog_foo")), Nil, DeltaOptimizeContext(isFull = true))(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("catalog_foo", "db", "tbl"), "OPTIMIZE"))
 
     parsedCmd = parser.parsePlan("OPTIMIZE '/path/to/tbl' FULL")
-    assert(parsedCmd ===
-      OptimizeTableCommand(Some("/path/to/tbl"), None, Nil, isFull = true)(Nil))
+    assert(parsedCmd === OptimizeTableCommand(
+      Some("/path/to/tbl"), None, Nil, DeltaOptimizeContext(isFull = true))(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedPathBasedDeltaTable("/path/to/tbl", Map.empty, "OPTIMIZE"))
 
     parsedCmd = parser.parsePlan("OPTIMIZE delta.`/path/to/tbl` FULL")
-    assert(parsedCmd ===
-      OptimizeTableCommand(None, Some(tblId("/path/to/tbl", "delta")), Nil, isFull = true)(Nil))
+    assert(parsedCmd === OptimizeTableCommand(
+      None, Some(tblId("/path/to/tbl", "delta")), Nil, DeltaOptimizeContext(isFull = true))(Nil))
     assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
       UnresolvedTable(Seq("delta", "/path/to/tbl"), "OPTIMIZE"))
   }
@@ -181,22 +181,22 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
 
     // Use the new keywords in table name
     assert(parser.parsePlan("OPTIMIZE optimize") ===
-      OptimizeTableCommand(None, Some(tblId("optimize")), Nil, isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("optimize")), Nil)(Nil))
 
     assert(parser.parsePlan("OPTIMIZE zorder") ===
-      OptimizeTableCommand(None, Some(tblId("zorder")), Nil, isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("zorder")), Nil)(Nil))
 
     assert(parser.parsePlan("OPTIMIZE full") ===
-      OptimizeTableCommand(None, Some(tblId("full")), Nil, isFull = false)(Nil))
+      OptimizeTableCommand(None, Some(tblId("full")), Nil)(Nil))
 
     // Use the new keywords in column name
     assert(parser.parsePlan("OPTIMIZE tbl WHERE zorder = 1 and optimize = 2 and full = 3") ===
       OptimizeTableCommand(None,
         Some(tblId("tbl"))
-        , Seq("zorder = 1 and optimize = 2 and full = 3"), isFull = false)(Nil))
+        , Seq("zorder = 1 and optimize = 2 and full = 3"))(Nil))
 
     assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder, full)") ===
-      OptimizeTableCommand(None, Some(tblId("tbl")), Nil, isFull = false)(
+      OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(
         Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"), unresolvedAttr("full"))))
   }
 

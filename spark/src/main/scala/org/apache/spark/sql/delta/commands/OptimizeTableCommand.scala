@@ -113,20 +113,15 @@ object OptimizeTableCommand {
    *
    * Note that the returned OptimizeTableCommand will have an *unresolved* child table
    * and hence, the command needs to be analyzed before it can be executed.
-   *
-   * Note isFull is only used for clustered table. When set, it indicates that all data
-   * within the table is eligible for clustering, including data that are clustered based
-   * on different sets of clustering columns.
    */
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
       userPartitionPredicates: Seq[String],
-      isFull: Boolean,
       optimizeContext: DeltaOptimizeContext = DeltaOptimizeContext())(
       zOrderBy: Seq[UnresolvedAttribute]): OptimizeTableCommand = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, "OPTIMIZE")
-    OptimizeTableCommand(plan, userPartitionPredicates, optimizeContext, isFull)(zOrderBy)
+    OptimizeTableCommand(plan, userPartitionPredicates, optimizeContext)(zOrderBy)
   }
 }
 
@@ -141,8 +136,7 @@ object OptimizeTableCommand {
 case class OptimizeTableCommand(
     override val child: LogicalPlan,
     userPartitionPredicates: Seq[String],
-    optimizeContext: DeltaOptimizeContext,
-    isFull: Boolean)(
+    optimizeContext: DeltaOptimizeContext)(
     val zOrderBy: Seq[UnresolvedAttribute])
   extends OptimizeTableCommandBase
   with UnaryNode {
@@ -213,12 +207,14 @@ case class OptimizeTableCommand(
  *                            this threshold will be rewritten by the OPTIMIZE command. If not
  *                            specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO]]
  *                            will be used. This parameter must be set to `0` when [[reorg]] is set.
+ * @param isFull whether OPTIMIZE FULL is run. This is only for clustered tables.
  */
 case class DeltaOptimizeContext(
     reorg: Option[DeltaReorgOperation] = None,
     minFileSize: Option[Long] = None,
     maxFileSize: Option[Long] = None,
-    maxDeletedRowsRatio: Option[Double] = None) {
+    maxDeletedRowsRatio: Option[Double] = None,
+    isFull: Boolean = false) {
   if (reorg.nonEmpty) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),

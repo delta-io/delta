@@ -96,7 +96,7 @@ class DeltaOptimizeBuilder private(table: DeltaTableV2) extends AnalysisHelper {
       }
       val resolvedTable = ResolvedTable.create(catalog, id, table)
       val optimize = OptimizeTableCommand(
-        resolvedTable, partitionFilter, DeltaOptimizeContext(), isFull = false)(zOrderBy = zOrderBy)
+        resolvedTable, partitionFilter, DeltaOptimizeContext())(zOrderBy = zOrderBy)
       toDataset(sparkSession, optimize)
     }
   }
