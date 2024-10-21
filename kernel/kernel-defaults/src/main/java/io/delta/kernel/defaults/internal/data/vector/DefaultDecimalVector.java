@@ -37,7 +37,7 @@ public class DefaultDecimalVector extends AbstractColumnVector {
   public DefaultDecimalVector(DataType dataType, int size, BigDecimal[] values) {
 
     super(size, dataType, Optional.empty());
-    checkArgument(dataType instanceof DecimalType, "invalid type for decimal vector: " + dataType);
+    checkArgument(dataType instanceof DecimalType, "invalid type for decimal vector: %s", dataType);
     this.values = requireNonNull(values, "values is null");
     checkArgument(
         values.length >= size,

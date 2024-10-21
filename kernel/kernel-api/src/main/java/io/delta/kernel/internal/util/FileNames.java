@@ -136,7 +136,7 @@ public final class FileNames {
     return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
   }
 
-  public static boolean isMulitPartCheckpointFile(String fileName) {
+  public static boolean isMultiPartCheckpointFile(String fileName) {
     return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
   }
 

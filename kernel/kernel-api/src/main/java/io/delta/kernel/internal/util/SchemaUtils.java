@@ -97,8 +97,7 @@ public class SchemaUtils {
             partitionCol -> {
               DataType dataType = columnNameToType.get(partitionCol.toLowerCase(Locale.ROOT));
               checkArgument(
-                  dataType != null,
-                  "Partition column " + partitionCol + " not found in the schema");
+                  dataType != null, "Partition column %s not found in the schema", partitionCol);
 
               if (!(dataType instanceof BooleanType
                   || dataType instanceof ByteType

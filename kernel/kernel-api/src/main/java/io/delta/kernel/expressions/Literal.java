@@ -174,9 +174,10 @@ public final class Literal implements Expression {
     BigDecimal valueToStore = value.setScale(scale);
     checkArgument(
         valueToStore.precision() <= precision,
-        String.format(
-            "Decimal precision=%s for decimal %s exceeds max precision %s",
-            valueToStore.precision(), valueToStore, precision));
+        "Decimal precision=%s for decimal %s exceeds max precision %s",
+        valueToStore.precision(),
+        valueToStore,
+        precision);
     return new Literal(valueToStore, new DecimalType(precision, scale));
   }
 

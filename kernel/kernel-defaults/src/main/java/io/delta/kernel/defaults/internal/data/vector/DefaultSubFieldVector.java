@@ -169,7 +169,6 @@ public class DefaultSubFieldVector implements ColumnVector {
   }
 
   private void assertValidRowId(int rowId) {
-    checkArgument(
-        rowId < size, "Invalid rowId: " + rowId + ", max allowed rowId is: " + (size - 1));
+    checkArgument(rowId < size, "Invalid rowId: %s, max allowed rowId is: %s", rowId, (size - 1));
   }
 }

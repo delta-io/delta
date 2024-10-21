@@ -152,13 +152,13 @@ public final class VectorUtils {
 
       @Override
       public boolean isNullAt(int rowId) {
-        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: " + rowId);
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         return values.get(rowId) == null;
       }
 
       @Override
       public String getString(int rowId) {
-        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: " + rowId);
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         return values.get(rowId);
       }
     };

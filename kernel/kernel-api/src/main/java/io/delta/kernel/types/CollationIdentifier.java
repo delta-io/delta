@@ -71,7 +71,7 @@ public class CollationIdentifier {
    */
   public static CollationIdentifier fromString(String identifier) {
     long numDots = identifier.chars().filter(ch -> ch == '.').count();
-    checkArgument(numDots > 0, String.format("Invalid collation identifier: %s", identifier));
+    checkArgument(numDots > 0, "Invalid collation identifier: %s", identifier);
     if (numDots == 1) {
       String[] parts = identifier.split("\\.");
       return new CollationIdentifier(parts[0], parts[1]);
