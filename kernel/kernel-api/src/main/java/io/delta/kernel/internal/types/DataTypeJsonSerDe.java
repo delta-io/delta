@@ -25,7 +25,6 @@ import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
-import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.types.*;
 import java.io.IOException;
 import java.io.StringWriter;
@@ -206,7 +205,8 @@ public class DataTypeJsonSerDe {
       JsonNode json, String fieldPath, FieldMetadata collationsMetadata) {
     checkArgument(
         json.isObject() && json.size() == 3,
-        String.format("Expected JSON object with 3 fields for array data type but got:\n%s", json));
+        "Expected JSON object with 3 fields for array data type but got:\n%s",
+        json);
     boolean containsNull = getBooleanField(json, "containsNull");
     DataType dataType =
         parseDataType(
@@ -222,7 +222,8 @@ public class DataTypeJsonSerDe {
       JsonNode json, String fieldPath, FieldMetadata collationsMetadata) {
     checkArgument(
         json.isObject() && json.size() == 4,
-        String.format("Expected JSON object with 4 fields for map data type but got:\n%s", json));
+        "Expected JSON object with 4 fields for map data type but got:\n%s",
+        json);
     boolean valueContainsNull = getBooleanField(json, "valueContainsNull");
     DataType keyType =
         parseDataType(getNonNullField(json, "keyType"), fieldPath + ".key", collationsMetadata);
@@ -238,12 +239,10 @@ public class DataTypeJsonSerDe {
   private static StructType parseStructType(JsonNode json) {
     checkArgument(
         json.isObject() && json.size() == 2,
-        String.format(
-            "Expected JSON object with 2 fields for struct data type but got:\n%s", json));
+        "Expected JSON object with 2 fields for struct data type but got:\n%s",
+        json);
     JsonNode fieldsNode = getNonNullField(json, "fields");
-    Preconditions.checkArgument(
-        fieldsNode.isArray(),
-        String.format("Expected array for fieldName=%s in:\n%s", "fields", json));
+    checkArgument(fieldsNode.isArray(), "Expected array for fieldName=%s in:\n%s", "fields", json);
     Iterator<JsonNode> fields = fieldsNode.elements();
     List<StructField> parsedFields = new ArrayList<>();
     while (fields.hasNext()) {
@@ -257,7 +256,7 @@ public class DataTypeJsonSerDe {
    * struct field </a>
    */
   private static StructField parseStructField(JsonNode json) {
-    Preconditions.checkArgument(json.isObject(), "Expected JSON object for struct field");
+    checkArgument(json.isObject(), "Expected JSON object for struct field");
     String name = getStringField(json, "name");
     FieldMetadata metadata = parseFieldMetadata(json.get("metadata"), false);
     DataType type =
@@ -282,7 +281,7 @@ public class DataTypeJsonSerDe {
       return FieldMetadata.empty();
     }
 
-    Preconditions.checkArgument(json.isObject(), "Expected JSON object for struct field metadata");
+    checkArgument(json.isObject(), "Expected JSON object for struct field metadata");
     final Iterator<Map.Entry<String, JsonNode>> iterator = json.fields();
     final FieldMetadata.Builder builder = FieldMetadata.builder();
     while (iterator.hasNext()) {
@@ -403,9 +402,8 @@ public class DataTypeJsonSerDe {
 
   private static String getStringField(JsonNode rootNode, String fieldName) {
     JsonNode node = getNonNullField(rootNode, fieldName);
-    Preconditions.checkArgument(
-        node.isTextual(),
-        String.format("Expected string for fieldName=%s in:\n%s", fieldName, rootNode));
+    checkArgument(
+        node.isTextual(), "Expected string for fieldName=%s in:\n%s", fieldName, rootNode);
     return node.textValue(); // double check this only works for string values! and isTextual()!
   }
 
@@ -427,9 +425,8 @@ public class DataTypeJsonSerDe {
 
   private static boolean getBooleanField(JsonNode rootNode, String fieldName) {
     JsonNode node = getNonNullField(rootNode, fieldName);
-    Preconditions.checkArgument(
-        node.isBoolean(),
-        String.format("Expected boolean for fieldName=%s in:\n%s", fieldName, rootNode));
+    checkArgument(
+        node.isBoolean(), "Expected boolean for fieldName=%s in:\n%s", fieldName, rootNode);
     return node.booleanValue();
   }
 

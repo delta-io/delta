@@ -192,7 +192,8 @@ public class PartitionUtils {
               // this shouldn't happen as we have already validated the partition column names
               checkArgument(
                   partColField != null,
-                  "Partition column " + partColName + " is not present in the table schema");
+                  "Partition column %s is not present in the table schema",
+                  partColName);
               DataType partColType = partColField.getDataType();
 
               if (!partColType.equivalent(partValue.getDataType())) {
@@ -230,7 +231,7 @@ public class PartitionUtils {
           combineWithAndOp(leftResult._2, rightResult._2));
     }
     if (hasNonPartitionColumns(children, partitionColNames)) {
-      return new Tuple2(ALWAYS_TRUE, predicate);
+      return new Tuple2<>(ALWAYS_TRUE, predicate);
     } else {
       return new Tuple2<>(predicate, ALWAYS_TRUE);
     }
@@ -354,7 +355,8 @@ public class PartitionUtils {
       Literal partitionValue = partitionValues.get(partitionColName);
       checkArgument(
           partitionValue != null,
-          "Partition column value is missing for column: " + partitionColName);
+          "Partition column value is missing for column: %s",
+          partitionColName);
       String serializedValue = serializePartitionValue(partitionValue);
       if (serializedValue == null) {
         // Follow the delta-spark behavior to use "__HIVE_DEFAULT_PARTITION__" for null
