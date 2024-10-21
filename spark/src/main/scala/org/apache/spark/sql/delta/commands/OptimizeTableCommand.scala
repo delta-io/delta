@@ -159,13 +159,19 @@ case class OptimizeTableCommand(
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
-    if (ClusteredTableUtils.isSupported(snapshot.protocol)) {
+    val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
+    if (isClusteredTable) {
       if (userPartitionPredicates.nonEmpty) {
         throw DeltaErrors.clusteringWithPartitionPredicatesException(userPartitionPredicates)
       }
       if (zOrderBy.nonEmpty) {
         throw DeltaErrors.clusteringWithZOrderByException(zOrderBy)
       }
+    }
+
+    lazy val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+    if (isFull && (!isClusteredTable || clusteringColumns.isEmpty)) {
+      throw DeltaErrors.optimizeFullNotSupportedException()
     }
 
     val partitionColumns = snapshot.metadata.partitionColumns

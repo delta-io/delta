@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.skipping.clustering
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtilsBase
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo, ClusteringFileStats, ClusteringStats}
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -279,6 +279,26 @@ class IncrementalZCubeClusteringSuite extends QueryTest
         // files1 are files with old clustering columns 'col1'.
         assert(files3.intersect(files2) === files1)
       }
+    }
+  }
+
+  // Test to validate OPTIMIZE FULL is only applied to a clustered table with non-empty clustering
+  // columns.
+  test("OPTIMIZE FULL - error cases") {
+    withTable(table) {
+      sql(s"CREATE TABLE $table(col1 INT, col2 INT, col3 INT) using delta")
+      val e = intercept[DeltaUnsupportedOperationException] {
+        sql(s"OPTIMIZE $table FULL")
+      }
+      checkError(e, "DELTA_OPTIMIZE_FULL_NOT_SUPPORTED")
+    }
+
+    withClusteredTable(table, "col1 INT, col2 INT, col3 INT", "col1") {
+      sql(s"ALTER TABLE $table CLUSTER BY NONE")
+      val e = intercept[DeltaUnsupportedOperationException] {
+        sql(s"OPTIMIZE $table FULL")
+      }
+      checkError(e, "DELTA_OPTIMIZE_FULL_NOT_SUPPORTED")
     }
   }
 }
