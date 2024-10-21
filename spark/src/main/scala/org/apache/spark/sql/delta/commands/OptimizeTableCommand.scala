@@ -113,15 +113,17 @@ object OptimizeTableCommand {
    *
    * Note that the returned OptimizeTableCommand will have an *unresolved* child table
    * and hence, the command needs to be analyzed before it can be executed.
+   * TODO: isFull
    */
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
       userPartitionPredicates: Seq[String],
-      optimizeContext: DeltaOptimizeContext = DeltaOptimizeContext())(
+      optimizeContext: DeltaOptimizeContext = DeltaOptimizeContext(),
+      isFull: Boolean)(
       zOrderBy: Seq[UnresolvedAttribute]): OptimizeTableCommand = {
     val plan = UnresolvedDeltaPathOrIdentifier(path, tableIdentifier, "OPTIMIZE")
-    OptimizeTableCommand(plan, userPartitionPredicates, optimizeContext)(zOrderBy)
+    OptimizeTableCommand(plan, userPartitionPredicates, optimizeContext, isFull)(zOrderBy)
   }
 }
 
@@ -130,11 +132,14 @@ object OptimizeTableCommand {
  * {{{
  *    OPTIMIZE ('/path/to/dir' | delta.table) [WHERE part = 25];
  * }}}
+ *
+ * TODO: isFull
  */
 case class OptimizeTableCommand(
     override val child: LogicalPlan,
     userPartitionPredicates: Seq[String],
-    optimizeContext: DeltaOptimizeContext)(
+    optimizeContext: DeltaOptimizeContext,
+    isFull: Boolean)(
     val zOrderBy: Seq[UnresolvedAttribute])
   extends OptimizeTableCommandBase
   with UnaryNode {
