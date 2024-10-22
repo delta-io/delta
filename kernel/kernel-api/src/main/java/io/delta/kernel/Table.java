@@ -22,6 +22,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.TableImpl;
 import java.io.IOException;
+import java.util.Optional;
 
 /**
  * Represents the Delta Lake table for a given path.
@@ -57,6 +58,10 @@ public interface Table {
     return TableImpl.forPath(engine, path);
   }
 
+  static Table forPathWithTableId(Engine engine, String path, TableIdentifier tableId) {
+    return TableImpl.forPathWithTableId(engine, path, tableId);
+  }
+
   /**
    * The fully qualified path of this {@link Table} instance.
    *
@@ -65,6 +70,15 @@ public interface Table {
    * @since 3.2.0
    */
   String getPath(Engine engine);
+
+  /**
+   * The catalog identifier of this {@link Table} instance.
+   *
+   * @param engine {@link Engine} instance.
+   * @return the table identifier, or {@link Optional#empty()} if none is set.
+   * @since 3.3.0
+   */
+  Optional<TableIdentifier> getTableIdentifier(Engine engine);
 
   /**
    * Get the latest snapshot of the table.
