@@ -58,6 +58,10 @@ public interface Table {
     return TableImpl.forPath(engine, path);
   }
 
+  static Table forPathWithTableId(Engine engine, String path, TableIdentifier tableId) {
+    return TableImpl.forPathWithTableId(engine, path, tableId);
+  }
+
   /**
    * Instantiate a table object for the Delta Lake table at the given path and associate it with the
    * given {@link TableIdentifier}.
