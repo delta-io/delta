@@ -47,6 +47,22 @@ public interface Snapshot {
    * @return a list of partition column names, or an empty list if the table is not partitioned.
    */
   List<String> getPartitionColumnNames(Engine engine);
+
+  /**
+   * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit of this snapshot.
+   * For an uninitialized snapshot, this returns -1.
+   *
+   * <p>When InCommitTimestampTableFeature is enabled, the timestamp is retrieved from the
+   * CommitInfo of the latest commit which can result in an IO operation.
+   *
+   * <p>For non-ICT tables, this is the same as the file modification time of the latest commit in
+   * the snapshot.
+   *
+   * @param engine the engine to use for IO operations
+   * @return the timestamp of the latest commit
+   */
+  long getTimestamp(Engine engine);
+
   /**
    * Get the schema of the table at this snapshot.
    *
