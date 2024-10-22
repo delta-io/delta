@@ -164,7 +164,7 @@ case class OptimizeTableCommand(
     }
 
     lazy val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
-    if (isFull && (!isClusteredTable || clusteringColumns.isEmpty)) {
+    if (optimizeContext.isFull && (!isClusteredTable || clusteringColumns.isEmpty)) {
       throw DeltaErrors.optimizeFullNotSupportedException()
     }
 
