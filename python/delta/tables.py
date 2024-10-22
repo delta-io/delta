@@ -581,7 +581,8 @@ class DeltaTable(object):
                              type(writerVersion))
         jdt.upgradeTableProtocol(readerVersion, writerVersion)
 
-    def addFeatureSupport(self, feature: str) -> None:
+    @since(3.3)  # type: ignore[arg-type]
+    def addFeatureSupport(self, featureName: str) -> None:
         """
         Modify the protocol to add a supported feature, and if the table does not support table
         features, upgrade the protocol automatically. In such a case when the provided feature is
@@ -590,11 +591,8 @@ class DeltaTable(object):
 
         See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
         """
-        jdt = self._jdt
-        if not isinstance(feature, str):
-            raise ValueError("The feature needs to be a string but got '%s'." % type(feature))
-        jdt.addFeatureSupport(feature)
-
+        DeltaTable._verify_type_str(featureName, "feature")
+        self._jdt.addFeatureSupport(featureName)
 
     @since(1.2)  # type: ignore[arg-type]
     def restoreToVersion(self, version: int) -> DataFrame:

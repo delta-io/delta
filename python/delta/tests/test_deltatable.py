@@ -1190,13 +1190,13 @@ class DeltaTableTestsMixin:
 
     def test_addFeatureSupport(self) -> None:
         try:
-            self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
             self.spark.conf.set('spark.databricks.delta.minReaderVersion', '1')
+            self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
             self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
             dt = DeltaTable.forPath(self.spark, self.tempFile)
         finally:
-            self.spark.conf.unset('spark.databricks.delta.minWriterVersion')
             self.spark.conf.unset('spark.databricks.delta.minReaderVersion')
+            self.spark.conf.unset('spark.databricks.delta.minWriterVersion')
 
         # bad args
         with self.assertRaisesRegex(Py4JJavaError, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
