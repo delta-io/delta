@@ -109,7 +109,7 @@ object OptimizeTableStrategy {
       zOrderBy: Seq[String]): OptimizeTableStrategy = getMode(snapshot, zOrderBy) match {
     case OptimizeTableMode.CLUSTERING =>
       ClusteringStrategy(
-        sparkSession, ClusteringColumnInfo.extractLogicalNames(snapshot))
+        sparkSession, ClusteringColumnInfo.extractLogicalNames(snapshot), optimizeContext)
     case OptimizeTableMode.ZORDER => ZOrderStrategy(sparkSession, zOrderBy)
     case OptimizeTableMode.COMPACTION =>
       CompactionStrategy(sparkSession, optimizeContext)
@@ -188,7 +188,8 @@ case class ZOrderStrategy(
 /** Implements clustering strategy for clustered tables */
 case class ClusteringStrategy(
     override val sparkSession: SparkSession,
-    clusteringColumns: Seq[String]) extends OptimizeTableStrategy {
+    clusteringColumns: Seq[String],
+    optimizeContext: DeltaOptimizeContext) extends OptimizeTableStrategy {
 
   override val optimizeTableMode: OptimizeTableMode.Value = OptimizeTableMode.CLUSTERING
 
@@ -237,9 +238,10 @@ case class ClusteringStrategy(
    * clustering. The requirements to pick candidate files are:
    *
    * 1. Candidate files are either un-clustered (missing clusteringProvider) or the
-   * clusteringProvider is "liquid".
-   * 2. Clustered files (clusteringProvider is set) with different clustering columns are skipped.
-   * When clustering columns are changed, existing clustered data is not re-clustered.
+   * clusteringProvider is "liquid" when isFull is unset.
+   * 2. Clustered files with different clustering columns are handled differently based
+   * on isFull setting: If isFull is unset, existing clustered files with different columns are
+   * skipped. If isFull is set, all clustered files are considered.
    * 3. Files that belong to the partial ZCubes are picked. A ZCube is considered as a partial
    * ZCube if its size is smaller than [[DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE]].
    * 4. If there is only single ZCUBE with all files are clustered and if all clustered files
@@ -247,9 +249,9 @@ case class ClusteringStrategy(
    */
   private def applyMinZCube(files: Seq[AddFile]): Seq[AddFile] = {
     val targetSize = sparkSession.sessionState.conf.getConf(DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE)
-    // Skip files with from different clusteringProviders or files clustered by a different set
-    // of clustering columns.
-    val inputFiles = files.iterator.filter { file =>
+    // Keep all files if isFull is set, otherwise skip files with different clusteringProviders
+    // or files clustered by a different set of clustering columns.
+    val (candidateFiles, skippedClusteredFiles) = files.iterator.partition { file =>
       clusteringStatsCollector.inputStats.updateStats(file)
       val sameOrMissingClusteringProvider =
         file.clusteringProvider.forall(_ == ClusteredTableUtils.clusteringProvider)
@@ -258,18 +260,29 @@ case class ClusteringStrategy(
       val zCubeInfo = ZCubeInfo.getForFile(file)
       val unmatchedClusteringColumns = zCubeInfo.exists(_.zOrderBy != clusteringColumns)
       sameOrMissingClusteringProvider && !unmatchedClusteringColumns
-    }.map(AddFileWithNumRecords.createFromFile)
+    }
     // Skip files that belong to a ZCUBE that is larger than target ZCUBE size.
-    val smallZCubeFiles = ZCube.filterOutLargeZCubes(inputFiles, targetSize)
+    // Note that ZCube.filterOutLargeZCubes requires clustered files have
+    // the same clustering columns, so skippedClusteredFiles are not included.
+    val smallZCubeFiles = ZCube.filterOutLargeZCubes(
+      candidateFiles.map(AddFileWithNumRecords.createFromFile), targetSize)
 
-    // Skip smallZCubeFiles if they all belong to a single ZCUBE.
-    ZCube.filterOutSingleZCubes(smallZCubeFiles).map { file =>
-      clusteringStatsCollector.outputStats.updateStats(file.addFile)
-      file.addFile
-    }.toSeq
+    if (optimizeContext.isFull && skippedClusteredFiles.nonEmpty) {
+      // Clustered files with different clustering columns have to be re-clustered.
+      (smallZCubeFiles.map(_.addFile) ++ skippedClusteredFiles).map { f =>
+        clusteringStatsCollector.outputStats.updateStats(f)
+        f
+      }.toSeq
+    } else {
+      // Skip smallZCubeFiles if they all belong to a single ZCUBE.
+      ZCube.filterOutSingleZCubes(smallZCubeFiles).map { file =>
+        clusteringStatsCollector.outputStats.updateStats(file.addFile)
+        file.addFile
+      }.toSeq
+    }
   }
 
   /** Metrics for clustering when [[isClusteredTable]] is true. */
   private val clusteringStatsCollector: ClusteringStatsCollector =
-    ClusteringStatsCollector(clusteringColumns)
+    ClusteringStatsCollector(clusteringColumns, optimizeContext)
 }

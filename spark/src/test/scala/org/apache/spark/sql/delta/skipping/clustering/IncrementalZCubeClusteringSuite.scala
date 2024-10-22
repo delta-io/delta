@@ -325,27 +325,32 @@ class IncrementalZCubeClusteringSuite extends QueryTest
           DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> Long.MaxValue.toString) {
           runOptimize(table) { metrics =>
             assert(metrics.clusteringStats.nonEmpty)
+            assert(metrics.numFilesRemoved == 4)
+            assert(metrics.numFilesAdded == 2)
             validateClusteringMetrics(
               actualMetrics = metrics.clusteringStats.get,
               expectedMetrics = ClusteringStats(
                 inputZCubeFiles = ClusteringFileStats(2, SKIP_CHECK_SIZE_VALUE),
+                // Note existing 4 files with different clustering columns are considered as
+                // inputOtherFiles.
                 inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
-                inputNumZCubes = 1,
+                inputNumZCubes = 0,
                 mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
                 numOutputZCubes = 1))
-            assert(metrics.numFilesRemoved == 4)
-            assert(metrics.numFilesAdded == 2)
           }
         }
         val files2 = getFiles(table)
         assert(files2.size === 4)
-        assertClustered(table, files2)
+        assert(files2.forall { file =>
+          val zCubeInfo = ZCubeInfo.getForFile(file)
+          zCubeInfo.nonEmpty
+        })
         assert(getZCubeIds(table).size == 2)
         // validate files clustered to previous clustering columns are not re-clustered.
         assert(files2.intersect(files1) === files1)
 
         // OPTIMIZE FULL should re-cluster all files.
-        runOptimize(table) { metrics =>
+        runOptimizeFull(table) { metrics =>
           assert(metrics.clusteringStats.nonEmpty)
           validateClusteringMetrics(
             actualMetrics = metrics.clusteringStats.get,
@@ -363,6 +368,34 @@ class IncrementalZCubeClusteringSuite extends QueryTest
         runOptimize(table) { metrics =>
           assert(metrics.clusteringStats.nonEmpty)
           assert(metrics.numFilesRemoved == 0)
+          validateClusteringMetrics(
+            actualMetrics = metrics.clusteringStats.get,
+            expectedMetrics = ClusteringStats(
+              inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+              inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+              inputNumZCubes = 1,
+              mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+              numOutputZCubes = 0))
+        }
+
+        // OPTIMIZE FULL again and all clustered files have same clustering columns and
+        // all ZCUBEs are stable.
+        withSQLConf(
+          // Force all zcubes stable
+          DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> 1.toString) {
+          runOptimizeFull(table) { metrics =>
+            assert(metrics.clusteringStats.nonEmpty)
+            validateClusteringMetrics(
+              actualMetrics = metrics.clusteringStats.get,
+              expectedMetrics = ClusteringStats(
+                inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+                inputNumZCubes = 1,
+                mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                numOutputZCubes = 0))
+            assert(metrics.numFilesRemoved == 0)
+            assert(metrics.numFilesAdded == 0)
+          }
         }
       }
     }
