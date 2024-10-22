@@ -84,15 +84,14 @@ case class DescribeDeltaDetailCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val tableMetadata = getTableCatalogTable(child, DescribeDeltaDetailCommand.CMD_NAME)
     val (_, path) = getTablePathOrIdentifier(child, DescribeDeltaDetailCommand.CMD_NAME)
-    val basePath = tableMetadata match {
-      case Some(metadata) => new Path(metadata.location)
-      case _ if path.isDefined => new Path(path.get)
+    val deltaLog = tableMetadata match {
+      case Some(metadata) => DeltaLog.forTable(sparkSession, metadata, hadoopConf)
+      case _ if path.isDefined => DeltaLog.forTable(sparkSession, new Path(path.get), hadoopConf)
       case _ =>
         throw DeltaErrors.missingTableIdentifierException(DescribeDeltaDetailCommand.CMD_NAME)
     }
-    val deltaLog = DeltaLog.forTable(sparkSession, basePath, hadoopConf)
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
-      val snapshot = deltaLog.update()
+      val snapshot = deltaLog.update(tableIdentifierOpt = tableMetadata.map(_.identifier))
       if (snapshot.version == -1) {
         if (path.nonEmpty) {
           val fs = new Path(path.get).getFileSystem(deltaLog.newDeltaHadoopConf())

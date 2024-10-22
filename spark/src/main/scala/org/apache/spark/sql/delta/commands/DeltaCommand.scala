@@ -224,7 +224,7 @@ trait DeltaCommand extends DeltaLogging {
 
   /**
    * Utility method to return the [[DeltaLog]] of an existing Delta table referred
-   * by either the given [[path]] or [[tableIdentifier].
+   * by either the given [[path]] or [[tableIdentifier]].
    *
    * @param spark [[SparkSession]] reference to use.
    * @param path Table location. Expects a non-empty [[tableIdentifier]] or [[path]].
@@ -241,18 +241,18 @@ trait DeltaCommand extends DeltaLogging {
       tableIdentifier: Option[TableIdentifier],
       operationName: String,
       hadoopConf: Map[String, String] = Map.empty): DeltaLog = {
-    val tablePath =
+    val (deltaLog, tableName) =
       if (path.nonEmpty) {
-        new Path(path.get)
+        (DeltaLog.forTable(spark, new Path(path.get), hadoopConf), None)
       } else if (tableIdentifier.nonEmpty) {
         val sessionCatalog = spark.sessionState.catalog
         lazy val metadata = sessionCatalog.getTableMetadata(tableIdentifier.get)
 
         DeltaTableIdentifier(spark, tableIdentifier.get) match {
           case Some(id) if id.path.nonEmpty =>
-            new Path(id.path.get)
+            (DeltaLog.forTable(spark, new Path(id.path.get), hadoopConf), None)
           case Some(id) if id.table.nonEmpty =>
-            new Path(metadata.location)
+            (DeltaLog.forTable(spark, metadata, hadoopConf), id.table)
           case _ =>
             if (metadata.tableType == CatalogTableType.VIEW) {
               throw DeltaErrors.viewNotSupported(operationName)
@@ -264,8 +264,9 @@ trait DeltaCommand extends DeltaLogging {
       }
 
     val startTime = Some(System.currentTimeMillis)
-    val deltaLog = DeltaLog.forTable(spark, tablePath, hadoopConf)
-    if (deltaLog.update(checkIfUpdatedSinceTs = startTime).version < 0) {
+    if (deltaLog
+        .update(checkIfUpdatedSinceTs = startTime, tableIdentifierOpt = tableName)
+        .version < 0) {
       throw DeltaErrors.notADeltaTableException(
         operationName,
         DeltaTableIdentifier(path, tableIdentifier))
