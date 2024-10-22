@@ -1308,7 +1308,7 @@ This section documents additional requirements that writers must follow in order
   - Add / Remove actions with the same `(path, DV)` tuple.
   - More than one Metadata action
   - More than one protocol action
-  - More than one SetTransaction with the same `appId`
+  - More than one Transaction Identifiers with the same `appId`
 
 ## Checkpoints
 Each row in the checkpoint corresponds to a single action. The checkpoint **must** contain all information regarding the following actions:
