@@ -323,10 +323,18 @@ private[internal] class SnapshotImpl(
   }
 
   /**
+   * [[SetTransaction]]s before [[minSetTransactionRetentionTimestamp]] will be considered expired
+   * and dropped from the snapshot.
+   */
+  private[delta] def minSetTransactionRetentionTimestamp: Option[Long] = {
+    deltaLog.minSetTransactionRetentionInterval(metadataScala).map(deltaLog.clock.getTimeMillis() - _)
+  }
+
+  /**
    * Reconstruct the state by applying deltas in order to the checkpoint.
    */
   protected lazy val state: State = {
-    val replay = new InMemoryLogReplay(hadoopConf, minFileRetentionTimestamp)
+    val replay = new InMemoryLogReplay(hadoopConf, minFileRetentionTimestamp, minSetTransactionRetentionTimestamp)
     val actions = loadInMemory(files).map(_.unwrap)
 
     replay.append(0, actions.iterator)
