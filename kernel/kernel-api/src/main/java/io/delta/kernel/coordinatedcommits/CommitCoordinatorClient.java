@@ -70,7 +70,7 @@ public interface CommitCoordinatorClient {
    * @param currentMetadata The metadata of the table at currentVersion
    * @param currentProtocol The protocol of the table at currentVersion
    * @return A map of key-value pairs which is issued by the commit coordinator to uniquely identify
-   *     the table. This should be stored in the table's metadata for table property {@link *
+   *     the table. This should be stored in the table's metadata for table property {@link
    *     io.delta.kernel.internal.TableConfig#COORDINATED_COMMITS_TABLE_CONF}. This information
    *     needs to be passed to the {@link #commit}, {@link #getUnbackfilledCommits}, and {@link
    *     #backfillToVersion} APIs to identify the table.
