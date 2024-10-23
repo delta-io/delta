@@ -20,8 +20,10 @@ import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{Column, DataFrame, QueryTest}
+import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types._
 
 // Unit tests to verify that type widening works with delta sharing.
@@ -43,14 +45,18 @@ class DeltaSharingDataSourceTypeWideningSuite
       tableName: String,
       versionAsOf: Option[Long],
       responseFormat: String,
+      filter: Column = new Column(Literal.TrueLiteral),
       expectedSchema: StructType,
+      expectedJsonPredicate: Seq[String] = Seq.empty,
       expectedResult: DataFrame): Unit = {
     withTempDir { tempDir =>
       val sharedTableName =
         if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
-          "type_widening_shared_delta_table"
+          tableName + "shared_delta_table"
         } else {
-          "type_widening_shared_parquet_table"
+          // The mock test client expects the table name to contain 'shared_parquet_table' for
+          // parquet format sharing.
+          tableName + "shared_parquet_table"
         }
       prepareMockedClientMetadata(tableName, sharedTableName)
       prepareMockedClientGetTableVersion(tableName, sharedTableName, versionAsOf)
@@ -68,18 +74,31 @@ class DeltaSharingDataSourceTypeWideningSuite
         reader = reader.option("versionAsOf", version)
       }
 
+      TestClientForDeltaFormatSharing.jsonPredicateHints.clear()
       withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
         val profileFile = prepareProfileFile(tempDir)
-        val result = reader.load(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+        val result = reader
+          .load(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          .filter(filter)
         assert(result.schema === expectedSchema)
         checkAnswer(result, expectedResult)
+        assert(getJsonPredicateHints(tableName) === expectedJsonPredicate)
       }
     }
   }
 
+  /** Fetches JSON predicates passed to the test client when reading a table. */
+  private def getJsonPredicateHints(tableName: String): Seq[String] = {
+    TestClientForDeltaFormatSharing
+      .jsonPredicateHints
+      .filterKeys(_.contains(tableName))
+      .values
+      .toSeq
+  }
+
   /** Creates a table and applies a type change to it. */
   private def withTestTable(testBody: String => Unit): Unit = {
-    val deltaTableName = "type_widening_table"
+    val deltaTableName = "type_widening"
     withTable(deltaTableName) {
       sql(s"CREATE TABLE $deltaTableName (value SMALLINT) USING DELTA")
       sql(s"INSERT INTO $deltaTableName VALUES (1), (2)")
@@ -149,6 +168,69 @@ class DeltaSharingDataSourceTypeWideningSuite
           expectedSchema = new StructType()
             .add("value", ShortType),
           expectedResult = Seq(1, 2).toDF("value"))
+      }
+    }
+
+    test(s"jsonPredicateHints on non-partition column after type widening, " +
+      s"responseFormat=$responseFormat") {
+      withTestTable { tableName =>
+        testReadingDeltaShare(
+          tableName,
+          versionAsOf = None,
+          responseFormat,
+          filter = col("value") === Int.MaxValue,
+          expectedSchema = new StructType()
+            .add("value", IntegerType, nullable = true, metadata = typeWideningMetadata),
+          expectedResult = Seq(Int.MaxValue).toDF("value"),
+          expectedJsonPredicate = Seq(
+            """
+              |{"op":"and","children":[
+              |  {"op":"not","children":[
+              |    {"op":"isNull","children":[
+              |      {"op":"column","name":"value","valueType":"int"}]}]},
+              |  {"op":"equal","children":[
+              |    {"op":"column","name":"value","valueType":"int"},
+              |    {"op":"literal","value":"2147483647","valueType":"int"}]}]}
+            """.stripMargin.replaceAll("\n", "").replaceAll(" ", ""))
+        )
+      }
+    }
+
+    test(s"jsonPredicateHints on partition column after type widening, " +
+      s"responseFormat=$responseFormat") {
+      val deltaTableName = "type_widening_partitioned"
+      withTable(deltaTableName) {
+        sql(
+          s"""
+             |CREATE TABLE $deltaTableName (part SMALLINT, value SMALLINT)
+             |USING DELTA
+             |PARTITIONED BY (part)
+           """.stripMargin
+        )
+        sql(s"INSERT INTO $deltaTableName VALUES (1, 1), (2, 2)")
+        sql(s"ALTER TABLE $deltaTableName CHANGE COLUMN part TYPE INT")
+        sql(s"INSERT INTO $deltaTableName VALUES (3, 3), (${Int.MaxValue}, 4)")
+
+        testReadingDeltaShare(
+          deltaTableName,
+          versionAsOf = None,
+          responseFormat,
+          filter = col("part") === Int.MaxValue,
+          expectedSchema = new StructType()
+            .add("part", IntegerType, nullable = true, metadata = typeWideningMetadata)
+            .add("value", ShortType),
+          expectedResult = Seq((Int.MaxValue, 4)).toDF("part", "value"),
+          expectedJsonPredicate = Seq(
+            """
+              |{"op":"and","children":[
+              |  {"op":"not","children":[
+              |    {"op":"isNull","children":[
+              |      {"op":"column","name":"part","valueType":"int"}]}]},
+              |  {"op":"equal","children":[
+              |    {"op":"column","name":"part","valueType":"int"},
+              |    {"op":"literal","value":"2147483647","valueType":"int"}]}]}
+            """.stripMargin.replaceAll("\n", "").replaceAll(" ", ""))
+        )
       }
     }
   }
