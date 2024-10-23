@@ -424,3 +424,16 @@ case class CheckConstraintsPreDowngradeTableFeatureCommand(table: DeltaTableV2)
     throw DeltaErrors.cannotDropCheckConstraintFeature(checkConstraintNames)
   }
 }
+
+case class ChangeDataFeedPreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand {
+
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    if (ChangeDataFeedTableFeature.validateRemoval(table.initialSnapshot)) {
+      return false
+    }
+    val properties = Seq(DeltaConfigs.CHANGE_DATA_FEED.key)
+    AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(table.spark)
+    true
+  }
+}
