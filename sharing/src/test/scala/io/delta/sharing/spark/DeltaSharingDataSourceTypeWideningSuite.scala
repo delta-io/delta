@@ -45,7 +45,7 @@ class DeltaSharingDataSourceTypeWideningSuite
       tableName: String,
       versionAsOf: Option[Long],
       responseFormat: String,
-      filter: Column = new Column(Literal.TrueLiteral),
+      filter: Option[Column] = None,
       expectedSchema: StructType,
       expectedJsonPredicate: Seq[String] = Seq.empty,
       expectedResult: DataFrame): Unit = {
@@ -77,9 +77,11 @@ class DeltaSharingDataSourceTypeWideningSuite
       TestClientForDeltaFormatSharing.jsonPredicateHints.clear()
       withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
         val profileFile = prepareProfileFile(tempDir)
-        val result = reader
+        var result = reader
           .load(s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
-          .filter(filter)
+        filter.foreach { f =>
+          result = result.filter(f)
+        }
         assert(result.schema === expectedSchema)
         checkAnswer(result, expectedResult)
         assert(getJsonPredicateHints(tableName) === expectedJsonPredicate)
@@ -178,7 +180,7 @@ class DeltaSharingDataSourceTypeWideningSuite
           tableName,
           versionAsOf = None,
           responseFormat,
-          filter = col("value") === Int.MaxValue,
+          filter = Some(col("value") === Int.MaxValue),
           expectedSchema = new StructType()
             .add("value", IntegerType, nullable = true, metadata = typeWideningMetadata),
           expectedResult = Seq(Int.MaxValue).toDF("value"),
@@ -215,7 +217,7 @@ class DeltaSharingDataSourceTypeWideningSuite
           deltaTableName,
           versionAsOf = None,
           responseFormat,
-          filter = col("part") === Int.MaxValue,
+          filter = Some(col("part") === Int.MaxValue),
           expectedSchema = new StructType()
             .add("part", IntegerType, nullable = true, metadata = typeWideningMetadata)
             .add("value", ShortType),
