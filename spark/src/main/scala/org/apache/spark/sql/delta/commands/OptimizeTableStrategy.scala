@@ -252,7 +252,6 @@ case class ClusteringStrategy(
     // Keep all files if isFull is set, otherwise skip files with different clusteringProviders
     // or files clustered by a different set of clustering columns.
     val (candidateFiles, skippedClusteredFiles) = files.iterator.map { f =>
-      val zCubeInfo = ZCubeInfo.getForFile(f)
       clusteringStatsCollector.inputStats.updateStats(f)
       f
     }.partition { file =>
@@ -275,7 +274,6 @@ case class ClusteringStrategy(
       val finalFiles = (smallZCubeFiles.map(_.addFile) ++ skippedClusteredFiles).toSeq
       finalFiles.map { f =>
         clusteringStatsCollector.outputStats.updateStats(f)
-        val zCubeInfo = ZCubeInfo.getForFile(f)
         f
       }
     } else {
