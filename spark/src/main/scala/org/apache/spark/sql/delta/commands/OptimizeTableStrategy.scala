@@ -252,6 +252,10 @@ case class ClusteringStrategy(
     // Keep all files if isFull is set, otherwise skip files with different clusteringProviders
     // or files clustered by a different set of clustering columns.
     val (candidateFiles, skippedClusteredFiles) = files.iterator.map { f =>
+      // Note that updateStats is moved out of Iterator.partition lambda since
+      // scala2.13 doesn't call the lambda in the order of files which violates
+      // the updateStats' requirement which requires files are ordered in the
+      // ZCUBE id (files have been ordered before calling applyMinZCube).
       clusteringStatsCollector.inputStats.updateStats(f)
       f
     }.partition { file =>
