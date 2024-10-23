@@ -73,17 +73,17 @@ class IncrementalZCubeClusteringSuite extends QueryTest
       actualMetrics: ClusteringStats, expectedMetrics: ClusteringStats): Unit = {
     var finalActualMetrics = actualMetrics
     if (expectedMetrics.inputZCubeFiles.size == SKIP_CHECK_SIZE_VALUE) {
-      val stats = expectedMetrics.inputZCubeFiles
+      val stats = finalActualMetrics.inputZCubeFiles
       finalActualMetrics =
         finalActualMetrics.copy(inputZCubeFiles = stats.copy(size = SKIP_CHECK_SIZE_VALUE))
     }
     if (expectedMetrics.inputOtherFiles.size == SKIP_CHECK_SIZE_VALUE) {
-      val stats = expectedMetrics.inputOtherFiles
+      val stats = finalActualMetrics.inputOtherFiles
       finalActualMetrics =
         finalActualMetrics.copy(inputOtherFiles = stats.copy(size = SKIP_CHECK_SIZE_VALUE))
     }
     if (expectedMetrics.mergedFiles.size == SKIP_CHECK_SIZE_VALUE) {
-      val stats = expectedMetrics.mergedFiles
+      val stats = finalActualMetrics.mergedFiles
       finalActualMetrics =
         finalActualMetrics.copy(mergedFiles = stats.copy(size = SKIP_CHECK_SIZE_VALUE))
     }
@@ -153,7 +153,7 @@ class IncrementalZCubeClusteringSuite extends QueryTest
                 inputZCubeFiles = ClusteringFileStats(2, SKIP_CHECK_SIZE_VALUE),
                 inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
                 inputNumZCubes = 1,
-                mergedFiles = ClusteringFileStats(6, SKIP_CHECK_SIZE_VALUE),
+                mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
                 numOutputZCubes = 1))
 
             assert(metrics.numFilesRemoved === 4)
@@ -230,7 +230,7 @@ class IncrementalZCubeClusteringSuite extends QueryTest
                 inputZCubeFiles = ClusteringFileStats(2, SKIP_CHECK_SIZE_VALUE),
                 inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
                 inputNumZCubes = 1,
-                mergedFiles = ClusteringFileStats(6, SKIP_CHECK_SIZE_VALUE),
+                mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
                 numOutputZCubes = 1))
             assert(metrics.numFilesRemoved == 4)
             assert(metrics.numFilesAdded == 2)
@@ -266,7 +266,9 @@ class IncrementalZCubeClusteringSuite extends QueryTest
               actualMetrics = metrics.clusteringStats.get,
               expectedMetrics = ClusteringStats(
                 inputZCubeFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
-                inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                // 8 files: 4 files from previously clustered files with different cluster keys
+                // and 4 files from newly added 4 un-clustered files.
+                inputOtherFiles = ClusteringFileStats(8, SKIP_CHECK_SIZE_VALUE),
                 inputNumZCubes = 0,
                 mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
                 numOutputZCubes = 1))
@@ -330,10 +332,8 @@ class IncrementalZCubeClusteringSuite extends QueryTest
             validateClusteringMetrics(
               actualMetrics = metrics.clusteringStats.get,
               expectedMetrics = ClusteringStats(
-                inputZCubeFiles = ClusteringFileStats(2, SKIP_CHECK_SIZE_VALUE),
-                // Note existing 4 files with different clustering columns are considered as
-                // inputOtherFiles.
-                inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                inputZCubeFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+                inputOtherFiles = ClusteringFileStats(6, SKIP_CHECK_SIZE_VALUE),
                 inputNumZCubes = 0,
                 mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
                 numOutputZCubes = 1))
@@ -349,33 +349,50 @@ class IncrementalZCubeClusteringSuite extends QueryTest
         // validate files clustered to previous clustering columns are not re-clustered.
         assert(files2.intersect(files1) === files1)
 
-        // OPTIMIZE FULL should re-cluster all files.
-        runOptimizeFull(table) { metrics =>
-          assert(metrics.clusteringStats.nonEmpty)
-          validateClusteringMetrics(
-            actualMetrics = metrics.clusteringStats.get,
-            expectedMetrics = ClusteringStats(
-              inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
-              inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
-              inputNumZCubes = 2,
-              mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
-              numOutputZCubes = 1))
-          assert(metrics.numFilesRemoved == 4)
-          assert(metrics.numFilesAdded == 4)
+        // OPTIMIZE FULL should re-cluster previously clustered files.
+        withSQLConf(
+          // Force all zcubes stable
+          DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> 1.toString) {
+          runOptimizeFull(table) { metrics =>
+            assert(metrics.clusteringStats.nonEmpty)
+            // Only files with old cluster keys are rewritten.
+            assert(metrics.numFilesRemoved == 2)
+            assert(metrics.numFilesAdded == 2)
+
+            validateClusteringMetrics(
+              actualMetrics = metrics.clusteringStats.get,
+              expectedMetrics = ClusteringStats(
+                inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+                inputNumZCubes = 2,
+                mergedFiles = ClusteringFileStats(2, SKIP_CHECK_SIZE_VALUE),
+                numOutputZCubes = 1))
+          }
         }
+        // all files have same clustering keys.
+        assert(getFiles(table).forall { f =>
+          val zCubeInfo = ZCubeInfo.getForFile(f).get
+          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
+          val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+          zCubeInfo.zOrderBy == clusteringColumns
+        })
 
         // Incremental OPTIMIZE to validate no files should be clustered.
-        runOptimize(table) { metrics =>
-          assert(metrics.clusteringStats.nonEmpty)
-          assert(metrics.numFilesRemoved == 0)
-          validateClusteringMetrics(
-            actualMetrics = metrics.clusteringStats.get,
-            expectedMetrics = ClusteringStats(
-              inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
-              inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
-              inputNumZCubes = 1,
-              mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
-              numOutputZCubes = 0))
+        withSQLConf(
+          // Force all zcubes stable
+          DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> 1.toString) {
+          runOptimize(table) { metrics =>
+            assert(metrics.clusteringStats.nonEmpty)
+            assert(metrics.numFilesRemoved == 0)
+            validateClusteringMetrics(
+              actualMetrics = metrics.clusteringStats.get,
+              expectedMetrics = ClusteringStats(
+                inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+                inputNumZCubes = 2,
+                mergedFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+                numOutputZCubes = 0))
+          }
         }
 
         // OPTIMIZE FULL again and all clustered files have same clustering columns and
@@ -390,8 +407,8 @@ class IncrementalZCubeClusteringSuite extends QueryTest
               expectedMetrics = ClusteringStats(
                 inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
                 inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
-                inputNumZCubes = 1,
-                mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                inputNumZCubes = 2,
+                mergedFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
                 numOutputZCubes = 0))
             assert(metrics.numFilesRemoved == 0)
             assert(metrics.numFilesAdded == 0)

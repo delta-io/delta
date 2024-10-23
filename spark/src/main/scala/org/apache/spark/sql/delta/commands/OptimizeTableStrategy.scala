@@ -251,8 +251,11 @@ case class ClusteringStrategy(
     val targetSize = sparkSession.sessionState.conf.getConf(DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE)
     // Keep all files if isFull is set, otherwise skip files with different clusteringProviders
     // or files clustered by a different set of clustering columns.
-    val (candidateFiles, skippedClusteredFiles) = files.iterator.partition { file =>
-      clusteringStatsCollector.inputStats.updateStats(file)
+    val (candidateFiles, skippedClusteredFiles) = files.iterator.map { f =>
+      val zCubeInfo = ZCubeInfo.getForFile(f)
+      clusteringStatsCollector.inputStats.updateStats(f)
+      f
+    }.partition { file =>
       val sameOrMissingClusteringProvider =
         file.clusteringProvider.forall(_ == ClusteredTableUtils.clusteringProvider)
 
@@ -269,10 +272,12 @@ case class ClusteringStrategy(
 
     if (optimizeContext.isFull && skippedClusteredFiles.nonEmpty) {
       // Clustered files with different clustering columns have to be re-clustered.
-      (smallZCubeFiles.map(_.addFile) ++ skippedClusteredFiles).map { f =>
+      val finalFiles = (smallZCubeFiles.map(_.addFile) ++ skippedClusteredFiles).toSeq
+      finalFiles.map { f =>
         clusteringStatsCollector.outputStats.updateStats(f)
+        val zCubeInfo = ZCubeInfo.getForFile(f)
         f
-      }.toSeq
+      }
     } else {
       // Skip smallZCubeFiles if they all belong to a single ZCUBE.
       ZCube.filterOutSingleZCubes(smallZCubeFiles).map { file =>
