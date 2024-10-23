@@ -18,6 +18,8 @@ package io.delta.sharing.spark
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sharing.client.{
   DeltaSharingClient,
@@ -28,11 +30,13 @@ import io.delta.sharing.client.model.{
   AddFile => ClientAddFile,
   DeltaTableFiles,
   DeltaTableMetadata,
+  Metadata,
   SingleAction,
   Table
 }
 
 import org.apache.spark.SparkEnv
+import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructType}
 import org.apache.spark.storage.BlockId
 
 /**
@@ -59,16 +63,20 @@ private[spark] class TestClientForDeltaFormatSharing(
     tokenRenewalThresholdInSeconds: Int = 600)
     extends DeltaSharingClient {
 
+  private val supportedReaderFeatures: Seq[String] = Seq(
+    DeletionVectorsTableFeature,
+    ColumnMappingTableFeature,
+    TimestampNTZTableFeature,
+    TypeWideningPreviewTableFeature,
+    TypeWideningTableFeature,
+    VariantTypeTableFeature
+  ).map(_.name)
+
   assert(
     responseFormat == DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET ||
-    (
-      readerFeatures.contains("deletionVectors") &&
-      readerFeatures.contains("columnMapping") &&
-      readerFeatures.contains("timestampNtz") &&
-      readerFeatures.contains("variantType-preview")
-    ),
-    "deletionVectors, columnMapping, timestampNtz, variantType-preview should be supported in " +
-    "all types of queries."
+      supportedReaderFeatures.forall(readerFeatures.split(",").contains),
+    s"${supportedReaderFeatures.diff(readerFeatures.split(",")).mkString(", ")} " +
+      s"should be supported in all types of queries."
   )
 
   import TestClientForDeltaFormatSharing._
@@ -101,7 +109,7 @@ private[spark] class TestClientForDeltaFormatSharing(
       DeltaTableMetadata(
         version = versionAsOf.getOrElse(getTableVersion(table)),
         protocol = protocol,
-        metadata = metadata,
+        metadata = cleanUpTableSchema(metadata),
         respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET
       )
     } else {
@@ -178,7 +186,7 @@ private[spark] class TestClientForDeltaFormatSharing(
       DeltaTableFiles(
         versionAsOf.getOrElse(getTableVersion(table)),
         protocol,
-        metadata,
+        metadata = cleanUpTableSchema(metadata),
         files.toSeq,
         respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET
       )
@@ -263,6 +271,27 @@ private[spark] class TestClientForDeltaFormatSharing(
   override def getForStreaming(): Boolean = forStreaming
 
   override def getProfileProvider: DeltaSharingProfileProvider = profileProvider
+
+  /**
+   * Removes all field metadata except for comments from the table schema in the given Delta
+   * metadata action. Used for Parquet format sharing.
+   */
+  private def cleanUpTableSchema(metadata: Metadata): Metadata = {
+    val schema = DataType.fromJson(metadata.schemaString).asInstanceOf[StructType]
+    val cleanedSchema = SchemaMergingUtils.transformColumns(schema) {
+      case (_, field, _) =>
+        val cleanedMetadata = if (field.metadata.contains("comment")) {
+          new MetadataBuilder()
+            .putString("comment", field.metadata.getString("comment"))
+            .build()
+        } else {
+          SparkMetadata.empty
+
+        }
+        field.copy(metadata = cleanedMetadata)
+    }
+    metadata.copy(schemaString = cleanedSchema.json)
+  }
 }
 
 object TestClientForDeltaFormatSharing {
