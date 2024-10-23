@@ -32,6 +32,9 @@ import java.util.*;
 
 public class DataSkippingUtils {
 
+  public static final String DATA_SKIPPING_NUM_INDEXED_COLS = "delta.dataSkippingNumIndexedCols";
+  public static final int DEFAULT_DATA_SKIPPING_NUM_INDEXED_COLS = 32;
+
   /**
    * Given a {@code FilteredColumnarBatch} of scan files and the statistics schema to parse, return
    * the parsed JSON stats from the scan files.
