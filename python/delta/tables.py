@@ -591,7 +591,7 @@ class DeltaTable(object):
 
         See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
         """
-        DeltaTable._verify_type_str(featureName, "feature")
+        DeltaTable._verify_type_str(featureName, "featureName")
         self._jdt.addFeatureSupport(featureName)
 
     @since(1.2)  # type: ignore[arg-type]

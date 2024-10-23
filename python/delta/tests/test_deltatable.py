@@ -1201,13 +1201,13 @@ class DeltaTableTestsMixin:
         # bad args
         with self.assertRaisesRegex(Py4JJavaError, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
             dt.addFeatureSupport("abc")
-        with self.assertRaisesRegex(ValueError, "feature needs to be a string"):
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
             dt.addFeatureSupport(12345)  # type: ignore[arg-type]
-        with self.assertRaisesRegex(ValueError, "feature needs to be a string"):
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
             dt.addFeatureSupport([12345])  # type: ignore[arg-type]
-        with self.assertRaisesRegex(ValueError, "feature needs to be a string"):
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
             dt.addFeatureSupport({})  # type: ignore[arg-type]
-        with self.assertRaisesRegex(ValueError, "feature needs to be a string"):
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
             dt.addFeatureSupport([])  # type: ignore[arg-type]
 
         # good args
