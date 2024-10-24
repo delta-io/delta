@@ -26,8 +26,11 @@ import org.apache.spark.sql.delta.zorder.ZCubeInfo.ZCubeID
  * calling updateStats on every new file seen.
  * The number of ZCubes, number of files from matching cubes and number of unoptimized files are
  * captured here.
+ *
+ * @param zOrderBy zOrder or clustering columns.
+ * @param isFull whether OPTIMIZE FULL is run. This is only for clustered tables.
  */
-class ZCubeFileStatsCollector(zOrderBy: Seq[String]) {
+class ZCubeFileStatsCollector(zOrderBy: Seq[String], isFull: Boolean) {
 
   /** map that holds the file statistics Map("element" -> (number of files, total file size)) */
   private var processedZCube: ZCubeID = _
@@ -47,7 +50,9 @@ class ZCubeFileStatsCollector(zOrderBy: Seq[String]) {
   /** method to update the zCubeFileStats incrementally by file */
   def updateStats(file: AddFile): AddFile = {
     val zCubeInfo = ZCubeInfo.getForFile(file)
-    if (zCubeInfo.isDefined && zCubeInfo.get.zOrderBy == zOrderBy) {
+    // Note that clustered files with different clustering columns are considered candidate
+    // files when isFull is set.
+    if (zCubeInfo.isDefined && (isFull || zCubeInfo.get.zOrderBy == zOrderBy)) {
       if (processedZCube != zCubeInfo.get.zCubeID) {
         processedZCube = zCubeInfo.get.zCubeID
         numZCubes += 1

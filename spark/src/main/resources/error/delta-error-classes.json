@@ -1950,6 +1950,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_OPTIMIZE_FULL_NOT_SUPPORTED" : {
+    "message" : [
+      "OPTIMIZE FULL is only supported for clustered tables with non-empty clustering columns."
+    ],
+    "sqlState" : "42601"
+  },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
       "'overwriteSchema' cannot be used in dynamic partition overwrite mode."

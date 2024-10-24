@@ -93,7 +93,7 @@ statement
         (clusterBySpec | CLUSTER BY NONE)                               #alterTableClusterBy
     | ALTER TABLE table=qualifiedName
         (ALTER | CHANGE) COLUMN? column=qualifiedName SYNC IDENTITY     #alterTableSyncIdentity
-    | OPTIMIZE (path=STRING | table=qualifiedName)
+    | OPTIMIZE (path=STRING | table=qualifiedName) FULL?
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
     | REORG TABLE table=qualifiedName
@@ -237,7 +237,7 @@ nonReserved
     : VACUUM | USING | INVENTORY | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
-    | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
+    | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE | FULL
     | IDENTITY | SYNC | COLUMN | CHANGE
     | REORG | APPLY | PURGE | UPGRADE | UNIFORM | ICEBERG_COMPAT_VERSION
     | RESTORE | AS | OF
@@ -275,6 +275,7 @@ EXISTS: 'EXISTS';
 FALSE: 'FALSE';
 FEATURE: 'FEATURE';
 FOR: 'FOR';
+FULL: 'FULL';
 GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';

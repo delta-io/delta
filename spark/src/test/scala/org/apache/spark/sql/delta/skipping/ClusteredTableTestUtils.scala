@@ -59,6 +59,19 @@ trait ClusteredTableTestUtilsBase
     verifyDescribeHistoryOperationParameters(table)
   }
 
+  /**
+   * Runs optimize full on the table and calls postHook on the metrics.
+   *
+   * @param table    the name of table
+   * @param postHook callback triggered with OptimizeMetrics returned by the OPTIMIZE command
+   */
+  def runOptimizeFull(table: String)(postHook: OptimizeMetrics => Unit): Unit = {
+    postHook(sql(s"OPTIMIZE $table FULL").select($"metrics.*").as[OptimizeMetrics].head())
+
+    // Verify Delta history operation parameters' clusterBy
+    verifyDescribeHistoryOperationParameters(table)
+  }
+
   def verifyClusteringColumnsInDomainMetadata(
       snapshot: Snapshot,
       logicalColumnNames: Seq[String]): Unit = {
