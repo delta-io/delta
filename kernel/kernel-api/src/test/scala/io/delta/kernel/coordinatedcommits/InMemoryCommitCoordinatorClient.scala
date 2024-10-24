@@ -48,7 +48,7 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
    * | and more commits are done  |                  |                           |
    * |----------------------------|------------------|---------------------------|
    */
-  private[commit] class PerTableData(
+  private class PerTableData(
       var maxCommitVersion: Long = -1,
       var active: Boolean = false) {
     def updateLastRatifiedCommit(commitVersion: Long): Unit = {
@@ -69,7 +69,7 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
     val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock()
   }
 
-  private[commit] val perTableMap = new ConcurrentHashMap[String, PerTableData]()
+  private val perTableMap = new ConcurrentHashMap[String, PerTableData]()
 
   /////////////////
   // Public APIs //
