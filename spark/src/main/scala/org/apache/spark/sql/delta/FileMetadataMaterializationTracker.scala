@@ -208,7 +208,7 @@ object FileMetadataMaterializationTracker extends DeltaLogging {
       new FileMetadataMaterializationTracker()
     } else {
       logInfo(log"File metadata materialization tracking is disabled for this query." +
-        log" Please set ${MDC(DeltaLogKeys.CONFIG,
+        log" Please set ${MDC(DeltaLogKeys.CONFIG_KEY,
           DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED.key)} " +
         log"to true to enable it.")
       noopTracker

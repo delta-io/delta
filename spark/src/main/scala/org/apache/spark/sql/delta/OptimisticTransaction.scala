@@ -2468,7 +2468,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       assert(mismatch.isEmpty,
         s"Expected ${mismatch.map(_._1).mkString(",")} but got ${mismatch.map(_._2).mkString(",")}")
 
-      val logPrefix = log"[attempt ${MDC(DeltaLogKeys.ATTEMPT, attemptNumber)}] "
+      val logPrefix = log"[attempt ${MDC(DeltaLogKeys.NUM_ATTEMPT, attemptNumber)}] "
       val txnDetailsLog = {
         var adds = 0L
         var removes = 0L

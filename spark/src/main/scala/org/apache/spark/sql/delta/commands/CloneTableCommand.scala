@@ -92,7 +92,7 @@ case class CloneTableCommand(
     }
 
     /** Log clone command information */
-    logInfo(log"Cloning ${MDC(DeltaLogKeys.TABLE_DESC, sourceTable.description)} to " +
+    logInfo(log"Cloning ${MDC(DeltaLogKeys.CLONE_SOURCE_DESC, sourceTable.description)} to " +
       log"${MDC(DeltaLogKeys.PATH, targetPath)}")
 
     // scalastyle:off deltahadoopconfiguration
