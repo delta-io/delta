@@ -721,8 +721,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     withTable("mytab") {
       spark.sql("create table mytab (id int) using delta")
 
-      // This test is intended to check if the following query compilation
-      // succeeds or not. https://github.com/delta-io/delta/issues/3099
+      // Without the fix, the following SQL fails with AnalysisException
       spark.sql("""
         merge into mytab as target
         using (
