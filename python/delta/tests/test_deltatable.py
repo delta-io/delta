@@ -1214,14 +1214,16 @@ class DeltaTableTestsMixin:
         dt.addFeatureSupport("appendOnly")
         dt_details = dt.detail().collect()[0].asDict()
         self.assertTrue(dt_details["minReaderVersion"] == 1, "The upgrade should be a no-op")
-        self.assertTrue(dt_details["minWriterVersion"] == 7, "Explicitly support table features will bump version")
+        self.assertTrue(dt_details["minWriterVersion"] == 7,
+                        "Explicitly support table features will bump version")
         self.assertEqual(sorted(dt_details["tableFeatures"]), ["appendOnly", "invariants"])
 
         dt.addFeatureSupport("deletionVectors")
         dt_details = dt.detail().collect()[0].asDict()
         self.assertTrue(dt_details["minReaderVersion"] == 3, "DV requires reader version 3")
         self.assertTrue(dt_details["minWriterVersion"] == 7, "DV requires writer version 7")
-        self.assertEqual(sorted(dt_details["tableFeatures"]), ["appendOnly", "deletionVectors", "invariants"])
+        self.assertEqual(sorted(dt_details["tableFeatures"]),
+                         ["appendOnly", "deletionVectors", "invariants"])
 
     def test_restore_to_version(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2)])
