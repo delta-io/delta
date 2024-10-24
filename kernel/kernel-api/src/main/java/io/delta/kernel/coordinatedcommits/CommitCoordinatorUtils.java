@@ -23,7 +23,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.coordinatedcommits.UpdatedActions;
 import io.delta.kernel.internal.DeltaErrors;
-import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -31,7 +30,6 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.Optional;
 import java.util.UUID;
 
 /** Various public utility methods related to Coordinated Commits. */
