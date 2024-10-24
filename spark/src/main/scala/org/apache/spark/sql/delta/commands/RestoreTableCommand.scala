@@ -107,7 +107,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
       }
 
       val latestVersion = deltaLog
-        .update(tableIdentifierOpt = catalogTable.map(_.identifier))
+        .update(catalogTableOpt = catalogTable)
         .version
 
       require(versionToRestore < latestVersion, s"Version to restore ($versionToRestore)" +
@@ -117,7 +117,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
         val latestSnapshot = txn.snapshot
         val snapshotToRestore = deltaLog.getSnapshotAt(
           versionToRestore,
-          tableIdentifierOpt = catalogTable.map(_.identifier))
+          catalogTableOpt = catalogTable)
         val latestSnapshotFiles = latestSnapshot.allFiles
         val snapshotToRestoreFiles = snapshotToRestore.allFiles
 

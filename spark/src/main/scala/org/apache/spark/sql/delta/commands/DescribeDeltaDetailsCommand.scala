@@ -91,7 +91,7 @@ case class DescribeDeltaDetailCommand(
         throw DeltaErrors.missingTableIdentifierException(DescribeDeltaDetailCommand.CMD_NAME)
     }
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
-      val snapshot = deltaLog.update(tableIdentifierOpt = tableMetadata.map(_.identifier))
+      val snapshot = deltaLog.update(catalogTableOpt = tableMetadata)
       if (snapshot.version == -1) {
         if (path.nonEmpty) {
           val fs = new Path(path.get).getFileSystem(deltaLog.newDeltaHadoopConf())

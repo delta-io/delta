@@ -220,11 +220,8 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
   override def executeOnWrite(
       spark: SparkSession,
       snapshot: Snapshot
-    ): Unit = {
-    executeAsync(
-      spark,
-      snapshot
-    )
+     ): Unit = {
+    executeAsync(spark, snapshot)
   }
 
 
@@ -278,8 +275,7 @@ case class UpdateCatalog(table: CatalogTable) extends UpdateCatalogBase {
    */
   private def executeAsync(
       spark: SparkSession,
-      snapshot: Snapshot
-    ): Unit = {
+      snapshot: Snapshot): Unit = {
     if (!shouldRun(spark, snapshot)) return
     Future[Unit] {
       UpdateCatalog.activeAsyncRequests.incrementAndGet()

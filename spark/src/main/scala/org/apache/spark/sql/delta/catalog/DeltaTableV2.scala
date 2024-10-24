@@ -156,12 +156,12 @@ case class DeltaTableV2(
         "queriedVersion" -> version,
         "accessType" -> accessType
       ))
-      deltaLog.getSnapshotAt(version, tableIdentifierOpt = getTableIdentifierIfExists)
+      deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,
         checkIfUpdatedSinceTs = Some(creationTimeMs),
-        tableIdentifierOpt = getTableIdentifierIfExists
+        catalogTableOpt = catalogTable
       )
     )
   }
