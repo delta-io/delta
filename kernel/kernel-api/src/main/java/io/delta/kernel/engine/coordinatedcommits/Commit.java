@@ -34,12 +34,12 @@ public class Commit {
 
   private final FileStatus fileStatus;
 
-  private final long commitTimestamp;
+  private final long timestamp;
 
-  public Commit(long version, FileStatus fileStatus, long commitTimestamp) {
+  public Commit(long version, FileStatus fileStatus, long timestamp) {
     this.version = version;
     this.fileStatus = fileStatus;
-    this.commitTimestamp = commitTimestamp;
+    this.timestamp = timestamp;
   }
 
   /**
@@ -66,7 +66,7 @@ public class Commit {
    *
    * @return the timestamp of the commit.
    */
-  public long getCommitTimestamp() {
-    return commitTimestamp;
+  public long getTimestamp() {
+    return timestamp;
   }
 }
