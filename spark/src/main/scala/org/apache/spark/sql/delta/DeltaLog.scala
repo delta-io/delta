@@ -876,9 +876,9 @@ object DeltaLog extends DeltaLogging {
       thunk: Clock => (DeltaLog, Option[CatalogTable])): (DeltaLog, Snapshot) = {
     val clock = new SystemClock
     val ts = clock.getTimeMillis()
-    val (deltaLog, catalogTable) = thunk(clock)
+    val (deltaLog, catalogTableOpt) = thunk(clock)
     val snapshot =
-      deltaLog.update(checkIfUpdatedSinceTs = Some(ts), catalogTableOpt = catalogTable)
+      deltaLog.update(checkIfUpdatedSinceTs = Some(ts), catalogTableOpt = catalogTableOpt)
     (deltaLog, snapshot)
   }
 
