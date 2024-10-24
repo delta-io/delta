@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.hooks.ChecksumHook
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -358,6 +359,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   }
 
   protected val postCommitHooks = new ArrayBuffer[PostCommitHook]()
+  registerPostCommitHook(ChecksumHook)
   catalogTable.foreach { ct =>
     registerPostCommitHook(UpdateCatalogFactory.getUpdateCatalogHook(ct, spark))
   }

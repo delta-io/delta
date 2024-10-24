@@ -1040,7 +1040,7 @@ trait DeltaSQLConfBase {
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
